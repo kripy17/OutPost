@@ -1,0 +1,130 @@
+"""Uploaded sample binaries (roadmap 1.4) — OS sniffed from magic bytes.
+
+Stores the original name, SHA-256, detected platform, and size so the webapp
+can pre-fill a detonation and the hash is searchable via IOC search.
+"""
+
+import sqlite3
+from datetime import datetime, timezone
+from typing import Optional
+
+
+def add_sample(
+    conn: sqlite3.Connection,
+    sample_id: str,
+    original_name: str,
+    sha256: str,
+    detected_platform: str,
+    size: int,
+    family: Optional[str] = None,
+) -> dict:
+    created_at = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        """
+        INSERT INTO samples (sample_id, original_name, sha256, detected_platform, size, created_at, family)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (sample_id, original_name, sha256, detected_platform, size, created_at, family),
+    )
+    return {
+        "sample_id": sample_id,
+        "original_name": original_name,
+        "sha256": sha256,
+        "detected_platform": detected_platform,
+        "size": size,
+        "created_at": created_at,
+        "family": family,
+    }
+
+
+def get_sample(conn: sqlite3.Connection, sample_id: str) -> Optional[dict]:
+    row = conn.execute("SELECT * FROM samples WHERE sample_id = ?", (sample_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def list_samples(
+    conn: sqlite3.Connection,
+    q: str = "",
+    limit: int = 100,
+    offset: int = 0,
+) -> list[dict]:
+    """Sample library — newest first, optional name/hash/family filter."""
+    base = "SELECT * FROM samples"
+    params: list = []
+    if q:
+        like = f"%{q}%"
+        base += " WHERE original_name LIKE ? OR sha256 LIKE ? OR malware_family LIKE ?"
+        params = [like, like, like]
+    base += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+    params += [limit, offset]
+    return [dict(r) for r in conn.execute(base, params).fetchall()]
+
+
+def count_samples(conn: sqlite3.Connection, q: str = "") -> int:
+    base = "SELECT COUNT(*) FROM samples"
+    if q:
+        like = f"%{q}%"
+        base += " WHERE original_name LIKE ? OR sha256 LIKE ? OR malware_family LIKE ?"
+        return conn.execute(base, (like, like, like)).fetchone()[0]
+    return conn.execute(base).fetchone()[0]
+
+
+def find_by_sha(conn: sqlite3.Connection, sha256: str) -> Optional[dict]:
+    row = conn.execute("SELECT * FROM samples WHERE sha256 = ?", (sha256,)).fetchone()
+    return dict(row) if row else None
+
+
+def list_by_sha_prefix(conn: sqlite3.Connection, prefix: str, limit: int = 20) -> list[dict]:
+    """IOC search helper — match a (possibly partial) hash prefix."""
+    rows = conn.execute(
+        "SELECT * FROM samples WHERE sha256 LIKE ? ORDER BY created_at DESC LIMIT ?",
+        (f"{prefix}%", limit),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def set_family(conn: sqlite3.Connection, sample_id: str, family: Optional[str]) -> None:
+    """Persist the sniffed family label (the vault displays it per row)."""
+    conn.execute("UPDATE samples SET family = ? WHERE sample_id = ?", (family, sample_id))
+
+
+def set_sample_reputation(
+    conn: sqlite3.Connection,
+    sample_id: str,
+    vt_detections: Optional[int],
+    malware_family: Optional[str],
+    yara_rules: Optional[str],  # JSON array of matched rule names
+) -> None:
+    """Attach roadmap-2.2 reputation evidence to an uploaded sample."""
+    conn.execute(
+        "UPDATE samples SET vt_detections = ?, malware_family = ?, yara_rules = ? WHERE sample_id = ?",
+        (vt_detections, malware_family, yara_rules, sample_id),
+    )
+
+
+# -- hash_cache (roadmap 2.2) ---------------------------------------------------
+def get_hash_cache(conn: sqlite3.Connection, sha256: str) -> Optional[dict]:
+    row = conn.execute("SELECT * FROM hash_cache WHERE sha256 = ?", (sha256,)).fetchone()
+    return dict(row) if row else None
+
+
+def upsert_hash_cache(
+    conn: sqlite3.Connection,
+    sha256: str,
+    vt_detections: Optional[int],
+    malware_family: Optional[str],
+) -> None:
+    from datetime import datetime, timezone
+
+    checked_at = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        """
+        INSERT INTO hash_cache (sha256, vt_detections, malware_family, checked_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(sha256) DO UPDATE SET
+            vt_detections = excluded.vt_detections,
+            malware_family = excluded.malware_family,
+            checked_at = excluded.checked_at
+        """,
+        (sha256, vt_detections, malware_family, checked_at),
+    )
