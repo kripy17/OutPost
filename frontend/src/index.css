@@ -1,0 +1,300 @@
+@import "tailwindcss";
+
+/* OutPost design system — SOC command deck (docs/07-UI-DESIGN-SYSTEM.md + v2).
+   Tailwind v4: tokens are declared via @theme and become utility classes
+   like bg-bg-base, text-text-muted, text-risk-malicious, border-border-subtle.
+   Raw values live on :root (dark, the default) and [data-theme="light"];
+   @theme inline maps them into Tailwind utilities so switching the data-theme
+   attribute re-themes the whole app at runtime.
+   Set before first paint by the inline script in index.html (no flash). */
+
+:root {
+  /* ── Field (backgrounds) ─────────────────────────────────────────────── */
+  --bg-base: #10131a; /* deep slate-charcoal field */
+  --bg-surface: #171b24; /* panel/card */
+  --bg-elevated: #1f2531; /* modals, dropdowns, hover */
+  --bg-inset: #0d1016; /* wells, table rows, code */
+  --bg-overlay: #232a38; /* strong elevation (active chips) */
+
+  /* Atmosphere — faint radials on the field so it isn't a flat void. */
+  --atmos-amber: 33 28 18; /* amber bloom, top-left */
+  --atmos-teal: 14 30 28; /* teal depth, bottom-right */
+
+  /* ── Text ────────────────────────────────────────────────────────────── */
+  --text-primary: #e6e9ef;
+  --text-muted: #8b93a3;
+  --text-faint: #565e6e;
+
+  /* ── Signature accent — specimen-glass amber ─────────────────────────── */
+  --accent-amber: #d9a441;
+  --accent-amber-soft: #f0c877; /* hover/bright */
+
+  /* ── Risk scale — functional, not decorative ─────────────────────────── */
+  --risk-clean: #3fa796;
+  --risk-suspicious: #d9a441;
+  --risk-malicious: #c4453b;
+
+  /* ── Structure ───────────────────────────────────────────────────────── */
+  --border-subtle: #262c3a; /* hairline */
+  --border-strong: #333b4d;
+
+  /* ── Depth — layered shadows with a faint top highlight (glass edge) ─── */
+  --shadow-panel: 0 1px 0 rgba(255, 255, 255, 0.03) inset,
+    0 1px 2px rgba(0, 0, 0, 0.35), 0 8px 24px -12px rgba(0, 0, 0, 0.5);
+  --shadow-raised: 0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    0 2px 6px rgba(0, 0, 0, 0.4), 0 16px 40px -16px rgba(0, 0, 0, 0.65);
+
+  /* ── Severity glow — makes a finding read at a glance ──────────────────
+     Literal rgba per theme (NOT color-mix): Lightning CSS collapses
+     color-mix(in srgb, var(--x) N%, transparent) to the raw var during
+     minification and silently drops the alpha. */
+  --glow-amber: 0 0 0 1px rgba(217, 164, 65, 0.3), 0 0 14px rgba(217, 164, 65, 0.22);
+  --glow-malicious: 0 0 0 1px rgba(196, 69, 59, 0.35), 0 0 16px rgba(196, 69, 59, 0.28);
+  --glow-clean: 0 0 0 1px rgba(63, 167, 150, 0.25), 0 0 12px rgba(63, 167, 150, 0.18);
+}
+
+[data-theme="light"] {
+  --bg-base: #eef1f6;
+  --bg-surface: #ffffff;
+  --bg-elevated: #f0f3f8;
+  --bg-inset: #e3e8f0;
+  --bg-overlay: #ffffff;
+
+  --atmos-amber: 233 220 190;
+  --atmos-teal: 200 228 224;
+
+  --text-primary: #1a1d24;
+  --text-muted: #5b6472;
+  --text-faint: #98a0ae;
+
+  --accent-amber: #a8791d;
+  --accent-amber-soft: #8a6416;
+
+  --risk-clean: #1d7266;
+  --risk-suspicious: #a8791d;
+  --risk-malicious: #b23a30;
+
+  --border-subtle: #d9dee8;
+  --border-strong: #c2c9d6;
+
+  --shadow-panel: 0 1px 0 rgba(255, 255, 255, 0.6) inset,
+    0 1px 2px rgba(20, 24, 34, 0.06), 0 8px 24px -14px rgba(20, 24, 34, 0.18);
+  --shadow-raised: 0 1px 0 rgba(255, 255, 255, 0.7) inset,
+    0 2px 6px rgba(20, 24, 34, 0.08), 0 16px 40px -20px rgba(20, 24, 34, 0.25);
+
+  --glow-amber: 0 0 0 1px rgba(168, 121, 29, 0.25), 0 0 12px rgba(168, 121, 29, 0.16);
+  --glow-malicious: 0 0 0 1px rgba(178, 58, 48, 0.3), 0 0 14px rgba(178, 58, 48, 0.2);
+  --glow-clean: 0 0 0 1px rgba(29, 114, 102, 0.22), 0 0 10px rgba(29, 114, 102, 0.14);
+}
+
+@theme inline {
+  --color-bg-base: var(--bg-base);
+  --color-bg-surface: var(--bg-surface);
+  --color-bg-elevated: var(--bg-elevated);
+  --color-bg-inset: var(--bg-inset);
+  --color-bg-overlay: var(--bg-overlay);
+
+  --color-text-primary: var(--text-primary);
+  --color-text-muted: var(--text-muted);
+  --color-text-faint: var(--text-faint);
+
+  --color-accent-amber: var(--accent-amber);
+  --color-accent-amber-soft: var(--accent-amber-soft);
+
+  --color-risk-clean: var(--risk-clean);
+  --color-risk-suspicious: var(--risk-suspicious);
+  --color-risk-malicious: var(--risk-malicious);
+
+  --color-border-subtle: var(--border-subtle);
+  --color-border-strong: var(--border-strong);
+
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+/* Smooth cross-fade when switching themes (skipped under reduced motion). */
+html,
+body {
+  transition: background-color 200ms ease, color 200ms ease;
+}
+
+/* The field — deep slate with a faint amber bloom (top-left) and teal depth
+   (bottom-right). The glow reads as a dim SOC room, not a neon sign. */
+html,
+body {
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  background-image:
+    radial-gradient(1100px 520px at 12% -8%, rgb(var(--atmos-amber) / 0.55), transparent 62%),
+    radial-gradient(900px 560px at 108% 112%, rgb(var(--atmos-teal) / 0.45), transparent 60%);
+  background-attachment: fixed;
+  min-height: 100vh;
+}
+
+/* ── Type utilities ───────────────────────────────────────────────────── */
+
+/* Micro label with a leading tick — the instrument-panel voice. */
+.kicker {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.kicker::before {
+  content: "";
+  width: 10px;
+  height: 1px;
+  background: var(--accent-amber);
+  opacity: 0.8;
+  flex-shrink: 0;
+}
+
+/* Display headings — tight, weight-forward, minimal tracking. */
+.display {
+  font-size: 28px;
+  line-height: 1.12;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+}
+
+.text-balance {
+  text-wrap: balance;
+}
+.text-pretty {
+  text-wrap: pretty;
+}
+
+/* ── Panel — the standard elevated card (surface + hairline + depth) ───── */
+.panel {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  box-shadow: var(--shadow-panel);
+}
+.panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px 0;
+}
+.panel-title {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* ── Inset well — recessed data area inside a panel (tables, logs) ────── */
+.well {
+  background: var(--bg-inset);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+}
+
+/* ── Keyboard focus — amber ring so it's visible on every surface ──────── */
+:focus-visible {
+  outline: 2px solid var(--accent-amber);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent-amber) 30%, transparent);
+}
+
+button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Tactile press for primary actions (opt-in class). */
+.press {
+  transition: transform 120ms ease-out;
+}
+.press:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+/* Subtle scrollbars that match the palette. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── Motion — one directed moment per page: content rises in ──────────── */
+@keyframes outpost-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-fade-up {
+  animation: outpost-fade-up 0.34s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+@keyframes outpost-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+.animate-outpost-pulse {
+  animation: outpost-pulse 1.6s ease-in-out infinite;
+}
+
+/* Toast slide-in for live alerts on the Monitor page */
+@keyframes outpost-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.animate-outpost-toast-in {
+  animation: outpost-toast-in 0.22s ease-out;
+}
+
+/* Live "recording" dot on the Monitor page */
+@keyframes outpost-record {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--risk-malicious) 45%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 5px transparent;
+  }
+}
+.animate-record {
+  animation: outpost-record 1.8s ease-out infinite;
+}

@@ -1,0 +1,2 @@
+-a always,exit -F arch=b64 -S execve -k vantage_exec
+-a always,exit -F arch=b64 -S connect -k vantage_net

@@ -1,0 +1,14 @@
+"""`outpost list` — table of all past sessions."""
+
+from ..lib import api_client
+from ..rendering.banners import show_banner
+from ..rendering.terminal_views import console, render_run_table
+
+
+def list_runs() -> None:
+    show_banner(primary=False)
+    runs = api_client.list_runs()
+    if not runs:
+        console.print("[dim]No sessions yet — start one with `outpost watch` or `outpost run <sample>`.[/dim]")
+        return
+    console.print(render_run_table(runs))
