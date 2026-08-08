@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Synthetic test script — proves the whole pipeline with zero real risk.
 
-Per docs/03-COLLECTOR-SPEC.md and docs/11-DETECTION-LOGIC.md: spawn identifiable
-child processes and connect to a test listener, then confirm the dashboard
-shows the expected process tree, connections, and detection alerts.
+Spawns identifiable child processes and connects to a test listener, then
+confirm the dashboard shows the expected process tree, connections, and
+detection alerts (the detection heuristics are defined in the backend's
+detection engine).
 
 This script intentionally mimics several detection heuristics so you can
 demonstrate them firing on command:

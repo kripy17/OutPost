@@ -4,7 +4,7 @@ Two Playwright demo scripts live here:
 
 | Script | Flow | Output |
 |---|---|---|
-| [`shelf-stack-demo.mjs`](shelf-stack-demo.mjs) | Campaign arc: detonate → search → compare → watchlist → rules (see [`../13-CAMPAIGN-DEMO.md`](../13-CAMPAIGN-DEMO.md)) | screenshots per step |
+| [`shelf-stack-demo.mjs`](shelf-stack-demo.mjs) | Campaign arc: detonate → search → compare → watchlist → rules (two samples sharing a C2 IP) | screenshots per step |
 | [`deck-demo.mjs`](deck-demo.mjs) | The redesigned SOC deck in 4 acts: Overview pan → Sample vault (library + detail) → Monitor detonation → run detail (risk gauge, kill chain, process-tree halos, timeline, analyst notes, detection rules) | **`deck-demo.webm`** video (cursor + subtitles) + 19 per-step screenshots |
 
 ## One-time setup
