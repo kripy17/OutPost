@@ -1,27 +1,23 @@
-# Python
+.env
+*.db
 __pycache__/
-*.pyc
-.venv/
-*.egg-info/
-.pytest_cache/
-
-# Node
 node_modules/
 dist/
-
-# Runtime data
-*.db
-*.db-wal
-*.db-shm
-*.sqlite3
-.env
-*.log
-
-# Dev tooling state
-.freebuff/
-.deck-video/
-
-# Editors / OS
+*.qcow2
+*.vmdk
+samples/
+memory-dumps/
+*.yar
+.pytest_cache/
 .vscode/
 .idea/
-.DS_Store
+
+# Environments & tooling
+.venv/
+.freebuff/
+*.log
+*.pid
+*.egg-info/
+
+# Playwright artifacts (keep screenshots/*.png — they're README assets)
+demo/.deck-video/
