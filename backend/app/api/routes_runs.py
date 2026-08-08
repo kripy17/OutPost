@@ -28,6 +28,23 @@ def list_runs(q: str = Query("", max_length=200)) -> list[RunSummary]:
         return [run_store.to_summary(conn, r) for r in rows]
 
 
+@router.get("/runs/active-live", response_model=RunSummary)
+def get_active_live_run() -> RunSummary:
+    """The newest open `live` session — what a host collector should stream
+    into. The webapp's "Start live monitoring" creates one; the collector's
+    `--auto` flag claims it, so real auditd/Sysmon events flow straight into
+    the visible Monitor. 404 when nothing is open. Must be registered before
+    `/runs/{run_id}` so "active-live" isn't captured as a run id."""
+    with db_session() as conn:
+        row = conn.execute(
+            "SELECT * FROM runs WHERE session_type = 'live' AND completed_at IS NULL "
+            "ORDER BY started_at DESC LIMIT 1"
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="No active live session — start one from the Monitor page")
+        return run_store.to_summary(conn, row)
+
+
 @router.get("/runs/{run_id}", response_model=RunDetail)
 async def get_run_detail(run_id: str) -> RunDetail:
     from ..core.db import get_connection

@@ -44,14 +44,14 @@ export default function NotesPanel({ runId }: { runId: string }) {
             onChange={(e) => setDraft(e.target.value)}
             rows={2}
             placeholder="Add an observation…"
-            className="min-w-0 flex-1 resize-y rounded border border-border-subtle bg-bg-base px-3 py-2 text-sm text-text-primary placeholder:text-text-faint focus:border-accent-amber/60 focus:outline-none"
+            className="min-w-0 flex-1 resize-y rounded border border-border-subtle bg-bg-base px-3 py-2 text-sm text-text-primary placeholder:text-text-faint focus:border-accent/60 focus:outline-none"
           />
           <button
             onClick={() => {
               if (draft.trim()) addNote.mutate();
             }}
             disabled={!draft.trim() || addNote.isPending}
-            className="press shrink-0 self-end rounded border border-border-subtle px-3 py-1.5 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent-amber/60 hover:text-accent-amber disabled:cursor-not-allowed disabled:opacity-40"
+            className="press shrink-0 self-end rounded border border-border-subtle px-3 py-1.5 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
           >
             {addNote.isPending ? "Adding…" : "Add note"}
           </button>

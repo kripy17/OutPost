@@ -56,6 +56,22 @@ export const KILL_CHAIN_ORDER = [
   "Full Chain",
 ];
 
+// Trend windows for the History charts — span + bucket size per window.
+// Hourly buckets on 24h (the dashboard's original resolution); daily buckets
+// on 7d and All so the trend line stays legible over longer spans.
+export type TrendWindow = "24h" | "7d" | "all";
+
+/** MM-DD — axis label for daily-bucketed windows (7d / all). */
+export function fmtDayShort(ts: number): string {
+  return new Date(ts).toISOString().slice(5, 10);
+}
+
+export const TREND_WINDOWS: { key: TrendWindow; label: string; spanMs: number; bucketMs: number }[] = [
+  { key: "24h", label: "24h", spanMs: 24 * 3_600_000, bucketMs: 3_600_000 },
+  { key: "7d", label: "7d", spanMs: 7 * 86_400_000, bucketMs: 86_400_000 },
+  { key: "all", label: "All", spanMs: Infinity, bucketMs: 86_400_000 },
+];
+
 // Risk bands (roadmap 1.3) — score → color + label, reused by the detail
 // gauge and the history-card badge. Bands: 0 none, 1-29 low, 30-59 elevated,
 // 60+ critical.

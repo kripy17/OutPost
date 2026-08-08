@@ -9,6 +9,16 @@ def test_health(client):
     assert resp.json() == {"status": "ok"}
 
 
+def test_platform_detects_host_os(client):
+    """GET /platform — the webapp's auto-OS source (no manual picker)."""
+    resp = client.get("/platform")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["os"] in {"windows", "linux", "macos"}
+    assert body["collector"] in {"sysmon", "auditd", "unified-logs"}
+    assert body["name"] and body["release"] and body["machine"]
+
+
 def test_create_run_and_ingest_batch(client):
     run_id = make_run(client)
     events = [
@@ -66,6 +76,29 @@ def test_complete_run_sets_completed_at(client):
     assert resp.status_code == 200
     assert resp.json()["completed_at"] is not None
     assert resp.json()["highest_severity"] is None
+
+
+def test_active_live_run_claims_newest_open_session(client):
+    """GET /runs/active-live — the run a host collector should stream into."""
+    # Nothing open yet → 404
+    assert client.get("/runs/active-live").status_code == 404
+
+    live_a = make_run(client, session_type="live")
+    live_b = make_run(client, session_type="live")
+    make_run(client, session_type="analysis")  # must never be claimed
+
+    hit = client.get("/runs/active-live").json()
+    assert hit["run_id"] == live_b  # newest open live session wins
+    assert hit["session_type"] == "live"
+    assert hit["completed_at"] is None
+
+    # Completing the newest one falls back to the next open live session.
+    client.post(f"/runs/{live_b}/complete")
+    hit2 = client.get("/runs/active-live").json()
+    assert hit2["run_id"] == live_a
+
+    client.post(f"/runs/{live_a}/complete")
+    assert client.get("/runs/active-live").status_code == 404
 
 
 def test_ingest_validation_rejects_bad_event(client):

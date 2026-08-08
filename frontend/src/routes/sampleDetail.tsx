@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { Icon, platformIconName } from "../components/Icon";
 import { Chip, PageHeader, Panel } from "../components/ui";
 import { getRuns, getSample } from "../lib/api";
 import type { RunSummary } from "../types";
@@ -47,16 +48,17 @@ export default function SampleDetailPage() {
     );
   }
 
-  const platLabel = sample.detected_platform === "windows" ? "⊞ Windows" : sample.detected_platform === "linux" ? "⎈ Linux" : sample.detected_platform === "macos" ? " Mac" : "? unknown";
+  const platName = sample.detected_platform === "windows" ? "Windows" : sample.detected_platform === "linux" ? "Linux" : sample.detected_platform === "macos" ? "macOS" : "unknown";
+  const platIcon = sample.detected_platform === "macos" || sample.detected_platform === "windows" || sample.detected_platform === "linux" ? platformIconName(sample.detected_platform) : "terminal";
 
   return (
     <div className="mx-auto max-w-5xl px-6 py-8 lg:px-10">
       <nav className="mb-6 flex items-center gap-2 font-mono text-xs text-text-muted">
-        <Link to="/" className="transition-colors hover:text-accent-amber">
+        <Link to="/" className="transition-colors hover:text-accent">
           Overview
         </Link>
         <span aria-hidden>/</span>
-        <Link to="/samples" className="transition-colors hover:text-accent-amber">
+        <Link to="/samples" className="transition-colors hover:text-accent">
           Sample vault
         </Link>
         <span aria-hidden>/</span>
@@ -73,13 +75,22 @@ export default function SampleDetailPage() {
         }
         lede={`Detected ${sample.detected_platform} from magic bytes · ${formatBytes(sample.size)} · uploaded ${sample.created_at.slice(0, 19).replace("T", " ")} UTC`}
         actions={
-          <button
-            onClick={() => void copyHash()}
-            className="press rounded border border-accent-amber/60 px-4 py-2 font-mono text-xs text-accent-amber transition-colors duration-150 hover:bg-accent-amber/10"
-            title={sample.sha256}
-          >
-            {copied ? "✓ copied" : "copy hash"}
-          </button>
+          <div className="flex items-center gap-2">              <Link
+                to={`/footprint?sample=${sample.sample_id}`}
+                className="press inline-flex items-center gap-1.5 rounded border border-border-subtle px-4 py-2 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
+              >
+                Digital footprint
+                <Icon name="arrowRight" size={12} />
+              </Link>
+            <button
+              onClick={() => void copyHash()}
+              className="press inline-flex items-center gap-1.5 rounded border border-accent/60 px-4 py-2 font-mono text-xs text-accent transition-colors duration-150 hover:bg-accent/10"
+              title={sample.sha256}
+            >
+              <Icon name={copied ? "check" : "copy"} size={12} />
+              {copied ? "copied" : "copy hash"}
+            </button>
+          </div>
         }
       />
 
@@ -90,7 +101,8 @@ export default function SampleDetailPage() {
           </code>
           <div className="mt-4 flex flex-wrap items-center gap-2">
             <Chip tone={sample.detected_platform === "macos" ? "suspicious" : sample.detected_platform === "linux" ? "clean" : "accent"} dot title={`Detected ${sample.detected_platform}`}>
-              {platLabel}
+              <Icon name={platIcon} size={11} />
+              {platName}
             </Chip>
             {sample.malware_family && (
               <Chip tone="malicious" dot title="VirusTotal family">
@@ -113,7 +125,7 @@ export default function SampleDetailPage() {
               {sample.yara_rules.map((r) => (
                 <span
                   key={r}
-                  className="rounded border border-accent-amber/40 bg-accent-amber/5 px-2 py-1 font-mono text-[11px] text-accent-amber"
+                  className="rounded border border-accent/40 bg-accent/5 px-2 py-1 font-mono text-[11px] text-accent"
                 >
                   {r}
                 </span>
@@ -132,7 +144,7 @@ export default function SampleDetailPage() {
           <div className="overflow-x-auto">
             <table className="w-full text-left">
               <thead className="border-b border-border-subtle">
-                <tr className="text-[10px] uppercase tracking-widest text-text-faint">
+                <tr className="text-xs font-semibold text-text-muted">
                   <th className="px-4 py-2.5">Run</th>
                   <th className="px-4 py-2.5">Started</th>
                   <th className="px-4 py-2.5">Alerts</th>
@@ -146,7 +158,7 @@ export default function SampleDetailPage() {
                     <td className="px-4 py-2.5">
                       <Link
                         to={`/runs/${r.run_id}`}
-                        className="press font-mono text-xs text-accent-amber transition-colors hover:underline"
+                        className="press font-mono text-xs text-accent transition-colors hover:underline"
                       >
                         {r.run_id.slice(0, 12)}
                       </Link>

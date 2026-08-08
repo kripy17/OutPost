@@ -1,6 +1,17 @@
 // Mirrors backend Pydantic models in app/core/schema.py exactly (docs/04).
 
 export type Platform = "windows" | "linux" | "macos";
+
+// GET /platform — the host OS the backend runs on. The webapp has no OS
+// picker; it reads this on load and targets sessions at the detected OS.
+export interface PlatformInfo {
+  os: Platform;
+  name: string;
+  release: string;
+  machine: string;
+  python: string;
+  collector: "sysmon" | "auditd" | string;
+}
 export type Reputation = "clean" | "suspicious" | "malicious" | "unknown";
 export type SessionType = "live" | "analysis";
 export type Severity = "suspicious" | "malicious";
@@ -288,4 +299,32 @@ export interface EventFeedParams {
 
 export interface GlobalAlert extends Alert {
   sample_name: string;
+}
+
+// -- Digital footprinting (roadmap scaffold) ---------------------------------
+
+export interface FootprintSeedIp {
+  ip: string;
+  hits: number;
+  first_seen: string;
+  last_seen: string;
+  run_count: number;
+  reputation: Reputation;
+  abuse_score: number | null;
+  vt_malicious_count: number | null;
+}
+
+export interface FootprintPassive {
+  source: "not_configured" | "synthetic_demo";
+  resolutions: { domain: string; first_seen: string; last_seen: string; synthetic?: boolean }[];
+  certificates: { cn: string; issuer: string; not_before: string; not_after: string; synthetic?: boolean }[];
+  sibling_ips: { ip: string; relation: string; synthetic?: boolean }[];
+}
+
+export interface Footprint {
+  sample: { sample_id: string; name: string; sha256: string; platform: Platform; family: string | null };
+  runs: { run_id: string; sample_name: string; started_at: string; completed_at: string | null }[];
+  seed_ips: FootprintSeedIp[];
+  passive: FootprintPassive;
+  status: { roadmap: boolean; generated: "mock" | null };
 }

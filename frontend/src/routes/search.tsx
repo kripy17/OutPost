@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
+import { EVENT_ICON, Icon, platformIconName } from "../components/Icon";
 import { PageHeader } from "../components/ui";
 import { searchIocs } from "../lib/api";
 import type { IocSearchResponse } from "../types";
@@ -25,8 +26,15 @@ export default function SearchPage() {
     }
   };
 
+  const sampleTone = (p: string) =>
+    p === "windows"
+      ? "border-accent/50 text-accent"
+      : p === "linux"
+        ? "border-risk-clean/50 text-risk-clean"
+        : "border-text-faint text-text-muted";
+
   return (
-    <div className="mx-auto max-w-5xl px-6 py-10">
+    <div className="mx-auto max-w-5xl px-5 py-8 lg:px-8">
       <PageHeader
         kicker="Intelligence · search"
         title={
@@ -38,87 +46,114 @@ export default function SearchPage() {
       />
 
       <form onSubmit={onSearch} className="mt-6 flex gap-2">
-        <input
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          placeholder="e.g. 185.220.101.34"
-          className="w-full max-w-md rounded border border-border-subtle bg-bg-surface px-3 py-2 font-mono text-sm text-text-primary placeholder:text-text-faint focus:border-accent-amber/60 focus:outline-none"
-        />
+        <div className="relative w-full max-w-md">
+          <Icon name="search" size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-faint" />
+          <input
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder="e.g. 185.220.101.34"
+            className="w-full rounded-lg border border-border-subtle bg-bg-surface py-2 pl-9 pr-3 font-mono text-sm text-text-primary placeholder:text-text-faint focus:border-accent/60 focus:outline-none"
+          />
+        </div>
         <button
           type="submit"
           disabled={loading}
-          className="press rounded border border-accent-amber/60 px-4 py-2 font-mono text-xs text-accent-amber transition-colors duration-150 hover:bg-accent-amber/10 disabled:opacity-50"
+          className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 px-4 py-2 font-mono text-xs text-accent transition-colors duration-150 hover:bg-accent/10 disabled:opacity-50"
         >
+          <Icon name={loading ? "refresh" : "search"} size={12} className={loading ? "animate-spin" : ""} />
           {loading ? "Searching…" : "Search"}
         </button>
       </form>
 
-      {error && <p className="mt-4 text-sm text-risk-malicious">{error}</p>}
+      {error && (
+        <p className="mt-4 inline-flex items-center gap-1.5 text-sm text-risk-malicious">
+          <Icon name="alert" size={13} />
+          {error}
+        </p>
+      )}
 
       {result && (
-        <div className="mt-8">
-          <p className="mb-3 text-xs text-text-muted">
-            {result.count} match(es) for <span className="font-mono text-text-primary">{result.value}</span>
+        <div className="mt-8 space-y-6">
+          <p className="flex items-center gap-2 text-xs text-text-muted">
+            <Icon name="zap" size={12} className="text-signal" />
+            {result.count} match{result.count === 1 ? "" : "es"} for <span className="font-mono text-text-primary">{result.value}</span>
             {result.returned < result.count && ` — showing first ${result.returned}`}
           </p>
 
-          {/* Uploaded binaries whose SHA-256 matches (roadmap 1.4) */}
-          {result.samples && result.samples.length > 0 && (
-            <div className="mb-6 rounded-lg border border-border-subtle bg-bg-surface">
-              <div className="border-b border-border-subtle px-4 py-2 font-mono text-[10px] uppercase tracking-widest text-text-faint">
-                Uploaded binaries matching this hash
-              </div>
-              {result.samples.map((s) => (
-                <div key={s.sample_id} className="flex flex-wrap items-center gap-2 border-b border-border-subtle/50 px-4 py-2.5 last:border-0">
-                  <span className="font-mono text-sm text-text-primary">{s.original_name}</span>
-                  <span
-                    className={`rounded border px-1.5 py-0.5 font-mono text-[10px] uppercase ${
-                      s.detected_platform === "windows"
-                        ? "border-accent-amber/50 text-accent-amber"
-                        : s.detected_platform === "linux"
-                          ? "border-risk-clean/50 text-risk-clean"
-                          : "border-text-faint text-text-muted"
-                    }`}
-                  >
-                    {s.detected_platform}
-                  </span>
-                  <span className="ml-auto font-mono text-[10px] text-text-faint">{s.sha256.slice(0, 24)}…</span>
-                </div>
+          {loading && (
+            <div className="space-y-2">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <div key={i} className="skeleton h-12 w-full" />
               ))}
             </div>
           )}
 
+          {result.samples && result.samples.length > 0 && (
+            <section className="rounded-2xl border border-border-subtle bg-bg-surface">
+              <header className="flex items-center gap-2 border-b border-border-subtle px-4 py-2.5">
+                <Icon name="box" size={13} className="text-signal" />
+                <span className="text-xs font-semibold text-text-muted">Uploaded binaries matching this hash</span>
+                <span className="ml-auto rounded border border-border-subtle px-1.5 font-mono text-[10px] text-text-faint">
+                  {result.samples.length}
+                </span>
+              </header>
+              <div className="divide-y divide-border-subtle/60">
+                {result.samples.map((s) => (
+                  <Link
+                    key={s.sample_id}
+                    to={`/samples/${s.sample_id}`}
+                    className="flex flex-wrap items-center gap-2 px-4 py-2.5 transition-colors hover:bg-bg-elevated/40"
+                  >
+                    <Icon name={platformIconName(s.detected_platform)} size={13} className="text-text-faint" />
+                    <span className="font-mono text-sm text-text-primary">{s.original_name}</span>
+                    <span className={`rounded border px-1.5 py-0.5 font-mono text-[9px] uppercase ${sampleTone(s.detected_platform)}`}>
+                      {s.detected_platform}
+                    </span>
+                    <span className="ml-auto font-mono text-[10px] text-text-faint">{s.sha256.slice(0, 24)}…</span>
+                  </Link>
+                ))}
+              </div>
+            </section>
+          )}
+
           {result.matches.length === 0 && (result.samples?.length ?? 0) === 0 ? (
-            <p className="text-sm text-text-muted">No prior runs contain this value.</p>
-          ) : (
-            <div className="overflow-x-auto rounded-lg border border-border-subtle">
-              <table className="w-full text-left">
-                <thead className="border-b border-border-subtle">
-                  <tr className="text-[10px] uppercase tracking-widest text-text-faint">
-                    <th className="px-4 py-2">Run</th>
-                    <th className="px-4 py-2">Sample</th>
-                    <th className="px-4 py-2">Event</th>
-                    <th className="px-4 py-2">When</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {result.matches.map((m, i) => (
-                    <tr key={i} className="border-b border-border-subtle/50 transition-colors duration-150 hover:bg-bg-surface">
-                      <td className="px-4 py-2">
-                        <Link to={`/runs/${m.run_id}`} className="font-mono text-xs text-accent-amber hover:underline">
-                          {m.run_id.slice(0, 12)}
-                        </Link>
-                      </td>
-                      <td className="px-4 py-2 font-mono text-xs text-text-primary">{m.sample_name}</td>
-                      <td className="px-4 py-2 font-mono text-xs text-text-muted">{m.event_type}</td>
-                      <td className="px-4 py-2 font-mono text-xs text-text-faint">
-                        {(m.timestamp || "").slice(0, 19).replace("T", " ")}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="rounded-2xl border border-dashed border-border-strong bg-bg-surface/40 p-12 text-center">
+              <Icon name="search" size={26} className="mx-auto text-text-faint" />
+              <p className="mt-3 text-sm text-text-muted">No prior runs contain this value.</p>
             </div>
+          ) : (
+            result.matches.length > 0 && (
+              <section className="rounded-2xl border border-border-subtle bg-bg-surface">
+                <header className="flex items-center gap-2 border-b border-border-subtle px-4 py-2.5">
+                  <Icon name="list" size={13} className="text-signal" />
+                  <span className="text-xs font-semibold text-text-muted">Events across runs</span>
+                  <span className="ml-auto rounded border border-border-subtle px-1.5 font-mono text-[10px] text-text-faint">
+                    {result.matches.length}
+                  </span>
+                </header>
+                <div className="divide-y divide-border-subtle/60">
+                  {result.matches.map((m, i) => (
+                    <Link
+                      key={i}
+                      to={`/runs/${m.run_id}`}
+                      className="group flex flex-wrap items-center gap-3 px-4 py-2.5 transition-colors hover:bg-bg-elevated/40"
+                    >
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-border-subtle text-signal">
+                        <Icon name={EVENT_ICON[m.event_type] ?? "list"} size={13} />
+                      </span>
+                      <span className="font-mono text-xs text-text-primary group-hover:text-accent">{m.sample_name}</span>
+                      <span className="rounded border border-border-subtle px-1.5 py-0.5 font-mono text-[9px] uppercase text-text-faint">
+                        {m.event_type.replace("_", " ")}
+                      </span>
+                      <span className="ml-auto font-mono text-[10px] text-text-faint">
+                        {(m.timestamp || "").slice(0, 19).replace("T", " ")}
+                      </span>
+                      <span className="font-mono text-[10px] text-text-faint">{m.run_id.slice(0, 12)}</span>
+                    </Link>
+                  ))}
+                </div>
+              </section>
+            )
           )}
         </div>
       )}

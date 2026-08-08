@@ -1,8 +1,8 @@
-// Detection-volume mini-chart for the Overview — alerts fired per hour over
+// Detection-volume chart for the History page — alerts fired per hour over
 // the trailing 24h, stacked by kill-chain family (the user asked for
 // Execution / C2 / Persistence / Impact; Evasion and the composite Chain
-// round it out). Pairs with RiskTimeline: risk *score* per session on the
-// left, detection *density* per hour on the right.
+// round it out). Pairs with RiskTimeline: risk *score* per session vs
+// detection *density* per hour.
 //
 // Data comes from the same GET /alerts feed the findings list uses (a larger
 // limit), bucketed client-side by rule_id → kill-chain stage → family.
@@ -10,12 +10,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Panel } from "../ui";
-import { KILL_CHAIN_STAGE } from "../../lib/constants";
+import { fmtDayShort, KILL_CHAIN_STAGE, TREND_WINDOWS, type TrendWindow } from "../../lib/constants";
 import { getRecentAlerts } from "../../lib/api";
 import { useThemeColors } from "../../lib/theme";
 
-const HOUR_MS = 3_600_000;
-const HOURS = 24;
+const DAY_MS = 86_400_000;
 const HEIGHT = 150;
 const PAD = { top: 12, right: 8, bottom: 24, left: 28 };
 
@@ -52,7 +51,7 @@ function fmtHour(ts: number): string {
   return new Date(ts).toISOString().slice(11, 16) + "Z";
 }
 
-export default function DetectionVolume() {
+export default function DetectionVolume({ windowKey }: { windowKey: TrendWindow }) {
   const colors = useThemeColors();
   const { data: alerts = [], isLoading, isError } = useQuery({
     queryKey: ["alerts", "volume"],
@@ -74,36 +73,49 @@ export default function DetectionVolume() {
     return () => ro.disconnect();
   }, []);
 
-  // -- bucket alerts into the trailing 24h, one slot per hour ----------------
+  // -- bucket alerts into the window ------------------------------------------
+  // 24h → one slot per hour; 7d / all → one slot per day (all spans the oldest
+  // alert in the fetched feed — the API caps at 200, so the header says so).
+  const cfg = TREND_WINDOWS.find((w) => w.key === windowKey) ?? TREND_WINDOWS[0];
   const now = Date.now();
-  const start = now - HOURS * HOUR_MS;
+  const oldestAlert = alerts.length ? Math.min(...alerts.map((a) => new Date(a.triggered_at).getTime())) : now;
+  const start = windowKey === "all" ? oldestAlert : now - cfg.spanMs;
+  const slotCount =
+    windowKey === "all" ? Math.max(1, Math.ceil((now - start) / cfg.bucketMs)) : Math.round(cfg.spanMs / cfg.bucketMs);
+  const isDaily = cfg.bucketMs >= DAY_MS;
+
   const buckets = new Map<number, Record<string, number>>();
   for (const a of alerts) {
     const t = new Date(a.triggered_at).getTime();
     if (t < start) continue;
-    const key = Math.floor((t - start) / HOUR_MS);
+    const key = Math.min(slotCount - 1, Math.floor((t - start) / cfg.bucketMs));
     const fam = familyOf(a.rule_id);
     const b = buckets.get(key) ?? Object.fromEntries(FAMILIES.map((f) => [f, 0]));
     b[fam] = (b[fam] ?? 0) + 1;
     buckets.set(key, b);
   }
 
-  const entries = Array.from({ length: HOURS }, (_, i) => {
+  const entries = Array.from({ length: slotCount }, (_, i) => {
     const b = buckets.get(i);
     const counts = FAMILIES.map((f) => b?.[f] ?? 0);
-    return { i, hour: fmtHour(start + i * HOUR_MS), counts, total: counts.reduce((n, c) => n + c, 0) };
+    return {
+      i,
+      label: isDaily ? fmtDayShort(start + i * cfg.bucketMs + cfg.bucketMs / 2) : fmtHour(start + i * cfg.bucketMs),
+      counts,
+      total: counts.reduce((n, c) => n + c, 0),
+    };
   });
   const maxTotal = Math.max(1, ...entries.map((e) => e.total));
   const totalAlerts = alerts.filter((a) => new Date(a.triggered_at).getTime() >= start).length;
   const peak = Math.max(0, ...entries.map((e) => e.total));
-  // Legend counts come from the same 24h-windowed buckets as the bars/header,
-  // so the three always agree (alerts older than 24h are excluded everywhere).
+  // Legend counts come from the same windowed buckets as the bars/header, so
+  // the three always agree (out-of-window alerts are excluded everywhere).
   const familyTotals = FAMILIES.map((f, fi) => [f, entries.reduce((n, e) => n + e.counts[fi], 0)] as const);
 
   // -- geometry ---------------------------------------------------------------
   const plotW = Math.max(120, width - PAD.left - PAD.right);
   const plotH = HEIGHT - PAD.top - PAD.bottom;
-  const slotW = plotW / HOURS;
+  const slotW = plotW / slotCount;
   const barW = Math.max(2, slotW * 0.72);
 
   return (
@@ -116,9 +128,14 @@ export default function DetectionVolume() {
             <span className="font-semibold text-text-primary">{totalAlerts}</span> alerts
           </span>
           <span>
-            peak <span className="font-semibold text-accent-amber">{peak}</span>/hr
+            peak <span className="font-semibold text-accent">{peak}</span>
+            {isDaily ? "/day" : "/hr"}
           </span>
-          <span title="Alerts fired per hour over the trailing 24h, stacked by kill-chain family. Drawn from the latest 200 alerts.">per hour · 24h · latest 200</span>
+          <span
+            title={`Alerts fired per ${isDaily ? "day" : "hour"} over ${windowKey === "all" ? "all history" : `the last ${windowKey}`}, stacked by kill-chain family. Drawn from the latest 200 alerts.`}
+          >
+            per {isDaily ? "day" : "hour"} · {windowKey === "all" ? "all" : windowKey} · latest 200
+          </span>
         </div>
       }
     >
@@ -128,7 +145,9 @@ export default function DetectionVolume() {
       )}
 
       {!isLoading && !isError && totalAlerts === 0 && (
-        <p className="py-10 text-center text-sm text-text-muted">No detections in the last 24h.</p>
+        <p className="py-10 text-center text-sm text-text-muted">
+          {windowKey === "all" ? "No detections on record." : `No detections in the last ${windowKey}.`}
+        </p>
       )}
 
       {!isLoading && !isError && totalAlerts > 0 && (
@@ -150,8 +169,11 @@ export default function DetectionVolume() {
               0
             </text>
 
-            {/* hour labels — every 6h */}
-            {[0, 6, 12, 18, 23].map((i) => (
+            {/* slot labels — every 6h on 24h; start/mid/end on daily windows */}
+            {(isDaily
+              ? [0, Math.floor((slotCount - 1) / 2), slotCount - 1].filter((v, i, a) => a.indexOf(v) === i)
+              : [0, 6, 12, 18, 23]
+            ).map((i) => (
               <text
                 key={i}
                 x={PAD.left + i * slotW + slotW / 2}
@@ -161,7 +183,7 @@ export default function DetectionVolume() {
                 fill={colors.faint}
                 fontFamily="monospace"
               >
-                {entries[i].hour}
+                {entries[i].label}
               </text>
             ))}
 
@@ -184,7 +206,7 @@ export default function DetectionVolume() {
                         rx={0.5}
                         fill={FAMILY_COLOR[f]}
                       >
-                        <title>{`${e.hour} — ${f}: ${c} alert${c === 1 ? "" : "s"}`}</title>
+                        <title>{`${e.label} — ${f}: ${c} alert${c === 1 ? "" : "s"}`}</title>
                       </rect>
                     );
                     offset += h;

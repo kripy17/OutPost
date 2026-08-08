@@ -1,52 +1,58 @@
-import { useEffect, useState } from "react";
+// Nav — the left-rail workspace (the shell). A compact, modern desktop-app
+// rail: grouped icon-tile navigation, with the live status cluster (backend
+// pulse, session count, last finding), host OS, ⌘K, and theme toggle docked
+// in the footer. No top bar — the rail carries all chrome.
+//
+// The rail can collapse to an icon-only activity bar (⌘B / the chevron at the
+// top): width is driven by var(--rail-w) (64px collapsed), which main.tsx
+// mirrors for the content offset, so the two never drift. Collapsed state
+// persists (outpost-rail) and restores pre-paint via index.html.
+
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useEffect,
+  useState,
+  type FocusEvent,
+  type MouseEvent,
+} from "react";
 import { NavLink } from "react-router-dom";
+import CommandPalette from "./CommandPalette";
+import { getHealth, getPlatform, getRecentAlerts, getRuns } from "../lib/api";
+import { useEventStream } from "../lib/useEventStream";
+import { Icon, IconMenu, IconMoon, IconSun, platformIconName, type IconName } from "./Icon";
 
-const STORAGE_KEY = "outpost-theme";
+const STORAGE_KEY = "outpost-theme-v2"; // v2 key: dark-first default (index.html pre-paint)
+const RAIL_KEY = "outpost-rail"; // "collapsed" | "expanded" (pre-paint restored)
 
-// Grouped navigation — a SOC console's information architecture:
-// analyze → hunt → operate.
-const GROUPS: { label: string; links: { to: string; label: string; end?: boolean }[] }[] = [
-  {
-    label: "Analyze",
-    links: [
-      { to: "/", label: "Overview", end: true },
-      { to: "/monitor", label: "Monitor" },
-    ],
-  },
-  {
-    label: "Intelligence",
-    links: [
-      { to: "/events", label: "Events" },
-      { to: "/search", label: "IOC Search" },
-      { to: "/compare", label: "Compare" },
-      { to: "/campaigns", label: "Campaigns" },
-      { to: "/samples", label: "Samples" },
-    ],
-  },
-  {
-    label: "Operations",
-    links: [
-      { to: "/watchlist", label: "Watchlist" },
-      { to: "/rules", label: "Rules" },
-      { to: "/settings", label: "Settings" },
-      { to: "/history", label: "History" },
-    ],
-  },
-];
+/** Rail tooltip wiring — hover/focus handlers attached to a rail element so
+ *  the tooltip can be positioned from the element's own rect. */
+type TipHandlers = (label: string) => {
+  onMouseEnter: (e: MouseEvent<HTMLElement>) => void;
+  onMouseLeave: () => void;
+  onFocus: (e: FocusEvent<HTMLElement>) => void;
+  onBlur: () => void;
+};
+
+/* ── Theme ─────────────────────────────────────────────────────────────── */
 
 function useTheme() {
   const [theme, setTheme] = useState<"dark" | "light">(() =>
-    document.documentElement.dataset.theme === "light" ? "light" : "dark",
+    document.documentElement.dataset.theme === "dark" ? "dark" : "light",
   );
 
   const toggle = () => {
     const next = theme === "dark" ? "light" : "dark";
     document.documentElement.dataset.theme = next;
     localStorage.setItem(STORAGE_KEY, next);
+    // Palettes are dark-only — leaving light mode clears the applied palette so
+    // toggling back to dark doesn't silently resurrect it.
+    if (next === "light") {
+      delete document.documentElement.dataset.palette;
+      localStorage.removeItem("outpost-palette");
+    }
     setTheme(next);
   };
 
-  // Stay in sync if the theme changes elsewhere (another tab / devtools).
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
       if (e.key === STORAGE_KEY && (e.newValue === "light" || e.newValue === "dark")) setTheme(e.newValue);
@@ -58,28 +64,170 @@ function useTheme() {
   return { theme, toggle };
 }
 
-// Radar mark — the deck's signature glyph: a sweep across concentric rings.
-function RadarMark() {
+/* ── Mark ──────────────────────────────────────────────────────────────── */
+
+function Mark() {
   return (
-    <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden>
-      <circle cx="12" cy="12" r="9" fill="none" stroke="var(--border-strong)" strokeWidth="1" />
-      <circle cx="12" cy="12" r="5.5" fill="none" stroke="var(--border-strong)" strokeWidth="1" />
-      <circle cx="12" cy="12" r="2" fill="none" stroke="var(--accent-amber)" strokeWidth="1" opacity="0.7" />
-      <line x1="12" y1="12" x2="19" y2="5" stroke="var(--accent-amber)" strokeWidth="1.4" />
-      <circle cx="19" cy="5" r="1.6" fill="var(--accent-amber)" />
-      <circle cx="12" cy="12" r="1.1" fill="var(--text-primary)" />
+    <svg viewBox="0 0 24 24" className="h-6 w-6" aria-hidden>
+      <rect x="1.5" y="1.5" width="21" height="21" rx="6" fill="none" stroke="var(--border-strong)" strokeWidth="1.2" />
+      <path d="M4 13h4l2-5 3 9 2-4h5" fill="none" stroke="var(--accent)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="20.5" cy="4.5" r="2.2" fill="var(--accent)" />
     </svg>
   );
 }
 
-function Brand() {
-  return (
-    <span className="flex items-center gap-2.5">
-      <RadarMark />
-      <span className="font-mono text-sm font-semibold tracking-tight text-text-primary">OUTPOST</span>
-      <span className="hidden rounded border border-border-subtle px-1 py-0.5 font-mono text-[9px] uppercase tracking-widest text-text-faint xl:inline">
-        SOC
+/* ── Nav model ─────────────────────────────────────────────────────────── */
+
+interface NavItem {
+  to: string;
+  label: string;
+  iconName: IconName;
+  end?: boolean;
+}
+
+const GROUPS: { label: string; links: NavItem[] }[] = [
+  {
+    label: "Workspace",
+    links: [
+      { to: "/", label: "Overview", iconName: "grid", end: true },
+      { to: "/monitor", label: "Live Monitor", iconName: "activity" },
+      { to: "/events", label: "Event Log", iconName: "list" },
+    ],
+  },
+  {
+    label: "Analysis",
+    links: [
+      { to: "/samples", label: "Samples", iconName: "box" },
+      { to: "/history", label: "History", iconName: "clock" },
+      { to: "/compare", label: "Compare", iconName: "compare" },
+    ],
+  },
+  {
+    label: "Intelligence",
+    links: [
+      { to: "/search", label: "IOC Search", iconName: "search" },
+      { to: "/campaigns", label: "Campaigns", iconName: "flag" },
+      { to: "/footprint", label: "Footprint", iconName: "globe" },
+    ],
+  },
+  {
+    label: "Operations",
+    links: [
+      { to: "/watchlist", label: "Watchlist", iconName: "star" },
+      { to: "/rules", label: "Rules", iconName: "shield" },
+      { to: "/themes", label: "Theme lab", iconName: "sliders" },
+      { to: "/settings", label: "Settings", iconName: "bell" },
+    ],
+  },
+];
+
+/* ── Status cluster — docked in the rail footer ────────────────────────── */
+
+function StatusCluster({
+  compact = false,
+  collapsed = false,
+  makeTip,
+}: {
+  compact?: boolean;
+  collapsed?: boolean;
+  makeTip?: TipHandlers;
+}) {
+  const queryClient = useQueryClient();
+  useEventStream(() => {
+    void queryClient.invalidateQueries({ queryKey: ["statusbar"] });
+    void queryClient.invalidateQueries({ queryKey: ["alerts"] });
+    void queryClient.invalidateQueries({ queryKey: ["runs"] });
+  });
+
+  const health = useQuery({ queryKey: ["health"], queryFn: getHealth, refetchInterval: 5_000 });
+  const latest = useQuery({ queryKey: ["statusbar", "latest-finding"], queryFn: () => getRecentAlerts(1), refetchInterval: 10_000 });
+  const runs = useQuery({ queryKey: ["statusbar", "runs"], queryFn: () => getRuns(), refetchInterval: 10_000 });
+
+  const online = health.data === true;
+  const offline = health.data === false || health.isError;
+  const latestTime = latest.data?.[0] ? `${latest.data[0].triggered_at.slice(11, 19)} UTC` : null;
+  const count = runs.isLoading ? "…" : runs.data?.length ?? "—";
+
+  // Icon-only rail: a single live pulse dot, summary in the tooltip.
+  if (collapsed) {
+    const summary = `${online ? "Online" : offline ? "Offline" : "Connecting"} · ${count} sessions${
+      latestTime ? ` · latest finding ${latestTime}` : ""
+    }`;
+    return (
+      <span
+        {...(makeTip ? makeTip(summary) : {})}
+        className="flex h-8 w-8 items-center justify-center rounded-lg border border-border-subtle bg-bg-elevated/30"
+        role="status"
+        aria-label={summary}
+      >
+        <span className="relative flex h-2 w-2">
+          {online && <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-risk-clean/50" />}
+          <span
+            className={`relative inline-flex h-2 w-2 rounded-full ${online ? "bg-risk-clean" : offline ? "bg-risk-malicious" : "bg-text-faint"}`}
+          />
+        </span>
       </span>
+    );
+  }
+
+  return (
+    <div className={`text-[11px] ${compact ? "flex items-center gap-1.5" : "space-y-1.5"}`}>
+      <span className="flex items-center gap-1.5 font-medium">
+        <span className="relative flex h-2 w-2">
+          {online && <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-risk-clean/50" />}
+          <span
+            className={`relative inline-flex h-2 w-2 rounded-full ${online ? "bg-risk-clean" : offline ? "bg-risk-malicious" : "bg-text-faint"}`}
+          />
+        </span>
+        <span className={online ? "text-risk-clean" : offline ? "text-risk-malicious" : "text-text-muted"}>
+          {online ? "Online" : offline ? "Offline" : "Connecting"}
+        </span>
+        <span className="ml-auto flex items-baseline gap-1 text-text-faint">
+          <span className="font-semibold tabular-nums text-text-primary">{count}</span> sessions
+        </span>
+      </span>
+      {latestTime && (
+        <span className="flex items-center gap-1.5 text-text-faint">
+          <Icon name="zap" size={11} className="text-risk-suspicious" />
+          {latestTime}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function HostOsChip({
+  collapsed = false,
+  makeTip,
+}: {
+  collapsed?: boolean;
+  makeTip?: TipHandlers;
+}) {
+  const { data } = useQuery({ queryKey: ["platform"], queryFn: getPlatform, staleTime: Infinity });
+  if (!data) return null;
+  const label = `Host OS auto-detected: ${data.name} ${data.release} (${data.machine}) · ${data.collector}`;
+
+  if (collapsed) {
+    return (
+      <span
+        {...(makeTip ? makeTip(label) : {})}
+        role="img"
+        className="flex h-8 w-8 items-center justify-center rounded-lg border border-border-subtle bg-bg-surface"
+        aria-label={label}
+      >
+        <Icon name={platformIconName(data.os)} size={15} className={data.os === "windows" ? "text-accent" : "text-risk-clean"} />
+      </span>
+    );
+  }
+
+  return (
+    <span
+      className="flex items-center gap-2 rounded-lg border border-border-subtle bg-bg-surface px-2 py-1.5 text-[11px] font-medium text-text-muted"
+      title={label}
+    >
+      <Icon name={platformIconName(data.os)} size={13} className={data.os === "windows" ? "text-accent" : "text-risk-clean"} />
+      <span className="capitalize">{data.os}</span>
+      <span className="ml-auto font-mono text-[10px] text-text-faint">{data.collector}</span>
     </span>
   );
 }
@@ -91,50 +239,230 @@ function ThemeToggle({ theme, toggle }: { theme: "dark" | "light"; toggle: () =>
       onClick={toggle}
       aria-label={`Switch to ${next} theme`}
       title={`Switch to ${next} theme`}
-      className="press flex h-8 w-8 items-center justify-center rounded-md border border-border-subtle text-sm text-text-muted transition-colors duration-150 hover:border-accent-amber/60 hover:text-accent-amber"
+      className="press flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border-subtle bg-bg-surface text-[15px] text-text-muted transition-colors duration-150 hover:border-accent/50 hover:text-accent"
     >
-      {theme === "dark" ? "☀" : "☾"}
+      {theme === "dark" ? <IconSun /> : <IconMoon />}
     </button>
   );
 }
 
+function CommandButton({
+  onClick,
+  collapsed = false,
+  makeTip,
+}: {
+  onClick: () => void;
+  collapsed?: boolean;
+  makeTip?: TipHandlers;
+}) {
+  if (collapsed) {
+    return (
+      <button
+        onClick={onClick}
+        {...(makeTip ? makeTip("Jump to… (⌘K)") : {})}
+        className="press flex h-9 w-full items-center justify-center rounded-lg border border-border-subtle bg-bg-surface text-text-muted transition-colors duration-150 hover:border-accent/50 hover:text-text-primary"
+        aria-label="Open command palette"
+      >
+        <Icon name="search" size={14} />
+      </button>
+    );
+  }
+  return (
+    <button
+      onClick={onClick}
+      className="press flex h-9 w-full items-center gap-2 rounded-lg border border-border-subtle bg-bg-surface px-2.5 text-[12px] text-text-faint transition-colors duration-150 hover:border-accent/50 hover:text-text-primary"
+      aria-label="Open command palette"
+    >
+      <Icon name="search" size={13} />
+      <span className="flex-1 text-left">Jump to…</span>
+      <kbd className="rounded border border-border-subtle bg-bg-elevated px-1 font-mono text-[10px] text-text-muted">⌘K</kbd>
+    </button>
+  );
+}
+
+/* ── Mobile header ─────────────────────────────────────────────────────── */
+
+function MobileMenu({ open, onClose }: { open: boolean; onClose: () => void }) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 lg:hidden">
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} aria-hidden />
+      <div className="animate-slide-in absolute inset-y-0 left-0 w-72 max-w-[85vw] overflow-y-auto border-r border-border-subtle bg-bg-surface p-4">
+        <div className="mb-4 flex items-center justify-between">
+          <span className="flex items-center gap-2 font-bold text-text-primary">
+            <Mark /> OutPost
+          </span>
+          <button onClick={onClose} aria-label="Close menu" className="flex h-8 w-8 items-center justify-center rounded-lg text-text-muted hover:bg-bg-elevated">
+            <Icon name="x" size={16} />
+          </button>
+        </div>
+        <nav className="space-y-5" aria-label="Mobile">
+          {GROUPS.map((g) => (
+            <div key={g.label}>
+              <p className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-text-faint">{g.label}</p>
+              <div className="space-y-0.5">
+                {g.links.map((l) => (
+                  <NavLink
+                    key={l.to}
+                    to={l.to}
+                    end={l.end}
+                    onClick={onClose}
+                    className={({ isActive }) =>
+                      `flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm ${
+                        isActive ? "bg-accent/10 font-semibold text-accent" : "text-text-muted hover:bg-bg-elevated hover:text-text-primary"
+                      }`
+                    }
+                  >
+                    <Icon name={l.iconName} size={16} />
+                    {l.label}
+                  </NavLink>
+                ))}
+              </div>
+            </div>
+          ))}
+        </nav>
+      </div>
+    </div>
+  );
+}
+
+/* ── App ───────────────────────────────────────────────────────────────── */
+
+interface RailTip {
+  label: string;
+  left: number;
+  top: number;
+}
+
 export default function Nav() {
   const { theme, toggle } = useTheme();
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
+
+  // Opening a modal (⌘K palette / mobile menu) must dismiss the rail tooltip,
+  // or it would keep floating above the overlay (z-70 > z-50).
+  const openPalette = () => {
+    setTip(null);
+    setPaletteOpen(true);
+  };
+  const openMobileMenu = () => {
+    setTip(null);
+    setMobileOpen(true);
+  };
+  const [railCollapsed, setRailCollapsed] = useState(
+    () => document.documentElement.dataset.rail === "collapsed",
+  );
+  const [tip, setTip] = useState<RailTip | null>(null);
+
+  const toggleRail = () => {
+    const next = document.documentElement.dataset.rail !== "collapsed";
+    document.documentElement.dataset.rail = next ? "collapsed" : "expanded";
+    try {
+      localStorage.setItem(RAIL_KEY, next ? "collapsed" : "expanded");
+    } catch {
+      /* storage unavailable — the attribute still applies for this session */
+    }
+    setRailCollapsed(next);
+  };
+
+  // Tooltip follow: elements inside the rail report their own rects (the rail
+  // is fixed at left:0, so viewport coords line up). Rendered at the Nav root
+  // so the fixed tooltip is never clipped by the nav's overflow.
+  const makeTip = (label: string) => ({
+    onMouseEnter: (e: MouseEvent<HTMLElement>) => {
+      const r = e.currentTarget.getBoundingClientRect();
+      setTip({ label, left: r.right + 10, top: r.top + r.height / 2 });
+    },
+    onMouseLeave: () => setTip(null),
+    onFocus: (e: FocusEvent<HTMLElement>) => {
+      const r = e.currentTarget.getBoundingClientRect();
+      setTip({ label, left: r.right + 10, top: r.top + r.height / 2 });
+    },
+    onBlur: () => setTip(null),
+  });
+
+  // ⌘K / Ctrl+K opens the palette; ⌘B / Ctrl+B collapses the rail (skipped
+  // while typing so it never fights the browser or form fields).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      const k = e.key.toLowerCase();
+      if (k === "k") {
+        e.preventDefault();
+        setPaletteOpen((v) => !v);
+      } else if (k === "b") {
+        const t = e.target as HTMLElement | null;
+        if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+        e.preventDefault();
+        toggleRail();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <>
-      {/* Desktop — fixed left rail */}
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-56 flex-col border-r border-border-subtle bg-bg-surface/70 backdrop-blur-md lg:flex">
-        <div className="px-5 pb-4 pt-6">
-          <Brand />
+      {/* Desktop — left rail (collapsible to an icon-only activity bar) */}
+      <aside
+        className={`fixed inset-y-0 left-0 z-30 hidden w-[var(--rail-w)] flex-col border-r border-border-subtle bg-bg-surface/70 backdrop-blur-md transition-[width] duration-200 ease-out lg:flex ${
+          railCollapsed ? "items-center" : ""
+        }`}
+      >
+        <div className={`flex w-full items-center gap-2.5 pb-2 ${railCollapsed ? "flex-col gap-1.5 px-0 pb-0 pt-4" : "px-4 pt-5"}`}>
+          <Mark />
+          {!railCollapsed && <span className="text-[15px] font-bold tracking-tight text-text-primary">OutPost</span>}
+          <button
+            onClick={toggleRail}
+            aria-label={railCollapsed ? "Expand rail" : "Collapse rail"}
+            aria-pressed={railCollapsed}
+            title={`${railCollapsed ? "Expand" : "Collapse"} rail (⌘B)`}
+            className={`press flex h-7 w-7 items-center justify-center rounded-lg text-text-faint transition-colors duration-150 hover:bg-bg-elevated hover:text-text-primary ${
+              railCollapsed ? "" : "ml-auto"
+            }`}
+          >
+            <Icon name={railCollapsed ? "chevronRight" : "chevronLeft"} size={14} />
+          </button>
         </div>
-        <nav className="flex-1 overflow-y-auto px-3" aria-label="Primary">
-          {GROUPS.map((group) => (
-            <div key={group.label} className="mb-5">
-              <p className="kicker px-2 pb-2">{group.label}</p>
+
+        <nav
+          className={`mt-2 flex-1 overflow-y-auto pb-4 ${
+            railCollapsed ? "w-full space-y-1 px-2" : "space-y-5 px-3"
+          }`}
+          aria-label="Primary"
+        >
+          {GROUPS.map((group, i) => (
+            <div key={group.label} className={railCollapsed && i > 0 ? "border-t border-border-subtle/70 pt-1.5" : ""}>
+              {!railCollapsed && (
+                <p className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-text-faint">{group.label}</p>
+              )}
               <div className="space-y-0.5">
                 {group.links.map((link) => (
                   <NavLink
                     key={link.to}
                     to={link.to}
                     end={link.end}
+                    aria-label={railCollapsed ? link.label : undefined}
+                    {...(railCollapsed ? makeTip(link.label) : {})}
                     className={({ isActive }) =>
-                      `group relative flex items-center rounded-md py-1.5 pl-3 pr-2 font-mono text-xs transition-colors duration-150 ${
+                      `relative flex items-center gap-2.5 rounded-lg transition-colors duration-150 ${railCollapsed ? "justify-center px-0 py-2" : "px-2 py-1.5 text-[13px]"} ${
                         isActive
-                          ? "bg-bg-elevated font-medium text-accent-amber shadow-[var(--glow-amber)]"
-                          : "text-text-muted hover:bg-bg-elevated/50 hover:text-text-primary"
+                          ? "bg-accent/15 font-semibold text-accent"
+                          : "font-medium text-text-muted hover:bg-bg-elevated hover:text-text-primary"
                       }`
                     }
                   >
                     {({ isActive }) => (
                       <>
-                        {/* Accent bar — the active position reads like a breaker tripped. */}
-                        <span
-                          className={`absolute left-0 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-full bg-accent-amber transition-opacity duration-150 ${
-                            isActive ? "opacity-100" : "opacity-0 group-hover:opacity-40"
-                          }`}
-                        />
-                        {link.label}
+                        {/* Collapsed: a violet indicator bar marks the active page. */}
+                        {railCollapsed && isActive && (
+                          <span className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-full bg-accent" aria-hidden />
+                        )}
+                        <span className="flex h-6 w-6 shrink-0 items-center justify-center">
+                          <Icon name={link.iconName} size={railCollapsed ? 18 : 16} />
+                        </span>
+                        {!railCollapsed && link.label}
                       </>
                     )}
                   </NavLink>
@@ -143,43 +471,48 @@ export default function Nav() {
             </div>
           ))}
         </nav>
-        <div className="border-t border-border-subtle px-4 py-3">
-          <div className="flex items-center gap-2">
-            <span className="relative flex h-1.5 w-1.5">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-risk-clean/60" />
-              <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-risk-clean" />
-            </span>
-            <span className="font-mono text-[10px] uppercase tracking-widest text-text-faint">deck online</span>
-            <span className="ml-auto">
-              <ThemeToggle theme={theme} toggle={toggle} />
-            </span>
+
+        <footer className={`w-full border-t border-border-subtle py-3 ${railCollapsed ? "flex flex-col items-center gap-2 px-2" : "space-y-2 px-3"}`}>
+          <CommandButton onClick={openPalette} collapsed={railCollapsed} makeTip={railCollapsed ? makeTip : undefined} />
+          <HostOsChip collapsed={railCollapsed} makeTip={railCollapsed ? makeTip : undefined} />
+          <div className={`flex items-center gap-2 rounded-lg border border-border-subtle ${railCollapsed ? "flex-col bg-bg-elevated/30 p-1.5" : "bg-bg-elevated/30 px-2.5 py-2"}`}>
+            <StatusCluster collapsed={railCollapsed} makeTip={railCollapsed ? makeTip : undefined} />
+            <ThemeToggle theme={theme} toggle={toggle} />
           </div>
-        </div>
+        </footer>
       </aside>
 
-      {/* Mobile / narrow — compact top bar */}
-      <header className="sticky top-0 z-30 border-b border-border-subtle bg-bg-base/80 backdrop-blur lg:hidden">
-        <div className="flex items-center gap-4 px-4 py-2.5">
-          <Brand />
-          <nav className="flex flex-1 items-center gap-0.5 overflow-x-auto text-xs" aria-label="Primary">
-            {GROUPS.flatMap((g) => g.links).map((link) => (
-              <NavLink
-                key={link.to}
-                to={link.to}
-                end={link.end}
-                className={({ isActive }) =>
-                  `whitespace-nowrap rounded-md px-2 py-1.5 transition-colors duration-150 ${
-                    isActive ? "bg-bg-elevated font-medium text-accent-amber" : "text-text-muted hover:text-text-primary"
-                  }`
-                }
-              >
-                {link.label}
-              </NavLink>
-            ))}
-          </nav>
-          <ThemeToggle theme={theme} toggle={toggle} />
+      {/* Mobile — slim header */}
+      <header className="topbar lg:hidden">
+        <div className="flex items-center gap-3 px-4 py-2.5">
+          <button
+            className="press -ml-1 flex h-9 w-9 items-center justify-center rounded-lg text-text-muted hover:bg-bg-elevated"
+            onClick={openMobileMenu}
+            aria-label="Open navigation menu"
+          >
+            <IconMenu />
+          </button>
+          <span className="flex items-center gap-2 font-bold text-text-primary">
+            <Mark /> OutPost
+          </span>
+          <div className="ml-auto flex items-center gap-2">
+            <span className="flex items-center gap-1 text-[11px] text-text-faint">
+              <StatusCluster compact />
+            </span>
+            <ThemeToggle theme={theme} toggle={toggle} />
+          </div>
         </div>
       </header>
+
+      <MobileMenu open={mobileOpen} onClose={() => setMobileOpen(false)} />
+      {paletteOpen && <CommandPalette onClose={() => setPaletteOpen(false)} />}
+
+      {/* Positioned rail tooltip — lives at the root so nothing clips it. */}
+      {tip && (
+        <div className="rail-tip" style={{ left: tip.left, top: tip.top }} role="tooltip">
+          {tip.label}
+        </div>
+      )}
     </>
   );
 }

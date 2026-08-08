@@ -3,19 +3,21 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#10131a" />
+    <meta name="theme-color" content="#0a0c11" />
     <meta name="description" content="OutPost — cross-platform behavioral security monitoring, dynamic malware analysis, and campaign hunting." />
     <title>OutPost — Behavioral Security Monitor</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <script>
-      // Theme before first paint — avoids a flash of the wrong theme.
+      // Theme before first paint — dark-first. Uses a fresh storage key so any
+      // "light" saved under the old key is ignored: every session starts dark.
       (function () {
         try {
-          var saved = localStorage.getItem("outpost-theme");
-          if (saved !== "light" && saved !== "dark") {
-            saved = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
-          }
-          document.documentElement.dataset.theme = saved;
+          var saved = localStorage.getItem("outpost-theme-v2");
+          document.documentElement.dataset.theme = saved === "light" ? "light" : "dark";
+          var pal = localStorage.getItem("outpost-palette");
+          if (pal) document.documentElement.dataset.palette = pal;
+          // Icon-only rail — restore before paint so the offset never flashes.
+          if (localStorage.getItem("outpost-rail") === "collapsed") document.documentElement.dataset.rail = "collapsed";
         } catch (e) {
           document.documentElement.dataset.theme = "dark";
         }
@@ -24,7 +26,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
   </head>

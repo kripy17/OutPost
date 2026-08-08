@@ -16,13 +16,14 @@ Maps Sysmon Event IDs to the unified schema:
 
 import argparse
 import datetime
+import os
 import sys
 import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
 
-from shipper import Shipper  # noqa: E402
+from shipper import Shipper, claim_active_live_run  # noqa: E402
 
 CHANNEL = "Microsoft-Windows-Sysmon/Operational"
 
@@ -87,12 +88,17 @@ def _basename(path: str | None) -> str | None:
     return Path(path.replace("\\", "/")).name
 
 
-def main(run_id: str, backend_url: str, mode: str = "analysis", timeout: int = 240) -> None:
+def main(run_id: str | None, backend_url: str, mode: str = "analysis", timeout: int = 240) -> None:
     try:
         import win32evtlog
     except ImportError:
         print("ERROR: pywin32 required — install with: pip install pywin32", file=sys.stderr)
         sys.exit(2)
+
+    # Claim the webapp's open live session when no run_id was given.
+    if not run_id:
+        run_id = claim_active_live_run(backend_url)
+        print(f"[collector-win] claimed active live session {run_id}")
 
     shipper = Shipper(backend_url, run_id)
     handle = win32evtlog.OpenEventLog(None, CHANNEL)
@@ -123,8 +129,13 @@ def main(run_id: str, backend_url: str, mode: str = "analysis", timeout: int = 2
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="OutPost Windows collector (Sysmon)")
-    parser.add_argument("--run-id", required=True)
-    parser.add_argument("--backend-url", default="http://localhost:8000")
+    parser.add_argument(
+        "--run-id",
+        default=None,
+        help="Target run id. Omit to claim the newest open live session from the "
+        "webapp's Live Monitor (empty/omitted both claim).",
+    )
+    parser.add_argument("--backend-url", default=os.environ.get("OUTPOST_API_URL", "http://localhost:8001"))
     parser.add_argument("--mode", choices=["live", "analysis"], default="analysis")
     parser.add_argument("--timeout", type=int, default=240)
     args = parser.parse_args()

@@ -47,7 +47,7 @@ export default function RulesPanel({ runId }: { runId: string }) {
               onClick={() => void load(f)}
               className={`rounded px-2 py-1 font-mono text-[10px] uppercase tracking-wide transition-colors duration-150 ${
                 format === f && text !== null
-                  ? "bg-bg-elevated text-accent-amber"
+                  ? "bg-bg-elevated text-accent"
                   : "text-text-muted hover:text-text-primary"
               }`}
             >
@@ -57,7 +57,7 @@ export default function RulesPanel({ runId }: { runId: string }) {
           {text && (
             <button
               onClick={() => void copy()}
-              className="press ml-2 rounded border border-border-subtle px-2 py-1 font-mono text-[10px] text-text-muted transition-colors duration-150 hover:border-accent-amber/60 hover:text-accent-amber"
+              className="press ml-2 rounded border border-border-subtle px-2 py-1 font-mono text-[10px] text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
             >
               {copied ? "Copied ✓" : "Copy"}
             </button>
@@ -68,7 +68,7 @@ export default function RulesPanel({ runId }: { runId: string }) {
       {loading && <p className="text-sm text-text-muted">Generating…</p>}
       {error && <p className="text-sm text-risk-malicious">{error}</p>}
       {!loading && !error && text === null && (
-        <button onClick={() => void load("suricata")} className="text-sm text-accent-amber hover:underline">
+        <button onClick={() => void load("suricata")} className="text-sm text-accent hover:underline">
           Generate rules from this run's findings →
         </button>
       )}

@@ -41,7 +41,7 @@ export default function ExportButton({
     <button
       onClick={onExport}
       disabled={status === "working"}
-      className="press rounded border border-accent-amber/60 px-3 py-1.5 font-mono text-xs text-accent-amber transition-colors duration-150 hover:bg-accent-amber/10 disabled:opacity-50"
+      className="press rounded border border-accent/60 px-3 py-1.5 font-mono text-xs text-accent transition-colors duration-150 hover:bg-accent/10 disabled:opacity-50"
     >
       {text}
     </button>

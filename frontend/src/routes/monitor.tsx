@@ -3,11 +3,12 @@ import { useCallback, useEffect, useRef, useState, type ChangeEvent } from "reac
 import { Link } from "react-router-dom";
 import AlertBanner from "../components/AlertBanner/AlertBanner";
 import ExportButton from "../components/ExportButton/ExportButton";
+import { Icon, platformIconName } from "../components/Icon";
 import { PageHeader } from "../components/ui";
 import NetworkTable from "../components/NetworkTable/NetworkTable";
 import ProcessTree from "../components/ProcessTree/ProcessTree";
 import TimelineView from "../components/TimelineView/TimelineView";
-import { completeRun, createRun, getRunDetail, ingestBatch, uploadSample } from "../lib/api";
+import { completeRun, createRun, getPlatform, getRunDetail, ingestBatch, uploadSample } from "../lib/api";
 import { useEventStream } from "../lib/useEventStream";
 import { buildDetonationScenario, detonationSampleName } from "../lib/synthetic";
 import type { Platform, SampleMeta, Severity } from "../types";
@@ -36,14 +37,24 @@ export default function MonitorPage() {
   const toastKey = useRef(0);
   const toastTimers = useRef<number[]>([]);
 
-  // OS selector for the synthetic detonation (roadmap 1.2) — each platform
-  // streams a scenario that exercises that platform's own detection rules.
-  const [platform, setPlatform] = useState<Platform>("windows");
+  // Host OS auto-detection (vision): no manual OS picker anywhere. The
+  // detected host OS drives live sessions; an uploaded sample's magic-byte
+  // detection can override it per-file. macOS hosts resolve to the macos
+  // scenario, but the UI never asks the operator to choose.
+  const { data: host } = useQuery({ queryKey: ["platform"], queryFn: getPlatform, staleTime: Infinity });
+  const hostPlatform: Platform = host?.os === "windows" ? "windows" : host?.os === "macos" ? "macos" : "linux";
 
   // Uploaded sample — OS auto-detected from magic bytes (roadmap 1.4); its
-  // platform pre-fills the selector and its name is used for the run.
+  // platform drives the detonation scenario and its name is used for the run.
   const [sample, setSample] = useState<SampleMeta | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
+
+  // Effective target: the uploaded sample's OS if one is attached (magic
+  // bytes are authoritative for that file), otherwise the detected host OS.
+  const targetPlatform: Platform =
+    sample && (sample.detected_platform === "windows" || sample.detected_platform === "linux" || sample.detected_platform === "macos")
+      ? sample.detected_platform
+      : hostPlatform;
 
   const onUpload = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -52,7 +63,6 @@ export default function MonitorPage() {
     try {
       const meta = await uploadSample(file.name, file);
       setSample(meta);
-      setPlatform(meta.detected_platform === "windows" || meta.detected_platform === "linux" ? meta.detected_platform : "linux");
     } catch (err) {
       setSample(null);
       setUploadError(err instanceof Error ? err.message.slice(0, 220) : "Upload failed — backend reachable?");
@@ -145,20 +155,20 @@ export default function MonitorPage() {
 
   const startLive = async () => {
     const label = `Live monitor — ${new Date().toISOString().slice(0, 19).replace("T", " ")}`;
-    const { run_id } = await createRun(label, "windows", "live");
+    const { run_id } = await createRun(label, hostPlatform, "live");
     setRunId(run_id);
     setMode("live");
-    setPhase("live — waiting for collector events");
+    setPhase(`live — waiting for collector events (${hostPlatform})`);
   };
 
   const startDetonation = async () => {
-    const name = sample?.original_name ?? detonationSampleName(platform);
-    const { run_id } = await createRun(name, platform, "analysis");
+    const name = sample?.original_name ?? detonationSampleName(targetPlatform);
+    const { run_id } = await createRun(name, targetPlatform, "analysis");
     setRunId(run_id);
     setMode("detonate");
     setStreaming(true);
-    setPhase("starting detonation…");
-    void streamDetonation(run_id, platform);
+    setPhase(`starting detonation (${targetPlatform})…`);
+    void streamDetonation(run_id, targetPlatform);
   };
 
   const endAnalysis = useCallback(async () => {
@@ -216,55 +226,50 @@ export default function MonitorPage() {
         <div className="mt-10 grid gap-4 sm:grid-cols-2">
           <button
             onClick={startLive}
-            className="press panel group p-6 text-left transition-all duration-150 hover:-translate-y-0.5 hover:border-accent-amber/60 hover:shadow-[var(--shadow-raised)]"
+            className="press panel group p-6 text-left transition-all duration-150 hover:-translate-y-0.5 hover:border-accent/60 hover:shadow-[var(--shadow-raised)]"
           >
-            <span className="font-mono text-sm text-accent-amber">● Start live monitoring</span>
+            <span className="inline-flex items-center gap-2 font-mono text-sm text-accent">
+              <Icon name="activity" size={15} />
+              Start live monitoring
+            </span>
             <p className="mt-2 text-xs leading-relaxed text-text-muted">
               Opens a continuous session. Feed it events from a real collector (Sysmon / auditd) on any machine, or keep
               it open while one streams in.
             </p>
           </button>
           <div className="panel p-6">
-            <button
-              onClick={startDetonation}
-              className="press group w-full text-left"
-            >
-              <span className="font-mono text-sm text-risk-malicious">▸ Detonate synthetic sample</span>
+            <button onClick={startDetonation} className="press group w-full text-left">
+              <span className="inline-flex items-center gap-2 font-mono text-sm text-risk-malicious">
+                <Icon name="play" size={14} />
+                Detonate synthetic sample
+              </span>
               <p className="mt-2 text-xs text-text-muted">
                 Streams a realistic dropper scenario (macro → LOLBin → C2 beacon → file burst → persistence) into a
                 fresh run so you can watch the detection rules fire live — no collector or VM needed.
               </p>
             </button>
-            <div className="mt-4 flex items-center gap-2" role="radiogroup" aria-label="Detonation platform">
-              <span className="font-mono text-[10px] uppercase tracking-wide text-text-faint">Platform</span>
-              {(["windows", "linux", "macos"] as Platform[]).map((p) => (
-                <button
-                  key={p}
-                  role="radio"
-                  aria-checked={platform === p}
-                  onClick={() => setPlatform(p)}
-                  className={`rounded border px-2.5 py-1 font-mono text-[11px] transition-colors ${
-                    platform === p
-                      ? "border-accent-amber/60 text-accent-amber"
-                      : "border-border-subtle text-text-muted hover:text-text-primary"
-                  }`}
-                >
-                  {p === "windows" ? "⊞ Windows" : p === "linux" ? "⎈ Linux" : " Mac"}
-                </button>
-              ))}
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <span className="text-[11px] font-semibold text-text-faint">Target OS</span>
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-accent/50 bg-accent/10 px-2.5 py-1 font-mono text-[11px] text-accent">
+                <Icon name={platformIconName(targetPlatform)} size={12} />
+                {targetPlatform}
+              </span>
+              <span className="font-mono text-[10px] text-text-faint">
+                {sample ? "from sample magic bytes" : host ? `auto-detected from this host (${host.release})` : "detecting host…"}
+              </span>
             </div>
 
             {/* Sample upload — OS auto-detection (roadmap 1.4) */}
             <div className="mt-4 border-t border-border-subtle pt-3">
               <label className="block">
-                <span className="font-mono text-[10px] uppercase tracking-wide text-text-faint">
+                <span className="text-[11px] font-semibold text-text-faint">
                   Upload sample — auto-detect OS
                 </span>
                 <input
                   type="file"
                   accept=".exe,.bin,.elf,.dll,.so,.dylib,.docm,.lnk"
                   onChange={(e) => void onUpload(e)}
-                  className="mt-1.5 block w-full text-xs text-text-muted file:mr-3 file:rounded file:border file:border-border-subtle file:bg-bg-elevated file:px-3 file:py-1.5 file:font-mono file:text-[11px] file:text-text-muted hover:file:border-accent-amber/60"
+                  className="mt-1.5 block w-full text-xs text-text-muted file:mr-3 file:rounded file:border file:border-border-subtle file:bg-bg-elevated file:px-3 file:py-1.5 file:font-mono file:text-[11px] file:text-text-muted hover:file:border-accent/60"
                 />
               </label>
               {uploadError && <p className="mt-2 text-[11px] text-risk-malicious">{uploadError}</p>}
@@ -275,7 +280,7 @@ export default function MonitorPage() {
                     <span
                       className={`rounded border px-1.5 py-0.5 uppercase tracking-wide ${
                         sample.detected_platform === "windows"
-                          ? "border-accent-amber/50 text-accent-amber"
+                          ? "border-accent/50 text-accent"
                           : sample.detected_platform === "linux"
                             ? "border-risk-clean/50 text-risk-clean"
                             : "border-text-faint text-text-muted"
@@ -285,9 +290,6 @@ export default function MonitorPage() {
                     </span>
                   </div>
                   <p className="mt-1 break-all text-text-faint">{sample.sha256}</p>
-                  {sample.detected_platform === "macos" && (
-                    <p className="mt-1 text-risk-suspicious">macOS scenario selected — LaunchAgent + osascript rules.</p>
-                  )}
                 </div>
               )}
             </div>
@@ -300,11 +302,11 @@ export default function MonitorPage() {
   return (
     <div className="mx-auto max-w-6xl px-6 py-8">
       <nav className="mb-6 flex items-center gap-2 text-xs text-text-muted">
-        <Link to="/" className="transition-colors hover:text-accent-amber">
+        <Link to="/" className="transition-colors hover:text-accent">
           Overview
         </Link>
         <span aria-hidden>/</span>
-        <Link to="/history" className="transition-colors hover:text-accent-amber">
+        <Link to="/history" className="transition-colors hover:text-accent">
           Session history
         </Link>
         <span aria-hidden>/</span>
@@ -316,9 +318,12 @@ export default function MonitorPage() {
           <h1 className="font-mono text-xl font-semibold text-text-primary">{run?.sample_name ?? "…"}</h1>
           <p className="mt-1 font-mono text-xs text-text-muted">
             {runId ?? "…"}
-            {mode === "live" && <span className="ml-2 rounded border border-border-subtle px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-accent-amber">live</span>}
+            {mode === "live" && <span className="ml-2 rounded border border-border-subtle px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-accent">live</span>}
             {mode === "detonate" && streaming && (
-              <span className="ml-2 animate-outpost-pulse rounded border border-risk-malicious/50 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-risk-malicious">detonating</span>
+              <span className="ml-2 animate-outpost-pulse inline-flex items-center gap-1 rounded border border-signal/50 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-signal shadow-[var(--glow-signal)]">
+                <Icon name="activity" size={10} />
+                detonating
+              </span>
             )}
           </p>
           {phase && <p className="mt-2 text-xs text-text-muted">{phase}</p>}
@@ -342,9 +347,10 @@ export default function MonitorPage() {
               <ExportButton runId={runId} label="Export JSON" />
               <Link
                 to={`/runs/${runId}`}
-                className="rounded border border-border-subtle px-3 py-1.5 font-mono text-xs text-text-muted transition-colors hover:text-accent-amber"
+                className="inline-flex items-center gap-1.5 rounded border border-border-subtle px-3 py-1.5 font-mono text-xs text-text-muted transition-colors hover:text-accent"
               >
-                Full report →
+                Full report
+                <Icon name="arrowRight" size={12} />
               </Link>
             </>
           )}
@@ -357,7 +363,7 @@ export default function MonitorPage() {
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[3fr_2fr]">
         <section className="rounded-lg border border-border-subtle bg-bg-surface p-4">
-          <h2 className="mb-3 text-[10px] uppercase tracking-widest text-text-faint">Process tree</h2>
+          <h2 className="mb-3 text-xs font-semibold text-text-muted">Process tree</h2>
           {data ? (
             <ProcessTree roots={data.process_tree} />
           ) : (
@@ -367,12 +373,12 @@ export default function MonitorPage() {
 
         <div className="space-y-6">
           <section className="rounded-lg border border-border-subtle bg-bg-surface p-4">
-            <h2 className="mb-3 text-[10px] uppercase tracking-widest text-text-faint">Network connections</h2>
+            <h2 className="mb-3 text-xs font-semibold text-text-muted">Network connections</h2>
             <NetworkTable connections={data?.network_connections ?? []} />
           </section>
 
           <section className="rounded-lg border border-border-subtle bg-bg-surface p-4">
-            <h2 className="mb-3 text-[10px] uppercase tracking-widest text-text-faint">Timeline</h2>
+            <h2 className="mb-3 text-xs font-semibold text-text-muted">Timeline</h2>
             <TimelineView events={data?.timeline ?? []} />
           </section>
         </div>
@@ -400,7 +406,7 @@ export default function MonitorPage() {
                 className="text-text-faint transition-colors hover:text-text-primary"
                 aria-label="Dismiss alert"
               >
-                ×
+                <Icon name="x" size={12} />
               </button>
             </div>
             <p className="mt-1 text-[11px] leading-snug text-text-muted">{t.details}</p>

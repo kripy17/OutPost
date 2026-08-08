@@ -35,10 +35,10 @@ export default function NetworkTable({ connections }: { connections: NetworkConn
           setAsc(true);
         }
       }}
-      className="text-left text-[10px] uppercase tracking-widest text-text-faint transition-colors duration-150 hover:text-text-muted"
+      className="text-left text-xs font-semibold text-text-muted transition-colors duration-150 hover:text-text-muted"
     >
       {label}
-      {sortKey === key && <span className="ml-1 text-accent-amber">{asc ? "↑" : "↓"}</span>}
+      {sortKey === key && <span className="ml-1 text-accent">{asc ? "↑" : "↓"}</span>}
     </button>
   );
 
