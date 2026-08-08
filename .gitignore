@@ -21,3 +21,10 @@ memory-dumps/
 
 # Playwright artifacts (keep screenshots/*.png — they're README assets)
 demo/.deck-video/
+
+# Internal build-context docs (spec/AI handoff — never published to GitHub)
+/AGENTS.md
+/0[0-9]-*.md
+/1[0-3]-*.md
+/docs/14-*.md
+/docs/15-*.md

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * "Operation Shelf-Stack" — automated Playwright walkthrough of the OutPost
- * webapp demo (see ../13-CAMPAIGN-DEMO.md).
+ * webapp demo (campaign arc: detonate → search → compare → watchlist → rules).
  *
  * Drives the five-step campaign arc — detonate → search → compare → watchlist
  * → rules — against the live webapp + API, capturing a screenshot per step
@@ -179,7 +179,7 @@ async function main() {
     throw new Error(
       `Campaign pair not found in the backend — seed it first:\n` +
         `    cd backend && python -m app.seed_campaign\n` +
-        `(see 13-CAMPAIGN-DEMO.md, "Before you start")`,
+        `(seed the campaign pair first — see the header comment)`,
     );
   }
   log(`Campaign pair present: ${VARIANT_A} (${variantA.run_id}), ${VARIANT_B} (${variantB.run_id})`);

@@ -34,7 +34,7 @@ Monitor page, stream a detonation, and watch alerts toast in live as the rules
 fire — dynamic malware analysis without a sandbox, hypervisor, or malware.
 
 > Originally built as a BSc Cybersecurity (Year 3) semester project. The
-> full written spec lives in [`docs/`](docs/AGENTS.md) (14 design documents).
+> internal design documents used to build it aren't shipped in this repo.
 
 ## ✨ Highlights
 
@@ -125,8 +125,8 @@ bash scripts/dev.sh start
 # 3. That's it — detonate a sample on the Monitor page.
 ```
 
-Prefer to drive it by hand? See [`scripts/install.sh`](scripts/install.sh)
-and the setup details in [`.freebuff/run.md`](.freebuff/run.md).
+Prefer to drive it by hand? [`scripts/install.sh`](scripts/install.sh) shows
+every step it performs, in order.
 
 ### Try it without a collector
 
@@ -171,7 +171,8 @@ Point the CLI at a non-default backend with `OUTPOST_API_URL=http://localhost:80
 - **Linux** — `sudo auditctl -R collectors/linux/audit.rules` (needs auditd),
   then run the collector.
 
-Full collector setup: [`docs/05-DEPLOYMENT-SETUP.md`](docs/05-DEPLOYMENT-SETUP.md).
+The collector configs and shippers live in [`collectors/`](collectors/)
+(`windows/`, `linux/`, plus shared tests).
 
 ## 🧪 Testing
 
@@ -194,25 +195,21 @@ One command runs the whole sweep:
 
 ## 📚 Documentation
 
-The repo is written spec-first — [`AGENTS.md`](docs/AGENTS.md) is the index of
-14 design documents:
+- **This README** — quickstart, CLI reference, testing, architecture.
+- [`demo/README.md`](demo/README.md) — the automated Playwright walkthroughs
+  (Shelf-Stack campaign arc + the deck demo video).
+- **The code itself** — every backend service, route, and CLI command carries
+  docstrings describing what it does and the rule logic behind it.
 
-| Doc | Topic |
-|---|---|
-| `00`–`02` | Overview · Architecture · Backend spec |
-| `03`–`05` | Collector spec · Frontend spec · Deployment |
-| `06`–`07` | Build plan · UI design system |
-| `08`–`09` | Integrations · CLI spec |
-| `10`–`11` | Standout features · Detection logic |
-| `12`–`13` | Branding · Campaign demo (Shelf-Stack) |
-| `14` | Roadmap (all tiers shipped) |
+The original design documents used to build OutPost were internal build
+context and aren't shipped in this repository.
 
 ## 🔒 Scope & safety
 
 OutPost **monitors and analyzes** behavior — it generates nothing weaponized.
 Detection runs on synthetic event streams by default, so the demo is safe to
 run anywhere. Real malware should only ever run in an isolated environment
-you're prepared to reset ([`docs/05`](docs/05-DEPLOYMENT-SETUP.md)). Enrichment
+you're prepared to reset. Enrichment
 (AbuseIPDB / VirusTotal) needs API keys in `backend/.env` and degrades
 gracefully without them.
 
