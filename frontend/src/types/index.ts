@@ -31,6 +31,8 @@ export interface RunSummary {
   risk_score: number;
 }
 
+export type AlertStatus = "open" | "acknowledged" | "resolved";
+
 export interface Alert {
   id: number | null;
   run_id: string;
@@ -40,7 +42,38 @@ export interface Alert {
   triggered_at: string;
   related_pid: number | null;
   related_ip: string | null;
+  // PIDs behind composite rules (enumeration-burst recon sweep) — the Monitor
+  // highlights exactly these nodes in the live process tree.
+  related_pids?: number[];
   details: string;
+  // Triage (analyst workflow): open → acknowledged → resolved, with the
+  // optional analyst comment recorded at the transition.
+  status: AlertStatus;
+  status_comment: string | null;
+  status_at: string | null;
+}
+
+// -- Alert triage (analyst workflow) ------------------------------------------
+
+export type AllowlistKind = "ip" | "file" | "registry" | "process" | "hash";
+
+export interface AllowlistEntry {
+  id: number;
+  run_id: string;
+  kind: AllowlistKind;
+  value: string;
+  note: string | null;
+  created_at: string;
+  // How many already-open matching alerts the create call auto-acked (0 on GET).
+  acked: number;
+}
+
+export interface Suppression {
+  id: number;
+  rule_id: string;
+  run_id: string | null;
+  reason: string | null;
+  created_at: string;
 }
 
 export interface ProcessNode {
@@ -127,11 +160,50 @@ export interface TuningResponse {
   knobs: TuningKnob[];
 }
 
+// -- Enumeration pattern tables (rule 15, T1082) ----------------------------
+// One regex+label row per platform; operators edit these in the Rules page
+// and the change applies live to the next ingested batch (no restart).
+
+export interface EnumPatternRow {
+  pattern: string;
+  label: string;
+}
+
+export interface EnumPatternsResponse {
+  platforms: Record<string, EnumPatternRow[]>;
+  defaults: Record<string, EnumPatternRow[]>;
+}
+
 // -- Roadmap 3.1 — notification settings ---------------------------------------
 
 export interface NotificationSettings {
   enabled: boolean;
   webhook_url: string;
+  slack_webhook: string;
+  discord_webhook: string;
+  telegram_bot_token: string;
+  telegram_chat_id: string;
+  smtp_host: string;
+  smtp_port: string | number;
+  smtp_user: string;
+  smtp_pass: string;
+  smtp_pass_set: boolean;
+  smtp_from: string;
+  smtp_to: string;
+}
+
+export interface NotificationSettingsIn {
+  webhook_url?: string;
+  slack_webhook?: string;
+  discord_webhook?: string;
+  telegram_bot_token?: string;
+  telegram_chat_id?: string;
+  smtp_host?: string;
+  smtp_port?: string | number;
+  smtp_user?: string;
+  smtp_pass?: string;
+  smtp_from?: string;
+  smtp_to?: string;
 }
 
 // -- Webapp-first API surfaces (monitor / dynamic analysis / Phase 6) --------
@@ -208,6 +280,56 @@ export interface SampleMeta {
   malware_family?: string | null;
 }
 
+// -- Static analysis (strings / IOCs / PE / ELF) -----------------------------
+
+export interface StaticIocs {
+  urls: string[];
+  ips: string[];
+  domains: string[];
+  hashes: string[];
+  emails: string[];
+}
+
+export interface PeSection {
+  name: string;
+  virtual_size: number;
+  raw_size: number;
+  flags: string[];
+}
+
+export interface PeMetadata {
+  machine: string;
+  bits: number | null;
+  entry_point_rva: number | null;
+  sections: PeSection[];
+  imports: string[];
+}
+
+export interface ElfSection {
+  name: string;
+  type: number;
+  size: number;
+}
+
+export interface ElfMetadata {
+  class: number;
+  endian: string;
+  type: string;
+  machine: string;
+  entry_point: number;
+  sections: ElfSection[];
+}
+
+export interface SampleStatic {
+  sample_id: string;
+  sha256: string;
+  size: number;
+  strings: string[];
+  iocs: StaticIocs;
+  pe: PeMetadata | null;
+  elf: ElfMetadata | null;
+}
+
 export interface CompareResponse {
   run_a: { run_id: string; sample_name: string };
   run_b: { run_id: string; sample_name: string };
@@ -268,6 +390,9 @@ export interface RuleMeta {
   technique: string;
   tactic: string;
   weight: number;
+  // The alert severity the rule actually fires with (backend RULE_META) —
+  // lets the coverage matrix tone chips by real severity, not weight.
+  severity: Severity;
 }
 
 // -- Global event feed / Event Viewer (roadmap 1.1) -------------------------
@@ -315,10 +440,13 @@ export interface FootprintSeedIp {
 }
 
 export interface FootprintPassive {
-  source: "not_configured" | "synthetic_demo";
+  source: "not_configured" | "synthetic_demo" | "live";
   resolutions: { domain: string; first_seen: string; last_seen: string; synthetic?: boolean }[];
   certificates: { cn: string; issuer: string; not_before: string; not_after: string; synthetic?: boolean }[];
   sibling_ips: { ip: string; relation: string; synthetic?: boolean }[];
+  // RDAP registration info per seed IP (live only): network name, CIDR,
+  // organization, country.
+  networks: { ip: string; cidr: string; netname: string | null; org: string | null; country: string | null; synthetic?: boolean }[];
 }
 
 export interface Footprint {

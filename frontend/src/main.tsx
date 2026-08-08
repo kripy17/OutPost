@@ -1,12 +1,16 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { createBrowserRouter, Outlet, RouterProvider, useLocation } from "react-router-dom";
 import "./index.css";
 
 import Nav from "./components/Nav";
+import WatchlistToaster from "./components/WatchlistToaster/WatchlistToaster";
+import { getMe } from "./lib/api";
+import LoginPage from "./routes/login";
 import CampaignsPage from "./routes/campaigns";
 import ComparePage from "./routes/compare";
+import CoveragePage from "./routes/coverage";
 import EventsPage from "./routes/events";
 import FootprintPage from "./routes/footprint";
 import MonitorPage from "./routes/monitor";
@@ -29,9 +33,27 @@ const queryClient = new QueryClient({
 
 function Layout() {
   const location = useLocation();
+
+  // Optional-auth boot gate: probe /auth/me once. When the backend has auth
+  // enabled and we're not authenticated, the login screen replaces all
+  // content — with auth disabled (zero-config default) this renders nothing
+  // and the app behaves exactly as before.
+  const { data: me } = useQuery({ queryKey: ["me"], queryFn: getMe, staleTime: 30_000, retry: 1 });
+  const needLogin = me !== undefined && me.enabled && !me.authenticated && location.pathname !== "/login";
+
+  if (needLogin) {
+    return (
+      <div className="min-h-screen">
+        <LoginPage />
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen">
       <Nav />
+      {/* Global watchlist toaster — alive on every page, top-right. */}
+      <WatchlistToaster />
       {/* The left rail is fixed; the content column offsets for it (lg+).
           Both widths come from var(--rail-w), so the collapsed icon-only rail
           and the content offset always match. */}
@@ -56,6 +78,7 @@ const router = createBrowserRouter([
       { path: "/compare", element: <ComparePage /> },
       { path: "/watchlist", element: <WatchlistPage /> },
       { path: "/campaigns", element: <CampaignsPage /> },
+      { path: "/coverage", element: <CoveragePage /> },
       { path: "/rules", element: <RulesPage /> },
       { path: "/settings", element: <SettingsPage /> },
       { path: "/themes", element: <ThemesPage /> },

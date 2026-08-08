@@ -137,7 +137,17 @@ function SeedIpTable({ seeds }: { seeds: FootprintSeedIp[] }) {
   );
 }
 
-function PassiveCard({ title, note, empty, nodes }: { title: string; note: string; empty: string; nodes: { label: string; sub: string }[] }) {
+function PassiveCard({
+  title,
+  note,
+  empty,
+  nodes,
+}: {
+  title: string;
+  note: string;
+  empty: string;
+  nodes: { label: string; sub: string; synthetic?: boolean }[];
+}) {
   return (
     <Panel title={title} kicker={note}>
       {nodes.length === 0 ? (
@@ -149,7 +159,11 @@ function PassiveCard({ title, note, empty, nodes }: { title: string; note: strin
               <span className="min-w-0 truncate font-mono text-[11px] text-text-primary">{n.label}</span>
               <span className="flex shrink-0 items-center gap-1.5">
                 <span className="font-mono text-[10px] text-text-faint">{n.sub}</span>
-                <span className="rounded border border-accent/50 px-1 py-0.5 font-mono text-[9px] uppercase tracking-wide text-accent">synthetic</span>
+                {n.synthetic ? (
+                  <span className="rounded border border-accent/50 px-1 py-0.5 font-mono text-[9px] uppercase tracking-wide text-accent">synthetic</span>
+                ) : (
+                  <span className="rounded border border-risk-clean/50 px-1 py-0.5 font-mono text-[9px] uppercase tracking-wide text-risk-clean">live</span>
+                )}
               </span>
             </li>
           ))}
@@ -157,6 +171,13 @@ function PassiveCard({ title, note, empty, nodes }: { title: string; note: strin
       )}
     </Panel>
   );
+}
+
+/** Provider label per passive card — honest about where each row came from. */
+function passiveNote(source: Footprint["passive"]["source"], provider: string): string {
+  if (source === "synthetic_demo") return "synthetic preview";
+  if (source === "live") return `${provider} · live`;
+  return "offline — not configured";
 }
 
 export default function FootprintPage() {
@@ -207,17 +228,25 @@ export default function FootprintPage() {
         }
       />
 
-      {/* Roadmap banner — honest about the scaffold state */}
+      {/* Pipeline banner — live providers, honest fallback. Gated on the
+          footprint being loaded so it never flashes "offline" mid-fetch. */}
       <div className="mb-6 flex items-start gap-3 rounded-xl border border-accent/40 bg-accent/5 p-4">
         <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border border-accent/50 bg-accent/10 text-accent">
           <Icon name="globe" size={13} />
         </span>
         <div className="min-w-0">
-          <p className="font-mono text-xs font-semibold text-text-primary">Roadmap scaffold — seed data is real, passive expansion is stubbed</p>
+          <p className="font-mono text-xs font-semibold text-text-primary">
+            {footprint && footprint.passive.source === "live"
+              ? "Live passive expansion — reverse DNS + crt.sh CT logs + RDAP"
+              : footprint
+                ? "Seed data is real; passive lookups are offline right now"
+                : "Mapping the sample's observed infrastructure…"}
+          </p>
           <p className="mt-1 text-xs leading-relaxed text-text-muted">
-            The inner ring is genuine: every IP this sample reached, aggregated from its runs with cache-first reputations. The outer layer (resolutions,
-            certificates, sibling infrastructure) is an interface waiting for a passive-intel provider — flip the preview toggle to see the target UI shape
-            with clearly-labeled synthetic data.
+            The inner ring is genuine: every IP this sample reached, aggregated from its runs with cache-first reputations. The outer layer expands it
+            through keyless public sources — PTR reverse DNS for resolutions, Certificate Transparency logs (crt.sh) for TLS certificates, and RDAP for
+            registration + sibling networks. When the sources are unreachable the page degrades to an honest empty state; the preview toggle renders
+            clearly-labeled synthetic data for demos.
           </p>
         </div>
       </div>
@@ -280,25 +309,32 @@ export default function FootprintPage() {
             <FootprintMap footprint={footprint} />
           </Panel>
 
-          {/* Passive layer — the stubbed surface */}
-          <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+          {/* Passive layer — live providers (PTR → crt.sh + RDAP), with an
+              honest offline empty state and the labeled synthetic preview. */}
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-4">
             <PassiveCard
-              title="Passive DNS"
-              note={footprint.passive.source === "synthetic_demo" ? "synthetic preview" : "not configured"}
-              empty="Resolutions of the seed IPs will appear here once a passive-DNS source is connected (roadmap)."
-              nodes={footprint.passive.resolutions.map((r) => ({ label: r.domain, sub: `${r.first_seen.slice(0, 10)} → ${r.last_seen.slice(0, 10)}` }))}
+              title="Resolutions"
+              note={passiveNote(footprint.passive.source, "PTR")}
+              empty="No reverse-DNS records for the seed IPs — nothing to resolve, or the sources are unreachable."
+              nodes={footprint.passive.resolutions.map((r) => ({ label: r.domain, sub: `${r.first_seen.slice(0, 10)} → ${r.last_seen.slice(0, 10)}`, synthetic: r.synthetic }))}
             />
             <PassiveCard
               title="Certificates"
-              note={footprint.passive.source === "synthetic_demo" ? "synthetic preview" : "not configured"}
-              empty="TLS certificates seen on the seed infrastructure will appear here (roadmap)."
-              nodes={footprint.passive.certificates.map((c) => ({ label: c.cn, sub: c.issuer }))}
+              note={passiveNote(footprint.passive.source, "crt.sh")}
+              empty="No TLS certificates indexed for the seed infrastructure — crt.sh may be unreachable, or none are registered."
+              nodes={footprint.passive.certificates.map((c) => ({ label: c.cn, sub: c.issuer, synthetic: c.synthetic }))}
             />
             <PassiveCard
               title="Sibling infrastructure"
-              note={footprint.passive.source === "synthetic_demo" ? "synthetic preview" : "not configured"}
-              empty="Hosts sharing a network with the seed IPs — the 'same operator' hypothesis — will appear here (roadmap)."
-              nodes={footprint.passive.sibling_ips.map((s) => ({ label: s.ip, sub: s.relation }))}
+              note={passiveNote(footprint.passive.source, "RDAP")}
+              empty="Hosts sharing a network with the seed IPs — the 'same operator' hypothesis. Requires RDAP data."
+              nodes={footprint.passive.sibling_ips.map((s) => ({ label: s.ip, sub: s.relation, synthetic: s.synthetic }))}
+            />
+            <PassiveCard
+              title="Registration (RDAP)"
+              note={passiveNote(footprint.passive.source, "RDAP")}
+              empty="Registration info for the seed networks (name, CIDR, organization, country) will appear here."
+              nodes={footprint.passive.networks.map((n) => ({ label: n.cidr, sub: [n.netname, n.org, n.country].filter(Boolean).join(" · ") || n.ip, synthetic: n.synthetic }))}
             />
           </div>
         </div>

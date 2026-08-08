@@ -18,8 +18,10 @@ app = typer.Typer(
 
 
 def _register_commands() -> None:
+    from .commands.agent import app as agent_app
     from .commands.campaigns import campaigns
     from .commands.compare import compare
+    from .commands.coverage import coverage
     from .commands.export import export
     from .commands.list_runs import list_runs
     from .commands.notes import app as notes_app
@@ -39,10 +41,12 @@ def _register_commands() -> None:
     app.command("search")(search)
     app.command("compare")(compare)
     app.command("campaigns")(campaigns)
+    app.command("coverage")(coverage)
     app.command("rules")(rules)
     app.command("samples")(samples)
     app.add_typer(watchlist_app, name="watchlist")
     app.add_typer(notes_app, name="notes")
+    app.add_typer(agent_app, name="agent")
 
 
 @app.callback(invoke_without_command=True)

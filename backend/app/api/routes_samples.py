@@ -10,18 +10,22 @@ The webapp Monitor page uploads here to pre-fill the detonation platform and
 sample name — the "sample binary auto-detection (OS sniffing)" roadmap item.
 """
 
+import csv
 import hashlib
+import io
 import json
 import uuid
 from typing import Optional
 
 import httpx
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request, Response
+from fastapi.responses import FileResponse
 
+from ..core import config
 from ..core.db import db_session
 from ..models import samples as samples_store
-from ..services import enrichment, yara as yara_service
+from ..services import enrichment, static_analysis, yara as yara_service
 
 router = APIRouter(tags=["samples"])
 
@@ -106,6 +110,29 @@ def _guess_shebang(data: bytes) -> Optional[tuple[str, str]]:
     return "unknown", f"script (shebang: {interp})"
 
 
+def _store_bytes(sample_id: str, body: bytes) -> None:
+    """Persist the raw bytes to disk for later static analysis / download.
+
+    Idempotent — re-uploading identical bytes (dedup path) just overwrites
+    the same file. A failed write must not fail the upload; the sample's
+    metadata is still valid, static analysis just reports bytes unavailable.
+    """
+    try:
+        config.SAMPLES_DIR.mkdir(parents=True, exist_ok=True)
+        (config.SAMPLES_DIR / f"{sample_id}.bin").write_bytes(body)
+    except OSError:
+        pass
+
+
+def _load_bytes(sample_id: str) -> Optional[bytes]:
+    """Read a stored sample's raw bytes; None when absent (pre-persistence
+    uploads, or a failed write)."""
+    try:
+        return (config.SAMPLES_DIR / f"{sample_id}.bin").read_bytes()
+    except OSError:
+        return None
+
+
 def sniff_platform(data: bytes) -> Optional[tuple[str, str]]:
     """Return (platform, family) for a recognized signature, else None.
 
@@ -167,6 +194,10 @@ async def upload_sample(
             # NULL family, and re-uploading them is the honest backfill path.
             _, family = sniff_platform(body)
             samples_store.set_family(conn, existing["sample_id"], family)
+            # Backfill bytes on re-upload: samples stored before persistence
+            # landed have no .bin on disk — static analysis would report
+            # "bytes unavailable" until the same file comes back through.
+            _store_bytes(existing["sample_id"], body)
             return {
                 **dict(existing),
                 "family": family,
@@ -176,6 +207,9 @@ async def upload_sample(
             }
 
         sample_id = uuid.uuid4().hex[:12]
+        # Persist the raw bytes before/independent of the DB row — static
+        # analysis (strings/IOCs/PE/ELF) and the download endpoint read them.
+        _store_bytes(sample_id, body)
         row = samples_store.add_sample(
             conn,
             sample_id,
@@ -239,6 +273,30 @@ def list_samples(
     return {"total": total, "returned": len(out), "samples": out}
 
 
+@router.get("/samples/export", response_model=None)
+def export_samples(
+    q: str = Query("", max_length=200),
+    limit: int = Query(1000, ge=1, le=5000),
+):
+    """CSV of the sample vault (same filter as GET /samples) — name, hash,
+    platform, size, family, YARA hits, VT detections, detonation count."""
+    data = list_samples(q=q, limit=limit, offset=0)
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["sample_id", "original_name", "sha256", "detected_platform", "size", "family", "yara_rules", "vt_detections", "malware_family", "runs_count", "created_at"])
+    for s in data["samples"]:
+        writer.writerow([
+            s["sample_id"], s["original_name"], s["sha256"], s["detected_platform"],
+            s["size"], s["family"], "|".join(s["yara_rules"]), s["vt_detections"],
+            s["malware_family"], s["runs_count"], s["created_at"],
+        ])
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="outpost-samples.csv"'},
+    )
+
+
 @router.get("/samples/{sample_id}", response_model=None)
 def get_sample(sample_id: str):
     """One sample with the same parsed shape as the list endpoint — YARA rules
@@ -280,3 +338,58 @@ def get_sample_reputation(sample_id: str):
         "vt_detections": row["vt_detections"],
         "malware_family": row["malware_family"],
     }
+
+
+@router.get("/samples/{sample_id}/static", response_model=None)
+def get_sample_static(sample_id: str):
+    """Static analysis of a stored sample — strings, candidate IOCs, and
+    PE/ELF metadata (machine, sections, imports).
+
+    Computed on demand from the persisted bytes; no external tooling.
+    404 when the sample is unknown or its bytes were never stored (uploads
+    from before byte persistence — the 404 detail names the fix: re-upload).
+    """
+    with db_session() as conn:
+        row = samples_store.get_sample(conn, sample_id)
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Unknown sample_id: {sample_id}")
+    body = _load_bytes(sample_id)
+    if body is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Sample bytes are not stored — re-upload the file to enable static analysis.",
+        )
+    analysis = static_analysis.analyze_sample(body)
+    return {
+        "sample_id": sample_id,
+        "sha256": row["sha256"],
+        "size": len(body),
+        **analysis,
+    }
+
+
+@router.get("/samples/{sample_id}/download")
+def download_sample(sample_id: str):
+    """Hand the stored bytes back to the analyst (FileResponse).
+
+    The filename carries the original name; the `x-outpost-sha256` header lets
+    a client verify integrity without a second round-trip. 404 when the sample
+    is unknown or its bytes were never stored.
+    """
+    with db_session() as conn:
+        row = samples_store.get_sample(conn, sample_id)
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Unknown sample_id: {sample_id}")
+    path = config.SAMPLES_DIR / f"{sample_id}.bin"
+    if not path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="Sample bytes are not stored — re-upload the file to enable download.",
+        )
+    safe_name = "".join(c for c in row["original_name"] if c not in '"/\\:?*<>|').strip() or "sample.bin"
+    return FileResponse(
+        path,
+        media_type="application/octet-stream",
+        filename=safe_name,
+        headers={"x-outpost-sha256": row["sha256"]},
+    )

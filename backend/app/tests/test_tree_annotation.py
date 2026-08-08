@@ -33,10 +33,14 @@ def _net(run_id: str, pid: int, ip: str, ts: int = 0) -> dict:
 
 
 def _seed_reputation(conn, ip: str, reputation: str) -> None:
+    # Fresh checked_at: the enrichment TTL is 7 days, so a fixed historical
+    # timestamp would go stale once the wall clock passes it and the cache
+    # would be re-queried (no API keys → "unknown") instead of honored.
+    checked_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
     conn.execute(
         "INSERT INTO enrichment_cache (ip, abuse_score, vt_malicious_count, reputation, checked_at) "
         "VALUES (?, NULL, NULL, ?, ?)",
-        (ip, reputation, _ts()),
+        (ip, reputation, checked_at),
     )
     conn.commit()
 

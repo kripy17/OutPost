@@ -10,6 +10,10 @@ import type { ProcessNode, Reputation } from "../../types";
 // Default-expand to depth 2 so the initial view stays scannable (docs/07).
 const DEFAULT_EXPAND_DEPTH = 2;
 
+// Stable empty set for the default prop — a new Set per render would churn
+// (and break referential-stability assumptions if anything memoized on it).
+const EMPTY_RECON = new Set<number>();
+
 // Halo colors — dot + left accent border + label, never color alone (docs/07:
 // filled-dot-plus-label rule; color-blind analysts must not misread risk).
 // All classes are literal so Tailwind v4 generates them.
@@ -59,20 +63,62 @@ function HaloBadge({ node }: { node: ProcessNode }) {
   );
 }
 
-function TreeNode({ node, depth }: { node: ProcessNode; depth: number }) {
+// Recon highlight — the live Monitor's recon-sweep affordance: when
+// enumeration-burst fires, the backend tags the alert with the pids of the
+// enumerating processes; the Monitor passes them here and each matching node
+// gets a dashed amber "recon" ring + radar dot, distinct from the risk halo.
+function ReconBadge() {
+  return (
+    <span
+      className="inline-flex shrink-0 items-center gap-1 rounded-full border border-dashed border-risk-suspicious/70 px-1.5 py-0.5 font-mono text-[9px] text-risk-suspicious"
+      title="Performed discovery enumeration (recon sweep)"
+    >
+      <span className="relative flex h-1.5 w-1.5">
+        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-risk-suspicious/60" aria-hidden />
+        <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-risk-suspicious" aria-hidden />
+      </span>
+      recon
+    </span>
+  );
+}
+
+function TreeNode({
+  node,
+  depth,
+  reconPids,
+  highlightPid,
+}: {
+  node: ProcessNode;
+  depth: number;
+  reconPids: Set<number>;
+  highlightPid?: number | null;
+}) {
   const [expanded, setExpanded] = useState(depth < DEFAULT_EXPAND_DEPTH || node.children.length === 0);
   const hasChildren = node.children.length > 0;
   const toggle = () => setExpanded((v) => !v);
   const rep = worstRep(node);
   // Defensive: a stale "clean" value must never crash the row (no halo entry).
   const accent = rep ? (HALO[rep]?.text ?? "") : "";
+  const isRecon = node.pid !== undefined && reconPids.has(node.pid);
+  // One-shot attention flash — the run-detail recon-actors list jumps here.
+  // The parent clears the pid after the animation, so it re-arms on the next.
+  // The flash composes with the recon state so an enumerating process keeps
+  // its amber ring while the accent ring rings around it.
+  const isHighlighted = highlightPid !== null && highlightPid !== undefined && node.pid === highlightPid;
 
   return (
     <div className="select-none">
       <div
+        data-pid={node.pid}
         className={`group flex items-baseline gap-2 rounded border-l-2 px-1 py-0.5 transition-colors duration-150 ${
-          rep && HALO[rep] ? `${HALO[rep].ring} pl-2` : "border-transparent pl-3 hover:bg-bg-elevated"
-        }`}
+          isHighlighted
+            ? "animate-node-flash border-accent bg-accent/10 pl-2"
+            : rep && HALO[rep]
+              ? `${HALO[rep].ring} pl-2`
+              : isRecon
+                ? "border-risk-suspicious/70 bg-risk-suspicious/[0.06] pl-2"
+                : "border-transparent pl-3 hover:bg-bg-elevated"
+        } ${isHighlighted && isRecon ? "ring-1 ring-inset ring-risk-suspicious/70" : ""}`}
       >
         {hasChildren ? (
           <button
@@ -89,6 +135,7 @@ function TreeNode({ node, depth }: { node: ProcessNode; depth: number }) {
         {node.pid !== undefined && (
           <span className="font-mono text-xs text-text-faint">[{node.pid}]</span>
         )}
+        {isRecon && <ReconBadge />}
         <HaloBadge node={node} />
         {node.command_line && (
           <span className="truncate font-mono text-xs text-text-muted" title={node.command_line}>
@@ -99,7 +146,7 @@ function TreeNode({ node, depth }: { node: ProcessNode; depth: number }) {
       {expanded && hasChildren && (
         <div className="ml-3 border-l border-border-subtle pl-3">
           {node.children.map((child) => (
-            <TreeNode key={child.pid} node={child} depth={depth + 1} />
+            <TreeNode key={child.pid} node={child} depth={depth + 1} reconPids={reconPids} highlightPid={highlightPid} />
           ))}
         </div>
       )}
@@ -107,7 +154,24 @@ function TreeNode({ node, depth }: { node: ProcessNode; depth: number }) {
   );
 }
 
-export default function ProcessTree({ roots }: { roots: ProcessNode[] }) {
+/** Count how many visible tree nodes match the recon pids. */
+function countRecon(ns: ProcessNode[], reconPids: Set<number>): number {
+  return ns.reduce(
+    (n, x) => n + (x.pid !== undefined && reconPids.has(x.pid) ? 1 : 0) + countRecon(x.children, reconPids),
+    0,
+  );
+}
+
+export default function ProcessTree({
+  roots,
+  reconPids = EMPTY_RECON,
+  highlightPid = null,
+}: {
+  roots: ProcessNode[];
+  reconPids?: Set<number>;
+  /** Scroll target for the run-detail recon-actors list (brief flash ring). */
+  highlightPid?: number | null;
+}) {
   if (roots.length === 0) {
     return <p className="text-sm text-text-muted">No process activity recorded for this run.</p>;
   }
@@ -118,13 +182,19 @@ export default function ProcessTree({ roots }: { roots: ProcessNode[] }) {
       (n, x) => n + (FLAGGED_RANKS.has(x.flagged_reputation ?? "") ? 1 : 0) + flagged(x.children),
       0,
     );
+  const reconCount = countRecon(roots, reconPids);
 
   return (
     <div className="font-mono text-sm">
-      <div className="mb-2 flex items-baseline gap-3 font-mono text-[10px] text-text-faint">
+      <div className="mb-2 flex flex-wrap items-baseline gap-x-3 gap-y-1 font-mono text-[10px] text-text-faint">
         <span>
           {total(roots)} process{total(roots) === 1 ? "" : "es"}
         </span>
+        {reconCount > 0 && (
+          <span className="text-risk-suspicious">
+            {reconCount} recon — enumeration sweep (T1082)
+          </span>
+        )}
         {flagged(roots) > 0 && (
           <span className="text-risk-malicious">
             {flagged(roots)} flagged — reached uncharacterized or known-bad infrastructure
@@ -132,7 +202,7 @@ export default function ProcessTree({ roots }: { roots: ProcessNode[] }) {
         )}
       </div>
       {roots.map((root) => (
-        <TreeNode key={root.pid} node={root} depth={0} />
+        <TreeNode key={root.pid} node={root} depth={0} reconPids={reconPids} highlightPid={highlightPid} />
       ))}
     </div>
   );

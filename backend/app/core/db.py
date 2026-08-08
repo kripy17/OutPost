@@ -32,7 +32,11 @@ CREATE TABLE IF NOT EXISTS alerts (
     triggered_at TEXT NOT NULL,
     related_pid INTEGER,
     related_ip TEXT,
-    details TEXT NOT NULL
+    related_pids TEXT,
+    details TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open', 'acknowledged', 'resolved')),
+    status_comment TEXT,
+    status_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS events (
@@ -78,6 +82,18 @@ CREATE TABLE IF NOT EXISTS watchlist (
     added_at TEXT NOT NULL
 );
 
+-- Watchlist live-alerting: first-seen-per-run dedup. A (run, ioc) row is
+-- written the first time the IOC appears; ingestion only fires the webhook /
+-- SSE toast when the INSERT actually inserted, so a live session that keeps
+-- touching a watched C2 IP alerts once, not on every batch.
+CREATE TABLE IF NOT EXISTS watchlist_hits (
+    run_id TEXT NOT NULL REFERENCES runs(run_id),
+    ioc_type TEXT NOT NULL,
+    ioc_value TEXT NOT NULL,
+    first_seen TEXT NOT NULL,
+    PRIMARY KEY (run_id, ioc_type, ioc_value)
+);
+
 -- Uploaded sample binaries (roadmap 1.4): magic-byte OS detection + hash.
 -- 'unknown' platform: containers/scripts we accept with an honest "can't tell"
 -- guess (untyped zip, unrecognized shebang interpreter). Reputation columns
@@ -119,6 +135,28 @@ CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+-- Alert triage (analyst workflow): per-run IOC allowlists (matching alerts are
+-- suppressed going forward and auto-acknowledged when added) and per-rule
+-- suppressions (run_id NULL = global, set = that run only).
+CREATE TABLE IF NOT EXISTS run_allowlist (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL REFERENCES runs(run_id),
+    kind TEXT NOT NULL CHECK(kind IN ('ip', 'file', 'registry', 'process', 'hash')),
+    value TEXT NOT NULL,
+    note TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_allowlist_run ON run_allowlist(run_id);
+
+CREATE TABLE IF NOT EXISTS rule_suppressions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    rule_id TEXT NOT NULL,
+    run_id TEXT,
+    reason TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_suppressions_rule ON rule_suppressions(rule_id);
 """
 
 
@@ -168,6 +206,32 @@ def _migrate_runs_platform_macos(conn: sqlite3.Connection) -> None:
     if violations:
         raise RuntimeError(f"runs migration left FK violations: {[dict(v) for v in violations[:3]]}")
     conn.commit()
+
+
+def _migrate_alerts_triage(conn: sqlite3.Connection) -> None:
+    """Idempotent: add the triage columns (status/comment/timestamp) to DBs
+    created before the analyst-workflow pass. Fresh DBs get them from SCHEMA;
+    older installs need the ALTER. Status defaults 'open' for every
+    pre-existing alert."""
+    cols = _column_names(conn, "alerts")
+    if "status" not in cols:
+        conn.execute("ALTER TABLE alerts ADD COLUMN status TEXT NOT NULL DEFAULT 'open'")
+    if "status_comment" not in cols:
+        conn.execute("ALTER TABLE alerts ADD COLUMN status_comment TEXT")
+    if "status_at" not in cols:
+        conn.execute("ALTER TABLE alerts ADD COLUMN status_at TEXT")
+    conn.commit()
+
+
+def _migrate_alerts_related_pids(conn: sqlite3.Connection) -> None:
+    """Idempotent: add the JSON `related_pids` column to pre-existing DBs.
+
+    Fresh DBs get it from SCHEMA; older installs (created before the recon
+    highlight landed) need the ALTER. JSON array text — parsed on read.
+    """
+    if "related_pids" not in _column_names(conn, "alerts"):
+        conn.execute("ALTER TABLE alerts ADD COLUMN related_pids TEXT")
+        conn.commit()
 
 
 def _migrate_samples_platform_unknown(conn: sqlite3.Connection) -> None:
@@ -239,6 +303,8 @@ def init_db() -> None:
     """Create tables if they don't exist. Idempotent — safe on every boot."""
     with get_connection() as conn:
         conn.executescript(SCHEMA)
+        _migrate_alerts_related_pids(conn)
+        _migrate_alerts_triage(conn)
         _migrate_samples_platform_unknown(conn)
         _migrate_runs_platform_macos(conn)
 

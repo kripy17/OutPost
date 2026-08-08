@@ -101,6 +101,42 @@ def test_active_live_run_claims_newest_open_session(client):
     assert client.get("/runs/active-live").status_code == 404
 
 
+def test_ingest_dedupes_within_batch_and_across_retries(client):
+    """A collector retry (or a duplicated feed line) stores each event once.
+
+    If duplicates were stored, beaconing/rename-burst windows would count the
+    same connection/write twice and could false-fire. The response's
+    `accepted` count must reflect only genuinely-new events.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    run_id = make_run(client)
+    base = datetime(2026, 8, 1, 10, 0, 0, tzinfo=timezone.utc)
+
+    def _conn(i: int) -> dict:
+        return {
+            "run_id": run_id, "platform": "windows", "event_type": "network_connection",
+            "timestamp": (base + timedelta(seconds=10 * i)).isoformat(),
+            "pid": 900, "dest_ip": "203.0.113.44", "dest_port": 443, "protocol": "TCP",
+        }
+
+    # Within-batch duplicate: [A, A, B] → only 2 unique events stored.
+    resp = client.post("/ingest/batch", json=[_conn(0), _conn(0), _conn(1)])
+    assert resp.status_code == 202
+    assert resp.json()["accepted"] == 2
+
+    # A full retry of the same events must store nothing new (and must not
+    # bump the event count that beaconing windows read from).
+    resp = client.post("/ingest/batch", json=[_conn(0), _conn(1)])
+    assert resp.status_code == 202
+    assert resp.json()["accepted"] == 0
+
+    # The run still sees exactly the two unique connections.
+    detail = client.get(f"/runs/{run_id}").json()
+    assert detail["run"]["unique_ips"] == 1
+    assert len(detail["timeline"]) == 2
+
+
 def test_ingest_validation_rejects_bad_event(client):
     run_id = make_run(client)
     bad = [

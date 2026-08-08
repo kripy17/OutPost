@@ -8,13 +8,26 @@
 
 from fastapi import APIRouter, HTTPException, Query, Response
 
+from datetime import datetime, timezone
+
 from ..core.db import db_session
-from ..core.schema import Alert, EventOut, NetworkConnection, NoteIn, RunDetail, RunNote, RunSummary
+from ..core.schema import (
+    AllowlistEntry,
+    Alert,
+    AllowlistIn,
+    EventOut,
+    NetworkConnection,
+    NoteIn,
+    RunDetail,
+    RunNote,
+    RunSummary,
+)
 from ..models import event as event_store
 from ..models import run as run_store
 from ..models import run_notes as notes_store
 from ..models import samples as samples_store
 from ..services import enrichment, killchain, process_tree
+from ..services.detection import allowlist_matches, load_run_sample_sha256
 
 router = APIRouter(tags=["runs"])
 
@@ -364,3 +377,73 @@ def add_run_note(run_id: str, body: NoteIn) -> RunNote:
             raise HTTPException(status_code=404, detail=f"Unknown run_id: {run_id}")
         row = notes_store.add_note(conn, run_id, note)
     return RunNote(**row)
+
+
+# ---------------------------------------------------------------------------
+# Alert triage — per-run IOC allowlists (analyst workflow)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/runs/{run_id}/allowlist", response_model=list[AllowlistEntry])
+def list_run_allowlist(run_id: str) -> list[AllowlistEntry]:
+    """IOCs allowlisted for this run, oldest first."""
+    with db_session() as conn:
+        if not run_store.get_run(conn, run_id):
+            raise HTTPException(status_code=404, detail=f"Unknown run_id: {run_id}")
+        rows = conn.execute(
+            "SELECT * FROM run_allowlist WHERE run_id = ? ORDER BY id ASC", (run_id,)
+        ).fetchall()
+    return [AllowlistEntry(**dict(r)) for r in rows]
+
+
+@router.post("/runs/{run_id}/allowlist", status_code=201, response_model=AllowlistEntry)
+def add_run_allowlist(run_id: str, body: AllowlistIn) -> AllowlistEntry:
+    """Allowlist an IOC for this run: matching alerts stop firing on future
+    batches, and any already-open matching alerts are auto-acknowledged with
+    a comment so the triage trail stays honest."""
+    value = body.value.strip()
+    if not value:
+        raise HTTPException(status_code=422, detail="value must not be empty")
+    now = datetime.now(timezone.utc).isoformat()
+    with db_session() as conn:
+        if not run_store.get_run(conn, run_id):
+            raise HTTPException(status_code=404, detail=f"Unknown run_id: {run_id}")
+        # Hash-kind entries match the run's uploaded sample SHA-256 — resolve
+        # it here so the retroactive ack agrees with the engine's gating.
+        sample_sha256 = load_run_sample_sha256(conn, run_id)
+        cur = conn.execute(
+            "INSERT INTO run_allowlist (run_id, kind, value, note, created_at) VALUES (?, ?, ?, ?, ?)",
+            (run_id, body.kind, value, (body.note or "").strip() or None, now),
+        )
+        entry_id = cur.lastrowid
+
+        # Retroactive triage: acknowledge every matching alert still open.
+        matching = conn.execute(
+            "SELECT id, related_ip, details FROM alerts WHERE run_id = ? AND status = 'open'",
+            (run_id,),
+        ).fetchall()
+        acked = 0
+        for row in matching:
+            if allowlist_matches(body.kind, value, row["related_ip"], row["details"], sample_sha256):
+                conn.execute(
+                    "UPDATE alerts SET status = 'acknowledged', status_comment = ?, status_at = ? WHERE id = ?",
+                    (f"Allowlisted: {body.kind} {value}", now, row["id"]),
+                )
+                acked += 1
+        row = conn.execute("SELECT * FROM run_allowlist WHERE id = ?", (entry_id,)).fetchone()
+    out = dict(row)
+    out["acked"] = acked  # model field — the UI toasts how many were acked
+    return AllowlistEntry(**out)
+
+
+@router.delete("/runs/{run_id}/allowlist/{entry_id}", status_code=204)
+def delete_run_allowlist(run_id: str, entry_id: int) -> None:
+    """Remove an allowlist entry. Already-acked alerts stay acked (the analyst
+    decided on them); only *future* matching alerts start firing again."""
+    with db_session() as conn:
+        cur = conn.execute(
+            "DELETE FROM run_allowlist WHERE id = ? AND run_id = ?", (entry_id, run_id)
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail=f"Unknown allowlist entry: {entry_id}")
+    return None

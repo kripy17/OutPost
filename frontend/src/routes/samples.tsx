@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Icon, platformIconName } from "../components/Icon";
 import { Chip, PageHeader, Panel, Stat } from "../components/ui";
-import { getSamples } from "../lib/api";
+import { exportSamplesCsv, getSamples, saveBlob } from "../lib/api";
 import type { SampleRow } from "../types";
 
 const PLATFORM_META: Record<SampleRow["detected_platform"], { label: string; tone: "accent" | "clean" | "suspicious" | "muted" }> = {
@@ -117,6 +117,16 @@ export default function SamplesPage() {
   });
 
   const samples = data?.samples ?? [];
+  const [exportError, setExportError] = useState<string | null>(null);
+
+  const onExport = async () => {
+    try {
+      const blob = await exportSamplesCsv({ q: debounced });
+      saveBlob(blob, "outpost-samples.csv");
+    } catch {
+      setExportError("CSV export failed — is the backend running?");
+    }
+  };
   const withYara = samples.filter((s) => s.yara_rules.length > 0).length;
   const flagged = samples.filter((s) => (s.vt_detections ?? 0) > 0).length;
   const byPlatform = (p: SampleRow["detected_platform"]) => samples.filter((s) => s.detected_platform === p).length;
@@ -132,13 +142,24 @@ export default function SamplesPage() {
         }
         lede="The binaries submitted for detonation with their OS sniff, YARA signature hits, and VirusTotal reputation — searchable by name, hash, or family. Upload new ones from the Monitor page."
         actions={
-          <Link
-            to="/monitor"
-            className="press inline-flex items-center gap-2 rounded-lg border border-accent/60 px-4 py-2 font-mono text-xs font-medium text-accent transition-colors duration-150 hover:bg-accent/10"
-          >
-            <Icon name="plus" size={13} />
-            Detonate new
-          </Link>
+          <div className="flex items-center gap-2">
+            {exportError && <span className="font-mono text-[10px] text-risk-malicious">{exportError}</span>}
+            <button
+              onClick={() => void onExport()}
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-2 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
+              title="Download the vault as CSV"
+            >
+              <Icon name="download" size={12} />
+              Export CSV
+            </button>
+            <Link
+              to="/monitor"
+              className="press inline-flex items-center gap-2 rounded-lg border border-accent/60 px-4 py-2 font-mono text-xs font-medium text-accent transition-colors duration-150 hover:bg-accent/10"
+            >
+              <Icon name="plus" size={13} />
+              Detonate new
+            </Link>
+          </div>
         }
       />
 

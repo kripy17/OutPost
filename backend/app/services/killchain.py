@@ -31,6 +31,10 @@ _CANONICAL_ORDER = [
     "Defense Evasion",
     "Command and Control",
     "Persistence",
+    "Privilege Escalation",
+    "Credential Access",
+    "Discovery",
+    "Exfiltration",
     "Impact",
 ]
 

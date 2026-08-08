@@ -116,14 +116,18 @@ def test_ioc_search_matches_process_names(client):
 
 
 def test_rule7_first_seen_process(client):
-    """Rule 7 fires only for processes never seen in a *prior* run."""
+    """Rule 7 fires for processes never seen in a *prior* run when the novelty
+    is meaningful — i.e. spawned by a script host (the FP gate). A first-seen
+    binary launched by a normal parent stays silent (live-monitoring noise)."""
     first = make_run(client, sample_name="run-one.bin")
     _ingest(client, first, [_proc(first, 1, 0, "known.exe", ts=1)])
 
     second = make_run(client, sample_name="run-two.bin")
     _ingest(client, second, [
-        _proc(second, 2, 0, "known.exe", ts=1),  # seen before — no alert
-        _proc(second, 3, 0, "novel.exe", ts=2),  # never seen — alert
+        _proc(second, 2, 0, "powershell.exe", ts=1),  # script host
+        _proc(second, 3, 2, "known.exe", ts=2),       # seen before — no alert
+        _proc(second, 4, 2, "novel.exe", ts=3),       # script-spawned, never seen — alert
+        _proc(second, 5, 0, "ui-app.exe", ts=4),      # normal parent — gate suppresses
     ])
 
     alerts = client.get(f"/runs/{second}/alerts").json()
@@ -131,6 +135,7 @@ def test_rule7_first_seen_process(client):
     assert len(first_seen) == 1
     assert first_seen[0]["severity"] == "suspicious"
     assert "novel.exe" in first_seen[0]["details"]
+    assert "powershell.exe" in first_seen[0]["details"]  # the script-host parent
 
 
 # ---------------------------------------------------------------------------

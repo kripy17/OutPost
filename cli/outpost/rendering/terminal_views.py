@@ -77,19 +77,26 @@ def render_run_table(runs: list[dict]) -> Table:
     return table
 
 
-def _add_tree_children(tree: Tree, node: dict) -> None:
+def _add_tree_children(tree: Tree, node: dict, recon_pids: set[int]) -> None:
     label = f"[bold]{node.get('process_name', '?')}[/bold]"
+    pid = node.get("pid")
+    if pid is not None:
+        label += f" [dim][{pid}][/dim]"
+    # Recon affordance — webapp parity: a pid behind the enumeration-burst
+    # alert gets a RECON tag, matching the process tree's amber recon ring.
+    if pid in recon_pids:
+        label += " [bold #D9A441]● RECON[/bold #D9A441]"
     if node.get("command_line"):
         label += f"  [dim]{node['command_line'][:60]}[/dim]"
     branch = tree.add(label)
     for child in node.get("children", []):
-        _add_tree_children(branch, child)
+        _add_tree_children(branch, child, recon_pids)
 
 
-def render_process_tree(roots: list[dict]) -> Tree:
+def render_process_tree(roots: list[dict], recon_pids: set[int] | None = None) -> Tree:
     tree = Tree("Process Tree")
     for root in roots:
-        _add_tree_children(tree, root)
+        _add_tree_children(tree, root, recon_pids or set())
     return tree
 
 
@@ -175,6 +182,40 @@ def render_sample_reputation(rep: dict) -> Panel:
     return Panel("\n".join(lines), title="[bold]Sample Reputation[/bold]", border_style=border)
 
 
+def _enum_kinds(details: str) -> list[str]:
+    """The alert reads "N distinct enumeration commands within 120s: a, b, c"
+    — the trailing comma-separated labels are the distinct recon *kinds*,
+    shown as chips (webapp ReconActorsPanel parity)."""
+    if ": " not in details:
+        return []
+    return [k for k in (k.strip() for k in details.split(": ", 1)[1].split(", ")) if k]
+
+
+def render_enum_kinds(kinds: list[str]) -> str:
+    """One-line amber chip row for the distinct enumeration commands."""
+    chips = " ".join(f"[bold #D9A441]▪ {k}[/bold #D9A441]" for k in kinds)
+    return f"[dim]enum:[/dim] {chips}"
+
+
+def _recon_summary(alerts: list[dict]) -> tuple[set[int], str | None, list[str]]:
+    """Recon affordance (webapp parity): union the enumeration-burst actors,
+    build the distinct-commands summary, and list the command kinds.
+    Returns (recon_pids, sweep_line, enum_kinds)."""
+    bursts = [a for a in alerts if a.get("rule_id") == "enumeration-burst"]
+    if not bursts:
+        return set(), None, []
+    pids: set[int] = set()
+    for a in bursts:
+        for p in a.get("related_pids") or []:
+            if p is not None:
+                pids.add(p)
+    details = bursts[0].get("details") or ""
+    # The alert reads "N distinct enumeration commands within 120s: a, b, c".
+    head = details.split(": ")[0] if ": " in details else details
+    line = f"[bold #D9A441]recon sweep[/bold #D9A441] — {head.lower()}, {len(pids)} process{'es' if len(pids) != 1 else ''} [dim](T1082 · Discovery)[/dim]"
+    return pids, line, _enum_kinds(details)
+
+
 def render_report(report: dict, run_id: str | None = None, rules_meta: list[dict] | None = None) -> None:
     run = report.get("run", {})
     rid = run_id or run.get("run_id", "?")
@@ -208,9 +249,14 @@ def render_report(report: dict, run_id: str | None = None, rules_meta: list[dict
     else:
         console.print("\n[#3FA796]No alerts — session looks clean.[/#3FA796]")
 
+    recon_pids, recon_line, enum_kinds = _recon_summary(report.get("alerts", []))
     if report.get("process_tree"):
         console.print()
-        console.print(render_process_tree(report["process_tree"]))
+        if recon_line:
+            console.print(recon_line)
+            if enum_kinds:
+                console.print(render_enum_kinds(enum_kinds))
+        console.print(render_process_tree(report["process_tree"], recon_pids))
 
     if report.get("network_connections"):
         console.print()

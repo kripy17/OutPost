@@ -5,9 +5,13 @@ Terminal mirror of the webapp "Campaigns" view: one block per signature IP
 shared-IOC evidence, and the tail of the combined run-attributed timeline.
 """
 
+import json
+from pathlib import Path
+
 import typer
 from rich.panel import Panel
 from rich.table import Table
+from typer.models import OptionInfo
 
 from ..lib import api_client
 from ..rendering.banners import show_banner
@@ -93,8 +97,26 @@ def _render_campaign(c: dict) -> None:
         console.print(tail)
 
 
-def campaigns() -> None:
+def campaigns(
+    export_stix: str = typer.Option(
+        None, "--export-stix",
+        help="Export the campaign with this signature IP as a STIX 2.1 bundle (webapp parity)",
+    ),
+    output: Path = typer.Option(None, "--output", "-o", help="Output file for --export-stix"),
+) -> None:
     show_banner(primary=False)
+
+    # Direct calls (e.g. unit tests) see the raw OptionInfo defaults, which
+    # typer replaces with real values on CLI invocation — treat OptionInfo as
+    # "option not provided" so `campaigns()` stays callable without typer.
+    if isinstance(export_stix, OptionInfo):
+        export_stix = None
+    if isinstance(output, OptionInfo):
+        output = None
+
+    if export_stix:
+        _export_campaign_stix(export_stix, output)
+        return
 
     try:
         data = api_client.get_campaigns()
@@ -111,3 +133,18 @@ def campaigns() -> None:
         _render_campaign(c)
         if i < len(data) - 1:
             console.print("")
+
+
+def _export_campaign_stix(campaign_key: str, output: Path | None) -> None:
+    """Write the campaign STIX bundle; errors (unknown key) exit non-zero."""
+    try:
+        bundle = api_client.export_campaign_stix(campaign_key)
+    except api_client.APIError as exc:
+        console.print(f"[bold #C4453B]Campaign STIX export failed: {exc}[/bold #C4453B]")
+        raise typer.Exit(1)
+
+    dest = output or Path(f"outpost-campaign-stix-{campaign_key}.json")
+    dest.write_text(json.dumps(bundle, indent=2))
+    console.print(
+        f"[#3FA796]Exported STIX 2.1 bundle for campaign {campaign_key} → {dest}[/#3FA796]"
+    )

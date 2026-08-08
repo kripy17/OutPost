@@ -4,7 +4,12 @@
 
 import type {
   Alert,
+  AlertStatus,
+  AllowlistEntry,
+  AllowlistKind,
   CompareResponse,
+  EnumPatternRow,
+  EnumPatternsResponse,
   EventIn,
   Campaign,
   EventFeedParams,
@@ -13,6 +18,7 @@ import type {
   GlobalAlert,
   IocSearchResponse,
   NotificationSettings,
+  NotificationSettingsIn,
   Platform,
   PlatformInfo,
   RuleMeta,
@@ -22,7 +28,9 @@ import type {
   SampleMeta,
   SampleRow,
   SamplesResponse,
+  SampleStatic,
   SessionType,
+  Suppression,
   TuningResponse,
   WatchlistEntry,
   WatchlistImportResponse,
@@ -30,8 +38,57 @@ import type {
 
 export const BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
+// -- Optional auth (backend env-gated) --------------------------------------
+// Token lives in localStorage; every request carries it when present. The
+// login screen and the router gate read/write via these helpers.
+const TOKEN_KEY = "outpost-token";
+
+export function getAuthToken(): string | null {
+  return localStorage.getItem(TOKEN_KEY);
+}
+
+export function setAuthToken(token: string | null): void {
+  if (token) localStorage.setItem(TOKEN_KEY, token);
+  else localStorage.removeItem(TOKEN_KEY);
+}
+
+export interface MeResponse {
+  enabled: boolean;
+  authenticated: boolean;
+  role: "admin" | "analyst" | null;
+  read_only: boolean;
+  expires_at: number | null;
+}
+
+export async function getMe(): Promise<MeResponse> {
+  const headers = authHeaders();
+  const res = await fetch(`${BASE_URL}/auth/me`, { headers });
+  if (!res.ok) throw new Error(`GET /auth/me → ${res.status}`);
+  return res.json();
+}
+
+export async function login(password: string): Promise<{ token: string; role: string; read_only: boolean }> {
+  const res = await fetch(`${BASE_URL}/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password }),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(detail || `POST /auth/login → ${res.status}`);
+  }
+  return res.json();
+}
+
+function authHeaders(extra?: Record<string, string>): Record<string, string> {
+  const token = getAuthToken();
+  const base: Record<string, string> = {};
+  if (token) base.Authorization = `Bearer ${token}`;
+  return { ...base, ...extra };
+}
+
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE_URL}${path}`);
+  const res = await fetch(`${BASE_URL}${path}`, { headers: authHeaders() });
   if (!res.ok) throw new Error(`GET ${path} → ${res.status}`);
   return res.json();
 }
@@ -39,17 +96,32 @@ async function get<T>(path: string): Promise<T> {
 async function post<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`POST ${path} → ${res.status}`);
   return res.json();
 }
 
+async function patch<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${BASE_URL}${path}`, {
+    method: "PATCH",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`PATCH ${path} → ${res.status}`);
+  return res.json();
+}
+
+async function del(path: string): Promise<void> {
+  const res = await fetch(`${BASE_URL}${path}`, { method: "DELETE", headers: authHeaders() });
+  if (res.status !== 204) throw new Error(`DELETE ${path} → ${res.status}`);
+}
+
 // -- health -----------------------------------------------------------------
 export async function getHealth(): Promise<boolean> {
   try {
-    const res = await fetch(`${BASE_URL}/health`);
+    const res = await fetch(`${BASE_URL}/health`, { headers: authHeaders() });
     return res.ok;
   } catch {
     return false; // unreachable — the deck's pulse reads offline
@@ -92,14 +164,28 @@ export async function getRunStix(runId: string): Promise<unknown> {
   return get<unknown>(`/runs/${runId}/export?format=stix`);
 }
 
+// Campaign STIX bundle (cluster → MISP/OpenCTI) + MITRE Navigator layer, both
+// as Blob downloads so the ExportButton's fetcher signature covers them.
+export async function getCampaignStix(key: string): Promise<Blob> {
+  const res = await fetch(`${BASE_URL}/campaigns/${encodeURIComponent(key)}/export?format=stix`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(`GET /campaigns/${key}/export → ${res.status}`);
+  return res.blob();
+}
+
+export async function getNavigatorLayer(): Promise<Blob> {
+  const res = await fetch(`${BASE_URL}/coverage/navigator`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(`GET /coverage/navigator → ${res.status}`);
+  return res.blob();
+}
+
 export async function getRunExport(runId: string): Promise<Blob> {
-  const res = await fetch(`${BASE_URL}/runs/${runId}/export`);
+  const res = await fetch(`${BASE_URL}/runs/${runId}/export`, { headers: authHeaders() });
   if (!res.ok) throw new Error(`GET /runs/${runId}/export → ${res.status}`);
   return res.blob();
 }
 
 export async function getRunIocsCsv(runId: string): Promise<Blob> {
-  const res = await fetch(`${BASE_URL}/runs/${runId}/iocs?format=csv`);
+  const res = await fetch(`${BASE_URL}/runs/${runId}/iocs?format=csv`, { headers: authHeaders() });
   if (!res.ok) throw new Error(`GET /runs/${runId}/iocs → ${res.status}`);
   return res.blob();
 }
@@ -114,7 +200,7 @@ export async function compareRuns(a: string, b: string): Promise<CompareResponse
 }
 
 export async function getRules(runId: string, format: "suricata" | "sigma"): Promise<string> {
-  const res = await fetch(`${BASE_URL}/runs/${runId}/rules?format=${format}`);
+  const res = await fetch(`${BASE_URL}/runs/${runId}/rules?format=${format}`, { headers: authHeaders() });
   if (!res.ok) throw new Error(`GET /runs/${runId}/rules → ${res.status}`);
   return res.text();
 }
@@ -128,12 +214,12 @@ export async function watchlistAdd(value: string, label: string): Promise<Watchl
 }
 
 export async function watchlistRemove(value: string): Promise<void> {
-  const res = await fetch(`${BASE_URL}/watchlist/${encodeURIComponent(value)}`, { method: "DELETE" });
+  const res = await fetch(`${BASE_URL}/watchlist/${encodeURIComponent(value)}`, { method: "DELETE", headers: authHeaders() });
   if (res.status !== 204) throw new Error(`DELETE /watchlist/${value} → ${res.status}`);
 }
 
 export async function watchlistExport(format: "json" | "csv"): Promise<Blob> {
-  const res = await fetch(`${BASE_URL}/watchlist/export?format=${format}`);
+  const res = await fetch(`${BASE_URL}/watchlist/export?format=${format}`, { headers: authHeaders() });
   if (!res.ok) throw new Error(`GET /watchlist/export → ${res.status}`);
   return res.blob();
 }
@@ -147,13 +233,56 @@ export async function getTuning(): Promise<TuningResponse> {
   return get<TuningResponse>("/rules/tuning");
 }
 
+export async function getEnumPatterns(): Promise<EnumPatternsResponse> {
+  return get<EnumPatternsResponse>("/rules/enum-patterns");
+}
+
+export async function setEnumPatterns(patterns: Record<string, EnumPatternRow[]>): Promise<{ platforms: Record<string, EnumPatternRow[]> }> {
+  const res = await fetch(`${BASE_URL}/rules/enum-patterns`, {
+    method: "PUT",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ patterns }),
+  });
+  if (!res.ok) throw new Error(`PUT /rules/enum-patterns → ${res.status}`);
+  return res.json();
+}
+
 export async function setTuning(param: string, value: string): Promise<{ current: string }> {
   return post<{ current: string }>(`/rules/tuning/${param}`, { value });
 }
 
 export async function resetTuning(param: string): Promise<void> {
-  const res = await fetch(`${BASE_URL}/rules/tuning/${param}`, { method: "DELETE" });
+  const res = await fetch(`${BASE_URL}/rules/tuning/${param}`, { method: "DELETE", headers: authHeaders() });
   if (res.status !== 204) throw new Error(`DELETE /rules/tuning/${param} → ${res.status}`);
+}
+
+// -- Alert triage (analyst workflow) -------------------------------------------
+export async function updateAlertStatus(alertId: number, status: AlertStatus, comment?: string): Promise<Alert> {
+  return patch<Alert>(`/alerts/${alertId}`, { status, comment: comment ?? "" });
+}
+
+export async function getRunAllowlist(runId: string): Promise<AllowlistEntry[]> {
+  return get<AllowlistEntry[]>(`/runs/${runId}/allowlist`);
+}
+
+export async function addRunAllowlist(runId: string, kind: AllowlistKind, value: string, note?: string): Promise<AllowlistEntry> {
+  return post<AllowlistEntry>(`/runs/${runId}/allowlist`, { kind, value, note: note ?? "" });
+}
+
+export async function removeRunAllowlist(runId: string, entryId: number): Promise<void> {
+  await del(`/runs/${runId}/allowlist/${entryId}`);
+}
+
+export async function getSuppressions(): Promise<Suppression[]> {
+  return get<Suppression[]>("/rules/suppressions");
+}
+
+export async function addSuppression(ruleId: string, reason?: string, runId?: string): Promise<Suppression> {
+  return post<Suppression>("/rules/suppressions", { rule_id: ruleId, reason: reason ?? "", run_id: runId ?? null });
+}
+
+export async function removeSuppression(id: number): Promise<void> {
+  await del(`/rules/suppressions/${id}`);
 }
 
 // -- Roadmap 3.1 — notifications ----------------------------------------------
@@ -161,11 +290,11 @@ export async function getNotificationSettings(): Promise<NotificationSettings> {
   return get<NotificationSettings>("/notifications/settings");
 }
 
-export async function setNotificationSettings(webhookUrl: string): Promise<NotificationSettings> {
+export async function setNotificationSettings(body: NotificationSettingsIn): Promise<NotificationSettings> {
   const res = await fetch(`${BASE_URL}/notifications/settings`, {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ webhook_url: webhookUrl }),
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`PUT /notifications/settings → ${res.status}`);
   return res.json();
@@ -208,9 +337,69 @@ export async function getSample(sampleId: string): Promise<SampleRow> {
   return get<SampleRow>(`/samples/${sampleId}`);
 }
 
+export async function getSampleStatic(sampleId: string): Promise<SampleStatic> {
+  return get<SampleStatic>(`/samples/${sampleId}/static`);
+}
+
+export async function downloadSample(sampleId: string, name: string): Promise<void> {
+  const res = await fetch(`${BASE_URL}/samples/${sampleId}/download`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(`GET /samples/${sampleId}/download → ${res.status}`);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+export async function exportSamplesCsv(params: { q?: string } = {}): Promise<Blob> {
+  const qs = params.q ? `?q=${encodeURIComponent(params.q)}` : "";
+  const res = await fetch(`${BASE_URL}/samples/export${qs}`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(`GET /samples/export → ${res.status}`);
+  return res.blob();
+}
+
+export async function exportEventsCsv(params: EventFeedParams = {}): Promise<Blob> {
+  const qs = new URLSearchParams();
+  if (params.event_type) qs.set("event_type", params.event_type);
+  if (params.platform) qs.set("platform", params.platform);
+  if (params.severity) qs.set("severity", params.severity);
+  if (params.q) qs.set("q", params.q);
+  const suffix = qs.toString();
+  const res = await fetch(`${BASE_URL}/events/export${suffix ? `?${suffix}` : ""}`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(`GET /events/export → ${res.status}`);
+  return res.blob();
+}
+
+export async function exportAlertsCsv(): Promise<Blob> {
+  const res = await fetch(`${BASE_URL}/alerts/export`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(`GET /alerts/export → ${res.status}`);
+  return res.blob();
+}
+
+export async function bulkUpdateAlertStatus(ids: number[], status: AlertStatus, comment?: string): Promise<{ updated: number }> {
+  return post<{ updated: number }>("/alerts/bulk", { ids, status, comment: comment ?? "" });
+}
+
+// Generic CSV download helper — fetch a Blob then trigger a browser save.
+export function saveBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 export async function uploadSample(name: string, file: Blob): Promise<SampleMeta> {
   const res = await fetch(`${BASE_URL}/samples?name=${encodeURIComponent(name)}`, {
     method: "POST",
+    headers: authHeaders(),
     body: file,
   });
   if (!res.ok) {

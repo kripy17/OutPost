@@ -3,13 +3,17 @@ import { getRunExport } from "../../lib/api";
 
 type Status = "idle" | "working" | "done" | "error";
 
+// Fetcher may need a run id (run report/STIX) or not (coverage Navigator
+// layer) — a zero-arg fetcher is assignable to this signature, so the same
+// button covers both. The id defaults to "" and is simply ignored by fetchers
+// that don't need it.
 export default function ExportButton({
   runId,
   label = "Export JSON",
   filename,
   fetcher = getRunExport,
 }: {
-  runId: string;
+  runId?: string;
   label?: string;
   filename?: string;
   fetcher?: (runId: string) => Promise<Blob>;
@@ -19,11 +23,11 @@ export default function ExportButton({
   const onExport = async () => {
     setStatus("working");
     try {
-      const blob = await fetcher(runId);
+      const blob = await fetcher(runId ?? "");
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = filename ?? `outpost-report-${runId.slice(0, 12)}.json`;
+      a.download = filename ?? (runId ? `outpost-report-${runId.slice(0, 12)}.json` : "outpost-export.json");
       a.click();
       URL.revokeObjectURL(url);
       setStatus("done");
