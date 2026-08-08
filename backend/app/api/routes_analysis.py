@@ -3,15 +3,19 @@
 - GET /events       — global event feed across all runs: filter by event type,
                       platform, run severity (has-alert), and free text; offset
                       pagination. The webapp's Event Viewer page.
+- GET /events/export — same filters, CSV download (analysts hand the feed to
+                      spreadsheets / threat-intel pipelines).
 - GET /rules/meta   — MITRE ATT&CK technique/tactic + weight for every rule.
 """
 
+import csv
+import io
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Response
 
 from ..core.db import db_session
-from ..services.risk import RULE_META
+from ..services.risk import RULE_META, rule_name
 
 router = APIRouter(tags=["analysis"])
 
@@ -103,27 +107,50 @@ def list_events(
     }
 
 
+@router.get("/events/export", response_model=None)
+def export_events(
+    event_type: Optional[str] = None,
+    platform: Optional[str] = None,
+    severity: Optional[str] = None,
+    q: Optional[str] = None,
+    limit: int = Query(1000, ge=1, le=5000),
+):
+    """CSV export of the filtered event feed (same filters as GET /events).
+
+    `limit` defaults much higher than the feed's (1000, up to 5000) — export
+    is the bulk path; the webapp caps at 500 for interactive pagination.
+    """
+    feed = list_events(event_type=event_type, platform=platform, severity=severity, q=q, limit=limit, offset=0)
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["timestamp", "run_id", "sample_name", "platform", "event_type", "pid", "ppid", "process_name", "command_line", "dest_ip", "dest_port", "protocol", "file_path", "registry_key", "run_severity"])
+    for ev in feed["events"]:
+        writer.writerow([
+            ev["timestamp"], ev["run_id"], ev["sample_name"], ev["platform"],
+            ev["event_type"], ev["pid"], ev["ppid"], ev["process_name"],
+            ev["command_line"], ev["dest_ip"], ev["dest_port"], ev["protocol"],
+            ev["file_path"], ev["registry_key"], ev["run_severity"],
+        ])
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="outpost-events.csv"'},
+    )
+
+
 @router.get("/rules/meta", response_model=None)
 def get_rules_meta():
     """ATT&CK technique/tactic + risk weight per rule (roadmap 1.3)."""
     return [
-        {"rule_id": rid, "rule_name": _rule_name(rid), **RULE_META[rid]}
+        {"rule_id": rid, "rule_name": rule_name(rid), **RULE_META[rid]}
         for rid in sorted(RULE_META)
     ]
 
 
-def _rule_name(rule_id: str) -> str:
-    """Human rule names mirror detection.py's alert titles."""
-    names = {
-        "masquerading": "Process masquerading as system binary",
-        "suspicious-parent-child": "Suspicious parent-child process relationship",
-        "lolbin-abuse": "Living-off-the-land binary abuse",
-        "beaconing": "C2-style beaconing",
-        "registry-persistence": "Persistence via registry Run key",
-        "autostart-persistence": "Persistence via shell/autostart file",
-        "rename-burst": "Rapid file write burst (possible ransomware)",
-        "first-seen-process": "First-seen process (novelty)",
-        "unusual-port": "Connection to uncommon C2-style port",
-        "attack-chain": "Coordinated attack chain",
-    }
-    return names.get(rule_id, rule_id)
+@router.get("/coverage/navigator", response_model=None)
+def get_coverage_navigator():
+    """The coverage matrix as a MITRE ATT&CK Navigator layer (v4.3) — importable
+    into https://mitre-attack.github.io/attack-navigator/ (Upload a layer)."""
+    from ..services.navigator import build_navigator_layer
+
+    return build_navigator_layer()

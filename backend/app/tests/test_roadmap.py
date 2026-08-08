@@ -32,6 +32,72 @@ def _proc(run_id: str, name: str, cmdline: str, ts: str, pid: int, ppid: int = 1
     }
 
 
+# -- Enumeration pattern tables (rule 15) ----------------------------------------
+
+
+def _enum_proc(run_id: str, name: str, cmdline: str, ts: str, pid: int) -> dict:
+    return {
+        "run_id": run_id, "platform": "linux", "event_type": "process_create",
+        "timestamp": ts, "pid": pid, "ppid": 1, "process_name": name, "command_line": cmdline,
+    }
+
+
+def test_enum_patterns_list_exposes_platforms_and_defaults(client):
+    resp = client.get("/rules/enum-patterns")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert set(body["platforms"]) == {"windows", "linux", "macos"}
+    assert body["defaults"] == body["platforms"]  # untouched == stock
+    assert any(r["pattern"] == r"\bwhoami\b" for r in body["platforms"]["linux"])
+
+
+def test_enum_patterns_override_applies_live_to_detection(client):
+    """A custom recon command added via the editor fires enumeration-burst on
+    the next ingested batch; deleting the override restores stock behavior."""
+    marker = "custom-recon-tool-9f"  # distinctive — never in defaults
+    resp = client.get("/rules/enum-patterns").json()
+    linux = list(resp["platforms"]["linux"])
+    linux.append({"pattern": rf"\b{marker}\b", "label": "custom recon marker"})
+    put = client.put("/rules/enum-patterns", json={"patterns": {**resp["platforms"], "linux": linux}})
+    assert put.status_code == 200
+
+    try:
+        # Two stock commands + the custom one = 3 distinct kinds → fires.
+        run_id = make_run(client, sample_name=f"enum-ov-{marker}.bin", platform="linux")
+        client.post("/ingest/batch", json=[
+            _enum_proc(run_id, "whoami", "whoami", _ts(5), pid=901),
+            _enum_proc(run_id, "uname", "uname -a", _ts(4), pid=902),
+            _enum_proc(run_id, marker, f"{marker} --dump-all", _ts(3), pid=903),
+        ])
+        alerts = client.get(f"/runs/{run_id}/alerts").json()
+        burst = [a for a in alerts if a["rule_id"] == "enumeration-burst"]
+        assert len(burst) == 1
+        assert "custom recon marker" in burst[0]["details"]
+
+        # Without the override, the custom command no longer counts — two
+        # distinct kinds stay under the threshold and nothing fires.
+        assert client.delete("/rules/enum-patterns").status_code == 204
+        run2 = make_run(client, sample_name=f"enum-reset-{marker}.bin", platform="linux")
+        client.post("/ingest/batch", json=[
+            _enum_proc(run2, "whoami", "whoami", _ts(5), pid=911),
+            _enum_proc(run2, "uname", "uname -a", _ts(4), pid=912),
+            _enum_proc(run2, marker, f"{marker} --dump-all", _ts(3), pid=913),
+        ])
+        alerts2 = client.get(f"/runs/{run2}/alerts").json()
+        assert not any(a["rule_id"] == "enumeration-burst" for a in alerts2)
+
+        # And the list endpoint reports stock again.
+        assert client.get("/rules/enum-patterns").json()["platforms"] == resp["platforms"]
+    finally:
+        client.delete("/rules/enum-patterns")  # never leak the override
+
+
+def test_enum_patterns_rejects_unknown_platform(client):
+    resp = client.get("/rules/enum-patterns").json()
+    bad = client.put("/rules/enum-patterns", json={"patterns": {**resp["platforms"], "plan9": []}})
+    assert bad.status_code == 422
+
+
 # -- Roadmap 2.3: rule tuning ---------------------------------------------------
 
 
@@ -204,6 +270,174 @@ async def _send(client, alerts):
     from ..services.notifications import notify_new_alerts
 
     return await notify_new_alerts(alerts)
+
+
+# -- Roadmap 3.1b: multi-channel notifications -----------------------------------
+
+
+def _capture_http(monkeypatch):
+    """Monkeypatch httpx.AsyncClient to capture POSTs; returns the list."""
+    captured: list[dict] = []
+
+    class FakeResp:
+        def raise_for_status(self):
+            return None
+
+    class FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, json=None):
+            captured.append({"url": url, "json": json})
+            return FakeResp()
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
+    return captured
+
+
+def _mal_alert() -> Alert:
+    from ..core.schema import Alert
+
+    return Alert(
+        run_id="multi", rule_id="beaconing", rule_name="Beaconing", severity="malicious",
+        triggered_at=datetime.now(timezone.utc), details="203.0.113.9:4444 x5",
+    )
+
+
+def test_notifications_settings_full_roundtrip_and_password_masking(client):
+    body = {
+        "webhook_url": "http://hook.local/a",
+        "slack_webhook": "http://hooks.slack.com/b",
+        "discord_webhook": "http://discord.com/api/webhooks/c",
+        "telegram_bot_token": "123:ABC",
+        "telegram_chat_id": "-10042",
+        "smtp_host": "smtp.example.com",
+        "smtp_port": 587,
+        "smtp_user": "soc@example.com",
+        "smtp_pass": "hunter2",
+        "smtp_from": "outpost@example.com",
+        "smtp_to": "analyst@example.com",
+    }
+    resp = client.put("/notifications/settings", json=body)
+    assert resp.status_code == 200
+    got = resp.json()
+    assert got["enabled"] is True
+    assert got["smtp_host"] == "smtp.example.com"
+    # Password is never echoed back; a set flag signals it exists.
+    assert got["smtp_pass"] == "" and got["smtp_pass_set"] is True
+
+    # A subsequent save with a blank password must retain the stored one.
+    blank = client.put(
+        "/notifications/settings",
+        json={"webhook_url": "http://hook.local/a", "smtp_host": "smtp.example.com", "smtp_pass": ""},
+    ).json()
+    assert blank["smtp_pass_set"] is True
+
+    # Clearing explicitly (new password or whitespace) updates it.
+    cleared = client.put(
+        "/notifications/settings",
+        json={"webhook_url": "http://hook.local/a", "smtp_host": "smtp.example.com", "smtp_pass": "newpass"},
+    ).json()
+    assert cleared["smtp_pass_set"] is True
+
+    # Disable everything → enabled flips off.
+    off = client.put("/notifications/settings", json={}).json()
+    assert off["enabled"] is False
+
+
+def test_multi_channel_fanout_fires_each_configured_channel(client, monkeypatch):
+    """One malicious alert delivers to webhook + slack + discord + telegram."""
+    captured = _capture_http(monkeypatch)
+    client.put(
+        "/notifications/settings",
+        json={
+            "webhook_url": "http://hook.test/generic",
+            "slack_webhook": "http://hooks.slack.test/soc",
+            "discord_webhook": "http://discord.test/wc",
+            "telegram_bot_token": "123:ABC",
+            "telegram_chat_id": "-10042",
+        },
+    )
+    import asyncio
+
+    urls = asyncio.run(_send(client, [_mal_alert()]))
+    assert len(urls) == 4  # all four channels attempted
+
+    by_url = {c["url"]: c for c in captured}
+    assert "http://hook.test/generic" in by_url  # generic webhook: raw JSON payload
+    assert by_url["http://hook.test/generic"]["json"]["severity"] == "malicious"
+    # Slack: text field; Discord: embed; Telegram: chat_id + text.
+    assert "text" in by_url["http://hooks.slack.test/soc"]["json"]
+    assert "embeds" in by_url["http://discord.test/wc"]["json"]
+    tg = by_url["https://api.telegram.org/bot123:ABC/sendMessage"]["json"]
+    assert tg["chat_id"] == "-10042" and "Beaconing" in tg["text"]
+
+
+def test_smtp_fires_via_thread_when_configured(client, monkeypatch):
+    """SMTP channel triggers the blocking send in a thread (captured calls)."""
+    import asyncio
+    import threading
+
+    from ..services import notifications as notify
+
+    calls: list[dict] = []
+    orig = notify.asyncio.to_thread
+
+    def fake_to_thread(fn, *args, **kwargs):
+        fn(*args, **kwargs)
+        return None
+
+    monkeypatch.setattr(notify.asyncio, "to_thread", fake_to_thread)
+    monkeypatch.setattr(
+        notify.smtplib, "SMTP",
+        lambda *a, **k: _FakeSmtp(calls),
+    )
+    client.put(
+        "/notifications/settings",
+        json={
+            "smtp_host": "smtp.test", "smtp_port": 587,
+            "smtp_user": "u", "smtp_pass": "p",
+            "smtp_from": "outpost@test", "smtp_to": "a@test,b@test",
+        },
+    )
+    asyncio.run(_send(client, [_mal_alert()]))
+    assert len(calls) == 1
+    assert calls[0]["subject"]
+    assert "Beaconing" in calls[0]["subject"]
+
+
+class _FakeSmtp:
+    """Minimal smtplib.SMTP stand-in recording the message it sends."""
+
+    def __init__(self, calls, *a, **k):
+        self._calls = calls
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def ehlo(self):
+        return None
+
+    def starttls(self, context=None):
+        return None
+
+    def login(self, user, pwd):
+        return None
+
+    def send_message(self, msg):
+        self._calls.append({"subject": msg["Subject"]})
+
 
 
 # -- Roadmap 3.3: STIX export ------------------------------------------------------

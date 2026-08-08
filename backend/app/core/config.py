@@ -14,6 +14,11 @@ DATA_DIR = BASE_DIR / "data"
 
 DATABASE_PATH = os.getenv("DATABASE_PATH", str(DATA_DIR / "outpost.db"))
 
+# Stored sample bytes (static analysis + download). Each uploaded sample is
+# persisted as {sample_id}.bin here so triage can re-scan it without holding
+# the upload in memory. Tests override SAMPLES_DIR to a temp dir.
+SAMPLES_DIR = Path(os.getenv("SAMPLES_DIR", str(DATA_DIR / "samples")))
+
 
 def _parse_origins(raw: str) -> list[str]:
     """Accept CORS_ORIGINS as a comma list OR a JSON array of origins.

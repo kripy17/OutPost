@@ -1,9 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
+import ExportButton from "../components/ExportButton/ExportButton";
 import { EVENT_ICON, Icon, platformIconName } from "../components/Icon";
 import { eventDetail, TYPE_STYLE } from "../components/TimelineView/TimelineView";
 import { PageHeader } from "../components/ui";
-import { getCampaigns } from "../lib/api";
+import { getCampaigns, getCampaignStix } from "../lib/api";
 import type { Campaign, CampaignIoc, Severity } from "../types";
 
 const MAX_TIMELINE = 40;
@@ -80,8 +81,16 @@ function CampaignCard({ campaign }: { campaign: Campaign }) {
           {campaign.runs.length} sample{campaign.runs.length === 1 ? "" : "s"}
         </span>
         <ReputationBadge campaign={campaign} />
-        <span className="ml-auto font-mono text-[10px] tabular-nums uppercase tracking-wide text-text-faint">
-          {fmt(campaign.span_start)} → {fmt(campaign.span_end)}
+        <span className="ml-auto flex items-center gap-3">
+          <ExportButton
+            runId={campaign.key}
+            label="Export STIX"
+            filename={`outpost-campaign-${campaign.key}.json`}
+            fetcher={getCampaignStix}
+          />
+          <span className="font-mono text-[10px] tabular-nums uppercase tracking-wide text-text-faint">
+            {fmt(campaign.span_start)} → {fmt(campaign.span_end)}
+          </span>
         </span>
       </header>
 

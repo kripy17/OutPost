@@ -60,6 +60,11 @@ def _indicator_pattern(ioc_type: str, value: str) -> str:
         return f"[file:hashes.'SHA-256' = '{escaped}']"
     if ioc_type == "process":
         return f"[process:name = '{escaped}']"
+    if ioc_type == "registry":
+        return f"[windows-registry-key:key = '{escaped}']"
+    # File paths (full Windows paths) use the same custom SCP as the run
+    # bundle — `file:name` is semantically a basename, so a full path there
+    # would be misleading.
     return f"[x-outpost-file-path:value = '{escaped}']"
 
 
@@ -146,6 +151,128 @@ def build_stix_bundle(run_id: str) -> dict:
     return {
         "type": "bundle",
         "id": _stix_id("bundle", run_id),
+        "spec_version": "2.1",
+        "objects": objects,
+    }
+
+
+# -- Campaign-level bundles (clusters of runs sharing infrastructure) --------
+
+
+def build_campaign_stix_bundle(campaign_key: str) -> dict:
+    """STIX 2.1 Bundle for one campaign (webapp Campaigns view parity).
+
+    A campaign is a cluster of runs sharing a signature IP. The bundle carries
+    the cluster itself (`x-outpost-campaign`), every shared IOC as an
+    `indicator` (so a threat-intel team can hunt the whole cluster, not one
+    run), one `x-outpost-run` per member, and `related-to`/`indicates`
+    relationships linking them.
+    """
+    from datetime import datetime, timezone
+
+    from ..core.db import db_session
+    from .campaigns import build_campaigns
+
+    with db_session() as conn:
+        matches = [c for c in build_campaigns(conn) if c["key"] == campaign_key]
+    if not matches:
+        return {"error": f"Unknown campaign key: {campaign_key}"}
+    camp = matches[0]
+
+    created = camp["span_start"] or datetime.now(timezone.utc).isoformat()
+    modified = datetime.now(timezone.utc).isoformat()
+
+    objects: list[dict] = []
+
+    # The cluster itself.
+    campaign_id = _stix_id("x-outpost-campaign", camp["key"])
+    objects.append(
+        {
+            "type": "x-outpost-campaign",
+            "id": campaign_id,
+            "spec_version": "2.1",
+            "name": f"{camp['key']} — shared-infrastructure campaign",
+            "key": camp["key"],
+            "reputation": camp.get("reputation"),
+            "watchlist": camp.get("watchlist", False),
+            "watchlist_label": camp.get("watchlist_label"),
+            "span_start": camp.get("span_start"),
+            "span_end": camp.get("span_end"),
+            "member_count": len(camp["runs"]),
+            "chain_label": camp.get("chain_label"),
+        }
+    )
+
+    # One indicator per distinct shared IOC, labeled by cluster reputation.
+    label = "malicious" if camp.get("reputation") == "malicious" else "suspicious"
+    ioc_patterns = {
+        "ips": "ip",
+        "registry_keys": "registry",
+        "file_paths": "file",
+        "processes": "process",
+    }
+    for bucket, ioc_type in ioc_patterns.items():
+        for ioc in camp["iocs"].get(bucket, []):
+            value = ioc["value"]
+            objects.append(
+                _indicator(
+                    ioc_type,
+                    value,
+                    label,
+                    _indicator_pattern(ioc_type, value),
+                    f"campaign:{camp['key']}",
+                    created,
+                    modified,
+                )
+            )
+
+    # Member runs + relationships: run → campaign (related-to) and each
+    # indicator → campaign (indicates), so the cluster graph is navigable.
+    indicator_ids = {o["id"] for o in objects if o["type"] == "indicator"}
+    for member in camp["runs"]:
+        run_ref = _stix_id("x-outpost-run", member["run_id"])
+        objects.append(
+            {
+                "type": "x-outpost-run",
+                "id": run_ref,
+                "spec_version": "2.1",
+                "name": member["sample_name"],
+                "platform": member.get("platform"),
+                "started_at": member.get("started_at"),
+                "completed_at": member.get("completed_at"),
+                "alert_count": member.get("alert_count"),
+                "highest_severity": member.get("highest_severity"),
+            }
+        )
+        objects.append(
+            {
+                "type": "relationship",
+                "id": _stix_id("relationship", f"{member['run_id']}->{camp['key']}"),
+                "spec_version": "2.1",
+                "relationship_type": "related-to",
+                "source_ref": run_ref,
+                "target_ref": campaign_id,
+                "created": created,
+                "modified": modified,
+            }
+        )
+    for indicator_id in indicator_ids:
+        objects.append(
+            {
+                "type": "relationship",
+                "id": _stix_id("relationship", f"{indicator_id}->{camp['key']}"),
+                "spec_version": "2.1",
+                "relationship_type": "indicates",
+                "source_ref": indicator_id,
+                "target_ref": campaign_id,
+                "created": created,
+                "modified": modified,
+            }
+        )
+
+    return {
+        "type": "bundle",
+        "id": _stix_id("bundle", f"campaign:{camp['key']}"),
         "spec_version": "2.1",
         "objects": objects,
     }

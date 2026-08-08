@@ -111,6 +111,19 @@ def export_stix(run_id: str) -> dict:
     return _get(f"/runs/{run_id}/export?format=stix")
 
 
+def export_campaign_stix(campaign_key: str) -> dict:
+    """STIX 2.1 bundle of a campaign cluster (webapp per-card export parity)."""
+    from urllib.parse import quote
+
+    return _get(f"/campaigns/{quote(campaign_key)}/export?format=stix")
+
+
+def get_navigator_layer() -> dict:
+    """The coverage matrix as a MITRE ATT&CK Navigator v4.3 layer (webapp
+    Coverage-page export parity) — importable into attack-navigator."""
+    return _get("/coverage/navigator")
+
+
 def watchlist_export(format: str = "json") -> bytes:
     resp = requests.get(f"{BASE_URL}/watchlist/export?format={format}", timeout=15)
     if not resp.ok:

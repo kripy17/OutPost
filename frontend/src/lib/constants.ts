@@ -43,6 +43,14 @@ export const KILL_CHAIN_STAGE: Record<string, string> = {
   "unusual-port": "Command and Control",
   "registry-persistence": "Persistence",
   "autostart-persistence": "Persistence",
+  "ssh-authorized-keys": "Persistence",
+  "scheduled-task": "Persistence",
+  "suid-set": "Privilege Escalation",
+  "credential-dump": "Credential Access",
+  "suspicious-extension": "Defense Evasion",
+  "shell-history-wipe": "Defense Evasion",
+  "enumeration-burst": "Discovery",
+  "data-staging": "Exfiltration",
   "rename-burst": "Impact",
   "attack-chain": "Full Chain",
 };
@@ -52,6 +60,10 @@ export const KILL_CHAIN_ORDER = [
   "Defense Evasion",
   "Command and Control",
   "Persistence",
+  "Privilege Escalation",
+  "Credential Access",
+  "Discovery",
+  "Exfiltration",
   "Impact",
   "Full Chain",
 ];
@@ -71,6 +83,20 @@ export const TREND_WINDOWS: { key: TrendWindow; label: string; spanMs: number; b
   { key: "7d", label: "7d", spanMs: 7 * 86_400_000, bucketMs: 86_400_000 },
   { key: "all", label: "All", spanMs: Infinity, bucketMs: 86_400_000 },
 ];
+
+// Enumeration-burst alert details read "…: label, label, label" — the
+// trailing list is the distinct recon *kinds* (the CLI's chips and the
+// webapp's ReconActorsPanel badges both parse this same shape). Shared here
+// so the run-detail panel and the live Monitor stay in lockstep.
+export function enumKindsFromDetails(details: string): string[] {
+  const idx = details.indexOf(": ");
+  if (idx === -1) return [];
+  return details
+    .slice(idx + 2)
+    .split(", ")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
 
 // Risk bands (roadmap 1.3) — score → color + label, reused by the detail
 // gauge and the history-card badge. Bands: 0 none, 1-29 low, 30-59 elevated,

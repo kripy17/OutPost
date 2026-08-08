@@ -410,6 +410,16 @@ export function IconTerminal() {
   );
 }
 
+export function IconTarget() {
+  return (
+    <S>
+      <circle cx="12" cy="12" r="8.5" />
+      <circle cx="12" cy="12" r="4.5" />
+      <circle cx="12" cy="12" r="0.9" fill="currentColor" />
+    </S>
+  );
+}
+
 export const ICONS = {
   grid: IconGrid,
   activity: IconActivity,
@@ -453,6 +463,7 @@ export const ICONS = {
   menu: IconMenu,
   command: IconCommand,
   terminal: IconTerminal,
+  target: IconTarget,
 } as const;
 
 export type IconName = keyof typeof ICONS;

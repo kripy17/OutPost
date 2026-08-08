@@ -1,20 +1,27 @@
-import { useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { EVENT_ICON, Icon, platformIconName } from "../components/Icon";
 import { PageHeader } from "../components/ui";
 import { searchIocs } from "../lib/api";
 import type { IocSearchResponse } from "../types";
 
 export default function SearchPage() {
-  const [value, setValue] = useState("");
+  const [params] = useSearchParams();
+  const [value, setValue] = useState(params.get("q") ?? "");
   const [result, setResult] = useState<IocSearchResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const onSearch = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const query = value.trim();
-    if (!query) return;
+  // Deep-link support (?q=…): static-analysis IOC chips jump here pre-filled
+  // and the search runs once on mount — one click from sample → history.
+  useEffect(() => {
+    const query = (params.get("q") ?? "").trim();
+    if (query) void runSearch(query);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function runSearch(query: string) {
+    setValue(query);
     setLoading(true);
     setError(null);
     try {
@@ -24,6 +31,13 @@ export default function SearchPage() {
     } finally {
       setLoading(false);
     }
+  }
+
+  const onSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    const query = value.trim();
+    if (!query) return;
+    void runSearch(query);
   };
 
   const sampleTone = (p: string) =>

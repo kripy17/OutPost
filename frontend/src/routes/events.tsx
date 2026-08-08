@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { EVENT_ICON, Icon, platformIconName } from "../components/Icon";
 import { PageHeader } from "../components/ui";
-import { getEvents } from "../lib/api";
+import { exportEventsCsv, getEvents, saveBlob } from "../lib/api";
 import type { EventFeedEvent, EventType, Platform, Severity } from "../types";
 
 const PAGE = 60;
@@ -147,6 +147,7 @@ export default function EventsPage() {
   const [offset, setOffset] = useState(0);
   const [selected, setSelected] = useState<EventFeedEvent | null>(null);
   const [live, setLive] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   const { data, isLoading, isError, isFetching } = useQuery({
     queryKey: ["events", category, severity, platform, submittedQ, offset],
@@ -184,18 +185,32 @@ export default function EventsPage() {
         }
         lede="Every process, network, file, and registry event across all sessions — grouped by log channel, leveled by severity, live when you want it. Select any entry for the full record."
         actions={
-          <button
-            onClick={() => setLive((v) => !v)}
-            className={`press inline-flex items-center gap-2 rounded-lg border px-3 py-2 font-mono text-xs transition-colors duration-150 ${
-              live
-                ? "border-signal/60 bg-signal/10 text-signal shadow-[var(--glow-signal)]"
-                : "border-border-subtle text-text-muted hover:text-text-primary"
-            }`}
-            aria-pressed={live}
-          >
-            <span className={`h-1.5 w-1.5 rounded-full ${live ? "animate-outpost-pulse bg-signal" : "bg-text-faint"}`} />
-            {live ? "Live · refreshing" : "Follow live"}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() =>
+                void exportEventsCsv({ event_type: category, severity, platform, q: submittedQ })
+                  .then((blob) => saveBlob(blob, "outpost-events.csv"))
+                  .catch(() => setExportError("CSV export failed — is the backend running?"))
+              }
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-2 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
+              title="Download the current filter as CSV"
+            >
+              <Icon name="download" size={12} />
+              Export CSV
+            </button>
+            <button
+              onClick={() => setLive((v) => !v)}
+              className={`press inline-flex items-center gap-2 rounded-lg border px-3 py-2 font-mono text-xs transition-colors duration-150 ${
+                live
+                  ? "border-signal/60 bg-signal/10 text-signal shadow-[var(--glow-signal)]"
+                  : "border-border-subtle text-text-muted hover:text-text-primary"
+              }`}
+              aria-pressed={live}
+            >
+              <span className={`h-1.5 w-1.5 rounded-full ${live ? "animate-outpost-pulse bg-signal" : "bg-text-faint"}`} />
+              {live ? "Live · refreshing" : "Follow live"}
+            </button>
+          </div>
         }
       />
 
@@ -291,6 +306,7 @@ export default function EventsPage() {
             {isLoading ? "Loading events…" : `${total} event${total === 1 ? "" : "s"} · showing ${offset + 1}–${Math.min(offset + PAGE, total)}`}
             {isFetching && " · refreshing…"}
             {live && " · live"}
+            {exportError && <span className="text-risk-malicious"> · {exportError}</span>}
           </p>
 
           {isError && (

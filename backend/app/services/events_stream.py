@@ -62,6 +62,27 @@ def publish_alerts(alerts: list[Any]) -> int:
                 "run_id": a.run_id,
                 "details": a.details,
                 "triggered_at": a.triggered_at.isoformat(),
+                # The live Monitor reads this to highlight the exact processes
+                # behind composite rules (e.g. enumeration-burst's recon sweep)
+                # without waiting for the next run-detail poll.
+                "related_pids": list(getattr(a, "related_pids", []) or []),
             },
         )
     return sent
+
+
+def publish_watchlist(run_id: str, sample_name: str, platform: str, matches: list[dict]) -> int:
+    """Publish a watched-IOC hit (live watchlist alerting).
+
+    Distinct from the `alert` event so the webapp can toast watchlist hits
+    with their own visual language — and on any page, not just the Monitor.
+    """
+    return publish(
+        "watchlist",
+        {
+            "run_id": run_id,
+            "sample_name": sample_name,
+            "platform": platform,
+            "matches": matches,
+        },
+    )

@@ -311,6 +311,20 @@ button {
   animation: outpost-record 1.8s ease-out infinite;
 }
 
+/* One-shot attention flash for a process-tree node — the run-detail recon
+   actors list scrolls to a pid and rings it once (accent ring, amber hint). */
+@keyframes outpost-node-flash {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 10px transparent;
+  }
+}
+.animate-node-flash {
+  animation: outpost-node-flash 1.4s ease-out;
+}
+
 /* ── Rail tooltip — follows the collapsed rail's icons (React-positioned, so
    it's never clipped by the nav's overflow). Fixed to the viewport at the
    rail's right edge; the rail sits at left:0 so element rects are viewport-relative. */

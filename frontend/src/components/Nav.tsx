@@ -107,6 +107,7 @@ const GROUPS: { label: string; links: NavItem[] }[] = [
     links: [
       { to: "/search", label: "IOC Search", iconName: "search" },
       { to: "/campaigns", label: "Campaigns", iconName: "flag" },
+      { to: "/coverage", label: "ATT&CK Coverage", iconName: "target" },
       { to: "/footprint", label: "Footprint", iconName: "globe" },
     ],
   },

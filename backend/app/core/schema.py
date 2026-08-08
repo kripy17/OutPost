@@ -17,6 +17,8 @@ EventType = Literal["process_create", "network_connection", "file_write", "regis
 SessionType = Literal["live", "analysis"]
 Severity = Literal["suspicious", "malicious"]
 Reputation = Literal["clean", "suspicious", "malicious", "unknown"]
+AlertStatus = Literal["open", "acknowledged", "resolved"]
+AllowlistKind = Literal["ip", "file", "registry", "process", "hash"]
 
 
 class EventIn(BaseModel):
@@ -62,7 +64,54 @@ class Alert(BaseModel):
     triggered_at: datetime
     related_pid: Optional[int] = None
     related_ip: Optional[str] = None
+    # PIDs of the processes behind a composite rule (e.g. the enumerating
+    # commands of enumeration-burst) — lets the live Monitor highlight the
+    # actual actors in the process tree the moment the rule fires.
+    related_pids: list[int] = []
     details: str
+    # Triage (analyst workflow): open → acknowledged → resolved, with the
+    # optional analyst comment recorded at the transition.
+    status: AlertStatus = "open"
+    status_comment: Optional[str] = None
+    status_at: Optional[datetime] = None
+
+
+class AlertStatusIn(BaseModel):
+    status: AlertStatus
+    comment: Optional[str] = None
+
+
+class AllowlistIn(BaseModel):
+    kind: AllowlistKind = "ip"
+    value: str = Field(min_length=1, max_length=500)
+    note: Optional[str] = None
+
+
+class AllowlistEntry(BaseModel):
+    id: int
+    run_id: str
+    kind: AllowlistKind
+    value: str
+    note: Optional[str] = None
+    created_at: datetime
+    # How many already-open matching alerts the POST auto-acknowledged (0 on
+    # GET list — only the create response carries a meaningful value).
+    acked: int = 0
+
+
+class SuppressionIn(BaseModel):
+    rule_id: str
+    # None = global (every run); set = only that run. 422 on unknown rule_id.
+    run_id: Optional[str] = None
+    reason: Optional[str] = None
+
+
+class Suppression(BaseModel):
+    id: int
+    rule_id: str
+    run_id: Optional[str] = None
+    reason: Optional[str] = None
+    created_at: datetime
 
 
 class ProcessNode(BaseModel):

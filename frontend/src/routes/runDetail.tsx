@@ -1,4 +1,5 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import AlertBanner from "../components/AlertBanner/AlertBanner";
 import ExportButton from "../components/ExportButton/ExportButton";
@@ -7,11 +8,12 @@ import KillChainStepper, { killChainStats } from "../components/KillChain/KillCh
 import { Panel } from "../components/ui";
 import NotesPanel from "../components/NotesPanel/NotesPanel";
 import ProcessTree from "../components/ProcessTree/ProcessTree";
+import { AllowlistPanel, SuppressionPanel } from "../components/TriagePanels/TriagePanels";
 import RulesPanel from "../components/RulesPanel/RulesPanel";
 import TimelineView from "../components/TimelineView/TimelineView";
-import { RISK_COLORS, riskBand } from "../lib/constants";
-import { getCampaigns, getRunDetail, getRunIocsCsv } from "../lib/api";
-import type { NetworkConnection, Reputation, RunDetail } from "../types";
+import { RISK_COLORS, enumKindsFromDetails, riskBand } from "../lib/constants";
+import { bulkUpdateAlertStatus, getCampaigns, getRunDetail, getRunIocsCsv, updateAlertStatus } from "../lib/api";
+import type { AlertStatus, NetworkConnection, Reputation, RunDetail } from "../types";
 
 /* ── Risk gauge — semicircular arc, colored by band ────────────────────── */
 
@@ -182,10 +184,112 @@ function KillChainCard({ links }: { links: RunDetail["kill_chain"] }) {
   );
 }
 
+/* ── Recon actors — the processes behind a Discovery enumeration sweep ─── */
+
+interface ReconActor {
+  pid: number;
+  process_name: string | null;
+  command_line: string | null;
+}
+
+/** Flatten the process tree into a pid → {name, command} lookup. */
+function resolvePids(roots: RunDetail["process_tree"], pids: number[]): Map<number, ReconActor> {
+  const out = new Map<number, ReconActor>();
+  const walk = (ns: RunDetail["process_tree"]) => {
+    for (const n of ns) {
+      if (n.pid !== undefined) out.set(n.pid, { pid: n.pid, process_name: n.process_name, command_line: n.command_line });
+      walk(n.children);
+    }
+  };
+  walk(roots);
+  // Keep only the requested pids, preserving alert order.
+  const kept = new Map<number, ReconActor>();
+  for (const p of pids) if (out.has(p)) kept.set(p, out.get(p)!);
+  return kept;
+}
+
+function ReconActorsPanel({
+  alerts,
+  tree,
+  onLocate,
+}: {
+  alerts: RunDetail["alerts"];
+  tree: RunDetail["process_tree"];
+  /** Scroll the process tree into view and flash the actor node. */
+  onLocate: (pid: number) => void;
+}) {
+  const burst = alerts.filter((a) => a.rule_id === "enumeration-burst");
+  if (burst.length === 0) return null;
+
+  // Union of all enumerating pids across bursts, in first-seen order.
+  const pids: number[] = [];
+  for (const a of burst) {
+    for (const p of a.related_pids ?? []) if (!pids.includes(p)) pids.push(p);
+  }
+  const actors = [...resolvePids(tree, pids).values()];
+  const kinds = enumKindsFromDetails(burst[0].details);
+
+  return (
+    <Panel
+      kicker="Recon · T1082"
+      title="Recon actors"
+      right={
+        <span className="font-mono text-[10px] text-text-faint">
+          {burst.length} sweep{burst.length === 1 ? "" : "s"} · {pids.length} process{pids.length === 1 ? "" : "es"}
+        </span>
+      }
+    >
+      {kinds.length > 0 && (
+        <p className="mb-3 flex flex-wrap gap-1.5">
+          {kinds.map((k) => (
+            <span
+              key={k}
+              className="rounded border border-risk-suspicious/40 bg-risk-suspicious/10 px-1.5 py-0.5 font-mono text-[9px] text-risk-suspicious"
+            >
+              {k}
+            </span>
+          ))}
+        </p>
+      )}
+      {actors.length === 0 ? (
+        <p className="text-xs text-text-muted">
+          The sweep fired, but its actor processes are outside this run's recorded tree.
+        </p>
+      ) : (
+        <ul className="divide-y divide-border-subtle/60">
+          {actors.map((a) => (
+            <li key={a.pid}>
+              <button
+                onClick={() => onLocate(a.pid)}
+                className="press group flex w-full items-center gap-2 rounded px-1 py-1.5 text-left font-mono text-xs transition-colors hover:bg-bg-elevated"
+                title={`Locate ${a.process_name ?? `pid ${a.pid}`} in the process tree`}
+              >
+                <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-dashed border-risk-suspicious/70 px-1.5 py-0.5 font-mono text-[9px] text-risk-suspicious">
+                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-risk-suspicious" aria-hidden />
+                  recon
+                </span>
+                <span className="text-text-primary">{a.process_name ?? "—"}</span>
+                <span className="text-text-faint">[{a.pid}]</span>
+                {a.command_line && <span className="truncate text-[10px] text-text-muted">{a.command_line}</span>}
+                <Icon
+                  name="arrowRight"
+                  size={12}
+                  className="ml-auto shrink-0 text-text-faint transition-colors group-hover:text-accent"
+                />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Panel>
+  );
+}
+
 /* ── Page ──────────────────────────────────────────────────────────────── */
 
 export default function RunDetailPage() {
   const { runId = "" } = useParams();
+  const queryClient = useQueryClient();
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ["run", runId],
@@ -197,6 +301,51 @@ export default function RunDetailPage() {
   });
 
   const { data: campaigns = [] } = useQuery({ queryKey: ["campaigns"], queryFn: getCampaigns });
+
+  // All hooks above the early returns — Rules of Hooks. Flash target for the
+  // recon-actors list: clicking an actor scrolls to the process tree and
+  // rings its node once. Cleared after the 1.4s animation.
+  const [flashPid, setFlashPid] = useState<number | null>(null);
+  const flashTimer = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (flashTimer.current !== null) window.clearTimeout(flashTimer.current);
+  }, []);
+  const onLocate = (pid: number) => {
+    document.getElementById("process-tree-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    setFlashPid(pid);
+    if (flashTimer.current !== null) window.clearTimeout(flashTimer.current);
+    flashTimer.current = window.setTimeout(() => setFlashPid(null), 1500);
+  };
+
+  // Recon ring in the tree (matches the Monitor): pids behind enumeration-burst.
+  const reconPids = useMemo(() => {
+    const set = new Set<number>();
+    for (const a of (data?.alerts ?? [])) {
+      if (a.rule_id === "enumeration-burst") (a.related_pids ?? []).forEach((p) => set.add(p));
+    }
+    return set;
+  }, [data?.alerts]);
+
+  // Alert triage: status transitions invalidate the run query so the pills,
+  // the open-count header, and the kill chain all re-read fresh state.
+  const onAlertStatus = useCallback(
+    (alertId: number, status: AlertStatus, comment?: string) => {
+      void updateAlertStatus(alertId, status, comment)
+        .then(() => queryClient.invalidateQueries({ queryKey: ["run", runId] }))
+        .catch(() => undefined);
+    },
+    [runId, queryClient],
+  );
+
+  // Bulk triage — one Ack/Resolve across many selected alerts.
+  const onBulkAlertStatus = useCallback(
+    (ids: number[], status: AlertStatus) => {
+      void bulkUpdateAlertStatus(ids, status)
+        .then(() => queryClient.invalidateQueries({ queryKey: ["run", runId] }))
+        .catch(() => undefined);
+    },
+    [runId, queryClient],
+  );
 
   if (isLoading) return <p className="p-8 text-sm text-text-muted">Loading run…</p>;
   if (isError || !data) {
@@ -281,15 +430,20 @@ export default function RunDetailPage() {
         >
           <KillChainStepper alerts={alerts} />
         </Panel>
-        <AlertBanner alerts={alerts} />
+        <AlertBanner alerts={alerts} triage onStatus={onAlertStatus} onBulkStatus={onBulkAlertStatus} />
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[3fr_2fr]">
-        <Panel kicker="Behavior" title="Process tree">
-          <ProcessTree roots={process_tree} />
-        </Panel>
+        <div id="process-tree-panel" className="scroll-mt-24">
+          <Panel kicker="Behavior" title="Process tree">
+            <ProcessTree roots={process_tree} reconPids={reconPids} highlightPid={flashPid} />
+          </Panel>
+        </div>
 
         <div className="space-y-6">
+          <ReconActorsPanel alerts={alerts} tree={process_tree} onLocate={onLocate} />
+          <AllowlistPanel runId={runId} />
+          <SuppressionPanel runId={runId} alerts={alerts} />
           <Panel
             kicker="Network"
             title="Connections"

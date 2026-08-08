@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useEffect, useRef, useState, type ChangeEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { copyToClipboard } from "../lib/clipboard";
 import { Link } from "react-router-dom";
 import AlertBanner from "../components/AlertBanner/AlertBanner";
 import ExportButton from "../components/ExportButton/ExportButton";
@@ -8,7 +9,8 @@ import { PageHeader } from "../components/ui";
 import NetworkTable from "../components/NetworkTable/NetworkTable";
 import ProcessTree from "../components/ProcessTree/ProcessTree";
 import TimelineView from "../components/TimelineView/TimelineView";
-import { completeRun, createRun, getPlatform, getRunDetail, ingestBatch, uploadSample } from "../lib/api";
+import { BASE_URL, completeRun, createRun, getPlatform, getRunDetail, ingestBatch, uploadSample } from "../lib/api";
+import { enumKindsFromDetails } from "../lib/constants";
 import { useEventStream } from "../lib/useEventStream";
 import { buildDetonationScenario, detonationSampleName } from "../lib/synthetic";
 import type { Platform, SampleMeta, Severity } from "../types";
@@ -83,9 +85,60 @@ export default function MonitorPage() {
   // toast stream below fires immediately instead of waiting for the next poll
   // tick (2.5 s). Dedup is still the poll effect's id-based `seenAlerts` set,
   // so SSE + polling can never double-toast.
+  //
+  // Recon sweep: when an enumeration-burst alert arrives, its related_pids are
+  // the enumerating processes — highlight them in the live process tree at
+  // once, without waiting for the refetch to land. Pids are only accepted
+  // while THIS run is still open (completed runs can't highlight); combined
+  // with the reset in startLive/startDetonation, highlights can never leak
+  // from one analysis into the next.
+  const [reconPids, setReconPids] = useState<Set<number>>(new Set());
+  const [reconKinds, setReconKinds] = useState<string[]>([]);
   useEventStream((a) => {
-    if (a.run_id === runId) void refetch();
+    if (a.run_id !== runId) return;
+    if (a.rule_id === "enumeration-burst") {
+      // Belt-and-suspenders: reconciliation (below) is the source of truth
+      // and already prefers the poll data for any run with alerts — this only
+      // matters in the sub-second window before the post-completion refetch.
+      const run = data?.run;
+      if (run && run.completed_at !== null) return;
+      const pids = a.related_pids;
+      if (pids?.length) setReconPids((prev) => new Set([...prev, ...pids]));
+      // Kind chips (CLI parity): capture the distinct enumeration commands
+      // from the pushed alert's details so the badges appear the moment the
+      // sweep lands, not only after the refetch resolves.
+      const kinds = enumKindsFromDetails(a.details);
+      if (kinds.length) setReconKinds((prev) => [...new Set([...prev, ...kinds])]);
+    }
+    void refetch();
   });
+
+  // Reconciliation: the run-detail poll is the source of truth for which
+  // enumeration pids exist (SSE may miss an alert if the tab was closed). A
+  // fresh fetch recomputes the highlight set from the alert's related_pids.
+  const reconciledRecon = useMemo(() => {
+    const set = new Set<number>();
+    for (const a of data?.alerts ?? []) {
+      if (a.rule_id === "enumeration-burst") {
+        (a.related_pids ?? []).forEach((p) => set.add(p));
+      }
+    }
+    return set.size > 0 ? set : null;
+  }, [data]);
+  // Same reconciliation for the kind badges: the poll is the source of truth
+  // for which enumeration kinds exist; the SSE capture only fills the
+  // sub-second window before the post-alert refetch lands.
+  const reconciledKinds = useMemo(() => {
+    const bursts = (data?.alerts ?? []).filter((a) => a.rule_id === "enumeration-burst");
+    if (bursts.length === 0) return null;
+    const kinds: string[] = [];
+    for (const a of bursts) {
+      for (const k of enumKindsFromDetails(a.details)) if (!kinds.includes(k)) kinds.push(k);
+    }
+    return kinds;
+  }, [data]);
+  const effectiveKinds = reconciledKinds ?? reconKinds;
+  const effectiveRecon = reconciledRecon ?? reconPids;
 
   useEffect(() => {
     cancelRef.current = false;
@@ -156,6 +209,8 @@ export default function MonitorPage() {
   const startLive = async () => {
     const label = `Live monitor — ${new Date().toISOString().slice(0, 19).replace("T", " ")}`;
     const { run_id } = await createRun(label, hostPlatform, "live");
+    setReconPids(new Set());
+    setReconKinds([]);
     setRunId(run_id);
     setMode("live");
     setPhase(`live — waiting for collector events (${hostPlatform})`);
@@ -164,6 +219,8 @@ export default function MonitorPage() {
   const startDetonation = async () => {
     const name = sample?.original_name ?? detonationSampleName(targetPlatform);
     const { run_id } = await createRun(name, targetPlatform, "analysis");
+    setReconPids(new Set());
+    setReconKinds([]);
     setRunId(run_id);
     setMode("detonate");
     setStreaming(true);
@@ -210,6 +267,12 @@ export default function MonitorPage() {
     return () => window.removeEventListener("keydown", onKey);
   }, [mode, runId, inProgress, endAnalysis]);
 
+  const agentCmd =
+    hostPlatform === "windows"
+      ? `python collectors\\windows\\collector_win.py --backend-url ${BASE_URL} --mode live`
+      : `python collectors/${hostPlatform}/collector_${hostPlatform}.py --backend-url ${BASE_URL} --mode live`;
+  const [agentCopied, setAgentCopied] = useState(false);
+
   if (mode === "idle") {
     return (
       <div className="mx-auto max-w-4xl px-6 py-14 lg:px-10">
@@ -222,6 +285,51 @@ export default function MonitorPage() {
           }
           lede="Start a session and watch it unfold in real time — process tree, network connections, timeline, and detection alerts as they fire. The webapp is the primary interface; the CLI mirrors the same API."
         />
+
+        {/* One-command agent bootstrap — real host telemetry into the live
+            session (outpost agent install / run parity). The command targets
+            this backend and auto-claims the open live run. */}
+        <div className="panel mt-8 p-5">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="inline-flex items-center gap-2 font-mono text-sm text-accent">
+              <Icon name="terminal" size={15} />
+              Ship real host events
+            </span>
+            <span className="rounded-full border border-border-subtle px-2 py-0.5 font-mono text-[10px] text-text-faint">
+              auditd / Sysmon → live session
+            </span>
+            <span className="ml-auto flex items-center gap-2">
+              <button
+                onClick={() =>
+                  void copyToClipboard(agentCmd).then(() => {
+                    setAgentCopied(true);
+                    setTimeout(() => setAgentCopied(false), 1600);
+                  })
+                }
+                className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 px-3 py-1.5 font-mono text-xs text-accent transition-colors duration-150 hover:bg-accent/10"
+                title="Copy the collector command"
+              >
+                <Icon name={agentCopied ? "check" : "copy"} size={12} />
+                {agentCopied ? "copied" : "copy command"}
+              </button>
+              <Link
+                to="/events"
+                className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-1.5 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
+              >
+                Event log
+                <Icon name="arrowRight" size={12} />
+              </Link>
+            </span>
+          </div>
+          <p className="mt-2 text-xs leading-relaxed text-text-muted">
+            Start live monitoring, then run this on the machine you want to watch — it streams real
+            processes, connections, and file activity into this Monitor. Persistent install (systemd / scheduled
+            task): <code className="font-mono text-accent">outpost agent install</code>.
+          </p>
+          <code className="mt-3 block overflow-x-auto rounded-lg border border-border-subtle bg-bg-elevated/40 px-3 py-2 font-mono text-[11px] text-text-primary">
+            {agentCmd}
+          </code>
+        </div>
 
         <div className="mt-10 grid gap-4 sm:grid-cols-2">
           <button
@@ -363,9 +471,31 @@ export default function MonitorPage() {
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[3fr_2fr]">
         <section className="rounded-lg border border-border-subtle bg-bg-surface p-4">
-          <h2 className="mb-3 text-xs font-semibold text-text-muted">Process tree</h2>
+          <h2 className="mb-3 flex items-center gap-2 text-xs font-semibold text-text-muted">
+            Process tree
+            {effectiveRecon.size > 0 && (
+              <span className="inline-flex items-center gap-1 rounded-full border border-dashed border-risk-suspicious/70 px-1.5 py-0.5 font-mono text-[9px] text-risk-suspicious">
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-risk-suspicious" aria-hidden />
+                recon sweep — {effectiveRecon.size} process{effectiveRecon.size === 1 ? "" : "es"}
+              </span>
+            )}
+          </h2>
+          {/* Kind badges (CLI parity) — the distinct enumeration commands,
+              same chips as the run-detail ReconActorsPanel. */}
+          {effectiveKinds.length > 0 && (
+            <p className="mb-3 flex flex-wrap gap-1.5">
+              {effectiveKinds.map((k) => (
+                <span
+                  key={k}
+                  className="rounded border border-risk-suspicious/40 bg-risk-suspicious/10 px-1.5 py-0.5 font-mono text-[9px] text-risk-suspicious"
+                >
+                  {k}
+                </span>
+              ))}
+            </p>
+          )}
           {data ? (
-            <ProcessTree roots={data.process_tree} />
+            <ProcessTree roots={data.process_tree} reconPids={effectiveRecon} />
           ) : (
             <p className="text-sm text-text-muted">Waiting for first events…</p>
           )}

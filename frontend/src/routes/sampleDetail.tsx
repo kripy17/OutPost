@@ -1,10 +1,10 @@
-import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Icon, platformIconName } from "../components/Icon";
 import { Chip, PageHeader, Panel } from "../components/ui";
-import { getRuns, getSample } from "../lib/api";
-import type { RunSummary } from "../types";
+import { downloadSample, getRuns, getSample, getSampleStatic, watchlistAdd } from "../lib/api";
+import type { RunSummary, SampleStatic } from "../types";
 
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -12,9 +12,246 @@ function formatBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/* ── Static analysis (strings / IOCs / PE / ELF) ─────────────────────────── */
+
+function StaticAnalysis({ sample }: { sample: { sample_id: string; sha256: string } }) {
+  const queryClient = useQueryClient();
+  const [stringsFilter, setStringsFilter] = useState("");
+  const [showAll, setShowAll] = useState(false);
+  const [watchlisted, setWatchlisted] = useState<Set<string>>(new Set());
+  const [watchlistError, setWatchlistError] = useState<string | null>(null);
+
+  const { data: st, isLoading, isError } = useQuery({
+    queryKey: ["sample", "static", sample.sample_id],
+    queryFn: () => getSampleStatic(sample.sample_id),
+    // 404 = "bytes not stored" (uploaded before persistence) — retrying can
+    // never succeed, so surface the message on the first attempt.
+    retry: false,
+  });
+
+  const filteredStrings = useMemo(() => {
+    if (!st) return [];
+    const q = stringsFilter.trim().toLowerCase();
+    return q ? st.strings.filter((s) => s.toLowerCase().includes(q)) : st.strings;
+  }, [st, stringsFilter]);
+
+  const addToWatchlist = async (value: string) => {
+    try {
+      await watchlistAdd(value, `from ${sample.sample_id}`);
+      setWatchlisted((prev) => new Set(prev).add(value));
+      setWatchlistError(null);
+      void queryClient.invalidateQueries({ queryKey: ["watchlist"] });
+    } catch {
+      setWatchlistError(`Couldn't watchlist ${value}`);
+    }
+  };
+
+  const visibleStrings = showAll ? filteredStrings : filteredStrings.slice(0, 80);
+  const iocTotal = st ? st.iocs.urls.length + st.iocs.ips.length + st.iocs.domains.length + st.iocs.hashes.length + st.iocs.emails.length : 0;
+
+  return (
+    <div className="mt-6 space-y-6">
+      <Panel
+        kicker="Static · on-demand"
+        title="Strings & candidate IOCs"
+        right={
+          st ? (
+            <span className="font-mono text-[10px] text-text-faint">
+              {st.strings.length} strings · {iocTotal} IOCs
+            </span>
+          ) : undefined
+        }
+      >
+        {isLoading && <p className="text-sm text-text-muted">Analyzing bytes…</p>}
+        {isError && (
+          <p className="text-sm text-text-muted">
+            Static analysis unavailable — {sample.sample_id} was uploaded before byte persistence. Re-upload the file to enable it.
+          </p>
+        )}
+        {st && (
+          <>
+            {/* IOC buckets — each chip jumps to search (pre-filled) or watchlists. */}
+            {iocTotal > 0 ? (
+              <div className="mb-5 space-y-3">
+                {(
+                  [
+                    { key: "urls", label: "URLs", icon: "globe" as const, tone: "accent" as const },
+                    { key: "ips", label: "IPs", icon: "network" as const, tone: "suspicious" as const },
+                    { key: "domains", label: "Domains", icon: "globe" as const, tone: "muted" as const },
+                    { key: "hashes", label: "Hashes", icon: "copy" as const, tone: "muted" as const },
+                    { key: "emails", label: "Emails", icon: "notes" as const, tone: "muted" as const },
+                  ] as const
+                ).map(
+                  (g) =>
+                    st.iocs[g.key].length > 0 && (
+                      <div key={g.key} className="flex flex-wrap items-start gap-1.5">
+                        <span className="mt-1 w-20 shrink-0 font-mono text-[10px] uppercase tracking-wide text-text-faint">
+                          {g.label}
+                        </span>
+                        {st.iocs[g.key].slice(0, 40).map((v) => (
+                          <span key={`${g.key}-${v}`} className="group inline-flex items-center gap-1">
+                            <Link
+                              to={`/search?q=${encodeURIComponent(v)}`}
+                              title={`Search history for ${v}`}
+                              className="press inline-flex max-w-[260px] items-center gap-1 truncate rounded border border-border-subtle bg-bg-elevated/40 px-2 py-1 font-mono text-[11px] text-text-primary transition-colors duration-150 hover:border-accent/60 hover:text-accent"
+                            >
+                              <Icon name={g.icon} size={10} className="text-text-faint" />
+                              <span className="truncate">{v}</span>
+                            </Link>
+                            <button
+                              onClick={() => void addToWatchlist(v)}
+                              disabled={watchlisted.has(v)}
+                              title={watchlisted.has(v) ? "On watchlist" : "Add to watchlist"}
+                              className="press inline-flex h-5 w-5 items-center justify-center rounded border border-border-subtle text-text-faint transition-colors duration-150 hover:border-accent/60 hover:text-accent disabled:cursor-default disabled:text-risk-clean"
+                            >
+                              <Icon name={watchlisted.has(v) ? "check" : "plus"} size={9} />
+                            </button>
+                          </span>
+                        ))}
+                        {st.iocs[g.key].length > 40 && (
+                          <span className="font-mono text-[10px] text-text-faint">+{st.iocs[g.key].length - 40} more</span>
+                        )}
+                      </div>
+                    ),
+                )}
+                {watchlistError && <p className="text-[11px] text-risk-malicious">{watchlistError}</p>}
+              </div>
+            ) : (
+              <p className="mb-4 text-sm text-text-muted">No URLs, IPs, domains, hashes, or emails embedded in the bytes.</p>
+            )}
+
+            {/* Strings — filterable, collapsible, mono. */}
+            <div className="border-t border-border-subtle pt-4">
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <span className="font-mono text-[10px] uppercase tracking-wide text-text-faint">
+                  Strings ({st.strings.length})
+                </span>
+                <div className="flex items-center gap-2">
+                  <div className="relative">
+                    <Icon name="search" size={11} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-text-faint" />
+                    <input
+                      value={stringsFilter}
+                      onChange={(e) => setStringsFilter(e.target.value)}
+                      placeholder="filter…"
+                      className="w-40 rounded border border-border-subtle bg-bg-base py-1 pl-6 pr-2 font-mono text-[11px] text-text-primary placeholder:text-text-faint focus:border-accent/60 focus:outline-none"
+                      aria-label="Filter strings"
+                    />
+                  </div>
+                  {filteredStrings.length > 80 && (
+                    <button
+                      onClick={() => setShowAll((v) => !v)}
+                      className="press font-mono text-[10px] text-text-muted transition-colors hover:text-accent"
+                    >
+                      {showAll ? "collapse" : `show all ${filteredStrings.length}`}
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div className="max-h-64 overflow-y-auto rounded-lg border border-border-subtle bg-bg-elevated/30 p-3">
+                {visibleStrings.length === 0 ? (
+                  <p className="text-[11px] text-text-faint">No strings match the filter.</p>
+                ) : (
+                  <pre className="font-mono text-[10px] leading-relaxed text-text-muted">
+                    {visibleStrings.map((s) => (
+                      <div key={s}>{s}</div>
+                    ))}
+                  </pre>
+                )}
+              </div>
+            </div>
+          </>
+        )}
+      </Panel>
+
+      {/* Executable metadata — PE or ELF, whichever the bytes actually are. */}
+      {(st?.pe || st?.elf) && (
+        <Panel kicker="Static · format" title={st.pe ? "PE metadata" : "ELF metadata"}>
+          <PeElfTable st={st} />
+        </Panel>
+      )}
+    </div>
+  );
+}
+
+function PeElfTable({ st }: { st: SampleStatic }) {
+  const pe = st.pe;
+  const elf = st.elf;
+  return (
+    <div className="space-y-4">
+      {pe && (
+        <div className="flex flex-wrap items-center gap-2">
+          <Chip tone="accent" dot>
+            {pe.machine} · {pe.bits ?? "?"}-bit
+          </Chip>
+          {pe.entry_point_rva !== null && (
+            <span className="font-mono text-[11px] text-text-muted">entry RVA 0x{pe.entry_point_rva.toString(16)}</span>
+          )}
+          <span className="font-mono text-[10px] text-text-faint">
+            {pe.imports.length} import DLL{pe.imports.length === 1 ? "" : "s"}
+          </span>
+        </div>
+      )}
+      {pe && pe.sections.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[420px] text-left text-xs">
+            <thead className="border-b border-border-subtle">
+              <tr className="text-[10px] uppercase tracking-wide text-text-faint">
+                <th className="px-3 py-1.5 font-normal">Section</th>
+                <th className="px-3 py-1.5 text-right font-normal">Virtual</th>
+                <th className="px-3 py-1.5 text-right font-normal">Raw</th>
+                <th className="px-3 py-1.5 font-normal">Flags</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pe.sections.map((s) => (
+                <tr key={s.name} className="border-b border-border-subtle/50 last:border-0">
+                  <td className="px-3 py-1.5 font-mono text-text-primary">{s.name || "(null)"}</td>
+                  <td className="px-3 py-1.5 text-right font-mono text-text-muted">0x{s.virtual_size.toString(16)}</td>
+                  <td className="px-3 py-1.5 text-right font-mono text-text-muted">0x{s.raw_size.toString(16)}</td>
+                  <td className="px-3 py-1.5">
+                    <span className="font-mono text-[10px] text-text-faint">{s.flags.join(" · ") || "—"}</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {pe && pe.imports.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {pe.imports.map((dll) => (
+            <span key={dll} className="rounded border border-accent/40 bg-accent/5 px-2 py-0.5 font-mono text-[10px] text-accent">
+              {dll}
+            </span>
+          ))}
+        </div>
+      )}
+      {elf && (
+        <div className="flex flex-wrap items-center gap-2">
+          <Chip tone="clean" dot>
+            {elf.machine} · ELF{elf.class} · {elf.type}
+          </Chip>
+          <span className="font-mono text-[11px] text-text-muted">entry 0x{elf.entry_point.toString(16)}</span>
+          <span className="font-mono text-[10px] text-text-faint">{elf.sections.length} sections · {elf.endian}-endian</span>
+        </div>
+      )}
+      {elf && elf.sections.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {elf.sections.slice(0, 40).map((s) => (
+            <span key={`${s.name}-${s.type}`} className="rounded border border-border-subtle bg-bg-elevated/40 px-2 py-0.5 font-mono text-[10px] text-text-muted" title={`type ${s.type} · ${s.size} bytes`}>
+              {s.name || "(anon)"}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function SampleDetailPage() {
   const { sampleId = "" } = useParams();
   const [copied, setCopied] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
 
   const { data: sample, isLoading, isError } = useQuery({
     queryKey: ["sample", sampleId],
@@ -75,13 +312,25 @@ export default function SampleDetailPage() {
         }
         lede={`Detected ${sample.detected_platform} from magic bytes · ${formatBytes(sample.size)} · uploaded ${sample.created_at.slice(0, 19).replace("T", " ")} UTC`}
         actions={
-          <div className="flex items-center gap-2">              <Link
-                to={`/footprint?sample=${sample.sample_id}`}
+          <div className="flex items-center gap-2">
+            <Link
+              to={`/footprint?sample=${sample.sample_id}`}
+              className="press inline-flex items-center gap-1.5 rounded border border-border-subtle px-4 py-2 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
+            >
+              Digital footprint
+              <Icon name="arrowRight" size={12} />
+            </Link>
+            <span className="flex items-center gap-2">
+              {downloadError && <span className="font-mono text-[10px] text-risk-malicious">{downloadError}</span>}
+              <button
+                onClick={() => void downloadSample(sample.sample_id, sample.original_name).catch(() => setDownloadError("Download failed — bytes not stored?"))}
                 className="press inline-flex items-center gap-1.5 rounded border border-border-subtle px-4 py-2 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
+                title={`Download ${sample.original_name}`}
               >
-                Digital footprint
-                <Icon name="arrowRight" size={12} />
-              </Link>
+                <Icon name="download" size={12} />
+                download
+              </button>
+            </span>
             <button
               onClick={() => void copyHash()}
               className="press inline-flex items-center gap-1.5 rounded border border-accent/60 px-4 py-2 font-mono text-xs text-accent transition-colors duration-150 hover:bg-accent/10"
@@ -136,6 +385,8 @@ export default function SampleDetailPage() {
           )}
         </Panel>
       </div>
+
+      <StaticAnalysis sample={sample} />
 
       <Panel kicker="Detonations" title={`Runs of ${sample.original_name}`} className="mt-6" pad={false}>
         {runs.length === 0 ? (

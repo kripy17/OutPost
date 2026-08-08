@@ -25,6 +25,7 @@ const NAV_ITEMS: Item[] = [
   { kind: "nav", label: "Compare runs", hint: "Diff two samples", icon: "compare", to: "/compare" },
   { kind: "nav", label: "IOC search", hint: "IP / hash / domain lookup", icon: "search", to: "/search" },
   { kind: "nav", label: "Campaigns", hint: "Clustered by shared infrastructure", icon: "flag", to: "/campaigns" },
+  { kind: "nav", label: "ATT&CK coverage", hint: "The tactic matrix we see — and the gaps", icon: "target", to: "/coverage" },
   { kind: "nav", label: "Digital footprint", hint: "Passive infrastructure mapping", icon: "globe", to: "/footprint" },
   { kind: "nav", label: "Watchlist", hint: "Track known-bad infrastructure", icon: "star", to: "/watchlist" },
   { kind: "nav", label: "Detection rules", hint: "Suricata / Sigma + tuning", icon: "shield", to: "/rules" },

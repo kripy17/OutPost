@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # verify.sh — OutPost full verification sweep in one command.
 #
-#   backend pytest  →  CLI pytest  →  frontend build (tsc --noEmit + vite)
+#   backend pytest  →  coverage gate (14/14 ATT&CK)  →  collector pytest
+#   →  CLI pytest  →  frontend build (tsc --noEmit + vite)
 #
 # Prints a colored pass/fail summary per step and exits non-zero if any step
 # fails. Environment overrides:
@@ -46,6 +47,13 @@ echo "${C_DIM}OutPost verification sweep — root: $ROOT${C_RESET}"
 
 step "Backend pytest  (backend/app/tests)" \
   bash -c "cd '$ROOT/backend' && '$PYTEST' -q"
+
+# Coverage gate — the Navigator layer (and therefore RULE_META) must touch all
+# 14 canonical ATT&CK Enterprise tactics. A new rule that forgets its RULE_META
+# entry, or a tactic renamed off the canonical list, fails here — CI enforces
+# the coverage story instead of the Coverage page merely telling it.
+step "Coverage gate   (14/14 ATT&CK tactics)" \
+  bash -c "cd '$ROOT/backend' && '$PYTEST' -q app/tests/test_exports.py -k covers_all_14"
 
 step "Collector pytest (collectors/tests)" \
   bash -c "cd '$ROOT/collectors' && '$PYTEST' -q"

@@ -24,10 +24,14 @@ const FAMILY_OF: Record<string, string> = {
   "Defense Evasion": "Evasion",
   "Command and Control": "C2",
   Persistence: "Persistence",
+  "Privilege Escalation": "Escalation",
+  "Credential Access": "Credentials",
+  Discovery: "Discovery",
+  Exfiltration: "Exfiltration",
   Impact: "Impact",
   "Full Chain": "Chain",
 };
-const FAMILIES = ["Execution", "Evasion", "C2", "Persistence", "Impact", "Chain", "Other"] as const;
+const FAMILIES = ["Execution", "Evasion", "C2", "Persistence", "Escalation", "Credentials", "Discovery", "Exfiltration", "Impact", "Chain", "Other"] as const;
 
 // Distinct hues for stacked segments; amber/teal/brick deliberately echo the
 // app's semantic risk colors (Execution, C2, Impact), violet/orange/gold are
@@ -37,6 +41,10 @@ const FAMILY_COLOR: Record<string, string> = {
   Evasion: "#9d7bd8",
   C2: "#3fa796",
   Persistence: "#e0855b",
+  Escalation: "#f472b6",
+  Credentials: "#5b8def",
+  Discovery: "#6ee7b7",
+  Exfiltration: "#a78bfa",
   Impact: "#c4453b",
   Chain: "#f2b632",
   Other: "#6b7280", // rules with no kill-chain stage — never silently dropped

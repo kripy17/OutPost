@@ -1,5 +1,6 @@
 """Data access for `events`, `alerts`, and `enrichment_cache` tables."""
 
+import json
 import sqlite3
 from typing import Optional
 
@@ -43,8 +44,8 @@ def list_events_for_run(conn: sqlite3.Connection, run_id: str) -> list[dict]:
 def insert_alert(conn: sqlite3.Connection, alert: Alert) -> int:
     cur = conn.execute(
         """
-        INSERT INTO alerts (run_id, rule_id, rule_name, severity, triggered_at, related_pid, related_ip, details)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO alerts (run_id, rule_id, rule_name, severity, triggered_at, related_pid, related_ip, related_pids, details)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             alert.run_id,
@@ -54,6 +55,7 @@ def insert_alert(conn: sqlite3.Connection, alert: Alert) -> int:
             alert.triggered_at.isoformat(),
             alert.related_pid,
             alert.related_ip,
+            json.dumps(alert.related_pids),
             alert.details,
         ),
     )
@@ -65,7 +67,24 @@ def list_alerts_for_run(conn: sqlite3.Connection, run_id: str) -> list[dict]:
         "SELECT * FROM alerts WHERE run_id = ? ORDER BY triggered_at ASC",
         (run_id,),
     ).fetchall()
-    return [dict(r) for r in rows]
+    out = []
+    for r in rows:
+        d = dict(r)
+        _parse_related_pids(d)
+        out.append(d)
+    return out
+
+
+def _parse_related_pids(d: dict) -> None:
+    """related_pids is stored as a JSON text column — restore the list, or
+    default to [] for rows predating the column (missing/NULL/None)."""
+    raw = d.get("related_pids")
+    if isinstance(raw, list):
+        return
+    try:
+        d["related_pids"] = json.loads(raw) if raw else []
+    except (ValueError, TypeError):
+        d["related_pids"] = []
 
 
 def get_cache(conn: sqlite3.Connection, ip: str) -> Optional[dict]:
