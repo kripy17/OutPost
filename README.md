@@ -15,6 +15,7 @@ dark/light web deck with a full terminal mirror.
 ![React](https://img.shields.io/badge/React-19-61DAFB?style=flat-square)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?style=flat-square)
 ![Tests](https://img.shields.io/badge/tests-149%20passing-2ea44f?style=flat-square)
+![CI](https://github.com/kripy17/OutPost/actions/workflows/ci.yml/badge.svg)
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 
 </div>
@@ -186,6 +187,10 @@ One command runs the whole sweep:
 | Collector pytest | **12** | Sysmon + auditd shipping, normalization |
 | CLI pytest | **8** | rendering regressions, campaigns output, risk columns |
 | Frontend | clean `tsc --noEmit` + Vite build | — |
+
+**CI:** the same sweep runs automatically on every push and pull request via
+[GitHub Actions](https://github.com/kripy17/OutPost/actions/workflows/ci.yml)
+(the badge above reflects the latest run).
 
 ## 📚 Documentation
 
