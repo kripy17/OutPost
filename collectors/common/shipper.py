@@ -17,6 +17,30 @@ import requests
 log = logging.getLogger("outpost.shipper")
 
 
+def claim_active_live_run(backend_url: str) -> str:
+    """Claim the newest open live session the webapp started.
+
+    GET /runs/active-live and return its run_id — the collector then streams
+    real host events into exactly the run the Live Monitor is showing.
+    Raises RuntimeError with a human message when nothing is open.
+    """
+    try:
+        resp = requests.get(f"{backend_url.rstrip('/')}/runs/active-live", timeout=5)
+    except requests.RequestException:
+        raise RuntimeError(
+            f"Backend not reachable at {backend_url} — is it running? "
+            "(set OUTPOST_API_URL if it isn't the default)"
+        )
+    if resp.status_code == 404:
+        raise RuntimeError(
+            "No active live session to stream into — open the Live Monitor in the "
+            "webapp and click 'Start live monitoring' first."
+        )
+    if not resp.ok:
+        raise RuntimeError(f"Claim failed: GET /runs/active-live -> {resp.status_code}")
+    return resp.json()["run_id"]
+
+
 class Shipper:
     def __init__(
         self,

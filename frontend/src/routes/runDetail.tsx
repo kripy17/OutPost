@@ -2,33 +2,117 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import AlertBanner from "../components/AlertBanner/AlertBanner";
 import ExportButton from "../components/ExportButton/ExportButton";
+import { Icon, platformIconName } from "../components/Icon";
 import KillChainStepper, { killChainStats } from "../components/KillChain/KillChainStepper";
 import { Panel } from "../components/ui";
-import NetworkTable from "../components/NetworkTable/NetworkTable";
 import NotesPanel from "../components/NotesPanel/NotesPanel";
 import ProcessTree from "../components/ProcessTree/ProcessTree";
 import RulesPanel from "../components/RulesPanel/RulesPanel";
 import TimelineView from "../components/TimelineView/TimelineView";
-import { riskBand } from "../lib/constants";
+import { RISK_COLORS, riskBand } from "../lib/constants";
 import { getCampaigns, getRunDetail, getRunIocsCsv } from "../lib/api";
-import type { RunDetail } from "../types";
+import type { NetworkConnection, Reputation, RunDetail } from "../types";
+
+/* ── Risk gauge — semicircular arc, colored by band ────────────────────── */
 
 function RiskGauge({ score }: { score: number }) {
   const band = riskBand(score);
   const s = score ?? 0;
+  const arcLen = Math.PI * 54;
+  const frac = Math.min(1, Math.max(0, s / 100));
+  const tone = band.color.replace("text-risk-", "");
   return (
     <div className="flex items-center gap-3" title={`Risk score ${s}/100 — ${band.label}`}>
-      <span className={`font-mono text-2xl font-semibold tabular-nums ${band.color}`}>{s}</span>
-          <div className="h-1.5 w-24 overflow-hidden rounded-full bg-bg-elevated">
-            <div
-              className={`h-full rounded-full transition-[width] duration-500 ease-out ${band.bg}`}
-              style={{ width: `${Math.min(100, s)}%` }}
-            />
-          </div>
-          <span className={`font-mono text-[10px] uppercase tracking-wide ${band.color}`}>{band.label}</span>
+      <svg viewBox="0 0 140 78" className="h-[74px] w-[130px]" role="img" aria-label={`Risk score ${s}/100, ${band.label}`}>
+        <path d="M 16 70 A 54 54 0 0 1 124 70" fill="none" stroke="var(--border-strong)" strokeOpacity="0.5" strokeWidth="9" strokeLinecap="round" />
+        <path
+          d="M 16 70 A 54 54 0 0 1 124 70"
+          fill="none"
+          stroke={`var(--risk-${tone})`}
+          strokeWidth="9"
+          strokeLinecap="round"
+          strokeDasharray={`${frac * arcLen} ${arcLen}`}
+        />
+        <text x="70" y="56" textAnchor="middle" className="fill-current font-mono" fontSize="21" fontWeight="700">
+          {s}
+        </text>
+        <text x="70" y="71" textAnchor="middle" fontSize="8" fill="var(--text-faint)">
+          {band.label} / 100
+        </text>
+      </svg>
     </div>
   );
 }
+
+/* ── Network — grouped by reputation, so risk reads at a glance ────────── */
+
+const REP_ORDER: Reputation[] = ["malicious", "suspicious", "unknown", "clean"];
+
+const REP_META: Record<Reputation, { label: string; dot: string; text: string; border: string }> = {
+  malicious: { label: "Malicious", dot: "bg-risk-malicious", text: "text-risk-malicious", border: "border-risk-malicious/30" },
+  suspicious: { label: "Suspicious", dot: "bg-risk-suspicious", text: "text-risk-suspicious", border: "border-risk-suspicious/30" },
+  unknown: { label: "Unknown", dot: "bg-text-faint", text: "text-text-muted", border: "border-border-subtle" },
+  clean: { label: "Clean", dot: "bg-risk-clean", text: "text-risk-clean", border: "border-risk-clean/30" },
+};
+
+function NetworkGroups({ connections }: { connections: NetworkConnection[] }) {
+  if (connections.length === 0) return <p className="text-sm text-text-muted">No network connections recorded for this run.</p>;
+  const groups = REP_ORDER.map((rep) => ({ rep, items: connections.filter((c) => c.reputation === rep) })).filter((g) => g.items.length > 0);
+
+  return (
+    <div className="space-y-3">
+      {groups.map(({ rep, items }) => {
+        const meta = REP_META[rep];
+        const flagged = items.filter((c) => (c.vt_malicious_count ?? 0) > 0).length;
+        return (
+          <section key={rep} className={`rounded-xl border ${meta.border} bg-bg-elevated/30`}>
+            <header className={`flex items-center gap-2 border-b ${meta.border} px-3 py-2`}>
+              <span className={`h-2 w-2 rounded-full ${meta.dot}`} aria-hidden />
+              <span className={`text-xs font-semibold ${meta.text}`}>{meta.label}</span>
+              <span className="font-mono text-[10px] text-text-faint">
+                {items.length} destination{items.length === 1 ? "" : "s"}
+              </span>
+              {flagged > 0 && (
+                <span className="ml-auto inline-flex items-center gap-1 font-mono text-[10px] text-risk-malicious">
+                  <Icon name="alert" size={10} />
+                  {flagged} VT-flagged
+                </span>
+              )}
+            </header>
+            <ul className="divide-y divide-border-subtle/50">
+              {items.map((c) => (
+                <li key={`${c.dest_ip}-${c.dest_port}`} className="flex flex-wrap items-center gap-x-3 gap-y-0.5 px-3 py-1.5 font-mono text-xs">
+                  <span className={`font-semibold ${RISK_COLORS[c.reputation]}`}>{c.dest_ip}</span>
+                  <span className="text-text-faint">:{c.dest_port ?? "—"}</span>
+                  <span className="rounded border border-border-subtle px-1 py-px text-[9px] uppercase text-text-faint">
+                    {c.protocol ?? "?"}
+                  </span>
+                  {c.watchlist && (
+                    <span className="inline-flex items-center gap-0.5 text-accent" title={c.watchlist_label ?? "On your watchlist"}>
+                      <Icon name="star" size={10} />
+                    </span>
+                  )}
+                  <span className="ml-auto flex items-center gap-3 text-[10px] text-text-faint">
+                    {c.abuse_score !== null && <span title="AbuseIPDB score">abuse {c.abuse_score}</span>}
+                    {c.vt_malicious_count !== null && (
+                      <span className={c.vt_malicious_count > 0 ? "text-risk-malicious" : ""} title="VirusTotal positives">
+                        vt {c.vt_malicious_count}
+                      </span>
+                    )}
+                    {c.malware_family && <span className="text-risk-malicious">{c.malware_family}</span>}
+                    <span>{c.first_seen.slice(11, 19)}</span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ── Sample reputation ─────────────────────────────────────────────────── */
 
 function SampleReputation({ rep }: { rep: NonNullable<RunDetail["sample_reputation"]> }) {
   const hasIntel = rep.vt_detections !== null || rep.malware_family !== null;
@@ -58,10 +142,7 @@ function SampleReputation({ rep }: { rep: NonNullable<RunDetail["sample_reputati
         {rep.yara_rules.length > 0 ? (
           <div className="flex flex-wrap gap-1.5">
             {rep.yara_rules.map((r) => (
-              <span
-                key={r}
-                className="rounded border border-accent-amber/40 bg-bg-elevated/50 px-2 py-0.5 font-mono text-[10px] text-accent-amber"
-              >
+              <span key={r} className="rounded border border-accent/40 bg-bg-elevated/50 px-2 py-0.5 font-mono text-[10px] text-accent">
                 {r}
               </span>
             ))}
@@ -78,15 +159,17 @@ function KillChainCard({ links }: { links: RunDetail["kill_chain"] }) {
   if (!links || links.length === 0) return null;
   const label = links.map((l) => l.from).concat(links[links.length - 1].to).join(" → ");
   return (
-    <Panel kicker="Correlation · 2.4" title="Kill-chain sequence" className="mt-6">
+    <Panel kicker="Correlation" title="Kill-chain sequence" className="mt-6">
       <p className="mb-3 font-mono text-xs text-text-primary">{label}</p>
       <ol className="flex flex-wrap items-center gap-1.5">
         {links.map((l, i) => (
           <li key={i} className="flex items-center gap-1.5">
-            <span className="rounded border border-accent-amber/50 bg-accent-amber/10 px-2 py-0.5 font-mono text-[10px] text-accent-amber">
+            <span className="rounded border border-accent/50 bg-accent/10 px-2 py-0.5 font-mono text-[10px] text-accent">
               {l.from}
             </span>
-            <span aria-hidden className="font-mono text-[10px] text-text-faint">→</span>
+            <span aria-hidden className="font-mono text-[10px] text-text-faint">
+              <Icon name="chevronRight" size={10} />
+            </span>
             {i === links.length - 1 && (
               <span className="rounded border border-risk-malicious/50 bg-risk-malicious/10 px-2 py-0.5 font-mono text-[10px] text-risk-malicious">
                 {l.to}
@@ -99,10 +182,11 @@ function KillChainCard({ links }: { links: RunDetail["kill_chain"] }) {
   );
 }
 
+/* ── Page ──────────────────────────────────────────────────────────────── */
+
 export default function RunDetailPage() {
   const { runId = "" } = useParams();
 
-  // Poll while the run is still in progress (live sessions update continuously).
   const { data, isLoading, isError } = useQuery({
     queryKey: ["run", runId],
     queryFn: () => getRunDetail(runId),
@@ -112,9 +196,6 @@ export default function RunDetailPage() {
     },
   });
 
-  // Campaign membership — shared queryKey with the Campaigns page so this is
-  // one cached fetch across the app. Declared above the early returns: hook
-  // count must stay identical across renders (Rules of Hooks).
   const { data: campaigns = [] } = useQuery({ queryKey: ["campaigns"], queryFn: getCampaigns });
 
   if (isLoading) return <p className="p-8 text-sm text-text-muted">Loading run…</p>;
@@ -129,43 +210,47 @@ export default function RunDetailPage() {
   const { run, process_tree, network_connections, timeline, alerts, kill_chain, sample_reputation } = data;
   const inProgress = run.completed_at === null;
   const chain = killChainStats(alerts);
-
-  // A run in no campaign simply shows nothing.
   const campaign = campaigns.find((c) => c.runs.some((r) => r.run_id === runId));
 
   return (
-    <div className="mx-auto max-w-7xl px-6 py-8 lg:px-10">
-      <nav className="mb-6 flex items-center gap-2 font-mono text-xs text-text-muted">
-        <Link to="/" className="transition-colors hover:text-accent-amber">
+    <div className="mx-auto max-w-7xl px-5 py-8 lg:px-8">
+      <nav className="mb-6 flex items-center gap-2 text-xs text-text-muted">
+        <Link to="/" className="transition-colors hover:text-accent">
           Overview
         </Link>
         <span aria-hidden>/</span>
-        <Link to="/history" className="transition-colors hover:text-accent-amber">
+        <Link to="/history" className="transition-colors hover:text-accent">
           Session history
         </Link>
         <span aria-hidden>/</span>
-        <span className="text-text-primary">{run.sample_name}</span>
+        <span className="font-mono text-text-primary">{run.sample_name}</span>
       </nav>
 
       <header className="mb-6 flex flex-wrap items-start justify-between gap-x-8 gap-y-4">
         <div className="min-w-0">
           <p className="kicker">Analysis · {run.run_id.slice(0, 12)}</p>
           <h1 className="display mt-1.5">{run.sample_name}</h1>
-          <p className="mt-2 flex flex-wrap items-center gap-2 font-mono text-xs text-text-muted">
-            <span className="rounded border border-border-subtle px-1.5 py-0.5 uppercase">{run.platform}</span>
+          <p className="mt-2 flex flex-wrap items-center gap-2 text-xs text-text-muted">
+            <span className="inline-flex items-center gap-1.5 rounded border border-border-subtle px-1.5 py-0.5 font-mono uppercase">
+              <Icon name={platformIconName(run.platform)} size={11} className="text-signal" />
+              {run.platform}
+            </span>
             <span>{run.session_type}</span>
             <span>started {run.started_at.slice(0, 19).replace("T", " ")} UTC</span>
             {inProgress && (
-              <span className="animate-outpost-pulse text-accent-amber">● still tracing</span>
+              <span className="inline-flex items-center gap-1.5 animate-outpost-pulse text-signal">
+                <Icon name="activity" size={12} />
+                still tracing
+              </span>
             )}
           </p>
           {campaign && (
             <Link
               to="/campaigns"
-              className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-accent-amber/50 bg-accent-amber/10 px-2.5 py-1 font-mono text-[10px] text-accent-amber transition-all duration-150 hover:bg-accent-amber/20 hover:shadow-[var(--glow-amber)]"
+              className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-accent/50 bg-accent/10 px-2.5 py-1 font-mono text-[10px] text-accent transition-all duration-150 hover:bg-accent/20 hover:shadow-[var(--glow-accent)]"
               title={`Member of the campaign clustering around ${campaign.key}`}
             >
-              <span aria-hidden>✸</span>
+              <Icon name="flag" size={11} />
               Campaign · {campaign.key} · {campaign.runs.length} run{campaign.runs.length === 1 ? "" : "s"}
             </Link>
           )}
@@ -205,8 +290,17 @@ export default function RunDetailPage() {
         </Panel>
 
         <div className="space-y-6">
-          <Panel kicker="Network" title="Connections">
-            <NetworkTable connections={network_connections} />
+          <Panel
+            kicker="Network"
+            title="Connections"
+            right={
+              <span className="inline-flex items-center gap-1 font-mono text-[10px] text-signal">
+                <Icon name="network" size={11} />
+                {network_connections.length}
+              </span>
+            }
+          >
+            <NetworkGroups connections={network_connections} />
           </Panel>
 
           <Panel kicker="Sequence" title="Timeline">

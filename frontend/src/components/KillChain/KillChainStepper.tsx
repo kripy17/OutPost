@@ -33,7 +33,7 @@ export default function KillChainStepper({ alerts }: { alerts: Alert[] }) {
               {i > 0 && (
                 <span
                   className={`mt-3 h-0.5 w-5 shrink-0 sm:w-8 ${
-                    reached.has(KILL_CHAIN_ORDER[i]) ? "bg-accent-amber/70" : "bg-border-subtle"
+                    reached.has(KILL_CHAIN_ORDER[i]) ? "bg-accent/70" : "bg-border-subtle"
                   }`}
                   aria-hidden
                 />
@@ -44,7 +44,7 @@ export default function KillChainStepper({ alerts }: { alerts: Alert[] }) {
                     hit
                       ? isFullChain
                         ? "border-risk-malicious/70 bg-risk-malicious/10 text-risk-malicious"
-                        : "border-accent-amber/70 bg-accent-amber/10 text-accent-amber"
+                        : "border-accent/70 bg-accent/10 text-accent"
                       : "border-border-subtle text-text-faint"
                   }`}
                   title={hit ? `${stage} — observed` : `${stage} — not observed`}

@@ -20,14 +20,15 @@ export interface ThemeColors {
 export function readColors(): ThemeColors {
   const css = getComputedStyle(document.documentElement);
   const get = (name: string) => css.getPropertyValue(name).trim();
+  // Fallbacks match the dark-first :root palette (index.css v6).
   return {
-    clean: get("--risk-clean") || "#3fa796",
-    suspicious: get("--risk-suspicious") || "#d9a441",
-    malicious: get("--risk-malicious") || "#c4453b",
-    accent: get("--accent-amber") || "#d9a441",
-    grid: get("--border-subtle") || "#2a2f3a",
-    faint: get("--text-faint") || "#4b5261",
-    muted: get("--text-muted") || "#7a8290",
+    clean: get("--risk-clean") || "#34d399",
+    suspicious: get("--risk-suspicious") || "#fbbf24",
+    malicious: get("--risk-malicious") || "#f87171",
+    accent: get("--accent") || "#8b7cf6",
+    grid: get("--border-subtle") || "#1d2431",
+    faint: get("--text-faint") || "#5f6a7d",
+    muted: get("--text-muted") || "#98a2b3",
   };
 }
 

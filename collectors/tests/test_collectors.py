@@ -18,7 +18,7 @@ sys.path.insert(0, str(_COMMON))
 sys.path.insert(0, str(_LINUX))
 sys.path.insert(0, str(_WINDOWS))
 
-from shipper import Shipper  # noqa: E402
+from shipper import Shipper, claim_active_live_run  # noqa: E402
 from collector_linux import _parse_saddr, parse_audit_line  # noqa: E402
 
 
@@ -190,6 +190,47 @@ def test_shipper_spools_when_backend_down(monkeypatch, tmp_path):
     lines = [json.loads(l) for l in spool.read_text().splitlines() if l.strip()]
     assert len(lines) == 2
     assert lines[0]["file_path"] == "/etc/crontab"
+
+
+def test_claim_returns_newest_open_live_run(monkeypatch):
+    """--auto flow: claim returns the run id the backend names."""
+
+    class FakeResp:
+        def __init__(self, status=200):
+            self.status_code = status
+
+        @property
+        def ok(self):
+            return self.status_code == 200
+
+        def json(self):
+            return {"run_id": "abc123def456", "session_type": "live"}
+
+    monkeypatch.setattr("shipper.requests.get", lambda *a, **k: FakeResp())
+    assert claim_active_live_run("http://backend:8001") == "abc123def456"
+
+
+def test_claim_errors_cleanly_when_no_live_session(monkeypatch):
+    """The human-facing message is the feature's UX contract."""
+
+    class _404:
+        status_code = 404
+        ok = False
+
+    monkeypatch.setattr("shipper.requests.get", lambda *a, **k: _404())
+    with pytest.raises(RuntimeError, match="No active live session"):
+        claim_active_live_run("http://backend:8001")
+
+
+def test_claim_errors_when_backend_unreachable(monkeypatch):
+    import requests
+
+    def boom(*a, **k):
+        raise requests.ConnectionError("down")
+
+    monkeypatch.setattr("shipper.requests.get", boom)
+    with pytest.raises(RuntimeError, match="not reachable"):
+        claim_active_live_run("http://backend:8001")
 
 
 def test_shipper_replays_spool_after_recovery(monkeypatch, tmp_path):

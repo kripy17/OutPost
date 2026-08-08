@@ -17,7 +17,7 @@ export function eventDetail(ev: EventOut): string {
 
 export const TYPE_STYLE: Record<EventOut["event_type"], string> = {
   process_create: "text-text-primary",
-  network_connection: "text-accent-amber",
+  network_connection: "text-accent",
   file_write: "text-text-muted",
   registry_write: "text-text-muted",
 };

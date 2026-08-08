@@ -20,7 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
 
-from shipper import Shipper  # noqa: E402
+from shipper import Shipper, claim_active_live_run  # noqa: E402
 
 AUDIT_LOG = "/var/log/audit/audit.log"
 
@@ -138,10 +138,15 @@ def _ts(audit_ts: str) -> str:
         return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 
-def main(run_id: str, backend_url: str, mode: str = "analysis", timeout: int = 240) -> None:
+def main(run_id: str | None, backend_url: str, mode: str = "analysis", timeout: int = 240) -> None:
     if not os.path.exists(AUDIT_LOG):
         print(f"ERROR: {AUDIT_LOG} not found — is auditd installed and running?", file=sys.stderr)
         sys.exit(2)
+
+    # Claim the webapp's open live session when no run_id was given.
+    if not run_id:
+        run_id = claim_active_live_run(backend_url)
+        print(f"[collector-linux] claimed active live session {run_id}")
 
     shipper = Shipper(backend_url, run_id)
     pid_cache: dict = {}
@@ -172,8 +177,13 @@ def main(run_id: str, backend_url: str, mode: str = "analysis", timeout: int = 2
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="OutPost Linux collector (auditd)")
-    parser.add_argument("--run-id", required=True)
-    parser.add_argument("--backend-url", default="http://localhost:8000")
+    parser.add_argument(
+        "--run-id",
+        default=None,
+        help="Target run id. Omit to claim the newest open live session from the "
+        "webapp's Live Monitor (empty/omitted both claim).",
+    )
+    parser.add_argument("--backend-url", default=os.environ.get("OUTPOST_API_URL", "http://localhost:8001"))
     parser.add_argument("--mode", choices=["live", "analysis"], default="analysis")
     parser.add_argument("--timeout", type=int, default=240)
     args = parser.parse_args()

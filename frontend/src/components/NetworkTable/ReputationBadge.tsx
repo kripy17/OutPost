@@ -1,4 +1,5 @@
 import { RISK_BG, RISK_COLORS } from "../../lib/constants";
+import { Icon } from "../Icon";
 import type { Reputation } from "../../types";
 
 export default function ReputationBadge({
@@ -14,8 +15,8 @@ export default function ReputationBadge({
   return (
     <span className={`inline-flex items-center gap-1.5 font-mono text-xs ${RISK_COLORS[label]}`}>
       {watchlist && (
-        <span className="text-accent-amber" title={watchlistLabel || "On your personal watchlist"}>
-          ★
+        <span className="text-accent" title={watchlistLabel || "On your personal watchlist"}>
+          <Icon name="star" size={11} />
         </span>
       )}
       <span className={`inline-block h-2 w-2 rounded-full ${RISK_BG[label]}`} />

@@ -5,10 +5,10 @@ import { createBrowserRouter, Outlet, RouterProvider, useLocation } from "react-
 import "./index.css";
 
 import Nav from "./components/Nav";
-import StatusBar from "./components/StatusBar";
 import CampaignsPage from "./routes/campaigns";
 import ComparePage from "./routes/compare";
 import EventsPage from "./routes/events";
+import FootprintPage from "./routes/footprint";
 import MonitorPage from "./routes/monitor";
 import RunDetailPage from "./routes/runDetail";
 import RunHistoryPage from "./routes/index";
@@ -18,6 +18,7 @@ import SampleDetailPage from "./routes/sampleDetail";
 import SamplesPage from "./routes/samples";
 import SearchPage from "./routes/search";
 import SettingsPage from "./routes/settings";
+import ThemesPage from "./routes/themes";
 import WatchlistPage from "./routes/watchlist";
 
 const queryClient = new QueryClient({
@@ -31,9 +32,10 @@ function Layout() {
   return (
     <div className="min-h-screen">
       <Nav />
-      {/* The sidebar is fixed, so the content column offsets for it (lg+). */}
-      <main className="lg:pl-56">
-        <StatusBar />
+      {/* The left rail is fixed; the content column offsets for it (lg+).
+          Both widths come from var(--rail-w), so the collapsed icon-only rail
+          and the content offset always match. */}
+      <main className="transition-[padding] duration-200 ease-out lg:pl-[var(--rail-w)]">
         {/* Route-keyed fade-up: every navigation rises in once, deliberately. */}
         <div key={location.pathname} className="animate-fade-up">
           <Outlet />
@@ -56,7 +58,9 @@ const router = createBrowserRouter([
       { path: "/campaigns", element: <CampaignsPage /> },
       { path: "/rules", element: <RulesPage /> },
       { path: "/settings", element: <SettingsPage /> },
+      { path: "/themes", element: <ThemesPage /> },
       { path: "/events", element: <EventsPage /> },
+      { path: "/footprint", element: <FootprintPage /> },
       { path: "/samples", element: <SamplesPage /> },
       { path: "/samples/:sampleId", element: <SampleDetailPage /> },
       { path: "/runs/:runId", element: <RunDetailPage /> },

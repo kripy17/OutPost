@@ -4,6 +4,7 @@
 // the destinations it reached (flagged_reputation) and the IP list.
 
 import { useState } from "react";
+import { Icon } from "../Icon";
 import type { ProcessNode, Reputation } from "../../types";
 
 // Default-expand to depth 2 so the initial view stays scannable (docs/07).
@@ -77,12 +78,12 @@ function TreeNode({ node, depth }: { node: ProcessNode; depth: number }) {
           <button
             onClick={toggle}
             aria-expanded={expanded}
-            className="w-4 shrink-0 text-left text-xs text-text-muted transition-transform duration-150 hover:text-accent-amber"
+            className="flex w-4 shrink-0 items-center justify-center text-[11px] text-text-muted transition-transform duration-150 hover:text-accent"
           >
-            {expanded ? "▾" : "▸"}
+            <Icon name={expanded ? "chevronDown" : "chevronRight"} size={13} />
           </button>
         ) : (
-          <span className="w-4 shrink-0 text-xs text-text-faint">·</span>
+          <span className="w-4 shrink-0 text-center text-[10px] text-text-faint">·</span>
         )}
         <span className={`font-mono text-sm text-text-primary ${rep ? accent : ""}`}>{node.process_name}</span>
         {node.pid !== undefined && (

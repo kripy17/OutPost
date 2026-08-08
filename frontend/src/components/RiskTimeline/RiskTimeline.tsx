@@ -1,4 +1,5 @@
-// Risk-over-time chart for the Overview dashboard (SOC glance view).
+// Risk-over-time chart for the History page (the analytical view — it lives
+// with the session archive, not on the lean Overview dashboard).
 //
 // Pure SVG — no chart library. Bars are individual sessions, colored by risk
 // band; the line is the mean risk per hourly bucket over the trailing 24h.
@@ -8,12 +9,11 @@
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { Panel } from "../ui";
-import { riskBand } from "../../lib/constants";
+import { fmtDayShort, riskBand, TREND_WINDOWS, type TrendWindow } from "../../lib/constants";
 import { useThemeColors, type ThemeColors } from "../../lib/theme";
 import type { RunSummary } from "../../types";
 
-const WINDOW_HOURS = 24;
-const HOUR_MS = 3_600_000;
+const DAY_MS = 86_400_000;
 const HEIGHT = 200;
 const PAD = { top: 14, right: 12, bottom: 26, left: 34 };
 const BASELINE = 60; // risk ≥ 60 is critical (see lib/constants riskBand)
@@ -32,7 +32,7 @@ function fmtDay(ts: number): string {
   return new Date(ts).toISOString().slice(5, 16).replace("T", " ") + "Z";
 }
 
-export default function RiskTimeline({ runs }: { runs: RunSummary[] }) {
+export default function RiskTimeline({ runs, windowKey }: { runs: RunSummary[]; windowKey: TrendWindow }) {
   const colors = useThemeColors();
   const wrapRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(720);
@@ -72,9 +72,14 @@ export default function RiskTimeline({ runs }: { runs: RunSummary[] }) {
     setTip(null);
   };
 
+  const cfg = TREND_WINDOWS.find((w) => w.key === windowKey) ?? TREND_WINDOWS[0];
   const now = Date.now();
-  const windowStart = Math.min(now - WINDOW_HOURS * HOUR_MS, ...runs.map((r) => new Date(r.started_at).getTime()));
-  const windowMs = Math.max(WINDOW_HOURS * HOUR_MS, now - windowStart);
+  const oldest = runs.length ? Math.min(...runs.map((r) => new Date(r.started_at).getTime())) : now;
+  // Explicit window: start at now−span, extending back only to fit the oldest
+  // run (never truncating a bar). "all" spans the full recorded history.
+  const windowStart = windowKey === "all" ? oldest : Math.max(oldest, now - cfg.spanMs);
+  const windowMs = Math.max(cfg.bucketMs, now - windowStart);
+  const windowed = runs.filter((r) => new Date(r.started_at).getTime() >= windowStart);
 
   // -- geometry -------------------------------------------------------------
   const plotW = Math.max(120, width - PAD.left - PAD.right);
@@ -87,7 +92,7 @@ export default function RiskTimeline({ runs }: { runs: RunSummary[] }) {
   // apart so no bar hides another (the 09:32 pair would otherwise overlap to
   // sub-pixel precision on a 24h axis).
   const barW = Math.max(3, Math.min(10, (plotW / Math.max(1, runs.length)) * 0.55));
-  const bars = [...runs]
+  const bars = [...windowed]
     .sort((a, b) => new Date(a.started_at).getTime() - new Date(b.started_at).getTime())
     .map((r) => {
       const start = new Date(r.started_at).getTime();
@@ -102,13 +107,12 @@ export default function RiskTimeline({ runs }: { runs: RunSummary[] }) {
     lastX = shifted;
   }
 
-  // -- rolling 24h mean (hourly buckets, populated hours only) --------------
-  const trendStart = now - WINDOW_HOURS * HOUR_MS;
+  // -- mean line — hourly buckets on 24h, daily buckets on 7d / all ----------
+  const trendStart = windowStart;
   const buckets = new Map<number, { sum: number; n: number }>();
-  for (const r of runs) {
+  for (const r of windowed) {
     const t = new Date(r.started_at).getTime();
-    if (t < trendStart) continue;
-    const key = Math.floor((t - trendStart) / HOUR_MS);
+    const key = Math.floor((t - trendStart) / cfg.bucketMs);
     const b = buckets.get(key) ?? { sum: 0, n: 0 };
     b.sum += r.risk_score ?? 0;
     b.n += 1;
@@ -117,22 +121,22 @@ export default function RiskTimeline({ runs }: { runs: RunSummary[] }) {
   const trend = [...buckets.entries()]
     .sort((a, b) => a[0] - b[0])
     .map(([key, b]) => ({
-      x: x(trendStart + (key + 0.5) * HOUR_MS),
+      x: x(trendStart + (key + 0.5) * cfg.bucketMs),
       y: y(b.sum / b.n),
-      hour: fmtHour(trendStart + (key + 0.5) * HOUR_MS),
+      hour: fmtHour(trendStart + (key + 0.5) * cfg.bucketMs),
       mean: Math.round((b.sum / b.n) * 10) / 10,
       n: b.n,
     }));
 
-  const peak = Math.max(0, ...runs.filter((r) => new Date(r.started_at).getTime() >= trendStart)
-    .map((r) => r.risk_score ?? 0));
+  const peak = Math.max(0, ...windowed.map((r) => r.risk_score ?? 0));
 
   // -- axis ticks -----------------------------------------------------------
   const yTicks = [0, 30, 60, 100];
+  const fmtTick = cfg.bucketMs >= DAY_MS ? fmtDayShort : fmtHour;
   const xTickCount = Math.max(2, Math.min(6, Math.floor(plotW / 130)));
   const xTicks = Array.from({ length: xTickCount + 1 }, (_, i) => {
     const t = windowStart + (i / xTickCount) * windowMs;
-    return { x: x(t), label: fmtHour(t) };
+    return { x: x(t), label: fmtTick(t) };
   });
 
   const linePath = trend.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
@@ -148,21 +152,25 @@ export default function RiskTimeline({ runs }: { runs: RunSummary[] }) {
         <div className="flex flex-wrap items-center gap-3 font-mono text-[10px] text-text-faint">
           <span>
             <span className="font-semibold text-text-primary">{bars.length}</span> session{bars.length === 1 ? "" : "s"}
-            {windowMs > WINDOW_HOURS * HOUR_MS + 60_000 && (
-              <span title="Window extended to the oldest session"> · {Math.round(windowMs / HOUR_MS)}h</span>
-            )}
+            <span> · {windowKey === "all" ? "all time" : windowKey}</span>
           </span>
           <span>
             peak <span className="font-semibold text-risk-malicious">{peak}</span>
           </span>
-          <span title="Bars: individual sessions by risk band. Line: mean risk per hour, trailing 24h.">
-            bars = sessions · line = 24h mean
+          <span title="Bars: individual sessions by risk band. Line: mean risk per bucket.">
+            bars = sessions · line = {cfg.bucketMs >= DAY_MS ? "daily" : "24h"} mean
           </span>
         </div>
       }
     >
-      {runs.length === 0 ? (
-        <p className="py-10 text-center text-sm text-text-muted">No sessions yet — detonate a sample from Monitor.</p>
+      {windowed.length === 0 ? (
+        <p className="py-10 text-center text-sm text-text-muted">
+          {runs.length === 0
+            ? "No sessions yet — detonate a sample from Monitor."
+            : windowKey === "all"
+              ? "No sessions on record."
+              : `No sessions in the last ${windowKey}.`}
+        </p>
       ) : (
         <div ref={wrapRef} className="relative">
           <svg
@@ -308,7 +316,7 @@ export default function RiskTimeline({ runs }: { runs: RunSummary[] }) {
               <p className="mt-0.5 font-mono text-[9px] text-text-faint">
                 started {fmtDay(new Date(tip.run.started_at).getTime())}
               </p>
-              <p className="mt-1.5 border-t border-border-subtle pt-1 font-mono text-[9px] text-accent-amber">open run →</p>
+              <p className="mt-1.5 border-t border-border-subtle pt-1 font-mono text-[9px] text-accent">open run →</p>
             </div>
           )}
 
@@ -324,7 +332,8 @@ export default function RiskTimeline({ runs }: { runs: RunSummary[] }) {
               <span className="h-2 w-2 rounded-sm" style={{ background: colors.malicious }} /> critical
             </span>
             <span className="ml-auto flex items-center gap-1.5">
-              <span className="inline-block h-0.5 w-4 rounded" style={{ background: colors.accent }} /> 24h mean
+              <span className="inline-block h-0.5 w-4 rounded" style={{ background: colors.accent }} />{" "}
+              {cfg.bucketMs >= DAY_MS ? "daily mean" : "24h mean"}
             </span>
           </div>
         </div>

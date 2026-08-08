@@ -91,14 +91,14 @@ export function Chip({
     clean: "border-risk-clean/40 text-risk-clean",
     suspicious: "border-risk-suspicious/40 text-risk-suspicious",
     malicious: "border-risk-malicious/40 text-risk-malicious",
-    accent: "border-accent-amber/50 text-accent-amber",
+    accent: "border-accent/50 text-accent",
     muted: "border-border-subtle text-text-muted",
   };
   const dots: Record<string, string> = {
     clean: "bg-risk-clean",
     suspicious: "bg-risk-suspicious",
     malicious: "bg-risk-malicious",
-    accent: "bg-accent-amber",
+    accent: "bg-accent",
     muted: "bg-text-faint",
   };
   // Literal classes only — Tailwind generates what appears in source, and a
@@ -108,7 +108,7 @@ export function Chip({
     clean: "shadow-[var(--glow-clean)]",
     suspicious: "shadow-[var(--glow-amber)]",
     malicious: "shadow-[var(--glow-malicious)]",
-    accent: "shadow-[var(--glow-amber)]",
+    accent: "shadow-[var(--glow-accent)]",
     muted: "",
   };
   return (
@@ -139,17 +139,17 @@ export function Stat({
   icon?: ReactNode;
 }) {
   const valueTone =
-    tone === "malicious" ? "text-risk-malicious" : tone === "accent" ? "text-accent-amber" : tone === "clean" ? "text-risk-clean" : "text-text-primary";
+    tone === "malicious" ? "text-risk-malicious" : tone === "accent" ? "text-accent" : tone === "clean" ? "text-risk-clean" : "text-text-primary";
   return (
     <>
       <dt className="flex items-center gap-1.5">
         {icon && <span className="text-text-faint" aria-hidden>
           {icon}
         </span>}
-        <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-text-faint">{label}</span>
+        <span className="text-[11px] font-semibold text-text-faint">{label}</span>
       </dt>
       <dd className={`mt-1 font-mono text-2xl font-semibold tabular-nums ${valueTone}`}>{value}</dd>
-      {sub && <dd className="mt-0.5 font-mono text-[10px] text-text-faint">{sub}</dd>}
+      {sub && <dd className="mt-0.5 text-[11px] text-text-faint">{sub}</dd>}
     </>
   );
 }

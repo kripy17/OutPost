@@ -44,7 +44,7 @@ export default function SettingsPage() {
               <span
                 className={`rounded-full border px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide ${
                   data.enabled
-                    ? "border-accent-amber/50 text-accent-amber"
+                    ? "border-accent/50 text-accent"
                     : "border-border-subtle text-text-faint"
                 }`}
               >
@@ -58,12 +58,12 @@ export default function SettingsPage() {
                 value={webhook || data.webhook_url}
                 onChange={(e) => setWebhook(e.target.value)}
                 placeholder="https://hooks.slack.com/services/…"
-                className="w-full flex-1 rounded border border-border-subtle bg-bg-base px-3 py-2 font-mono text-sm text-text-primary placeholder:text-text-faint focus:border-accent-amber/60 focus:outline-none"
+                className="w-full flex-1 rounded border border-border-subtle bg-bg-base px-3 py-2 font-mono text-sm text-text-primary placeholder:text-text-faint focus:border-accent/60 focus:outline-none"
               />
               <button
                 onClick={() => save.mutate((webhook || data.webhook_url).trim())}
                 disabled={save.isPending}
-                className="press rounded border border-accent-amber/60 px-4 py-2 font-mono text-xs text-accent-amber transition-colors duration-150 hover:bg-accent-amber/10 disabled:opacity-50"
+                className="press rounded border border-accent/60 px-4 py-2 font-mono text-xs text-accent transition-colors duration-150 hover:bg-accent/10 disabled:opacity-50"
               >
                 {data.enabled ? "Update" : "Enable"}
               </button>
@@ -72,7 +72,7 @@ export default function SettingsPage() {
               Payload: {"{ run_id, sample_name, rule_name, severity, details, triggered_at, related_ip }"} — one POST per
               alert, sent asynchronously on ingest.
             </p>
-            {saved && <p className="mt-2 text-xs text-accent-amber">Saved — live from the next alert.</p>}
+            {saved && <p className="mt-2 text-xs text-accent">Saved — live from the next alert.</p>}
           </Panel>
         </div>
       )}

@@ -15,6 +15,7 @@ from .api.routes_alerts import router as alerts_router
 from .api.routes_analysis import router as analysis_router
 from .api.routes_campaigns import router as campaigns_router
 from .api.routes_events import router as events_router
+from .api.routes_footprint import router as footprint_router
 from .api.routes_health import router as health_router
 from .api.routes_ioc import router as ioc_router
 from .api.routes_ingest import router as ingest_router
@@ -49,6 +50,7 @@ app.add_middleware(
 )
 
 app.include_router(health_router)
+app.include_router(footprint_router)
 app.include_router(ingest_router)
 app.include_router(alerts_router)
 app.include_router(events_router)

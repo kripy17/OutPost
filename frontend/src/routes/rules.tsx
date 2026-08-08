@@ -46,7 +46,7 @@ export default function RulesPage() {
           {data.knobs.map((knob: TuningKnob) => (
             <Panel key={knob.param} title={KNOB_LABELS[knob.param] ?? knob.param}>
               <div className="flex flex-wrap items-center gap-3">
-                <code className="rounded border border-border-subtle bg-bg-elevated/50 px-2 py-1 font-mono text-[11px] text-accent-amber">
+                <code className="rounded border border-border-subtle bg-bg-elevated/50 px-2 py-1 font-mono text-[11px] text-accent">
                   {knob.param}
                 </code>
                 <span className="font-mono text-[10px] text-text-faint">
@@ -55,7 +55,7 @@ export default function RulesPage() {
                 <span
                   className={`ml-auto rounded-full border px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide ${
                     knob.tuned
-                      ? "border-accent-amber/50 text-accent-amber"
+                      ? "border-accent/50 text-accent"
                       : "border-border-subtle text-text-faint"
                   }`}
                 >
@@ -68,13 +68,13 @@ export default function RulesPage() {
                   inputMode="numeric"
                   value={drafts[knob.param] ?? String(knob.current)}
                   onChange={(e) => setDrafts((d) => ({ ...d, [knob.param]: e.target.value }))}
-                  className="w-24 rounded border border-border-subtle bg-bg-base px-2 py-1.5 font-mono text-sm text-text-primary focus:border-accent-amber/60 focus:outline-none"
+                  className="w-24 rounded border border-border-subtle bg-bg-base px-2 py-1.5 font-mono text-sm text-text-primary focus:border-accent/60 focus:outline-none"
                   aria-label={`${knob.param} value`}
                 />
                 <button
                   onClick={() => save.mutate({ param: knob.param, value: drafts[knob.param] ?? "" })}
                   disabled={save.isPending}
-                  className="press rounded border border-accent-amber/60 px-3 py-1.5 font-mono text-xs text-accent-amber transition-colors duration-150 hover:bg-accent-amber/10 disabled:opacity-50"
+                  className="press rounded border border-accent/60 px-3 py-1.5 font-mono text-xs text-accent transition-colors duration-150 hover:bg-accent/10 disabled:opacity-50"
                 >
                   Apply
                 </button>

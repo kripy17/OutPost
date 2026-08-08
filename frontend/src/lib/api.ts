@@ -9,10 +9,12 @@ import type {
   Campaign,
   EventFeedParams,
   EventFeedResponse,
+  Footprint,
   GlobalAlert,
   IocSearchResponse,
   NotificationSettings,
   Platform,
+  PlatformInfo,
   RuleMeta,
   RunDetail,
   RunNote,
@@ -52,6 +54,11 @@ export async function getHealth(): Promise<boolean> {
   } catch {
     return false; // unreachable — the deck's pulse reads offline
   }
+}
+
+// Host-OS auto-detection (vision: no manual OS picker anywhere).
+export async function getPlatform(): Promise<PlatformInfo> {
+  return get<PlatformInfo>("/platform");
 }
 
 // -- runs -------------------------------------------------------------------
@@ -211,6 +218,11 @@ export async function uploadSample(name: string, file: Blob): Promise<SampleMeta
     throw new Error(detail || `POST /samples → ${res.status}`);
   }
   return res.json();
+}
+
+// -- Digital footprinting (roadmap scaffold) ---------------------------------
+export async function getFootprint(sampleId: string, mock = false): Promise<Footprint> {
+  return get<Footprint>(`/footprint/${sampleId}${mock ? "?mock=1" : ""}`);
 }
 
 // -- Global event feed / Event Viewer (roadmap 1.1) --------------------------

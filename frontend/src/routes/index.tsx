@@ -1,10 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import DetectionVolume from "../components/DetectionVolume/DetectionVolume";
+import RiskTimeline from "../components/RiskTimeline/RiskTimeline";
 import RunList from "../components/RunHistory/RunList";
 import { PageHeader, Panel, Stat } from "../components/ui";
+import { TREND_WINDOWS, type TrendWindow } from "../lib/constants";
 import { BASE_URL, getRuns } from "../lib/api";
 
 export default function RunHistoryPage() {
   const { data, isLoading, isError } = useQuery({ queryKey: ["runs"], queryFn: () => getRuns() });
+  const [windowKey, setWindowKey] = useState<TrendWindow>("24h");
 
   const runs = data ?? [];
   const totalAlerts = runs.reduce((n, r) => n + r.alert_count, 0);
@@ -46,7 +51,42 @@ export default function RunHistoryPage() {
           </p>
         </Panel>
       )}
-      {data && <RunList runs={data} />}
+
+      {data && (
+        <>
+          {/* Trend charts — risk per session + detection density. The bars are
+              the analytical view; they live here with the archive rather than
+              on the lean Overview dashboard. */}
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+            <p className="kicker">Trend</p>
+            <div
+              role="group"
+              aria-label="Trend time window"
+              className="flex items-center gap-0.5 rounded-lg border border-border-subtle bg-bg-elevated/40 p-0.5"
+            >
+              {TREND_WINDOWS.map((w) => (
+                <button
+                  key={w.key}
+                  onClick={() => setWindowKey(w.key)}
+                  aria-pressed={windowKey === w.key}
+                  className={`press rounded-md px-2.5 py-1 font-mono text-[11px] transition-colors duration-150 ${
+                    windowKey === w.key
+                      ? "bg-accent/15 font-semibold text-accent"
+                      : "text-text-muted hover:text-text-primary"
+                  }`}
+                >
+                  {w.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="mb-6 grid grid-cols-1 gap-6 xl:grid-cols-[1.7fr_1fr]">
+            <RiskTimeline runs={runs} windowKey={windowKey} />
+            <DetectionVolume windowKey={windowKey} />
+          </div>
+          <RunList runs={data} />
+        </>
+      )}
     </div>
   );
 }
