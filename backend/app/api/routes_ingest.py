@@ -7,6 +7,7 @@
 
 import asyncio
 import uuid
+from datetime import datetime, timezone
 
 import httpx
 from fastapi import APIRouter, HTTPException
@@ -19,6 +20,31 @@ from ..services import detection
 from ..services import normalizer
 
 router = APIRouter(tags=["ingest"])
+
+
+@router.post("/ingest/snapshot", response_model=None)
+async def ingest_snapshot(snapshot: dict) -> dict:
+    """Store a live system snapshot (processes + listening ports) for a host.
+    The collectors ship these on an interval while an agent runs; the Agents
+    page and Live Monitor render the latest one as the 'running now' view.
+    Only the newest snapshot per host is kept (PK upsert)."""
+    import json as _json
+
+    host_id = str(snapshot.get("host_id") or "local").strip()
+    if not host_id:
+        raise HTTPException(status_code=422, detail="host_id is required")
+    with db_session() as conn:
+        conn.execute(
+            "INSERT INTO host_snapshots (host_id, payload, collected_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(host_id) DO UPDATE SET payload = excluded.payload, collected_at = excluded.collected_at",
+            (host_id, _json.dumps(snapshot), snapshot.get("collected_at") or datetime.now(timezone.utc).isoformat()),
+        )
+    return {
+        "stored": True,
+        "host_id": host_id,
+        "processes": len(snapshot.get("processes", [])),
+        "listening": len(snapshot.get("listening", [])),
+    }
 
 
 @router.post("/ingest/batch", status_code=202)
@@ -59,13 +85,13 @@ async def ingest_batch(events: list[EventIn]) -> dict:
         if batch_min_ts is not None:
             rows = conn.execute(
                 "SELECT event_type, timestamp, pid, process_name, command_line, "
-                "dest_ip, dest_port, file_path, registry_key FROM events "
+                "dest_ip, dest_port, file_path, registry_key, host_id FROM events "
                 "WHERE run_id = ? AND timestamp >= ?",
                 (run_id, batch_min_ts),
             ).fetchall()
             seen = {
                 (r["event_type"], r["timestamp"], r["pid"], r["process_name"], r["command_line"],
-                 r["dest_ip"], r["dest_port"], r["file_path"], r["registry_key"])
+                 r["dest_ip"], r["dest_port"], r["file_path"], r["registry_key"], r["host_id"])
                 for r in rows
             }
         else:
@@ -84,6 +110,7 @@ async def ingest_batch(events: list[EventIn]) -> dict:
                 normalized.get("dest_port"),
                 normalized.get("file_path"),
                 normalized.get("registry_key"),
+                normalized.get("host_id", "local"),
             )
             if key in seen:
                 continue
@@ -151,6 +178,9 @@ async def ingest_batch(events: list[EventIn]) -> dict:
 @router.post("/runs", status_code=201)
 def create_run(body: RunCreate) -> dict:
     run_id = uuid.uuid4().hex[:12]
+    # A live session is always host-telemetry provenance, whatever the client
+    # sent; analysis sessions carry the client's marker (monitor / cli / …).
+    source = "live" if body.session_type == "live" else body.source
     with db_session() as conn:
         run_store.create_run(
             conn,
@@ -158,6 +188,7 @@ def create_run(body: RunCreate) -> dict:
             sample_name=body.sample_name,
             platform=body.platform,
             session_type=body.session_type,
+            source=source,
         )
     return {"run_id": run_id, "session_type": body.session_type}
 

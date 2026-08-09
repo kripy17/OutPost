@@ -3,10 +3,13 @@
 // two separate surfaces over the same API; nothing is CLI-only.
 
 import type {
+  AgentsResponse,
+  RateLimitStatus,
   Alert,
   AlertStatus,
   AllowlistEntry,
   AllowlistKind,
+  AuditResponse,
   CompareResponse,
   EnumPatternRow,
   EnumPatternsResponse,
@@ -15,12 +18,17 @@ import type {
   EventFeedParams,
   EventFeedResponse,
   Footprint,
+  RuleFpResponse,
+  FpResponse,
   GlobalAlert,
+  HostSnapshot,
   IocSearchResponse,
   NotificationSettings,
   NotificationSettingsIn,
   Platform,
   PlatformInfo,
+  PruneResponse,
+  RetentionStatus,
   RuleMeta,
   RunDetail,
   RunNote,
@@ -29,7 +37,12 @@ import type {
   SampleRow,
   SamplesResponse,
   SampleStatic,
+  SandboxDetonateIn,
+  SandboxProvidersResponse,
+  SandboxTask,
   SessionType,
+  CustomYaraRulesResponse,
+  YaraTestResponse,
   Suppression,
   TuningResponse,
   WatchlistEntry,
@@ -57,6 +70,7 @@ export interface MeResponse {
   authenticated: boolean;
   role: "admin" | "analyst" | null;
   read_only: boolean;
+  credential_mode: "hash" | "plaintext" | null;
   expires_at: number | null;
 }
 
@@ -76,6 +90,19 @@ export async function login(password: string): Promise<{ token: string; role: st
   if (!res.ok) {
     const detail = await res.text().catch(() => "");
     throw new Error(detail || `POST /auth/login → ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function setPassword(role: "admin" | "analyst", newPassword: string): Promise<{ role: string; credential_mode: string }> {
+  const res = await fetch(`${BASE_URL}/auth/password`, {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ role, new_password: newPassword }),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(detail || `POST /auth/password → ${res.status}`);
   }
   return res.json();
 }
@@ -100,6 +127,16 @@ async function post<T>(path: string, body: unknown): Promise<T> {
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`POST ${path} → ${res.status}`);
+  return res.json();
+}
+
+async function put<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${BASE_URL}${path}`, {
+    method: "PUT",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`PUT ${path} → ${res.status}`);
   return res.json();
 }
 
@@ -134,9 +171,12 @@ export async function getPlatform(): Promise<PlatformInfo> {
 }
 
 // -- runs -------------------------------------------------------------------
-export async function getRuns(params: { q?: string } = {}): Promise<RunSummary[]> {
-  const suffix = params.q ? `?q=${encodeURIComponent(params.q)}` : "";
-  return get<RunSummary[]>(`/runs${suffix}`);
+export async function getRuns(params: { q?: string; host?: string } = {}): Promise<RunSummary[]> {
+  const qs = new URLSearchParams();
+  if (params.q) qs.set("q", params.q);
+  if (params.host) qs.set("host", params.host);
+  const suffix = qs.toString();
+  return get<RunSummary[]>(`/runs${suffix ? `?${suffix}` : ""}`);
 }
 
 export async function getRunDetail(runId: string): Promise<RunDetail> {
@@ -248,7 +288,19 @@ export async function setEnumPatterns(patterns: Record<string, EnumPatternRow[]>
 }
 
 export async function setTuning(param: string, value: string): Promise<{ current: string }> {
-  return post<{ current: string }>(`/rules/tuning/${param}`, { value });
+  return put<{ current: string }>(`/rules/tuning/${param}`, { value });
+}
+
+export async function getRuleFp(): Promise<RuleFpResponse> {
+  return get<RuleFpResponse>("/rules/fp");
+}
+
+export async function setFpThreshold(threshold: number): Promise<{ threshold: number }> {
+  return put<{ threshold: number }>("/rules/fp-threshold", { threshold });
+}
+
+export async function resetFpThreshold(): Promise<void> {
+  return del("/rules/fp-threshold");
 }
 
 export async function resetTuning(param: string): Promise<void> {
@@ -322,6 +374,75 @@ export async function getRuleMeta(): Promise<RuleMeta[]> {
 // -- Dashboard / global findings feed ----------------------------------------
 export async function getRecentAlerts(limit = 20): Promise<GlobalAlert[]> {
   return get<GlobalAlert[]>(`/alerts?limit=${limit}`);
+}
+
+// -- Agent fleet (which hosts stream telemetry) ------------------------------
+export async function getAgents(): Promise<AgentsResponse> {
+  return get<AgentsResponse>("/agents");
+}
+
+// -- Auth brute-force guard (read-only Settings view) ------------------------
+export async function getRateLimitStatus(): Promise<RateLimitStatus> {
+  return get<RateLimitStatus>("/auth/ratelimit");
+}
+
+// -- Analyst audit trail ------------------------------------------------------
+export async function getAudit(params: { limit?: number; action?: string } = {}): Promise<AuditResponse> {
+  const qs = new URLSearchParams();
+  if (params.limit !== undefined) qs.set("limit", String(params.limit));
+  if (params.action) qs.set("action", params.action);
+  const suffix = qs.toString();
+  return get<AuditResponse>(`/audit${suffix ? `?${suffix}` : ""}`);
+}
+
+// -- False-positive feedback loop ---------------------------------------------
+export async function markFalsePositive(alertId: number, comment = ""): Promise<FpResponse> {
+  return post<FpResponse>(`/alerts/${alertId}/false-positive`, { comment });
+}
+
+// -- Live system snapshot (processes + listening ports) -----------------------
+export async function getHostSnapshot(hostId: string): Promise<HostSnapshot> {
+  return get<HostSnapshot>(`/agents/${encodeURIComponent(hostId)}/snapshot`);
+}
+
+// -- Retention & backup -------------------------------------------------------
+export async function getRetention(): Promise<RetentionStatus> {
+  return get<RetentionStatus>("/admin/retention");
+}
+
+export async function setRetention(
+  days: number,
+  autoPrune: "off" | "hourly" | "daily" = "off",
+): Promise<RetentionStatus> {
+  return post<RetentionStatus>("/admin/retention", { retention_days: days, auto_prune: autoPrune });
+}
+
+export async function pruneRuns(days?: number): Promise<PruneResponse> {
+  return post<PruneResponse>("/admin/prune", { days: days ?? null });
+}
+
+export async function downloadBackup(): Promise<Blob> {
+  const resp = await fetch(`${BASE_URL}/admin/backup`, {
+    headers: { Authorization: `Bearer ${getAuthToken() ?? ""}` },
+  });
+  if (!resp.ok) throw new Error(`Backup failed (${resp.status})`);
+  return resp.blob();
+}
+
+export async function restoreBackup(data: ArrayBuffer): Promise<{ restored: boolean; safety_copy: string }> {
+  const resp = await fetch(`${BASE_URL}/admin/restore`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/octet-stream",
+      Authorization: `Bearer ${getAuthToken() ?? ""}`,
+    },
+    body: data,
+  });
+  if (!resp.ok) {
+    const body = (await resp.json().catch(() => null)) as { detail?: string } | null;
+    throw new Error(body?.detail ?? `Restore failed (${resp.status})`);
+  }
+  return resp.json();
 }
 
 // -- Sample upload / OS auto-detection (roadmap 1.4) -------------------------
@@ -407,6 +528,36 @@ export async function uploadSample(name: string, file: Blob): Promise<SampleMeta
     throw new Error(detail || `POST /samples → ${res.status}`);
   }
   return res.json();
+}
+
+// -- YARA signature lab --------------------------------------------------------
+export async function testYaraRule(rule: string, sampleIds?: string[]): Promise<YaraTestResponse> {
+  return post<YaraTestResponse>("/yara/test", { rule, sample_ids: sampleIds ?? null });
+}
+
+export async function getCustomYaraRules(): Promise<CustomYaraRulesResponse> {
+  return get<CustomYaraRulesResponse>("/yara/rules");
+}
+
+export async function saveCustomYaraRule(rule: string, family?: string, description?: string): Promise<{ name: string; strings: string[] }> {
+  return post<{ name: string; strings: string[] }>("/yara/rules", { rule, family: family ?? "custom", description: description ?? "" });
+}
+
+export async function deleteCustomYaraRule(name: string): Promise<void> {
+  await del(`/yara/rules/${encodeURIComponent(name)}`);
+}
+
+// -- Sandbox detonation adapter (roadmap 3.3) ---------------------------------
+export async function getSandboxProviders(): Promise<SandboxProvidersResponse> {
+  return get<SandboxProvidersResponse>("/sandbox/providers");
+}
+
+export async function sandboxDetonate(body: SandboxDetonateIn): Promise<SandboxTask> {
+  return post<SandboxTask>("/sandbox/detonate", body);
+}
+
+export async function getSandboxTask(taskId: string): Promise<SandboxTask> {
+  return get<SandboxTask>(`/sandbox/tasks/${taskId}`);
 }
 
 // -- Digital footprinting (roadmap scaffold) ---------------------------------

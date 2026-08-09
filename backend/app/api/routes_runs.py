@@ -6,10 +6,11 @@
 - GET /runs/{id}/export — JSON report or PDF (Task 21)
 """
 
-from fastapi import APIRouter, HTTPException, Query, Response
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 
 from datetime import datetime, timezone
 
+from ..core import auth
 from ..core.db import db_session
 from ..core.schema import (
     AllowlistEntry,
@@ -33,11 +34,12 @@ router = APIRouter(tags=["runs"])
 
 
 @router.get("/runs", response_model=list[RunSummary])
-def list_runs(q: str = Query("", max_length=200)) -> list[RunSummary]:
+def list_runs(q: str = Query("", max_length=200), host: str = Query("", max_length=200)) -> list[RunSummary]:
     """Run history, newest first. `?q=<sample>` filters by sample-name
-    substring — the sample vault's detonation-history links use it."""
+    substring; `?host=<host_id>` filters to runs whose events came from that
+    fleet host (the Agents page links here). Both combine when given."""
     with db_session() as conn:
-        rows = run_store.list_runs(conn, q=q.strip())
+        rows = run_store.list_runs(conn, q=q.strip(), host=host.strip())
         return [run_store.to_summary(conn, r) for r in rows]
 
 
@@ -397,7 +399,7 @@ def list_run_allowlist(run_id: str) -> list[AllowlistEntry]:
 
 
 @router.post("/runs/{run_id}/allowlist", status_code=201, response_model=AllowlistEntry)
-def add_run_allowlist(run_id: str, body: AllowlistIn) -> AllowlistEntry:
+def add_run_allowlist(run_id: str, body: AllowlistIn, request: Request) -> AllowlistEntry:
     """Allowlist an IOC for this run: matching alerts stop firing on future
     batches, and any already-open matching alerts are auto-acknowledged with
     a comment so the triage trail stays honest."""
@@ -431,13 +433,20 @@ def add_run_allowlist(run_id: str, body: AllowlistIn) -> AllowlistEntry:
                 )
                 acked += 1
         row = conn.execute("SELECT * FROM run_allowlist WHERE id = ?", (entry_id,)).fetchone()
+        from ..models import audit
+
+        audit.log(
+            conn, auth.role_from_request(request), "allowlist.add",
+            target_type="allowlist", target_id=str(entry_id),
+            detail=f"{body.kind} {value} on run {run_id}" + (f" (acked {acked})" if acked else ""),
+        )
     out = dict(row)
     out["acked"] = acked  # model field — the UI toasts how many were acked
     return AllowlistEntry(**out)
 
 
 @router.delete("/runs/{run_id}/allowlist/{entry_id}", status_code=204)
-def delete_run_allowlist(run_id: str, entry_id: int) -> None:
+def delete_run_allowlist(run_id: str, entry_id: int, request: Request) -> None:
     """Remove an allowlist entry. Already-acked alerts stay acked (the analyst
     decided on them); only *future* matching alerts start firing again."""
     with db_session() as conn:
@@ -446,4 +455,11 @@ def delete_run_allowlist(run_id: str, entry_id: int) -> None:
         )
         if cur.rowcount == 0:
             raise HTTPException(status_code=404, detail=f"Unknown allowlist entry: {entry_id}")
+        from ..models import audit
+
+        audit.log(
+            conn, auth.role_from_request(request), "allowlist.remove",
+            target_type="allowlist", target_id=str(entry_id),
+            detail=f"run {run_id}",
+        )
     return None

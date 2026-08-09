@@ -115,8 +115,9 @@ const GROUPS: { label: string; links: NavItem[] }[] = [
     label: "Operations",
     links: [
       { to: "/watchlist", label: "Watchlist", iconName: "star" },
+      { to: "/agents", label: "Agents", iconName: "terminal" },
+      { to: "/audit", label: "Audit Log", iconName: "notes" },
       { to: "/rules", label: "Rules", iconName: "shield" },
-      { to: "/themes", label: "Theme lab", iconName: "sliders" },
       { to: "/settings", label: "Settings", iconName: "bell" },
     ],
   },
@@ -400,7 +401,6 @@ export default function Nav() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (

@@ -1,5 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import { Icon } from "../components/Icon";
 import DetectionVolume from "../components/DetectionVolume/DetectionVolume";
 import RiskTimeline from "../components/RiskTimeline/RiskTimeline";
 import RunList from "../components/RunHistory/RunList";
@@ -8,7 +10,15 @@ import { TREND_WINDOWS, type TrendWindow } from "../lib/constants";
 import { BASE_URL, getRuns } from "../lib/api";
 
 export default function RunHistoryPage() {
-  const { data, isLoading, isError } = useQuery({ queryKey: ["runs"], queryFn: () => getRuns() });
+  // ?q=<sample> pre-filters the archive to one binary (Overview risk bars),
+  // ?host=<host_id> to one fleet host (Agents page). Both combine.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const q = (searchParams.get("q") ?? "").trim();
+  const host = (searchParams.get("host") ?? "").trim();
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ["runs", "q", q, "host", host],
+    queryFn: () => getRuns({ q, host }),
+  });
   const [windowKey, setWindowKey] = useState<TrendWindow>("24h");
 
   const runs = data ?? [];
@@ -23,6 +33,33 @@ export default function RunHistoryPage() {
         title="Session history"
         lede="Live monitoring sessions and bounded analyses, newest first."
       />
+
+      {(q || host) && (
+        <div className="mb-4 flex items-center gap-2 rounded-lg border border-accent/40 bg-accent/5 px-3 py-2">
+          <Icon name="filter" size={12} className="text-accent" />
+          <span className="text-xs text-text-muted">
+            {q && (
+              <>
+                Filtered to sample <span className="font-mono text-text-primary">{q}</span>
+              </>
+            )}
+            {q && host && <span className="mx-1 text-text-faint">·</span>}
+            {host && (
+              <>
+                host <span className="inline-flex items-center gap-1 font-mono text-text-primary"><Icon name="terminal" size={10} />{host}</span>
+              </>
+            )}{" "}
+            — {runs.length} session{runs.length === 1 ? "" : "s"}
+          </span>
+          <button
+            onClick={() => setSearchParams({}, { replace: true })}
+            className="press ml-auto inline-flex items-center gap-1 rounded border border-border-subtle px-2 py-1 font-mono text-[10px] text-text-muted transition-colors duration-150 hover:border-accent/50 hover:text-accent"
+          >
+            <Icon name="x" size={10} />
+            clear filter
+          </button>
+        </div>
+      )}
 
       {!isLoading && !isError && (
         <Panel className="mb-6 overflow-hidden" pad={false}>

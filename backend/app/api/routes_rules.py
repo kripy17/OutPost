@@ -14,11 +14,13 @@ Tuning takes effect on the *next* ingested batch — no backend restart needed.
 import json
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+from ..core import auth
 from ..core.db import db_session
 from ..core.schema import Suppression, SuppressionIn
+from ..models import audit
 from ..services.detection import ENUM_PATTERNS, TUNABLE_DEFAULTS, load_enum_patterns
 from ..services.risk import RULE_META
 
@@ -98,6 +100,108 @@ def reset_tuning(param: str) -> None:
     rule_id = TUNABLE_DEFAULTS[param][0]
     with db_session() as conn:
         conn.execute("DELETE FROM rule_tuning WHERE rule_id = ? AND param = ?", (rule_id, param))
+    return None
+
+
+# ---------------------------------------------------------------------------
+# False-positive feedback, surfaced on the Rules page: every rule's FP counter
+# (fed by the "mark as false positive" loop on run detail) plus an automatic
+# threshold-raise suggestion once a rule's FPs pass a tunable threshold. The
+# threshold itself is a setting (FP_SUGGEST_THRESHOLD, default 3) so operators
+# can tune when a rule is considered "noisy" without touching code.
+# ---------------------------------------------------------------------------
+
+FP_THRESHOLD_KEY = "FP_SUGGEST_THRESHOLD"
+FP_DEFAULT_THRESHOLD = 3
+
+
+def _fp_threshold(conn) -> int:
+    row = conn.execute("SELECT value FROM settings WHERE key = ?", (FP_THRESHOLD_KEY,)).fetchone()
+    try:
+        return max(1, int(row["value"])) if row else FP_DEFAULT_THRESHOLD
+    except (TypeError, ValueError):
+        return FP_DEFAULT_THRESHOLD
+
+
+def _threshold_suggestion(conn, rule_id: str, fp_count: int) -> dict | None:
+    """A concrete raise for the rule's int tunable (if it has one and a raise
+    is warranted): the knob, its current value, and max(current+1, fp+1)."""
+    for name, (rid, type_name, default) in TUNABLE_DEFAULTS.items():
+        if rid != rule_id or type_name != "int":
+            continue
+        row = conn.execute(
+            "SELECT value FROM rule_tuning WHERE rule_id = ? AND param = ?",
+            (rule_id, name),
+        ).fetchone()
+        current = int(row["value"]) if row else int(default)
+        suggested = max(current + 1, fp_count + 1)
+        if suggested > current:
+            return {
+                "kind": "threshold",
+                "param": name,
+                "rule_id": rule_id,
+                "current": current,
+                "suggested": suggested,
+                "detail": f"{fp_count} false positive(s) — raise {name} from {current} to {suggested}",
+            }
+    return None
+
+
+class FpThresholdIn(BaseModel):
+    threshold: int
+
+
+@router.get("/rules/fp", response_model=None)
+def list_rule_fp() -> dict:
+    """Every rule's FP counter, the tunable suggestion threshold, and — for
+    rules over it — a ready-to-apply threshold raise. The Rules page renders
+    these as chips on the tuning knobs and one-click apply buttons."""
+    with db_session() as conn:
+        threshold = _fp_threshold(conn)
+        rows = conn.execute("SELECT * FROM rule_fp ORDER BY count DESC").fetchall()
+        rules = []
+        for r in rows:
+            count = r["count"]
+            rules.append(
+                {
+                    "rule_id": r["rule_id"],
+                    "count": count,
+                    "last_fp_at": r["last_fp_at"],
+                    "over_threshold": count >= threshold,
+                    "suggestion": _threshold_suggestion(conn, r["rule_id"], count) if count >= threshold else None,
+                }
+            )
+    return {"threshold": threshold, "default_threshold": FP_DEFAULT_THRESHOLD, "rules": rules}
+
+
+@router.put("/rules/fp-threshold", response_model=None)
+def set_fp_threshold(body: FpThresholdIn, request: Request) -> dict:
+    """Tune when a rule counts as noisy — FPs at or above this value trigger
+    the threshold-raise suggestion on the Rules page."""
+    if body.threshold < 1:
+        raise HTTPException(status_code=422, detail="threshold must be >= 1")
+    actor = auth.role_from_request(request)
+    with db_session() as conn:
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (FP_THRESHOLD_KEY, str(body.threshold)),
+        )
+        audit.log(
+            conn, actor, "rules.fp-threshold",
+            target_type="settings", target_id=FP_THRESHOLD_KEY,
+            detail=f"FP suggestion threshold → {body.threshold}",
+        )
+    return {"threshold": body.threshold}
+
+
+@router.delete("/rules/fp-threshold", status_code=204)
+def reset_fp_threshold(request: Request) -> None:
+    """Restore the default FP suggestion threshold (3)."""
+    actor = auth.role_from_request(request)
+    with db_session() as conn:
+        conn.execute("DELETE FROM settings WHERE key = ?", (FP_THRESHOLD_KEY,))
+        audit.log(conn, actor, "rules.fp-threshold", target_type="settings", target_id=FP_THRESHOLD_KEY, detail="FP suggestion threshold → default")
     return None
 
 
@@ -193,7 +297,7 @@ def list_suppressions() -> list[Suppression]:
 
 
 @router.post("/rules/suppressions", status_code=201, response_model=Suppression)
-def add_suppression(body: SuppressionIn) -> Suppression:
+def add_suppression(body: SuppressionIn, request: Request) -> Suppression:
     """Suppress a rule — globally (run_id omitted) or for one run. Adding the
     same (rule_id, scope) twice replaces the earlier row; unknown rules 422."""
     if body.rule_id not in _KNOWN_RULES:
@@ -217,11 +321,16 @@ def add_suppression(body: SuppressionIn) -> Suppression:
         row = conn.execute(
             "SELECT * FROM rule_suppressions WHERE id = ?", (cur.lastrowid,)
         ).fetchone()
+        audit.log(
+            conn, auth.role_from_request(request), "suppression.add",
+            target_type="suppression", target_id=str(cur.lastrowid),
+            detail=f"{body.rule_id}" + (f" on run {run_id}" if run_id else " (global)"),
+        )
     return Suppression(**dict(row))
 
 
 @router.delete("/rules/suppressions/{entry_id}", status_code=204)
-def delete_suppression(entry_id: int) -> None:
+def delete_suppression(entry_id: int, request: Request) -> None:
     """Remove a suppression — the rule starts firing again on the next batch."""
     with db_session() as conn:
         cur = conn.execute(
@@ -229,4 +338,8 @@ def delete_suppression(entry_id: int) -> None:
         )
         if cur.rowcount == 0:
             raise HTTPException(status_code=404, detail=f"Unknown suppression: {entry_id}")
+        audit.log(
+            conn, auth.role_from_request(request), "suppression.remove",
+            target_type="suppression", target_id=str(entry_id),
+        )
     return None

@@ -71,9 +71,10 @@ def list_events(
         where.append(
             "(e.process_name LIKE ? ESCAPE '\\' OR e.file_path LIKE ? ESCAPE '\\' "
             "OR e.registry_key LIKE ? ESCAPE '\\' OR e.command_line LIKE ? ESCAPE '\\' "
-            "OR e.dest_ip = ? OR e.dest_ip LIKE ? ESCAPE '\\')"
+            "OR e.dest_ip = ? OR e.dest_ip LIKE ? ESCAPE '\\' "
+            "OR e.host_id LIKE ? ESCAPE '\\')"
         )
-        params += [like, like, like, like, q, like]
+        params += [like, like, like, like, q, like, like]
 
     clause = " AND ".join(where)
 
@@ -123,13 +124,13 @@ def export_events(
     feed = list_events(event_type=event_type, platform=platform, severity=severity, q=q, limit=limit, offset=0)
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["timestamp", "run_id", "sample_name", "platform", "event_type", "pid", "ppid", "process_name", "command_line", "dest_ip", "dest_port", "protocol", "file_path", "registry_key", "run_severity"])
+    writer.writerow(["timestamp", "run_id", "sample_name", "platform", "event_type", "pid", "ppid", "process_name", "command_line", "dest_ip", "dest_port", "protocol", "file_path", "registry_key", "host_id", "run_severity"])
     for ev in feed["events"]:
         writer.writerow([
             ev["timestamp"], ev["run_id"], ev["sample_name"], ev["platform"],
             ev["event_type"], ev["pid"], ev["ppid"], ev["process_name"],
             ev["command_line"], ev["dest_ip"], ev["dest_port"], ev["protocol"],
-            ev["file_path"], ev["registry_key"], ev["run_severity"],
+            ev["file_path"], ev["registry_key"], ev.get("host_id", "local"), ev["run_severity"],
         ])
     return Response(
         content=buf.getvalue(),

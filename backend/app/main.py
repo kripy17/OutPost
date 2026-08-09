@@ -7,6 +7,7 @@ mounts the API routers. Run with:
     cd backend && uvicorn app.main:app --reload
 """
 
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -26,7 +27,12 @@ from .api.routes_notifications import router as notifications_router
 from .api.routes_rules import router as rules_router
 from .api.routes_runs import router as runs_router
 from .api.routes_samples import router as samples_router
+from .api.routes_sandbox import router as sandbox_router
 from .api.routes_watchlist import router as watchlist_router
+from .api.routes_yara import router as yara_router
+from .api.routes_agents import router as agents_router
+from .api.routes_audit import router as audit_router
+from .api.routes_admin import auto_prune_loop, router as admin_router
 from .core import auth as auth_service
 from .core.config import CORS_ORIGINS
 from .core.db import init_db
@@ -41,7 +47,13 @@ _PUBLIC_PREFIXES = ("/health", "/platform", "/auth/")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    yield
+    # Background auto-prune scheduler (off by default) — wakes every 60s and
+    # runs the retention prune when a schedule is set. Canceled on shutdown.
+    prune_task = asyncio.create_task(auto_prune_loop())
+    try:
+        yield
+    finally:
+        prune_task.cancel()
 
 
 app = FastAPI(
@@ -50,15 +62,6 @@ app = FastAPI(
     description="Cross-platform behavioral security monitor — API",
     lifespan=lifespan,
 )
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=CORS_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 
 @app.middleware("http")
 async def auth_gate(request: Request, call_next):
@@ -81,6 +84,20 @@ async def auth_gate(request: Request, call_next):
         return JSONResponse(status_code=403, content={"detail": "Read-only analyst role cannot modify data"})
     return await call_next(request)
 
+
+# CORS must be the OUTERMOST middleware (registered last): Starlette wraps
+# middlewares inside-out, so anything added after auth_gate runs before it.
+# If the gate short-circuits a 401/403 (or auth is off), the response must
+# still carry Access-Control-Allow-Origin or the browser blocks it — which
+# previously broke the login screen (CORS errors on every gated fetch).
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.include_router(auth_router)
 app.include_router(health_router)
 app.include_router(footprint_router)
@@ -95,3 +112,8 @@ app.include_router(campaigns_router)
 app.include_router(analysis_router)
 app.include_router(rules_router)
 app.include_router(notifications_router)
+app.include_router(yara_router)
+app.include_router(sandbox_router)
+app.include_router(agents_router)
+app.include_router(audit_router)
+app.include_router(admin_router)

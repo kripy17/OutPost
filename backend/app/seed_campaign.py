@@ -106,7 +106,7 @@ def _variant_b(run_id: str) -> list[dict]:
 
 
 def _seed_variant(conn, run_id: str, sample_name: str, events: list[dict], first_ts: str, last_ts: str) -> list[str]:
-    run_store.create_run(conn, run_id, sample_name=sample_name, platform="windows", session_type="analysis")
+    run_store.create_run(conn, run_id, sample_name=sample_name, platform="windows", session_type="analysis", source="seed")
     for ev in events:
         event_store.insert_event(conn, ev)
     new_alerts = detection.evaluate_batch(conn, run_id, events)

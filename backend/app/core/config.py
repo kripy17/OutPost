@@ -45,5 +45,15 @@ CORS_ORIGINS = _parse_origins(os.getenv("CORS_ORIGINS", "http://localhost:5173")
 ABUSEIPDB_API_KEY = os.getenv("ABUSEIPDB_API_KEY", "")
 VIRUSTOTAL_API_KEY = os.getenv("VIRUSTOTAL_API_KEY", "")
 
+# Sandbox detonation adapters (roadmap 3.3). Provider keys are optional: with
+# none configured the webapp's sandbox panel falls back to a clearly-labeled
+# deterministic demo detonation (same honest-fallback pattern as footprint).
+# SANDBOX_PROVIDER pins the active provider ("anyrun" | "triage" | "joe");
+# empty = auto-pick the first configured one.
+SANDBOX_PROVIDER = os.getenv("SANDBOX_PROVIDER", "").strip().lower()
+ANYRUN_API_KEY = os.getenv("ANYRUN_API_KEY", "")
+TRIAGE_API_KEY = os.getenv("TRIAGE_API_KEY", "")
+JOE_API_KEY = os.getenv("JOE_API_KEY", "")
+
 # Enrichment cache TTL in days — free-tier quotas are small, cache aggressively.
 ENRICHMENT_TTL_DAYS = int(os.getenv("ENRICHMENT_TTL_DAYS", "7"))

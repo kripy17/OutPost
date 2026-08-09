@@ -5,14 +5,15 @@ import AlertBanner from "../components/AlertBanner/AlertBanner";
 import ExportButton from "../components/ExportButton/ExportButton";
 import { Icon, platformIconName } from "../components/Icon";
 import KillChainStepper, { killChainStats } from "../components/KillChain/KillChainStepper";
-import { Panel } from "../components/ui";
+import { Panel, SourceBadge } from "../components/ui";
 import NotesPanel from "../components/NotesPanel/NotesPanel";
 import ProcessTree from "../components/ProcessTree/ProcessTree";
 import { AllowlistPanel, SuppressionPanel } from "../components/TriagePanels/TriagePanels";
 import RulesPanel from "../components/RulesPanel/RulesPanel";
 import TimelineView from "../components/TimelineView/TimelineView";
+import Topology from "../components/Topology/Topology";
 import { RISK_COLORS, enumKindsFromDetails, riskBand } from "../lib/constants";
-import { bulkUpdateAlertStatus, getCampaigns, getRunDetail, getRunIocsCsv, updateAlertStatus } from "../lib/api";
+import { bulkUpdateAlertStatus, getCampaigns, getRunDetail, getRunIocsCsv, markFalsePositive, updateAlertStatus } from "../lib/api";
 import type { AlertStatus, NetworkConnection, Reputation, RunDetail } from "../types";
 
 /* ── Risk gauge — semicircular arc, colored by band ────────────────────── */
@@ -347,6 +348,18 @@ export default function RunDetailPage() {
     [runId, queryClient],
   );
 
+  // FP feedback loop — resolve as false positive, bump the rule's FP counter,
+  // return the tuning/suppression suggestions for one-click follow-ups.
+  const onMarkFalsePositive = useCallback(
+    async (alertId: number, comment?: string) => {
+      const resp = await markFalsePositive(alertId, comment ?? "");
+      void queryClient.invalidateQueries({ queryKey: ["run", runId] });
+      void queryClient.invalidateQueries({ queryKey: ["rules-meta"] });
+      return resp;
+    },
+    [runId, queryClient],
+  );
+
   if (isLoading) return <p className="p-8 text-sm text-text-muted">Loading run…</p>;
   if (isError || !data) {
     return (
@@ -384,6 +397,18 @@ export default function RunDetailPage() {
               <Icon name={platformIconName(run.platform)} size={11} className="text-signal" />
               {run.platform}
             </span>
+            <SourceBadge source={run.source} />
+            {(run.host_ids ?? []).map((h) => (
+              <Link
+                key={h}
+                to={`/history?host=${encodeURIComponent(h)}`}
+                className="inline-flex items-center gap-1 rounded border border-border-subtle px-1.5 py-0.5 font-mono text-[10px] text-text-muted transition-colors hover:border-accent/50 hover:text-accent"
+                title={`All runs from host ${h}`}
+              >
+                <Icon name="terminal" size={10} className="opacity-60" />
+                {h}
+              </Link>
+            ))}
             <span>{run.session_type}</span>
             <span>started {run.started_at.slice(0, 19).replace("T", " ")} UTC</span>
             {inProgress && (
@@ -430,8 +455,30 @@ export default function RunDetailPage() {
         >
           <KillChainStepper alerts={alerts} />
         </Panel>
-        <AlertBanner alerts={alerts} triage onStatus={onAlertStatus} onBulkStatus={onBulkAlertStatus} />
+        <AlertBanner
+          alerts={alerts}
+          triage
+          onStatus={onAlertStatus}
+          onBulkStatus={onBulkAlertStatus}
+          onFalsePositive={onMarkFalsePositive}
+        />
       </div>
+
+      {network_connections.length > 0 && (
+        <Panel
+          kicker="Behavior · graph"
+          title="Connection topology"
+          className="mb-6"
+          right={
+            <span className="inline-flex items-center gap-1 font-mono text-[10px] text-signal">
+              <Icon name="network" size={11} />
+              processes → destinations
+            </span>
+          }
+        >
+          <Topology tree={process_tree} connections={network_connections} />
+        </Panel>
+      )}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[3fr_2fr]">
         <div id="process-tree-panel" className="scroll-mt-24">

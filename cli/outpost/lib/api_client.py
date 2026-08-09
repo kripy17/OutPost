@@ -32,7 +32,10 @@ def _post(path: str, body: dict | None = None) -> Any:
 
 # -- runs --------------------------------------------------------------------
 def create_run(sample_name: str, platform: str, session_type: str = "analysis") -> str:
-    return _post("/runs", {"sample_name": sample_name, "platform": platform, "session_type": session_type})["run_id"]
+    return _post(
+        "/runs",
+        {"sample_name": sample_name, "platform": platform, "session_type": session_type, "source": "cli"},
+    )["run_id"]
 
 
 def complete_run(run_id: str) -> dict:

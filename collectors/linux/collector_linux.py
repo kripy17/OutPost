@@ -151,6 +151,8 @@ def main(run_id: str | None, backend_url: str, mode: str = "analysis", timeout: 
     shipper = Shipper(backend_url, run_id)
     pid_cache: dict = {}
     start = time.time()
+    snapshot_interval = float(os.getenv("SNAPSHOT_INTERVAL", "30"))
+    last_snapshot = 0.0
 
     print(f"[collector-linux] run_id={run_id} mode={mode} backend={backend_url}")
     try:
@@ -165,6 +167,11 @@ def main(run_id: str | None, backend_url: str, mode: str = "analysis", timeout: 
                         shipper.add(ev)
                 else:
                     shipper.flush()
+                    # Live system snapshot on an interval — the "running now"
+                    # view for the Agents page / Live Monitor (best-effort).
+                    if time.time() - last_snapshot > snapshot_interval:
+                        shipper.ship_snapshot(platform="linux")
+                        last_snapshot = time.time()
                     time.sleep(0.5)
                 if mode == "analysis" and time.time() - start > timeout:
                     break

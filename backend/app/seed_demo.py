@@ -26,7 +26,7 @@ def main() -> str:
     run_id = uuid.uuid4().hex[:12]
 
     with db_session() as conn:
-        run_store.create_run(conn, run_id, sample_name="demo-sample.exe", platform="windows", session_type="analysis")
+        run_store.create_run(conn, run_id, sample_name="demo-sample.exe", platform="windows", session_type="analysis", source="seed")
 
         events = [
             # Process tree: demo-sample.exe → cmd.exe → powershell.exe

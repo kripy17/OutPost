@@ -61,6 +61,12 @@ step "Collector pytest (collectors/tests)" \
 step "CLI pytest      (cli/tests)" \
   bash -c "cd '$ROOT/cli' && '$PYTEST' -q"
 
+step "Frontend lint   (eslint)" \
+  bash -c "cd '$ROOT/frontend' && '$NPM' run lint"
+
+step "Frontend tests  (vitest)" \
+  bash -c "cd '$ROOT/frontend' && '$NPM' run test"
+
 step "Frontend build  (tsc --noEmit && vite build)" \
   bash -c "cd '$ROOT/frontend' && '$NPM' run build"
 

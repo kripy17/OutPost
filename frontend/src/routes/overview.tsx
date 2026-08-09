@@ -1,21 +1,35 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Icon } from "../components/Icon";
-import { RiskGauge, RiskSparkline, SeverityDonut } from "../components/Posture/Posture";
+import { RiskGauge, RiskTrendBars, SeverityDonut, type RiskTrendBar } from "../components/Posture/Posture";
 import { Chip, PageHeader, Panel } from "../components/ui";
 import { SEVERITY_BG } from "../lib/constants";
 import { getCampaigns, getHealth, getPlatform, getRecentAlerts, getRuleMeta, getRuns } from "../lib/api";
-import type { Campaign, GlobalAlert, RunSummary } from "../types";
+import { useEventStream } from "../lib/useEventStream";
+import type { Campaign, GlobalAlert, RuleMeta, RunSummary, Severity } from "../types";
 
 /* ──────────────────────────────────────────────────────────────────────── */
 // Threat posture — the console header. Three visual primitives instead of a
-// stat strip: a risk gauge, a severity donut, and a risk-over-time sparkline.
-// The primitives live in components/Posture/Posture.tsx (shared with the
-// Theme Lab so palettes can be previewed side by side).
+// stat strip: a risk gauge, a severity donut, and a risk-over-time trend.
+// The trend is aggregated by sample (one bar per binary, sized by peak) so
+// the console reads which samples are worst at a glance; per-session detail
+// lives on History (click a bar to jump there pre-filtered). The primitives
+// live in components/Posture/Posture.tsx.
 /* ──────────────────────────────────────────────────────────────────────── */
 
-function PostureHeader({ runs, campaigns, totalAlerts }: { runs: RunSummary[]; campaigns: number; totalAlerts: number }) {
+function PostureHeader({
+  runs,
+  trendBars,
+  campaigns,
+  totalAlerts,
+}: {
+  runs: RunSummary[];
+  trendBars: RiskTrendBar[];
+  campaigns: number;
+  totalAlerts: number;
+}) {
   const peak = Math.max(0, ...runs.map((r) => r.risk_score ?? 0));
   const malicious = runs.filter((r) => r.highest_severity === "malicious").length;
   const suspicious = runs.filter((r) => r.highest_severity === "suspicious").length;
@@ -31,7 +45,7 @@ function PostureHeader({ runs, campaigns, totalAlerts }: { runs: RunSummary[]; c
           <SeverityDonut malicious={malicious} suspicious={suspicious} clean={clean} />
         </div>
         <div className="flex flex-col justify-center gap-4 px-6 py-6">
-          <RiskSparkline runs={runs} />
+          <RiskTrendBars bars={trendBars} />
           <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-border-subtle pt-3 text-[12px]">
             <span className="flex items-center gap-1.5 text-text-muted">
               <Icon name="grid" size={13} className="text-text-faint" />
@@ -53,23 +67,179 @@ function PostureHeader({ runs, campaigns, totalAlerts }: { runs: RunSummary[]; c
 }
 
 /* ──────────────────────────────────────────────────────────────────────── */
-// Live findings feed
+// Risk trend aggregation — one bar per unique binary (peak risk), with the
+// risk-0 host-monitor sessions excluded by default so the chart shows real
+// findings, not the live-viewing noise. Per-session detail stays on History.
 /* ──────────────────────────────────────────────────────────────────────── */
 
+export function aggregateTrend(runs: RunSummary[]): RiskTrendBar[] {
+  const byName = new Map<string, RiskTrendBar>();
+  for (const r of runs) {
+    // Default out empty live-monitor sessions — they're viewing sessions,
+    // not findings; a live session WITH a finding still shows.
+    if (r.session_type === "live" && (r.risk_score ?? 0) === 0) continue;
+    const cur = byName.get(r.sample_name) ?? { sample: r.sample_name, peak: 0, count: 0, last: "" };
+    cur.peak = Math.max(cur.peak, r.risk_score ?? 0);
+    cur.count += 1;
+    if (!cur.last || r.started_at > cur.last) cur.last = r.started_at;
+    byName.set(r.sample_name, cur);
+  }
+  return [...byName.values()].sort((a, b) => a.last.localeCompare(b.last));
+}
+
+/* ──────────────────────────────────────────────────────────────────────── */
+// Live findings feed — SSE push + duplicate collapse
+/* ──────────────────────────────────────────────────────────────────────── */
+
+/** Identical findings (same rule + same sample) within a 5-minute window
+ *  collapse into one row with a ×N badge — otherwise a single detonation's
+ *  four alerts spam the feed four times in a row. Newest-first input.
+ *  Exported for the unit tests (src/test/overview.test.ts). */
+export function collapseFindings(alerts: GlobalAlert[]): CollapsedFinding[] {
+  const WINDOW_MS = 5 * 60 * 1000;
+  const groups: CollapsedFinding[] = [];
+  for (const a of alerts) {
+    const last = groups[groups.length - 1];
+    const ts = new Date(a.triggered_at).getTime();
+    const firstTs = last ? new Date(last.first.triggered_at).getTime() : 0;
+    if (
+      last &&
+      last.rule_id === a.rule_id &&
+      last.sample_name === a.sample_name &&
+      Math.abs(firstTs - ts) < WINDOW_MS
+    ) {
+      last.count += 1;
+      last.runs.add(a.run_id);
+      continue;
+    }
+    groups.push({
+      key: `${a.rule_id}|${a.sample_name}|${a.triggered_at}`,
+      rule_id: a.rule_id,
+      sample_name: a.sample_name,
+      count: 1,
+      runs: new Set([a.run_id]),
+      first: a,
+    });
+  }
+  return groups;
+}
+
+interface CollapsedFinding {
+  key: string;
+  rule_id: string;
+  sample_name: string;
+  count: number;
+  runs: Set<string>;
+  first: GlobalAlert;
+}
+
+/** Risk-first ordering for the feed: malicious over suspicious, then heavier
+ *  rules first, then newest. The SOC console reads "what's worst" at a glance
+ *  instead of a pure time dump — time is still the final tiebreak. Exported
+ *  for the unit tests. */
+export function sortFindingsRiskFirst(groups: CollapsedFinding[], byRule: Map<string, RuleMeta>): CollapsedFinding[] {
+  const sev = { malicious: 2, suspicious: 1 } as const;
+  return [...groups].sort((a, b) => {
+    const wa = byRule.get(a.rule_id);
+    const wb = byRule.get(b.rule_id);
+    const sa = sev[a.first.severity] + (wa?.weight ?? 0) / 100;
+    const sb = sev[b.first.severity] + (wb?.weight ?? 0) / 100;
+    if (sb !== sa) return sb - sa;
+    return b.first.triggered_at.localeCompare(a.first.triggered_at);
+  });
+}
+
+/** Human "open since" label for an alert, e.g. "open since 12m". */
+export function openSince(a: GlobalAlert, now: number = Date.now()): string | null {
+  if (a.status !== "open") return null;
+  const start = new Date(a.triggered_at).getTime();
+  const mins = Math.max(0, Math.floor((now - start) / 60_000));
+  if (mins < 1) return "open · just now";
+  if (mins < 60) return `open since ${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  return `open since ${hrs}h`;
+}
+
+/** Age bucket for coloring the badge — 0 fresh, 1 warm (>30m), 2 hot (>2h). */
+export function ageBucket(a: GlobalAlert, now: number = Date.now()): 0 | 1 | 2 {
+  if (a.status !== "open") return 0;
+  const mins = (now - new Date(a.triggered_at).getTime()) / 60_000;
+  if (mins >= 120) return 2;
+  if (mins >= 30) return 1;
+  return 0;
+}
+
 function FindingsFeed() {
+  const queryClient = useQueryClient();
+  const [sevFilter, setSevFilter] = useState<Severity | "all">("all");
   const { data: alerts = [], isLoading, isError } = useQuery({
     queryKey: ["alerts", "recent"],
-    queryFn: () => getRecentAlerts(12),
+    queryFn: () => getRecentAlerts(24),
     refetchInterval: 10_000,
   });
   const { data: meta } = useQuery({ queryKey: ["rules-meta"], queryFn: getRuleMeta, staleTime: Infinity });
-  const byRule = new Map((meta ?? []).map((m) => [m.rule_id, m]));
+  const byRule = useMemo(() => new Map((meta ?? []).map((m) => [m.rule_id, m])), [meta]);
+
+  // Live push: a fired alert refetches the feed immediately (SSE carries no
+  // sample_name, so the query stays the single source of truth). The poll is
+  // the fallback; push just makes it instant.
+  useEventStream(() => {
+    void queryClient.invalidateQueries({ queryKey: ["alerts", "recent"] });
+  });
+
+  // Flash rows that weren't in the previous snapshot (new findings ring in).
+  const prevKeys = useRef<Set<string>>(new Set());
+  const [freshKeys, setFreshKeys] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    const keys = new Set(collapseFindings(alerts).map((g) => g.key));
+    const fresh = new Set<string>();
+    for (const k of keys) if (!prevKeys.current.has(k)) fresh.add(k);
+    prevKeys.current = keys;
+    setFreshKeys(fresh);
+    if (fresh.size === 0) return;
+    const t = setTimeout(() => setFreshKeys(new Set()), 2500);
+    return () => clearTimeout(t);
+  }, [alerts]);
+
+  const groups = useMemo(() => {
+    const collapsed = collapseFindings(alerts);
+    const filtered = sevFilter === "all" ? collapsed : collapsed.filter((g) => g.first.severity === sevFilter);
+    return sortFindingsRiskFirst(filtered, byRule);
+  }, [alerts, sevFilter, byRule]);
+
+  const now = Date.now();
 
   return (
     <Panel
       kicker="Live feed"
       title="Findings"
-      right={<span className="font-mono text-[10px] text-text-faint">auto-refresh · 10s</span>}
+      right={
+        <div className="flex items-center gap-3">
+          <div className="flex overflow-hidden rounded-md border border-border-subtle font-mono text-[10px]">
+            {(["all", "malicious", "suspicious"] as const).map((s) => (
+              <button
+                key={s}
+                onClick={() => setSevFilter(s)}
+                className={`px-2 py-1 transition-colors ${
+                  sevFilter === s
+                    ? s === "malicious"
+                      ? "bg-risk-malicious/20 text-risk-malicious"
+                      : s === "suspicious"
+                        ? "bg-risk-suspicious/20 text-risk-suspicious"
+                        : "bg-accent/15 text-accent"
+                    : "text-text-faint hover:text-text-muted"
+                }`}
+              >
+                {s === "all" ? "all" : s.slice(0, 3)}
+              </button>
+            ))}
+          </div>
+          <span className="inline-flex items-center gap-1.5 font-mono text-[10px] text-signal">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-signal" aria-hidden />
+            live · SSE
+          </span>
+        </div>
+      }
     >
       {isLoading && <SkeletonList rows={4} />}
       {isError && (
@@ -77,23 +247,35 @@ function FindingsFeed() {
           Backend unreachable — is it running?
         </p>
       )}
-      {!isLoading && !isError && alerts.length === 0 && (
+      {!isLoading && !isError && groups.length === 0 && (
         <p className="py-8 text-center text-sm text-text-muted">No findings yet — detonate a sample from Monitor.</p>
       )}
 
       <ol className="space-y-2">
-        {alerts.map((a: GlobalAlert) => {
+        {groups.map((g) => {
+          const a = g.first;
           const rule = byRule.get(a.rule_id);
+          const isFresh = freshKeys.has(g.key);
           return (
             <li
-              key={a.id ?? `${a.run_id}-${a.rule_id}-${a.triggered_at}`}
-              className="group relative overflow-hidden rounded-lg border border-border-subtle bg-bg-elevated/40 pl-3 transition-all duration-150 hover:border-accent/40 hover:shadow-[var(--shadow-raised)]"
+              key={g.key}
+              className={`group relative overflow-hidden rounded-lg border border-border-subtle bg-bg-elevated/40 pl-3 transition-all duration-150 hover:border-accent/40 hover:shadow-[var(--shadow-raised)] ${
+                isFresh ? "animate-outpost-pulse border-accent/50" : ""
+              }`}
             >
               <span className={`absolute inset-y-0 left-0 w-1 ${SEVERITY_BG[a.severity]}`} aria-hidden />
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3.5 py-3">
                 <Link to={`/runs/${a.run_id}`} className="press font-mono text-xs font-medium text-text-primary hover:text-accent">
                   {a.sample_name}
                 </Link>
+                {g.count > 1 && (
+                  <span
+                    className="rounded-full border border-border-subtle bg-bg-elevated/70 px-1.5 py-px font-mono text-[10px] tabular-nums text-text-muted"
+                    title={`${g.count} identical findings across ${g.runs.size} run${g.runs.size === 1 ? "" : "s"} in the last 5 minutes`}
+                  >
+                    ×{g.count}
+                  </span>
+                )}
                 <span className="text-xs text-text-muted">{a.rule_name}</span>
                 {rule && (
                   <span
@@ -103,9 +285,28 @@ function FindingsFeed() {
                     {rule.technique} · {rule.tactic}
                   </span>
                 )}
-                <span className="ml-auto flex items-center gap-1 font-mono text-[10px] tabular-nums text-text-faint">
-                  <Icon name={a.severity === "malicious" ? "alert" : "zap"} size={11} className={a.severity === "malicious" ? "text-risk-malicious" : "text-risk-suspicious"} />
-                  {a.triggered_at.slice(11, 19)} UTC
+                <span className="ml-auto flex items-center gap-2 font-mono text-[10px] tabular-nums">
+                  {a.status === "open" && (
+                    <span
+                      className={`rounded-full border px-1.5 py-px ${
+                        ageBucket(a, now) === 2
+                          ? "border-risk-malicious/40 bg-risk-malicious/10 text-risk-malicious"
+                          : ageBucket(a, now) === 1
+                            ? "border-risk-suspicious/40 bg-risk-suspicious/10 text-risk-suspicious"
+                            : "border-border-subtle text-text-faint"
+                      }`}
+                      title={a.status_at ? `Open since ${a.triggered_at}` : "Open — awaiting triage"}
+                    >
+                      {openSince(a, now)}
+                    </span>
+                  )}
+                  {a.status !== "open" && (
+                    <span className="text-text-faint">{a.status}</span>
+                  )}
+                  <span className="flex items-center gap-1 text-text-faint">
+                    <Icon name={a.severity === "malicious" ? "alert" : "zap"} size={11} className={a.severity === "malicious" ? "text-risk-malicious" : "text-risk-suspicious"} />
+                    {a.triggered_at.slice(11, 19)} UTC
+                  </span>
                 </span>
               </div>
               <p className="truncate px-3.5 pb-3 font-mono text-[11px] text-text-muted" title={a.details}>
@@ -300,6 +501,7 @@ export default function OverviewPage() {
   const { data: campaigns = [] } = useQuery({ queryKey: ["campaigns"], queryFn: getCampaigns });
 
   const totalAlerts = runs.reduce((n, r) => n + r.alert_count, 0);
+  const trendBars = useMemo(() => aggregateTrend(runs), [runs]);
 
   return (
     <div className="mx-auto max-w-[1400px] px-5 py-8 lg:px-8">
@@ -324,7 +526,7 @@ export default function OverviewPage() {
 
       {!isLoading && !isError && (
         <>
-          <PostureHeader runs={runs} campaigns={campaigns.length} totalAlerts={totalAlerts} />
+          <PostureHeader runs={runs} trendBars={trendBars} campaigns={campaigns.length} totalAlerts={totalAlerts} />
           {/* One-line trend affordance — the analytical bars live in History now. */}
           <p className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[10px] text-text-faint">
             <Icon name="activity" size={12} className="text-accent" />
