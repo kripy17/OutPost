@@ -20,7 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
 
-from shipper import Shipper, claim_active_live_run  # noqa: E402
+from shipper import Shipper, resolve_live_run_id  # noqa: E402
 
 AUDIT_LOG = "/var/log/audit/audit.log"
 
@@ -143,16 +143,19 @@ def main(run_id: str | None, backend_url: str, mode: str = "analysis", timeout: 
         print(f"ERROR: {AUDIT_LOG} not found — is auditd installed and running?", file=sys.stderr)
         sys.exit(2)
 
-    # Claim the webapp's open live session when no run_id was given.
+    # Standalone session resolution when no run_id was given: claim the
+    # webapp's open live session, else reuse/create today's agent run — so
+    # the systemd service streams with no browser session open.
     if not run_id:
-        run_id = claim_active_live_run(backend_url)
-        print(f"[collector-linux] claimed active live session {run_id}")
+        run_id = resolve_live_run_id(backend_url, platform="linux")
+        print(f"[collector-linux] live session {run_id}")
 
     shipper = Shipper(backend_url, run_id)
     pid_cache: dict = {}
     start = time.time()
     snapshot_interval = float(os.getenv("SNAPSHOT_INTERVAL", "30"))
     last_snapshot = 0.0
+    heartbeat_interval = float(os.getenv("HEARTBEAT_INTERVAL", "60"))
 
     print(f"[collector-linux] run_id={run_id} mode={mode} backend={backend_url}")
     try:
@@ -172,6 +175,8 @@ def main(run_id: str | None, backend_url: str, mode: str = "analysis", timeout: 
                     if time.time() - last_snapshot > snapshot_interval:
                         shipper.ship_snapshot(platform="linux")
                         last_snapshot = time.time()
+                    # Liveness ping — the fleet view's last-seen/silent signal.
+                    shipper.maybe_heartbeat(platform="linux", interval=heartbeat_interval)
                     time.sleep(0.5)
                 if mode == "analysis" and time.time() - start > timeout:
                     break

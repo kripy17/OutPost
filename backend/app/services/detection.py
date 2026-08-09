@@ -10,6 +10,7 @@ never a generic "suspicious activity detected". Runs on every ingested batch
 so live monitoring is actually live.
 """
 
+import ipaddress
 import json
 import re
 import statistics
@@ -186,6 +187,38 @@ PERSISTENCE_PATHS = {
 BEACON_WINDOW_MINUTES = 30
 BEACON_MIN_CONNECTIONS = 5
 BEACON_VARIANCE_THRESHOLD = 5.0  # seconds std-dev of intervals
+# A mean interval BELOW this is a burst, not a beacon — parallel fetches /
+# dev-stack polling land all connections within a fraction of a second and
+# their ~0s intervals look perfectly "regular" to the variance gate (soak FP:
+# 7 conns to one IP in 0.2s fired as beaconing). Real beacons are spaced.
+BEACON_MIN_INTERVAL_SECONDS = 1.0
+
+# Destinations that can never beacon: unspecified (0.0.0.0 — also the
+# collector's IPv6-parse artifact), loopback, multicast, and link-local.
+# Local dev traffic (frontend → backend on 127.0.0.1) is exactly the kind of
+# regular-interval polling that false-positives the rule (soak FP: 5 conns to
+# 127.0.0.1:8001 and 6 to 0.0.0.0:8001 fired).
+_BEACON_EXCLUDED_NETS = [
+    ipaddress.ip_network("0.0.0.0/8"),      # "this network" / parse artifact
+    ipaddress.ip_network("127.0.0.0/8"),    # loopback
+    ipaddress.ip_network("::1/128"),        # IPv6 loopback
+    ipaddress.ip_network("::/128"),         # IPv6 unspecified
+    ipaddress.ip_network("224.0.0.0/4"),    # multicast
+    ipaddress.ip_network("169.254.0.0/16"), # link-local
+]
+
+
+def _is_routable_dest(ip: str) -> bool:
+    """True for routable destinations only — excludes the non-routable / local
+    ranges that fire the network rules on normal host traffic (soak-discovered:
+    loopback dev-stack polling, 0.0.0.0 parse artifacts, etc.)."""
+    if not ip:
+        return False
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    return not any(addr in net for net in _BEACON_EXCLUDED_NETS)
 
 RENAME_BURST_WINDOW_SECONDS = 10
 RENAME_BURST_THRESHOLD = 10
@@ -199,6 +232,11 @@ ENUM_BURST_THRESHOLD = 3
 # Exfiltration (rule 16) — an archive created then an upload/connection to a
 # non-private host inside the window is the classic data-staging arc.
 STAGING_WINDOW_SECONDS = 180
+
+# Baseline anomalies (roadmap 4.x) — a host's own telemetry must reach this
+# many learned observations before first-time processes/IPs start firing, so
+# a brand-new host's initial traffic doesn't spam the triage queue.
+BASELINE_MIN_EVENTS = 100
 
 # Rules 17–21 close the remaining ATT&CK tactics (14/14 coverage gate).
 
@@ -310,6 +348,13 @@ def _alert_exists(conn: sqlite3.Connection, run_id: str, rule_id: str, related: 
 # ---------------------------------------------------------------------------
 # Rule 1 — Process Masquerading
 # ---------------------------------------------------------------------------
+# On Arch/Ubuntu etc., /sbin/init (and /usr/sbin/init) are symlinks to
+# systemd — pid 1's init execve is normal and must not trip the systemd path
+# check (soak FP: "systemd running from an unexpected path — expected
+# /usr/lib/systemd/systemd" fired on the real /sbin/init execve).
+SYSTEMD_INIT_ALIASES = {"/sbin/init", "/usr/sbin/init"}
+
+
 def check_masquerading(event: dict) -> Optional[Alert]:
     r"""A known system binary running from an unexpected absolute path.
 
@@ -331,6 +376,8 @@ def check_masquerading(event: dict) -> Optional[Alert]:
     is_abs = first_token.startswith("/") or (len(first_token) >= 3 and first_token[1] == ":")
     if not is_abs:
         return None
+    if name == "systemd" and first_token in SYSTEMD_INIT_ALIASES:
+        return None  # pid 1's init execve — systemd via the distro symlink
     if expected_path.lower() in cmdline.lower():
         return None
     return _make_alert(
@@ -388,6 +435,10 @@ def check_unusual_port(event: dict) -> Optional[Alert]:
     low-FP early signal that complements beaconing.
     """
     if event.get("event_type") != "network_connection":
+        return None
+    if not _is_routable_dest(event.get("dest_ip") or ""):
+        # A local service on a C2-ish port (127.0.0.1:9001 dev listener) is
+        # not a plant — soak-discovered FP. Only routable destinations count.
         return None
     port = event.get("dest_port")
     if port is None:
@@ -458,8 +509,9 @@ def check_beaconing(
     cutoff: datetime,
     min_conn: int = BEACON_MIN_CONNECTIONS,
     variance: float = BEACON_VARIANCE_THRESHOLD,
+    min_interval: float = BEACON_MIN_INTERVAL_SECONDS,
 ) -> Optional[Alert]:
-    if not dest_ip:
+    if not _is_routable_dest(dest_ip):
         return None
     timestamps = _recent_connection_times(conn, run_id, dest_ip, cutoff)
     if len(timestamps) < min_conn:
@@ -468,6 +520,10 @@ def check_beaconing(
     if len(intervals) < 2:
         return None
     if statistics.pstdev(intervals) >= variance:
+        return None
+    if statistics.mean(intervals) < min_interval:
+        # A burst (all connections within a fraction of a second) reads as
+        # perfectly regular to the variance gate — but it isn't a beacon.
         return None
     return Alert(
         run_id=run_id,
@@ -1237,11 +1293,13 @@ _DEFAULT_TUNABLES = {
     "BEACON_MIN_CONNECTIONS": ("beaconing", int, BEACON_MIN_CONNECTIONS),
     "BEACON_WINDOW_MINUTES": ("beaconing", int, BEACON_WINDOW_MINUTES),
     "BEACON_VARIANCE_THRESHOLD": ("beaconing", float, BEACON_VARIANCE_THRESHOLD),
+    "BEACON_MIN_INTERVAL_SECONDS": ("beaconing", float, BEACON_MIN_INTERVAL_SECONDS),
     "RENAME_BURST_THRESHOLD": ("rename-burst", int, RENAME_BURST_THRESHOLD),
     "RENAME_BURST_WINDOW_SECONDS": ("rename-burst", int, RENAME_BURST_WINDOW_SECONDS),
     "ENUM_BURST_THRESHOLD": ("enumeration-burst", int, ENUM_BURST_THRESHOLD),
     "ENUM_WINDOW_SECONDS": ("enumeration-burst", int, ENUM_WINDOW_SECONDS),
     "STAGING_WINDOW_SECONDS": ("data-staging", int, STAGING_WINDOW_SECONDS),
+    "BASELINE_MIN_EVENTS": ("baseline-anomaly", int, BASELINE_MIN_EVENTS),
 }
 
 # Defaults registry for the editor UI (kept separate from the lookup so the
@@ -1446,6 +1504,7 @@ def evaluate_batch(conn: sqlite3.Connection, run_id: str, events: list[dict]) ->
                 beacon_cutoff,
                 min_conn=int(t["BEACON_MIN_CONNECTIONS"]),
                 variance=int(t["BEACON_VARIANCE_THRESHOLD"] * 100) / 100.0,
+                min_interval=float(t["BEACON_MIN_INTERVAL_SECONDS"]),
             )
             if alert:
                 fire(alert)
@@ -1502,5 +1561,20 @@ def evaluate_batch(conn: sqlite3.Connection, run_id: str, events: list[dict]) ->
             ),
         )
         fire(chain_alert)
+
+    # Baseline anomalies (roadmap 4.x) — the anomaly layer under the rule
+    # engine: learn what this host normally executes/talks to from its own
+    # telemetry, then flag first-time observations once the baseline is
+    # established (BASELINE_MIN_EVENTS). Check-then-learn ordering means each
+    # novel item fires exactly once — it's not in the baseline when the batch
+    # arrives, we alert, we learn it, and the next batch sees it as known.
+    from ..services import baseline as baseline_svc
+
+    for host, kind, value, ev in baseline_svc.check_deviations(
+        conn, events, min_events=int(t["BASELINE_MIN_EVENTS"])
+    ):
+        if not _alert_exists(conn, run_id, "baseline-anomaly", value):
+            fire(baseline_svc.build_alert(run_id, host, kind, value, ev))
+    baseline_svc.learn(conn, events)
 
     return new_alerts

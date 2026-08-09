@@ -4,6 +4,8 @@ Uses the design-system color language (docs/07-UI-DESIGN-SYSTEM.md):
 clean teal / suspicious amber / malicious brick.
 """
 
+from datetime import datetime, timezone
+
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -13,11 +15,56 @@ from .banners import show_banner
 
 console = Console()
 
+
+def intel_age(checked_at: str | None) -> str:
+    """"checked 5h ago" — reputation cache age, mirroring the webapp's
+    intelAgeLabel so the terminal and the UI read the same staleness."""
+    if not checked_at:
+        return "-"
+    try:
+        ts = datetime.fromisoformat(checked_at.replace("Z", "+00:00"))
+    except ValueError:
+        return "-"
+    age = datetime.now(timezone.utc) - ts
+    if age.total_seconds() < 0:
+        return "just now"
+    m = int(age.total_seconds() // 60)
+    if m < 1:
+        return "just now"
+    if m < 60:
+        return f"{m}m ago"
+    h = m // 60
+    if h < 24:
+        return f"{h}h ago"
+    return f"{h // 24}d ago"
+
 SEVERITY_STYLE = {
     "clean": "bold #3FA796",
     "suspicious": "bold #D9A441",
     "malicious": "bold #C4453B",
 }
+
+
+def build_rule_summary_table(rules: dict[str, dict]) -> Table:
+    """Rich table for `outpost agent summary` — one row per fired rule:
+    total alerts, malicious/suspicious split, and how many agent sessions
+    the rule fired in (its blast radius across the measurement window).
+    """
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Rule", style="cyan")
+    table.add_column("Alerts", justify="right")
+    table.add_column("Malicious", justify="right", style="#C4453B")
+    table.add_column("Suspicious", justify="right", style="yellow")
+    table.add_column("Sessions", justify="right")
+    for v in sorted(rules.values(), key=lambda x: -x["count"]):
+        table.add_row(
+            v["rule_id"],
+            str(v["count"]),
+            str(v["malicious"]),
+            str(v["suspicious"]),
+            str(len(v["runs"])),
+        )
+    return table
 
 
 def risk_style(score: int | None) -> str:
@@ -108,6 +155,7 @@ def render_network_table(connections: list[dict]) -> Table:
     table.add_column("Reputation")
     table.add_column("Abuse")
     table.add_column("VT")
+    table.add_column("Checked", style="dim", no_wrap=True)
     table.add_column("First seen", style="dim", no_wrap=True)
 
     for c in connections:
@@ -119,6 +167,7 @@ def render_network_table(connections: list[dict]) -> Table:
             f"[{SEVERITY_STYLE.get(rep, 'white')}]● {rep}[/{SEVERITY_STYLE.get(rep, 'white')}]",
             str(c.get("abuse_score") or "-"),
             str(c.get("vt_malicious_count") or "-"),
+            intel_age(c.get("checked_at")),
             (c.get("first_seen") or "")[:19],
         )
     return table

@@ -6,6 +6,7 @@
 """
 
 import asyncio
+import json
 import uuid
 from datetime import datetime, timezone
 
@@ -99,7 +100,12 @@ async def ingest_batch(events: list[EventIn]) -> dict:
         stored_events: list[dict] = []
         for event_in in events:
             # mode="json" serializes datetimes to ISO strings — sqlite-safe.
-            normalized = normalizer.normalize_event(event_in.model_dump(mode="json"))
+            raw_payload = event_in.model_dump(mode="json")
+            normalized = normalizer.normalize_event(raw_payload)
+            # Keep the collector's original payload as the event's raw record
+            # (Event Viewer "raw record" pane — pivot from normalized row to
+            # the original auditd/Sysmon line).
+            normalized["raw_record"] = json.dumps(raw_payload)
             key = (
                 normalized.get("event_type"),
                 normalized.get("timestamp"),
@@ -149,6 +155,25 @@ async def ingest_batch(events: list[EventIn]) -> dict:
 
     asyncio.create_task(_dispatch())
 
+    # Baseline anomalies page the same fleet channel: they're suspicious
+    # severity, so the malicious-only alert notifier skips them — but a
+    # first-time process/IP on an established host is exactly what on-call
+    # wants to hear about.
+    baseline_hits = [a for a in new_alerts if a.rule_id == "baseline-anomaly"]
+
+    async def _dispatch_baseline() -> None:
+        try:
+            for a in baseline_hits:
+                host = "unknown"
+                if "on host " in a.details:
+                    host = a.details.split("on host ", 1)[1].split(":", 1)[0].strip()
+                await notify.notify_fleet_event("baseline-anomaly", host, a.details)
+        except Exception:
+            pass  # notification failure must never surface into ingestion
+
+    if baseline_hits:
+        asyncio.create_task(_dispatch_baseline())
+
     # Watchlist hits — same webhook channel, distinct `outpost.watchlist`
     # event, fired the moment a watched IOC appears in a new batch.
     async def _dispatch_watchlist() -> None:
@@ -171,6 +196,10 @@ async def ingest_batch(events: list[EventIn]) -> dict:
         events_stream.publish_watchlist(
             run_id, run_meta["sample_name"], run_meta["platform"], watchlist_matches
         )
+    # Run-level push: the Monitor / Event Log live views refresh the moment a
+    # batch lands (new events in the tree/table/feed) instead of waiting for
+    # the next poll tick. Polling remains the fallback when SSE is off.
+    events_stream.publish_run_update(run_id, accepted)
 
     return {"accepted": accepted, "alerts": len(new_alerts)}
 
@@ -200,4 +229,11 @@ def complete_run(run_id: str) -> dict:
             raise HTTPException(status_code=404, detail=f"Unknown run_id: {run_id}")
         run_store.complete_run(conn, run_id)
         summary = run_store.to_summary(conn, run_store.get_run(conn, run_id))
+
+    # Push the completion so open live views stop streaming immediately
+    # (the Monitor's poll stops once completed_at is set — push covers the
+    # gap for a run completed by an external client / collector timeout).
+    from ..services import events_stream
+
+    events_stream.publish_run_update(run_id, 0, completed=True)
     return summary.model_dump()

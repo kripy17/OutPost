@@ -25,11 +25,43 @@ def build_json_report(run_id: str) -> dict:
         alerts = event_store.list_alerts_for_run(conn, run_id)
         # Campaign references — links this analysis back to its cluster(s).
         campaigns = campaigns_service.campaigns_for_run(conn, run_id)
+        # Network connections — cache-first reputation reads (no new external
+        # calls in the export; `checked_at` shows how old each verdict is, so
+        # exported analyses carry the same staleness the UI surfaces).
+        conn_rows = conn.execute(
+            """
+            SELECT dest_ip, dest_port, protocol, MIN(timestamp) AS first_seen
+            FROM events
+            WHERE run_id = ? AND event_type = 'network_connection' AND dest_ip IS NOT NULL
+            GROUP BY dest_ip, dest_port, protocol
+            ORDER BY first_seen ASC
+            """,
+            (run_id,),
+        ).fetchall()
+        network_connections = []
+        for row in conn_rows:
+            cached = conn.execute(
+                "SELECT abuse_score, vt_malicious_count, reputation, checked_at FROM enrichment_cache WHERE ip = ?",
+                (row["dest_ip"],),
+            ).fetchone()
+            network_connections.append(
+                {
+                    "dest_ip": row["dest_ip"],
+                    "dest_port": row["dest_port"],
+                    "protocol": row["protocol"],
+                    "first_seen": row["first_seen"],
+                    "reputation": cached["reputation"] if cached else "unknown",
+                    "abuse_score": cached["abuse_score"] if cached else None,
+                    "vt_malicious_count": cached["vt_malicious_count"] if cached else None,
+                    "checked_at": cached["checked_at"] if cached else None,
+                }
+            )
     return {
         "run": summary.model_dump(mode="json"),
         "events": events,
         "alerts": alerts,
         "campaigns": campaigns,
+        "network_connections": network_connections,
     }
 
 

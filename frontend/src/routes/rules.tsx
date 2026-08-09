@@ -1,29 +1,68 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Icon } from "../components/Icon";
 import { PageHeader, Panel } from "../components/ui";
 import {
   deleteCustomYaraRule,
+  exportRulePack,
   getCustomYaraRules,
   getEnumPatterns,
   getRuleFp,
   getSamples,
   getTuning,
+  importRulePack,
   resetFpThreshold,
   resetTuning,
+  saveBlob,
   saveCustomYaraRule,
   setEnumPatterns,
   setFpThreshold,
   setTuning,
   testYaraRule,
 } from "../lib/api";
-import type { CustomYaraRule, EnumPatternRow, RuleFpEntry, TuningKnob, YaraTestResponse } from "../types";
+import type { CustomYaraRule, EnumPatternRow, FpDayPoint, RuleFpEntry, RulePack, TuningKnob, YaraTestResponse } from "../types";
 
 const PLATFORM_LABELS: Record<string, string> = {
   windows: "Windows",
   linux: "Linux",
   macos: "macOS",
 };
+
+/** 14-day fired/FP sparkline — the FP-rate trend (FP ÷ fired over time).
+ *  Grey bars = alerts fired that day, red overlay = marked FP. A rule whose
+ *  red is a big share of its grey is noise, and the threshold suggestion
+ *  exists to fix exactly that. */
+function FpSparkline({ history }: { history: FpDayPoint[] }) {
+  const W = 120;
+  const H = 26;
+  const max = Math.max(1, ...history.map((d) => d.fired));
+  const slot = W / Math.max(1, history.length);
+  const barW = Math.max(2, slot - 2);
+  return (
+    <svg
+      width={W}
+      height={H}
+      viewBox={`0 0 ${W} ${H}`}
+      role="img"
+      aria-label="14-day fired vs false-positive trend"
+      className="shrink-0"
+    >
+      {history.map((d, i) => {
+        const x = i * slot + (slot - barW) / 2;
+        const fh = Math.max(1, (d.fired / max) * (H - 4));
+        const ph = Math.max(1, (d.fp / max) * (H - 4));
+        return (
+          <g key={d.day}>
+            <rect x={x} y={H - 2 - fh} width={barW} height={fh} rx={1} fill="var(--text-faint)" opacity={0.35} />
+            {d.fp > 0 && (
+              <rect x={x} y={H - 2 - ph} width={barW} height={ph} rx={1} fill="var(--risk-malicious)" opacity={0.9} />
+            )}
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
 
 function EnumPatternsEditor() {
   const queryClient = useQueryClient();
@@ -173,11 +212,13 @@ const KNOB_LABELS: Record<string, string> = {
   BEACON_MIN_CONNECTIONS: "Min connections to flag beaconing",
   BEACON_WINDOW_MINUTES: "Beaconing look-back window (min)",
   BEACON_VARIANCE_THRESHOLD: "Beacon interval variance (s)",
+  BEACON_MIN_INTERVAL_SECONDS: "Min mean interval to call it a beacon (s)",
   RENAME_BURST_THRESHOLD: "File writes to flag ransomware burst",
   RENAME_BURST_WINDOW_SECONDS: "Burst window (s)",
   ENUM_BURST_THRESHOLD: "Distinct discovery commands to flag enumeration",
   ENUM_WINDOW_SECONDS: "Enumeration look-back window (s)",
   STAGING_WINDOW_SECONDS: "Archive-then-upload window (s)",
+  BASELINE_MIN_EVENTS: "Observations before baseline anomalies fire",
 };
 
 const YARA_TEMPLATE = `rule my_signature {
@@ -432,6 +473,94 @@ function YaraLab() {
   );
 }
 
+/* ── Rule packs — the whole operational rule surface as one git-diffable
+   JSON document (the WHIDS lesson: versioned, file-based rule packs). Export
+   → keep in git → diff revisions → roll back by re-importing an earlier
+   export. Import applies tuning as a full sync, suppressions additively, and
+   enum patterns + FP threshold wholesale. */
+function RulePackPanel() {
+  const queryClient = useQueryClient();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [packMsg, setPackMsg] = useState<string | null>(null);
+  const [packErr, setPackErr] = useState<string | null>(null);
+
+  const doExport = async () => {
+    setPackErr(null);
+    try {
+      const pack = await exportRulePack();
+      const stamp = new Date().toISOString().slice(0, 10);
+      saveBlob(new Blob([JSON.stringify(pack, null, 2)], { type: "application/json" }), `outpost-rules-${stamp}.json`);
+      setPackMsg(`Exported ${pack.tuning.length} tuning knob(s), ${pack.suppressions.length} suppression(s), enum tables, FP threshold — keep the file in git for diffable rule revisions.`);
+    } catch {
+      setPackErr("Export failed — is the backend running?");
+    }
+  };
+
+  const doImport = async (file: File) => {
+    setPackMsg(null);
+    try {
+      const pack = JSON.parse(await file.text()) as RulePack;
+      const s = await importRulePack(pack);
+      setPackMsg(
+        `Imported ${file.name} — ${s.tuning_applied} knob(s) synced, ${s.suppressions_added} suppression(s) added` +
+          (s.suppressions_skipped ? `, ${s.suppressions_skipped} skipped (already present)` : "") +
+          `, enum patterns ${s.enum_patterns_applied ? "applied" : "unchanged"}, FP threshold ${s.fp_threshold_applied ? "set" : "unchanged"}.`,
+      );
+      void queryClient.invalidateQueries({ queryKey: ["tuning"] });
+      void queryClient.invalidateQueries({ queryKey: ["rule-fp"] });
+      void queryClient.invalidateQueries({ queryKey: ["enum-patterns"] });
+    } catch (e) {
+      setPackErr(e instanceof Error ? e.message.slice(0, 240) : "Import failed — not a valid rule pack?");
+    }
+  };
+
+  return (
+    <div className="mt-8">
+      <div className="mb-3">
+        <p className="kicker">Operations · rule packs</p>
+        <h2 className="mt-1 text-base font-semibold text-text-primary">Versioned rule sets</h2>
+      </div>
+      <div className="rounded-xl border border-border-subtle bg-bg-surface p-5">
+        <p className="text-xs leading-relaxed text-text-muted">
+          Export the whole operational rule surface — tuning overrides, suppressions, per-OS enumeration tables, FP
+          threshold — as one JSON document, and re-apply it any time. Keep exports in git: diff what changed between
+          rule revisions, and roll back by re-importing an earlier export. Import applies tuning as a full sync,
+          suppressions additively (never clobbers live triage), and enum tables + threshold wholesale.
+        </p>
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => void doExport()}
+            className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/50 bg-accent/10 px-3 py-2 font-mono text-xs font-medium text-accent transition-all duration-150 hover:shadow-[var(--glow-accent)]"
+          >
+            <Icon name="download" size={12} />
+            Export pack
+          </button>
+          <button
+            onClick={() => fileRef.current?.click()}
+            className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-2 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
+          >
+            <Icon name="download" size={12} className="rotate-180" />
+            Import pack
+          </button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".json,application/json"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void doImport(f);
+              e.target.value = "";
+            }}
+          />
+        </div>
+        {packMsg && <p className="mt-3 font-mono text-[11px] leading-relaxed text-risk-clean">{packMsg}</p>}
+        {packErr && <p className="mt-3 font-mono text-[11px] leading-relaxed text-risk-malicious">{packErr}</p>}
+      </div>
+    </div>
+  );
+}
+
 
 export default function RulesPage() {
   const queryClient = useQueryClient();
@@ -493,6 +622,8 @@ export default function RulesPage() {
 
       {isLoading && <p className="mt-6 text-sm text-text-muted">Loading tunables…</p>}
       {isError && <p className="mt-6 text-sm text-risk-malicious">Couldn't load tunables — is the backend running?</p>}
+
+      <RulePackPanel />
 
       <YaraLab />
 
@@ -570,7 +701,15 @@ export default function RulesPage() {
                       title={`${fpRow.count} false positive(s) — last ${fpRow.last_fp_at}`}
                     >
                       {fpRow.count} FP
+                      {fpRow.fired_count > 0 && (
+                        <span className="opacity-80">
+                          {" "}· {Math.round((fpRow.count / fpRow.fired_count) * 100)}% rate
+                        </span>
+                      )}
                     </span>
+                  )}
+                  {fpRow && fpRow.history && fpRow.history.length > 0 && (
+                    <FpSparkline history={fpRow.history} />
                   )}
                   <span
                     className={`ml-auto rounded-full border px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide ${

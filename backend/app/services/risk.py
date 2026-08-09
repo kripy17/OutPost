@@ -163,6 +163,12 @@ RULE_META: dict[str, RuleMeta] = {
         "weight": 30,
         "severity": "malicious",
     },
+    "baseline-anomaly": {
+        "technique": "T1071.001",
+        "tactic": "Command and Control",
+        "weight": 12,
+        "severity": "suspicious",
+    },
 }
 
 
@@ -194,6 +200,7 @@ RULE_NAMES: dict[str, str] = {
     "first-seen-process": "First-seen process (novelty)",
     "unusual-port": "Connection to uncommon C2-style port",
     "attack-chain": "Coordinated attack chain",
+    "baseline-anomaly": "Baseline anomaly",
     "ssh-authorized-keys": "SSH authorized_keys tampering",
     "suid-set": "SUID/SGID bit set (privilege escalation)",
     "scheduled-task": "Scheduled task created (persistence)",

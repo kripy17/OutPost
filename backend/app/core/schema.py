@@ -38,10 +38,17 @@ class EventIn(BaseModel):
     # Fleet identity — which agent/host the event came from. Omitted events
     # (webapp detonations, sandbox runs) default to 'local' at normalization.
     host_id: Optional[str] = None
+    # The exact log channel (auditd / sysmon) a collector stamped on the
+    # event — the Event Log's source tabs split collectors by this. NULL for
+    # webapp/sandbox/seed events.
+    log_source: Optional[str] = None
 
 
 class EventOut(EventIn):
     id: Optional[int] = None
+    # The raw record as shipped by the collector (JSON) — the Event Viewer's
+    # "raw record" pane. Null for rows ingested before the column existed.
+    raw_record: Optional[str] = None
 
 
 class RunSummary(BaseModel):
@@ -149,6 +156,9 @@ class NetworkConnection(BaseModel):
     # Personal watchlist match (Task 26) — independent of external feeds.
     watchlist: Optional[bool] = None
     watchlist_label: Optional[str] = None
+    # When the reputation verdict was last fetched from an external feed
+    # (cache age) — None when the IP was never checked.
+    checked_at: Optional[str] = None
 
 
 class NoteIn(BaseModel):

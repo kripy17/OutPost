@@ -1,9 +1,10 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { Chip, PageHeader, Panel } from "../components/ui";
-import { getFootprint, getSamples } from "../lib/api";
+import { getFootprint, getSamples, refreshEnrichmentIp } from "../lib/api";
+import { intelAgeLabel } from "../lib/constants";
 import type { Footprint, FootprintSeedIp } from "../types";
 
 // Radial footprint map — sample at the center, its real seed IPs on ring 1,
@@ -93,7 +94,19 @@ function FootprintMap({ footprint }: { footprint: Footprint }) {
   );
 }
 
-function SeedIpTable({ seeds }: { seeds: FootprintSeedIp[] }) {
+function SeedIpTable({ seeds, queryKey }: { seeds: FootprintSeedIp[]; queryKey: unknown[] }) {
+  const queryClient = useQueryClient();
+  const [refreshing, setRefreshing] = useState<string | null>(null);
+  const refresh = async (ip: string) => {
+    setRefreshing(ip);
+    try {
+      await refreshEnrichmentIp(ip);
+    } finally {
+      setRefreshing(null);
+      void queryClient.invalidateQueries({ queryKey });
+    }
+  };
+
   if (seeds.length === 0) {
     return (
       <p className="py-6 text-center text-sm text-text-muted">
@@ -103,12 +116,13 @@ function SeedIpTable({ seeds }: { seeds: FootprintSeedIp[] }) {
   }
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[560px] text-left text-xs">
+      <table className="w-full min-w-[640px] text-left text-xs">
         <thead>
           <tr className="border-b border-border-subtle text-xs font-semibold uppercase tracking-wide text-text-muted">
             <th className="px-3 py-2 font-normal">IP</th>
             <th className="px-3 py-2 font-normal">Reputation</th>
             <th className="px-3 py-2 font-normal">Abuse</th>
+            <th className="px-3 py-2 font-normal">Checked</th>
             <th className="px-3 py-2 font-normal">Hits</th>
             <th className="px-3 py-2 font-normal">Runs</th>
             <th className="px-3 py-2 font-normal">First / last seen</th>
@@ -124,6 +138,21 @@ function SeedIpTable({ seeds }: { seeds: FootprintSeedIp[] }) {
                 </Chip>
               </td>
               <td className="px-3 py-2 font-mono tabular-nums text-text-muted">{s.abuse_score ?? "—"}</td>
+              <td className="px-3 py-2">
+                <span className="inline-flex items-center gap-1.5 font-mono tabular-nums text-text-faint">
+                  {intelAgeLabel(s.checked_at) ?? "—"}
+                  {/* Force refresh — global TTL bypass for this seed IP. */}
+                  <button
+                    onClick={() => refresh(s.ip)}
+                    disabled={refreshing === s.ip}
+                    className="press text-text-faint transition-colors hover:text-accent disabled:opacity-40"
+                    title="Force refresh — bypass the reputation cache (TTL) once and re-query with the current keys"
+                    aria-label={`Force-refresh reputation for ${s.ip}`}
+                  >
+                    <Icon name="refresh" size={10} className={refreshing === s.ip ? "animate-spin" : ""} />
+                  </button>
+                </span>
+              </td>
               <td className="px-3 py-2 font-mono tabular-nums text-text-muted">{s.hits}</td>
               <td className="px-3 py-2 font-mono tabular-nums text-text-muted">{s.run_count}</td>
               <td className="px-3 py-2 font-mono tabular-nums text-text-faint">
@@ -218,13 +247,19 @@ export default function FootprintPage() {
         }
         lede="Seed a sample's observed infrastructure and expand outward — passive DNS, certificates, and sibling hosts — to sketch the campaign behind one binary."
         actions={
-          <Link
-            to="/samples"
-            className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-1.5 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
-          >
-            Sample vault
-            <Icon name="arrowRight" size={12} />
-          </Link>
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-risk-suspicious/50 bg-risk-suspicious/10 px-2.5 py-1 font-mono text-[10px] uppercase tracking-wide text-risk-suspicious">
+              <Icon name="zap" size={10} />
+              roadmap · beta
+            </span>
+            <Link
+              to="/samples"
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-1.5 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
+            >
+              Sample vault
+              <Icon name="arrowRight" size={12} />
+            </Link>
+          </div>
         }
       />
 
@@ -301,7 +336,7 @@ export default function FootprintPage() {
               ) : undefined
             }
           >
-            <SeedIpTable seeds={footprint.seed_ips} />
+            <SeedIpTable seeds={footprint.seed_ips} queryKey={["footprint", sampleId, mock]} />
           </Panel>
 
           {/* Footprint map */}

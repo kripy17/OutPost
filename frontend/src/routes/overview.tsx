@@ -1,14 +1,15 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type { ReactNode } from "react";
+import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Icon } from "../components/Icon";
+import { Icon, platformIconName } from "../components/Icon";
 import { RiskGauge, RiskTrendBars, SeverityDonut, type RiskTrendBar } from "../components/Posture/Posture";
 import { Chip, PageHeader, Panel } from "../components/ui";
+import { copyToClipboard } from "../lib/clipboard";
 import { SEVERITY_BG } from "../lib/constants";
-import { getCampaigns, getHealth, getPlatform, getRecentAlerts, getRuleMeta, getRuns } from "../lib/api";
+import { BASE_URL, getAgents, getCampaigns, getHealth, getIntelFreshness, getIntelKeys, getMeta, getPlatform, getProcessSummary, getRecentAlerts, getRuleMeta, getRuns } from "../lib/api";
 import { useEventStream } from "../lib/useEventStream";
-import type { Campaign, GlobalAlert, RuleMeta, RunSummary, Severity } from "../types";
+import type { Campaign, GlobalAlert, IntelKeyStatus, ProcessSummary, RuleMeta, RunSummary, Severity } from "../types";
 
 /* ──────────────────────────────────────────────────────────────────────── */
 // Threat posture — the console header. Three visual primitives instead of a
@@ -172,6 +173,30 @@ export function ageBucket(a: GlobalAlert, now: number = Date.now()): 0 | 1 | 2 {
 function FindingsFeed() {
   const queryClient = useQueryClient();
   const [sevFilter, setSevFilter] = useState<Severity | "all">("all");
+  // Process-jump hover preview: a fixed-position card next to the link showing
+  // the process's identity (name + command line), platform, activity and alert
+  // counts, and its run — fetched lazily on hover with a short debounce.
+  const [preview, setPreview] = useState<{ x: number; y: number; data: ProcessSummary } | null>(null);
+  const previewTimer = useRef<number | null>(null);
+  const showPreview = (e: ReactMouseEvent<HTMLAnchorElement>, pid: number) => {
+    if (previewTimer.current !== null) window.clearTimeout(previewTimer.current);
+    const r = e.currentTarget.getBoundingClientRect();
+    previewTimer.current = window.setTimeout(() => {
+      void getProcessSummary(pid)
+        .then((data) =>
+          setPreview({
+            x: Math.max(8, Math.min(r.left, window.innerWidth - 336)),
+            y: Math.max(8, Math.min(r.bottom + 8, window.innerHeight - 180)),
+            data,
+          }),
+        )
+        .catch(() => setPreview(null));
+    }, 250);
+  };
+  const hidePreview = () => {
+    if (previewTimer.current !== null) window.clearTimeout(previewTimer.current);
+    setPreview(null);
+  };
   const { data: alerts = [], isLoading, isError } = useQuery({
     queryKey: ["alerts", "recent"],
     queryFn: () => getRecentAlerts(24),
@@ -265,9 +290,48 @@ function FindingsFeed() {
             >
               <span className={`absolute inset-y-0 left-0 w-1 ${SEVERITY_BG[a.severity]}`} aria-hidden />
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3.5 py-3">
-                <Link to={`/runs/${a.run_id}`} className="press font-mono text-xs font-medium text-text-primary hover:text-accent">
-                  {a.sample_name}
-                </Link>
+                {/* Clicking the sample jumps to the process-centric view when
+                    the alert names a process (Event-Manager parity): everything
+                    that PID did, filtered live. A recon sweep lists every
+                    enumerating PID at once. Alerts without a process keep
+                    linking to the run. */}
+                {(() => {
+                  const pids = a.related_pids ?? [];
+                  const pid = a.related_pid ?? pids[0] ?? null;
+                  if (a.rule_id === "enumeration-burst" && pids.length > 1) {
+                    return (
+                      <Link
+                        to={`/events?pid=${pids.join(",")}`}
+                        onMouseEnter={(e) => showPreview(e, pids[0])}
+                        onMouseLeave={hidePreview}
+                        className="press inline-flex items-center gap-1.5 font-mono text-xs font-medium text-risk-suspicious hover:underline"
+                        title={`Recon sweep — ${pids.length} enumerating processes (${a.sample_name}) — jump to the process view`}
+                      >
+                        {a.sample_name}
+                        <Icon name="process" size={11} className="opacity-80" />
+                        <span className="rounded border border-risk-suspicious/50 bg-risk-suspicious/10 px-1 py-px text-[9px] uppercase tracking-wide">
+                          recon · {pids.length}
+                        </span>
+                      </Link>
+                    );
+                  }
+                  return pid ? (
+                    <Link
+                      to={`/events?pid=${pid}`}
+                      onMouseEnter={(e) => showPreview(e, pid)}
+                      onMouseLeave={hidePreview}
+                      className="press inline-flex items-center gap-1.5 font-mono text-xs font-medium text-text-primary hover:text-accent"
+                      title={`Everything process ${pid} did (${a.sample_name}) — jump to the process view`}
+                    >
+                      {a.sample_name}
+                      <Icon name="process" size={11} className="text-text-faint transition-colors group-hover:text-accent" />
+                    </Link>
+                  ) : (
+                    <Link to={`/runs/${a.run_id}`} className="press font-mono text-xs font-medium text-text-primary hover:text-accent">
+                      {a.sample_name}
+                    </Link>
+                  );
+                })()}
                 {g.count > 1 && (
                   <span
                     className="rounded-full border border-border-subtle bg-bg-elevated/70 px-1.5 py-px font-mono text-[10px] tabular-nums text-text-muted"
@@ -316,6 +380,49 @@ function FindingsFeed() {
           );
         })}
       </ol>
+
+      {/* Process-jump hover preview — fixed-position card at the link's spot. */}
+      {preview && (
+        <div
+          role="tooltip"
+          className="pointer-events-none fixed z-50 w-80 overflow-hidden rounded-xl border border-border-subtle bg-bg-surface shadow-[var(--shadow-raised)]"
+          style={{ left: preview.x, top: preview.y }}
+        >
+          <div className="flex items-center gap-2 border-b border-border-subtle bg-bg-elevated/40 px-3 py-2">
+            <Icon name="process" size={13} className="shrink-0 text-accent" />
+            <span className="truncate font-mono text-xs font-semibold text-text-primary">
+              {preview.data.process_name ?? `pid ${preview.data.pid}`}
+            </span>
+            <span className="ml-auto shrink-0 font-mono text-[10px] text-text-faint">pid {preview.data.pid}</span>
+          </div>
+          <div className="space-y-2 px-3 py-2.5">
+            {preview.data.command_line && (
+              <p className="truncate font-mono text-[10px] text-text-muted" title={preview.data.command_line}>
+                {preview.data.command_line}
+              </p>
+            )}
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[10px] text-text-faint">
+              <span className="inline-flex items-center gap-1">
+                <Icon name={platformIconName(preview.data.platform)} size={10} />
+                {preview.data.platform}
+              </span>
+              <span>
+                {preview.data.event_count} event{preview.data.event_count === 1 ? "" : "s"}
+              </span>
+              <span className={preview.data.alert_count > 0 ? "text-risk-suspicious" : ""}>
+                {preview.data.alert_count} alert{preview.data.alert_count === 1 ? "" : "s"}
+              </span>
+            </div>
+            <Link
+              to={`/runs/${preview.data.run_id}`}
+              className="press inline-flex items-center gap-1 font-mono text-[10px] text-accent hover:underline"
+            >
+              {preview.data.sample_name}
+              <Icon name="external" size={9} className="opacity-60" />
+            </Link>
+          </div>
+        </div>
+      )}
     </Panel>
   );
 }
@@ -432,7 +539,7 @@ function CampaignSpotlight() {
 const ACTIONS: { to: string; label: string; desc: string; icon: ReactNode }[] = [
   { to: "/monitor", label: "Detonate sample", desc: "Dynamic analysis on the auto-detected host OS", icon: <Icon name="play" size={14} /> },
   { to: "/events", label: "Event log", desc: "Browse every activity like a system log viewer", icon: <Icon name="list" size={14} /> },
-  { to: "/compare", label: "Compare runs", desc: "Diff two samples side by side", icon: <Icon name="compare" size={14} /> },
+  { to: "/history", label: "Compare sessions", desc: "Pick two runs from History and diff them", icon: <Icon name="compare" size={14} /> },
   { to: "/watchlist", label: "Watchlist", desc: "Track known-bad infrastructure", icon: <Icon name="star" size={14} /> },
 ];
 
@@ -493,6 +600,244 @@ function ActionStrip() {
 }
 
 /* ──────────────────────────────────────────────────────────────────────── */
+// Auto-OS front door — the vision's first question: "is THIS host being
+// monitored?" The backend detects its own OS (no picker anywhere); this
+// panel compares its hostname to the fleet and, when no agent is attached,
+// leads with the one-command agent bootstrap instead of the detonation lab.
+// macOS hosts get nothing (Windows/Linux focus).
+/* ──────────────────────────────────────────────────────────────────────── */
+
+// Intel-key health for the posture header — configured keys and any past the
+// 90-day rotation age. Cheap by design: never auto-runs the live test (that
+// would burn a provider quota unit on every page load); the deliberate Test
+// button in Settings is the live probe. Exported helpers are unit-tested.
+export function intelKeyHealth(keys: IntelKeyStatus[]): { tone: "ok" | "stale" | "none"; items: string[] } {
+  const configured = keys.filter((k) => k.set);
+  if (configured.length === 0) return { tone: "none", items: [] };
+  const items = configured.map((k) => {
+    const stale = k.source === "db" && k.age_days !== null && k.age_days > 90;
+    return stale ? `${k.name} key ${k.age_days}d old — rotate` : `${k.name} key configured`;
+  });
+  return { tone: configured.some((k) => k.source === "db" && k.age_days !== null && k.age_days > 90) ? "stale" : "ok", items };
+}
+
+// Intel cache freshness — how stale the enrichment cache is fleet-wide
+// (oldest verdict age + rows past the TTL). Feeds the one-line posture strip
+// under the key health. Pure + exported for tests.
+export function intelFreshness(f: {
+  total: number;
+  stale_count: number;
+  oldest_age_hours: number | null;
+}): { tone: "ok" | "stale" | "none"; line: string | null } {
+  if (!f.total) return { tone: "none", line: null };
+  const age =
+    f.oldest_age_hours === null ? "" : f.oldest_age_hours < 1 ? " · oldest <1h" : ` · oldest ${f.oldest_age_hours}h old`;
+  if (f.stale_count > 0) return { tone: "stale", line: `${f.stale_count} of ${f.total} cached verdicts stale${age}` };
+  return { tone: "ok", line: `intel cache fresh — ${f.total} verdicts${age}` };
+}
+
+function IntelKeyHealth() {
+  const { data } = useQuery({ queryKey: ["intel-keys"], queryFn: getIntelKeys, staleTime: 60_000, refetchInterval: 120_000 });
+  const keys = data?.keys ?? [];
+  const health = intelKeyHealth(keys);
+  if (health.tone === "none") return null;
+  const cls =
+    health.tone === "stale"
+      ? "border-risk-suspicious/40 bg-risk-suspicious/10 text-risk-suspicious"
+      : "border-risk-clean/40 bg-risk-clean/10 text-risk-clean";
+  return (
+    <Link
+      to="/settings"
+      className={`mb-5 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border px-3 py-2 font-mono text-[10px] transition-colors duration-150 hover:brightness-110 ${cls}`}
+      title="Threat-intel keys — configure, test, and rotate in Settings"
+    >
+      <Icon name="shield" size={11} />
+      {health.items.join(" · ")}
+      <span className="ml-auto inline-flex items-center gap-1 text-text-faint">
+        intel keys <Icon name="arrowRight" size={10} />
+      </span>
+    </Link>
+  );
+}
+
+// Intel cache freshness — the one-line sibling of IntelKeyHealth: oldest
+// verdict age + stale count fleet-wide, amber when any verdict is past the
+// TTL. Links to Settings (where the stale-only sweep lives). Cheap: one
+// aggregate query, no external calls.
+function IntelFreshness() {
+  const { data } = useQuery({
+    queryKey: ["intel-freshness"],
+    queryFn: getIntelFreshness,
+    staleTime: 60_000,
+    refetchInterval: 120_000,
+  });
+  if (!data) return null;
+  const h = intelFreshness(data);
+  if (h.tone === "none" || !h.line) return null;
+  const cls =
+    h.tone === "stale"
+      ? "border-risk-suspicious/40 bg-risk-suspicious/10 text-risk-suspicious"
+      : "border-border-subtle text-text-faint";
+  return (
+    <Link
+      to="/settings"
+      className={`mb-5 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border px-3 py-2 font-mono text-[10px] transition-colors duration-150 hover:brightness-110 ${cls}`}
+      title="Enrichment cache age across the fleet — refresh stale verdicts in Settings (stale-only sweep)"
+    >
+      <Icon name="refresh" size={11} />
+      {h.line}
+      <span className="ml-auto inline-flex items-center gap-1 text-text-faint">
+        intel cache <Icon name="arrowRight" size={10} />
+      </span>
+    </Link>
+  );
+}
+
+function HostMonitorPanel() {
+  const queryClient = useQueryClient();
+  const { data: plat } = useQuery({ queryKey: ["platform"], queryFn: getPlatform, staleTime: Infinity });
+  const { data: fleet } = useQuery({ queryKey: ["agents"], queryFn: getAgents, staleTime: 15_000, refetchInterval: 30_000 });
+  const [copied, setCopied] = useState(false);
+
+  // Live fleet: a heartbeat from this host flips the panel to "monitored"
+  // the moment it lands (e.g. the operator runs `outpost agent run`) — no
+  // waiting for the 30 s poll.
+  useEventStream(
+    () => undefined,
+    undefined,
+    undefined,
+    (f) => {
+      if (f.host_id === plat?.hostname) {
+        void queryClient.invalidateQueries({ queryKey: ["agents"] });
+      }
+    },
+  );
+
+  if (!plat) return null;
+  if (plat.os === "macos") return null; // no collector ships for macOS
+
+  const agent = (fleet?.agents ?? []).find((a) => a.host_id === plat.hostname);
+  const monitored = agent !== undefined;
+  const collector = plat.os === "windows" ? "collectors\\windows\\collector_win.py" : "collectors/linux/collector_linux.py";
+  const agentCmd = `python ${collector} --backend-url ${BASE_URL} --mode live`;
+  const glyph = plat.os === "windows" ? "windows" : "linux";
+
+  return (
+    <div
+      className={`mb-5 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border px-4 py-3 ${
+        monitored ? "border-risk-clean/40 bg-risk-clean/10" : "border-risk-suspicious/40 bg-risk-suspicious/10"
+      }`}
+      aria-label="This host's monitor status"
+    >
+      <span
+        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
+          monitored ? "bg-risk-clean/15 text-risk-clean" : "bg-risk-suspicious/15 text-risk-suspicious"
+        }`}
+      >
+        <Icon name={glyph} size={16} />
+      </span>
+      <div className="min-w-0">
+        <p className={`font-mono text-xs font-semibold ${monitored ? "text-risk-clean" : "text-risk-suspicious"}`}>
+          {monitored ? `This host is monitored — ${agent?.online ? "agent online" : "agent silent"}` : "This host isn't monitored yet"}
+        </p>
+        <p className="mt-0.5 font-mono text-[10px] text-text-muted">
+          {plat.hostname} · {plat.os} {plat.release} · {plat.collector}
+          {monitored && agent?.silent
+            ? " — heartbeat lost, agent may be down"
+            : monitored
+              ? " — live events stream into the Monitor"
+              : " — run the agent to stream its activity live"}
+        </p>
+      </div>
+      {monitored ? (
+        <Link
+          to="/monitor"
+          className="press ml-auto inline-flex items-center gap-1.5 rounded-lg border border-risk-clean/50 bg-risk-clean/10 px-3 py-1.5 font-mono text-xs text-risk-clean transition-all duration-150 hover:shadow-[var(--glow-clean)]"
+        >
+          <Icon name="activity" size={12} />
+          Watch live
+        </Link>
+      ) : (
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          <code className="overflow-x-auto rounded-lg border border-border-subtle bg-bg-elevated/40 px-2.5 py-1.5 font-mono text-[10px] text-text-primary">
+            {agentCmd}
+          </code>
+          <button
+            onClick={() =>
+              void copyToClipboard(agentCmd).then(() => {
+                setCopied(true);
+                setTimeout(() => setCopied(false), 1600);
+              })
+            }
+            className="press inline-flex items-center gap-1 rounded-lg border border-risk-suspicious/50 px-2.5 py-1.5 font-mono text-[10px] text-risk-suspicious transition-colors duration-150 hover:bg-risk-suspicious/10"
+          >
+            <Icon name={copied ? "check" : "copy"} size={11} />
+            {copied ? "copied" : "copy agent command"}
+          </button>
+          <Link
+            to="/monitor"
+            className="press inline-flex items-center gap-1 rounded-lg border border-border-subtle px-2.5 py-1.5 font-mono text-[10px] text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
+          >
+            <Icon name="arrowRight" size={11} />
+            Live Monitor
+          </Link>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────────────── */
+// Demo-mode banner — seeded data labeled honestly, never masquerading as
+// real host telemetry. Dismissed per-browser (localStorage).
+/* ──────────────────────────────────────────────────────────────────────── */
+
+const DEMO_DISMISS_KEY = "outpost-demo-dismissed";
+
+function DemoBanner() {
+  const { data: meta } = useQuery({ queryKey: ["meta"], queryFn: getMeta, staleTime: 30_000 });
+  const [dismissed, setDismissed] = useState(() => {
+    try {
+      return localStorage.getItem(DEMO_DISMISS_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+
+  if (!meta?.demo_mode || dismissed) return null;
+
+  return (
+    <div className="mb-5 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-risk-suspicious/40 bg-risk-suspicious/10 px-4 py-3">
+      <span className="inline-flex items-center gap-1.5 font-mono text-xs font-semibold text-risk-suspicious">
+        <Icon name="zap" size={13} />
+        Demo data
+      </span>
+      <p className="min-w-0 flex-1 text-xs leading-relaxed text-text-muted">
+        These sessions are seeded samples so you can explore the console — not real host telemetry. Ship live events
+        from this machine with{" "}
+        <code className="font-mono text-text-primary">outpost agent run</code> (or{" "}
+        <code className="font-mono text-text-primary">outpost agent install</code> for a persistent service).
+      </p>
+      <button
+        onClick={() => {
+          try {
+            localStorage.setItem(DEMO_DISMISS_KEY, "1");
+          } catch {
+            /* ignore */
+          }
+          setDismissed(true);
+        }}
+        className="press inline-flex items-center gap-1 rounded border border-border-subtle px-2 py-1 font-mono text-[10px] text-text-muted transition-colors hover:border-risk-suspicious/60 hover:text-risk-suspicious"
+        aria-label="Dismiss demo banner"
+      >
+        <Icon name="x" size={10} />
+        dismiss
+      </button>
+    </div>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────────────── */
 // Page
 /* ──────────────────────────────────────────────────────────────────────── */
 
@@ -523,6 +868,12 @@ export default function OverviewPage() {
           </Link>
         }
       />
+
+      <DemoBanner />
+      <HostMonitorPanel />
+      {/* Intel posture: configured keys + rotation age, and cache freshness. */}
+      <IntelKeyHealth />
+      <IntelFreshness />
 
       {!isLoading && !isError && (
         <>

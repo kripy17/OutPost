@@ -84,7 +84,7 @@ def _seed_ips(conn, sample_name: str) -> list[dict]:
     seeds = []
     for row in rows:
         cached = conn.execute(
-            "SELECT abuse_score, vt_malicious_count, reputation FROM enrichment_cache WHERE ip = ?",
+            "SELECT abuse_score, vt_malicious_count, reputation, checked_at FROM enrichment_cache WHERE ip = ?",
             (row["dest_ip"],),
         ).fetchone()
         seeds.append(
@@ -97,6 +97,7 @@ def _seed_ips(conn, sample_name: str) -> list[dict]:
                 "reputation": cached["reputation"] if cached else "unknown",
                 "abuse_score": cached["abuse_score"] if cached else None,
                 "vt_malicious_count": cached["vt_malicious_count"] if cached else None,
+                "checked_at": cached["checked_at"] if cached else None,
             }
         )
     return seeds

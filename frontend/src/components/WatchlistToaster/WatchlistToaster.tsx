@@ -60,7 +60,7 @@ export default function WatchlistToaster() {
   if (toasts.length === 0) return null;
 
   return (
-    <div className="pointer-events-none fixed right-4 top-4 z-50 flex w-80 flex-col gap-2">
+    <div className="pointer-events-none fixed right-4 top-4 z-50 flex w-80 flex-col gap-2 print:hidden">
       {toasts.map((t) => (
         <div
           key={t.key}

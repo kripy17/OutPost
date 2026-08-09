@@ -57,6 +57,72 @@ def test_fleet_groups_hosts_with_counts_and_online_flag(client):
     assert beta["platforms"] == ["windows"]
 
 
+# ---------------------------------------------------------------------------
+# Heartbeat liveness
+# ---------------------------------------------------------------------------
+
+
+def test_heartbeat_marks_host_online_and_reports_age(client):
+    """A fresh heartbeat makes a host online even with no events, and the
+    fleet reports last_heartbeat + age + version."""
+    resp = client.post(
+        "/agents/hb-alpha/heartbeat",
+        json={"platform": "linux", "version": "outpost-collector/1.0"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+
+    data = client.get("/agents").json()
+    by_host = {ag["host_id"]: ag for ag in data["agents"]}
+    alpha = by_host["hb-alpha"]
+    assert alpha["online"] is True
+    assert alpha["silent"] is False
+    assert alpha["last_heartbeat"] is not None
+    assert alpha["heartbeat_age_seconds"] is not None and alpha["heartbeat_age_seconds"] < 60
+    assert alpha["heartbeat_version"] == "outpost-collector/1.0"
+    assert alpha["event_count"] == 0  # online on heartbeat alone
+    # This host is not silent — the fleet-wide silent count may be > 0 from
+    # other tests' backdated hosts (shared session DB).
+
+
+def test_heartbeat_upserts_single_row_per_host(client, conn):
+    """Repeated pings never duplicate the host row."""
+    for _ in range(3):
+        client.post("/agents/hb-beta/heartbeat", json={"platform": "windows"})
+    rows = conn.execute("SELECT COUNT(*) FROM agent_heartbeats WHERE host_id = 'hb-beta'").fetchone()[0]
+    assert rows == 1
+    data = client.get("/agents").json()
+    assert len([a for a in data["agents"] if a["host_id"] == "hb-beta"]) == 1
+
+
+def test_host_gone_silent_is_flagged(client, conn):
+    """A host that heartbeated but hasn't for > silent_window reads silent and
+    offline — the dead-agent flag."""
+    client.post("/agents/hb-gamma/heartbeat", json={"platform": "linux"})
+    # Backdate the heartbeat past the default 600s silent window.
+    old = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
+    conn.execute(
+        "UPDATE agent_heartbeats SET last_heartbeat = ? WHERE host_id = 'hb-gamma'",
+        (old,),
+    )
+    conn.commit()
+
+    data = client.get("/agents").json()
+    by_host = {ag["host_id"]: ag for ag in data["agents"]}
+    gamma = by_host["hb-gamma"]
+    assert gamma["online"] is False
+    assert gamma["silent"] is True
+    assert gamma["heartbeat_age_seconds"] >= 30 * 60
+    assert data["silent"] >= 1
+
+    # The same host with a fresh heartbeat is no longer silent.
+    client.post("/agents/hb-gamma/heartbeat")
+    data = client.get("/agents").json()
+    gamma = {ag["host_id"]: ag for ag in data["agents"]}["hb-gamma"]
+    assert gamma["online"] is True
+    assert gamma["silent"] is False
+
+
 def test_events_without_host_default_to_local(client):
     run_id = make_run(client, sample_name="local-attr.bin")
     client.post("/ingest/batch", json=[_event(run_id, "windows")])  # no host_id
@@ -167,3 +233,51 @@ def test_snapshot_ingest_and_read_back(client):
 
 def test_snapshot_unknown_host_404(client):
     assert client.get("/agents/no-such-host/snapshot").status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Host watch — the Monitor's 'watch a host' mode
+# ---------------------------------------------------------------------------
+
+
+def test_host_watch_returns_newest_run_for_host(client):
+    """GET /hosts/{host}/watch opens the host's newest session (open live
+    runs first, else the most recent) — what the Monitor streams when an
+    operator picks a fleet host."""
+    a = make_run(client, sample_name="watch-a.bin", platform="windows")
+    b = make_run(client, sample_name="watch-b.bin", platform="linux")
+    now = datetime.now(timezone.utc)
+    client.post("/ingest/batch", json=[_event(a, "windows", "host-watch", ts=now - timedelta(minutes=10))])
+    client.post("/ingest/batch", json=[_event(b, "linux", "host-watch", ts=now)])
+
+    resp = client.get("/hosts/host-watch/watch")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["run_id"] == b  # the newest session from this host
+    assert data["run"]["sample_name"] == "watch-b.bin"
+    assert data["run"]["host_ids"] == ["host-watch"]
+    assert "open" in data
+
+    # Runs with no events from this host are never returned.
+    assert client.get("/hosts/no-such-host/watch").status_code == 404
+
+
+def test_host_watch_prefers_open_live_session(client):
+    """An in-progress live session wins over an older completed run — the
+    'watch it now' semantics."""
+    old = make_run(client, sample_name="watch-old.bin", platform="linux")
+    now = datetime.now(timezone.utc)
+    client.post("/ingest/batch", json=[_event(old, "linux", "host-live", ts=now - timedelta(minutes=20))])
+    client.post(f"/runs/{old}/complete", json={})
+
+    live = make_run(client, sample_name="watch-live.bin", platform="linux", session_type="live")
+    client.post("/ingest/batch", json=[_event(live, "linux", "host-live", ts=now - timedelta(seconds=5))])
+
+    data = client.get("/hosts/host-live/watch").json()
+    assert data["run_id"] == live
+    assert data["open"] is True
+    assert data["run"]["session_type"] == "live"
+
+    # Don't leak an open live session into the shared test DB — the ingest
+    # tests assert /runs/active-live falls back to 404 when nothing is open.
+    client.post(f"/runs/{live}/complete", json={})

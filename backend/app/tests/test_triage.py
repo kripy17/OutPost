@@ -241,6 +241,92 @@ def test_suppression_scoped_to_run(client):
         client.delete(f"/rules/suppressions/{sid}")
 
 
+# -- Triage queue (the analyst work list) -------------------------------------
+
+
+def test_queue_lists_open_alerts_with_run_context(client):
+    run_id = make_run(client, sample_name="queue-a.bin", platform="linux")
+    client.post(
+        "/ingest/batch",
+        json=[
+            {**_conn(run_id, "203.0.113.77"), "host_id": "queue-host"},
+            _lolbin(run_id),
+        ],
+    )
+    # Scope by the run's sample name — the shared seeded DB holds other
+    # alerts, and the default aging sort + limit would cut off the newest.
+    data = client.get("/alerts/queue", params={"status": "all", "q": "queue-a.bin"}).json()
+    mine = data["alerts"]
+    assert len(mine) == 2
+    for a in mine:
+        assert a["sample_name"] == "queue-a.bin"
+        assert a["status"] == "open"
+    # Run context: the run's hosts ride along.
+    unusual = next(a for a in mine if a["rule_id"] == "unusual-port")
+    assert "queue-host" in unusual["host_ids"]
+    assert data["open"] >= 2
+
+
+def test_queue_filters_by_status_rule_host_and_text(client):
+    run_id = make_run(client, sample_name="queue-b.bin", platform="linux")
+    client.post(
+        "/ingest/batch",
+        json=[
+            {**_conn(run_id, "203.0.113.77"), "host_id": "filter-host"},
+            _lolbin(run_id),
+        ],
+    )
+    # Status filter isolates the malicious lolbin.
+    mal = client.get("/alerts/queue", params={"status": "all", "severity": "malicious"}).json()
+    assert all(a["severity"] == "malicious" for a in mal["alerts"])
+    # Rule filter.
+    by_rule = client.get("/alerts/queue", params={"status": "all", "rule_id": "unusual-port"}).json()
+    assert all(a["rule_id"] == "unusual-port" for a in by_rule["alerts"])
+    # Host filter.
+    by_host = client.get("/alerts/queue", params={"status": "all", "host_id": "filter-host"}).json()
+    assert all("filter-host" in a["host_ids"] for a in by_host["alerts"])
+    # Free text matches sample / rule / details.
+    by_q = client.get("/alerts/queue", params={"status": "all", "q": "queue-b.bin"}).json()
+    assert all(a["run_id"] == run_id for a in by_q["alerts"])
+    assert client.get("/alerts/queue", params={"status": "all", "q": "zzz-no-match"}).json()["total"] == 0
+
+
+def test_queue_aging_sort_surfaces_oldest_open_first(client):
+    """sort=aging (the default) puts the longest-open alert first — the SLA
+    pressure the queue exists to surface."""
+    a = make_run(client, sample_name="sla-old.bin")
+    b = make_run(client, sample_name="sla-new.bin")
+    old_ts = (datetime.now(timezone.utc) - timedelta(hours=5)).isoformat()
+    new_ts = (datetime.now(timezone.utc) - timedelta(minutes=2)).isoformat()
+    client.post("/ingest/batch", json=[{**_conn(a, "203.0.113.90"), "timestamp": old_ts}])
+    client.post("/ingest/batch", json=[{**_conn(b, "203.0.113.91"), "timestamp": new_ts}])
+
+    # Scope to this test's own runs — the shared seeded DB holds demo alerts
+    # with older timestamps that would otherwise sort first.
+    q = client.get("/alerts/queue", params={"status": "all", "rule_id": "unusual-port", "q": "sla-"}).json()
+    assert len(q["alerts"]) == 2
+    assert q["alerts"][0]["run_id"] == a  # oldest open first
+    newest = client.get("/alerts/queue", params={"status": "all", "rule_id": "unusual-port", "q": "sla-", "sort": "newest"}).json()
+    assert newest["alerts"][0]["run_id"] == b
+    assert client.get("/alerts/queue", params={"sort": "banana"}).status_code == 422
+
+
+def test_assign_claims_alert_and_audits(client):
+    run_id = make_run(client, sample_name="queue-assign.bin")
+    client.post("/ingest/batch", json=[_conn(run_id, "203.0.113.77")])
+    aid = client.get(f"/runs/{run_id}/alerts").json()[0]["id"]
+
+    resp = client.post(f"/alerts/{aid}/assign", json={"assignee": "sofi"})
+    assert resp.status_code == 200
+    assert resp.json()["assignee"] == "sofi"
+
+    by_assignee = client.get("/alerts/queue", params={"status": "all", "assignee": "sofi"}).json()
+    assert any(a["id"] == aid for a in by_assignee["alerts"])
+    # Unassign clears it; unknown alert 404.
+    assert client.post(f"/alerts/{aid}/assign", json={"assignee": ""}).json()["assignee"] is None
+    assert client.post("/alerts/999999/assign", json={"assignee": "x"}).status_code == 404
+
+
 def test_suppression_validation_and_dedupe(client):
     assert client.post("/rules/suppressions", json={"rule_id": "not-a-rule"}).status_code == 422
     assert client.post("/rules/suppressions", json={"rule_id": "lolbin-abuse", "run_id": "   "}).status_code == 422

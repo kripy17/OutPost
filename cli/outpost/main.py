@@ -26,6 +26,7 @@ def _register_commands() -> None:
     from .commands.export import export
     from .commands.list_runs import list_runs
     from .commands.notes import app as notes_app
+    from .commands.refresh import refresh
     from .commands.rules import rules
     from .commands.run import run
     from .commands.samples import samples
@@ -45,6 +46,7 @@ def _register_commands() -> None:
     app.command("coverage")(coverage)
     app.command("rules")(rules)
     app.command("samples")(samples)
+    app.command("refresh")(refresh)
     app.add_typer(watchlist_app, name="watchlist")
     app.add_typer(notes_app, name="notes")
     app.add_typer(agent_app, name="agent")

@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import AlertBanner from "../components/AlertBanner/AlertBanner";
@@ -8,13 +8,13 @@ import KillChainStepper, { killChainStats } from "../components/KillChain/KillCh
 import { Panel, SourceBadge } from "../components/ui";
 import NotesPanel from "../components/NotesPanel/NotesPanel";
 import ProcessTree from "../components/ProcessTree/ProcessTree";
-import { AllowlistPanel, SuppressionPanel } from "../components/TriagePanels/TriagePanels";
+import { AllowlistPanel, QuickAllowlist, SuppressionPanel } from "../components/TriagePanels/TriagePanels";
 import RulesPanel from "../components/RulesPanel/RulesPanel";
 import TimelineView from "../components/TimelineView/TimelineView";
 import Topology from "../components/Topology/Topology";
-import { RISK_COLORS, enumKindsFromDetails, riskBand } from "../lib/constants";
-import { bulkUpdateAlertStatus, getCampaigns, getRunDetail, getRunIocsCsv, markFalsePositive, updateAlertStatus } from "../lib/api";
-import type { AlertStatus, NetworkConnection, Reputation, RunDetail } from "../types";
+import { RISK_COLORS, enumKindsFromDetails, intelAgeLabel, riskBand } from "../lib/constants";
+import { bulkUpdateAlertStatus, getCampaigns, getRunDetail, getRunIocsCsv, markFalsePositive, reEnrichRun, refreshIpIntel, updateAlertStatus } from "../lib/api";
+import type { AlertStatus, NetworkConnection, ProcessNode, Reputation, RunDetail } from "../types";
 
 /* ── Risk gauge — semicircular arc, colored by band ────────────────────── */
 
@@ -58,7 +58,30 @@ const REP_META: Record<Reputation, { label: string; dot: string; text: string; b
   clean: { label: "Clean", dot: "bg-risk-clean", text: "text-risk-clean", border: "border-risk-clean/30" },
 };
 
-function NetworkGroups({ connections }: { connections: NetworkConnection[] }) {
+// Reputation source attribution — the feeds that produced a verdict, as a
+// human line (watchlist / AbuseIPDB / VirusTotal / none). Exported for tests.
+export function connectionSources(c: NetworkConnection): string[] {
+  const parts: string[] = [];
+  if (c.watchlist) parts.push(`personal watchlist${c.watchlist_label ? ` (${c.watchlist_label})` : ""}`);
+  if (c.abuse_score !== null && c.abuse_score !== undefined) parts.push(`AbuseIPDB score ${c.abuse_score}`);
+  if (c.vt_malicious_count !== null && c.vt_malicious_count !== undefined)
+    parts.push(`VirusTotal: ${c.vt_malicious_count} malicious vendor${c.vt_malicious_count === 1 ? "" : "s"}`);
+  if (parts.length === 0) parts.push("no external intel configured");
+  return parts;
+}
+
+function NetworkGroups({ connections, runId }: { connections: NetworkConnection[]; runId: string }) {
+  const queryClient = useQueryClient();
+  const [refreshingIp, setRefreshingIp] = useState<string | null>(null);
+  const refresh = useMutation({
+    mutationFn: (ip: string) => refreshIpIntel(runId, ip),
+    onMutate: (ip) => setRefreshingIp(ip),
+    onSettled: () => {
+      setRefreshingIp(null);
+      void queryClient.invalidateQueries({ queryKey: ["run", runId] });
+    },
+  });
+
   if (connections.length === 0) return <p className="text-sm text-text-muted">No network connections recorded for this run.</p>;
   const groups = REP_ORDER.map((rep) => ({ rep, items: connections.filter((c) => c.reputation === rep) })).filter((g) => g.items.length > 0);
 
@@ -83,9 +106,18 @@ function NetworkGroups({ connections }: { connections: NetworkConnection[] }) {
               )}
             </header>
             <ul className="divide-y divide-border-subtle/50">
-              {items.map((c) => (
+              {items.map((c) => {
+                // Source attribution — why this IP sits in this group: the
+                // feeds that produced the verdict (watchlist / AbuseIPDB /
+                // VirusTotal / none), on hover over the address.
+                const srcParts = connectionSources(c);
+                const srcTip = `Reputation ${c.reputation ?? "unknown"} — ${srcParts.join(" · ")}`;
+                return (
                 <li key={`${c.dest_ip}-${c.dest_port}`} className="flex flex-wrap items-center gap-x-3 gap-y-0.5 px-3 py-1.5 font-mono text-xs">
-                  <span className={`font-semibold ${RISK_COLORS[c.reputation]}`}>{c.dest_ip}</span>
+                  <span className={`font-semibold ${RISK_COLORS[c.reputation]}`} title={srcTip}>
+                    {c.dest_ip}
+                    <Icon name="eye" size={9} className="ml-1 opacity-50" aria-label="Reputation sources" />
+                  </span>
                   <span className="text-text-faint">:{c.dest_port ?? "—"}</span>
                   <span className="rounded border border-border-subtle px-1 py-px text-[9px] uppercase text-text-faint">
                     {c.protocol ?? "?"}
@@ -104,9 +136,29 @@ function NetworkGroups({ connections }: { connections: NetworkConnection[] }) {
                     )}
                     {c.malware_family && <span className="text-risk-malicious">{c.malware_family}</span>}
                     <span>{c.first_seen.slice(11, 19)}</span>
+                    {/* Reputation cache age — "checked 5h ago", so staleness is
+                        visible before an analyst trusts a verdict. */}
+                    {c.checked_at && (
+                      <span title={`Reputation fetched ${c.checked_at} UTC`}>{intelAgeLabel(c.checked_at)}</span>
+                    )}
+                    {/* Force refresh — bypass the enrichment TTL ONCE for this
+                        IP and re-query with the current keys. */}
+                    <button
+                      onClick={() => refresh.mutate(c.dest_ip)}
+                      disabled={refresh.isPending}
+                      className="press text-text-faint transition-colors hover:text-accent disabled:opacity-40"
+                      title="Force refresh — bypass the reputation cache (TTL) once and re-query with the current keys"
+                      aria-label={`Force-refresh reputation for ${c.dest_ip}`}
+                    >
+                      <Icon name="refresh" size={10} className={refresh.isPending && refreshingIp === c.dest_ip ? "animate-spin" : ""} />
+                    </button>
                   </span>
+                  {/* Two-click allowlist quick-add — whitelist this destination
+                      for the run without opening the panel. */}
+                  <QuickAllowlist runId={runId} kind="ip" value={c.dest_ip} />
                 </li>
-              ))}
+                );
+              })}
             </ul>
           </section>
         );
@@ -303,6 +355,13 @@ export default function RunDetailPage() {
 
   const { data: campaigns = [] } = useQuery({ queryKey: ["campaigns"], queryFn: getCampaigns });
 
+  // Re-enrich: clears the run's cached intel on the backend, then refetches
+  // this page so the network table shows the freshly-queried badges.
+  const reEnrich = useMutation({
+    mutationFn: (rid: string) => reEnrichRun(rid),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["run", runId] }),
+  });
+
   // All hooks above the early returns — Rules of Hooks. Flash target for the
   // recon-actors list: clicking an actor scrolls to the process tree and
   // rings its node once. Cleared after the 1.4s animation.
@@ -317,6 +376,61 @@ export default function RunDetailPage() {
     if (flashTimer.current !== null) window.clearTimeout(flashTimer.current);
     flashTimer.current = window.setTimeout(() => setFlashPid(null), 1500);
   };
+
+  // Select-to-filter (the spec's highest-value interaction): clicking a
+  // process node narrows the network + timeline panels to what THAT pid did.
+  // Network rows don't carry a pid, so the filter uses the node's reached
+  // IPs — the same list the halo annotation comes from.
+  const [selectedPid, setSelectedPid] = useState<number | null>(null);
+  const treeData = data?.process_tree ?? [];
+  const timelineEvents = data?.timeline ?? [];
+  const netData = data?.network_connections ?? [];
+  const selectedNode = useMemo(() => {
+    if (selectedPid === null) return null;
+    const walk = (ns: RunDetail["process_tree"]): ProcessNode | null => {
+      for (const n of ns) {
+        if (n.pid === selectedPid) return n;
+        const hit = walk(n.children);
+        if (hit) return hit;
+      }
+      return null;
+    };
+    return walk(treeData);
+  }, [selectedPid, treeData]);
+  const selectedIps = useMemo(() => new Set(selectedNode?.network_ips ?? []), [selectedNode]);
+  const filteredTimeline = selectedPid === null ? timelineEvents : timelineEvents.filter((e) => e.pid === selectedPid);
+  const filteredConnections =
+    selectedPid === null || selectedIps.size === 0
+      ? netData
+      : netData.filter((c) => selectedIps.has(c.dest_ip));
+
+  // Small "focusing on …" bar above the filtered panels (a JSX value, not a
+  // render-time component — creating components in render remounts them).
+  const focusBar =
+    selectedPid !== null ? (
+      <p className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-accent/40 bg-accent/5 px-3 py-1.5 font-mono text-[11px] text-accent">
+        <Icon name="process" size={12} />
+        <span>
+          focusing on {selectedNode?.process_name ?? `pid ${selectedPid}`}
+          <span className="text-text-faint"> [{selectedPid}]</span>
+        </span>
+        <span className="text-text-faint">
+          · {filteredTimeline.length} timeline event{filteredTimeline.length === 1 ? "" : "s"}
+          {selectedIps.size > 0 && (
+            <>
+              {" "}· {filteredConnections.length} connection{filteredConnections.length === 1 ? "" : "s"}
+            </>
+          )}
+        </span>
+        <button
+          onClick={() => setSelectedPid(null)}
+          className="press ml-auto inline-flex items-center gap-1 rounded border border-border-subtle px-2 py-0.5 text-[10px] text-text-muted transition-colors hover:border-accent/60 hover:text-accent"
+        >
+          <Icon name="x" size={10} />
+          clear focus
+        </button>
+      </p>
+    ) : null;
 
   // Recon ring in the tree (matches the Monitor): pids behind enumeration-burst.
   const reconPids = useMemo(() => {
@@ -369,7 +483,7 @@ export default function RunDetailPage() {
     );
   }
 
-  const { run, process_tree, network_connections, timeline, alerts, kill_chain, sample_reputation } = data;
+  const { run, process_tree, network_connections, alerts, kill_chain, sample_reputation } = data;
   const inProgress = run.completed_at === null;
   const chain = killChainStats(alerts);
   const campaign = campaigns.find((c) => c.runs.some((r) => r.run_id === runId));
@@ -439,6 +553,29 @@ export default function RunDetailPage() {
               fetcher={getRunIocsCsv}
             />
             <ExportButton runId={runId} />
+            {/* PDF = browser print-to-file: the @media print stylesheet in
+                index.css re-themes the report ink-on-paper (light, chrome
+                hidden), then the OS Save-as-PDF does the rest. Zero deps. */}
+            <button
+              onClick={() => window.print()}
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-2 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
+              title="Print / Save as PDF — print-optimized ink-on-paper layout of this report"
+            >
+              <Icon name="download" size={12} />
+              Export PDF
+            </button>
+            {/* Re-enrich: drop this run's cached IP/hash intel and re-run
+                enrichment with the CURRENT keys (the 'I just added a key'
+                button) — fresh badges on the next fetch. */}
+            <button
+              onClick={() => reEnrich.mutate(runId)}
+              disabled={reEnrich.isPending}
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-2 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent disabled:opacity-50"
+              title="Clear this run's cached reputation and re-query AbuseIPDB/VirusTotal with the currently configured keys"
+            >
+              <Icon name={reEnrich.isPending ? "refresh" : "refresh"} size={12} className={reEnrich.isPending ? "animate-spin" : ""} />
+              {reEnrich.isPending ? "Re-enriching…" : "Re-enrich intel"}
+            </button>
           </div>
         </div>
       </header>
@@ -483,7 +620,22 @@ export default function RunDetailPage() {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[3fr_2fr]">
         <div id="process-tree-panel" className="scroll-mt-24">
           <Panel kicker="Behavior" title="Process tree">
-            <ProcessTree roots={process_tree} reconPids={reconPids} highlightPid={flashPid} />
+            <ProcessTree
+              roots={process_tree}
+              reconPids={reconPids}
+              highlightPid={flashPid}
+              selectedPid={selectedPid}
+              onSelect={(pid) => setSelectedPid((cur) => (cur === pid ? null : pid))}
+              allowlistForRun={runId}
+            />
+            {/* Detection-awareness honesty (docs): the collector runs INSIDE the
+                guest, so sophisticated malware can observe or evade it — the
+                hypervisor-introspection alternative (DRAKVUF) watches from
+                outside the VM instead. */}
+            <p className="mt-3 border-t border-border-subtle pt-2 font-mono text-[10px] leading-relaxed text-text-faint">
+              Collector runs in-guest — well-built malware can detect it. Hypervisor-introspection sandboxes (e.g. DRAKVUF)
+              watch from outside the VM instead; a future integration could detonate here invisibly.
+            </p>
           </Panel>
         </div>
 
@@ -495,17 +647,29 @@ export default function RunDetailPage() {
             kicker="Network"
             title="Connections"
             right={
-              <span className="inline-flex items-center gap-1 font-mono text-[10px] text-signal">
-                <Icon name="network" size={11} />
-                {network_connections.length}
-              </span>
+              selectedPid !== null ? (
+                <button
+                  onClick={() => setSelectedPid(null)}
+                  className="press inline-flex items-center gap-1 font-mono text-[10px] text-accent hover:underline"
+                >
+                  <Icon name="x" size={10} />
+                  clear focus
+                </button>
+              ) : (
+                <span className="inline-flex items-center gap-1 font-mono text-[10px] text-signal">
+                  <Icon name="network" size={11} />
+                  {network_connections.length}
+                </span>
+              )
             }
           >
-            <NetworkGroups connections={network_connections} />
+            {focusBar}
+            <NetworkGroups connections={filteredConnections} runId={runId} />
           </Panel>
 
           <Panel kicker="Sequence" title="Timeline">
-            <TimelineView events={timeline} />
+            {focusBar}
+            <TimelineView events={filteredTimeline} />
           </Panel>
         </div>
       </div>

@@ -11,8 +11,12 @@ import logging
 import os
 import time
 from pathlib import Path
+from urllib.parse import quote
 
 import requests
+
+# Shipped with every heartbeat so the fleet view can tell agent versions apart.
+COLLECTOR_VERSION = "outpost-collector/1.0"
 
 log = logging.getLogger("outpost.shipper")
 
@@ -50,6 +54,64 @@ def claim_active_live_run(backend_url: str) -> str:
     return resp.json()["run_id"]
 
 
+def agent_run_name(host_id: str, when=None) -> str:
+    """One agent session per host per day — `agent-<host>-<YYYY-MM-DD>`.
+
+    The daily-summary tool and the systemd service both rely on this naming:
+    a crash-restart of the service reuses *today's* open run (the daily
+    measurement stays one session), and `outpost agent summary --days N`
+    selects exactly the agent's own sessions by the `agent-` prefix.
+    """
+    import datetime as _dt
+
+    d = (when or _dt.datetime.now(_dt.timezone.utc)).strftime("%Y-%m-%d")
+    return f"agent-{host_id}-{d}"
+
+
+def resolve_live_run_id(backend_url: str, platform: str) -> str:
+    """Standalone session resolution for live monitoring (systemd service).
+
+    1. Claim the webapp's open live session (Live Monitor parity — a user
+       watching the browser gets the host's real events).
+    2. Otherwise reuse today's open agent run (crash-safe: one session/day).
+    3. Otherwise create one (POST /runs, session_type=live, source=agent).
+
+    So the agent service is self-sufficient — no webapp session needs to be
+    open for telemetry to flow.
+    """
+    try:
+        return claim_active_live_run(backend_url)
+    except RuntimeError:
+        pass  # nothing open — fall through to the agent's own sessions
+
+    base = backend_url.rstrip("/")
+    host = _default_host_id()
+    name = agent_run_name(host)
+    # Reuse today's open agent run if the service restarted mid-day.
+    try:
+        resp = requests.get(f"{base}/runs", timeout=5)
+        if resp.ok:
+            for r in resp.json():
+                if (
+                    r.get("sample_name") == name
+                    and not r.get("completed_at")
+                    and r.get("session_type") == "live"
+                ):
+                    return r["run_id"]
+    except requests.RequestException:
+        pass
+    # Fresh session for today.
+    payload = {
+        "sample_name": name,
+        "platform": platform,
+        "session_type": "live",
+        "source": "agent",
+    }
+    resp = requests.post(f"{base}/runs", json=payload, timeout=5)
+    resp.raise_for_status()
+    return resp.json()["run_id"]
+
+
 class Shipper:
     def __init__(
         self,
@@ -76,12 +138,40 @@ class Shipper:
 
         Every event is stamped with this shipper's host identity (fleet
         attribution — the backend's /agents view groups by it). An event that
-        already names a host keeps its own."""
+        already names a host keeps its own.
+
+        The exact log channel is stamped from the event's own platform
+        (auditd on Linux, Sysmon on Windows) so the Event Log's source tabs
+        can split collector telemetry by channel — explicit provenance, not
+        inference from the platform label."""
         event["run_id"] = self.run_id
         event.setdefault("host_id", self.host_id)
+        plat = (event.get("platform") or "").lower()
+        if plat == "linux":
+            event.setdefault("log_source", "auditd")
+        elif plat == "windows":
+            event.setdefault("log_source", "sysmon")
         self.buffer.append(event)
         if len(self.buffer) >= self.batch_size or time.time() - self.last_flush > self.flush_interval:
             self.flush()
+
+    def maybe_heartbeat(self, platform: str | None = None, interval: float = 60.0) -> None:
+        """Ping /agents/{host}/heartbeat when `interval` elapsed since the last
+        ping — liveness independent of event volume, so the fleet view can
+        flag hosts that went silent. Best-effort like snapshots: a down
+        backend just logs and retries next tick."""
+        if time.time() - getattr(self, "_last_heartbeat", 0.0) < interval:
+            return
+        self._last_heartbeat = time.time()
+        try:
+            resp = requests.post(
+                f"{self.backend_url}/agents/{quote(self.host_id, safe='')}/heartbeat",
+                json={"platform": platform, "version": COLLECTOR_VERSION},
+                timeout=5,
+            )
+            resp.raise_for_status()
+        except Exception as exc:  # noqa: BLE001 — heartbeat is best-effort
+            log.warning("Heartbeat failed: %s", exc)
 
     def ship_snapshot(self, platform: str | None = None) -> dict | None:
         """POST the live system snapshot (processes + listening ports) for this

@@ -15,7 +15,7 @@ import json
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..core import auth
 from ..core.db import db_session
@@ -154,11 +154,36 @@ class FpThresholdIn(BaseModel):
 @router.get("/rules/fp", response_model=None)
 def list_rule_fp() -> dict:
     """Every rule's FP counter, the tunable suggestion threshold, and — for
-    rules over it — a ready-to-apply threshold raise. The Rules page renders
-    these as chips on the tuning knobs and one-click apply buttons."""
+    rules over it — a ready-to-apply threshold raise. Each rule also carries
+    its 14-day fired/FP history so the Rules page can render the FP-rate
+    trend (FP ÷ fired over time), which is what makes the threshold
+    suggestion defensible instead of a guess."""
+    from datetime import datetime, timedelta, timezone
+
     with db_session() as conn:
         threshold = _fp_threshold(conn)
         rows = conn.execute("SELECT * FROM rule_fp ORDER BY count DESC").fetchall()
+
+        # Fired + FP counts per rule per UTC day (FP = resolved with an FP:
+        # comment, which is exactly how mark-false-positive resolves alerts).
+        fired_rows = conn.execute(
+            "SELECT rule_id, substr(triggered_at, 1, 10) AS day, COUNT(*) AS n "
+            "FROM alerts GROUP BY rule_id, day"
+        ).fetchall()
+        fp_rows = conn.execute(
+            "SELECT rule_id, substr(triggered_at, 1, 10) AS day, COUNT(*) AS n "
+            "FROM alerts WHERE status = 'resolved' AND status_comment LIKE 'FP%' "
+            "GROUP BY rule_id, day"
+        ).fetchall()
+        fired_by_rule_day = {(r["rule_id"], r["day"]): r["n"] for r in fired_rows}
+        fp_by_rule_day = {(r["rule_id"], r["day"]): r["n"] for r in fp_rows}
+        fired_total = {}
+        for (rid, _day), n in fired_by_rule_day.items():
+            fired_total[rid] = fired_total.get(rid, 0) + n
+
+        today = datetime.now(timezone.utc).date()
+        days = [(today - timedelta(days=i)).isoformat() for i in range(13, -1, -1)]
+
         rules = []
         for r in rows:
             count = r["count"]
@@ -166,9 +191,18 @@ def list_rule_fp() -> dict:
                 {
                     "rule_id": r["rule_id"],
                     "count": count,
+                    "fired_count": fired_total.get(r["rule_id"], 0),
                     "last_fp_at": r["last_fp_at"],
                     "over_threshold": count >= threshold,
                     "suggestion": _threshold_suggestion(conn, r["rule_id"], count) if count >= threshold else None,
+                    "history": [
+                        {
+                            "day": d,
+                            "fired": fired_by_rule_day.get((r["rule_id"], d), 0),
+                            "fp": fp_by_rule_day.get((r["rule_id"], d), 0),
+                        }
+                        for d in days
+                    ],
                 }
             )
     return {"threshold": threshold, "default_threshold": FP_DEFAULT_THRESHOLD, "rules": rules}
@@ -343,3 +377,188 @@ def delete_suppression(entry_id: int, request: Request) -> None:
             target_type="suppression", target_id=str(entry_id),
         )
     return None
+
+
+# ---------------------------------------------------------------------------
+# Rule packs (the WHIDS lesson) — versioned, diffable, file-based rule sets.
+# GET /rules/pack exports the whole operational rule surface — tuning
+# overrides, suppressions, enum-pattern tables, FP threshold — as ONE JSON
+# document; POST /rules/pack re-applies it. Because a pack is a plain JSON
+# file, operators can keep it in git, diff revisions, and roll back by
+# re-importing the previous export: the Rules page's operational surface,
+# captured as an artifact instead of living only in the DB.
+# ---------------------------------------------------------------------------
+
+PACK_SCHEMA = 1
+
+
+def _suppressions_payload(conn) -> list[dict]:
+    rows = conn.execute("SELECT * FROM rule_suppressions ORDER BY id ASC").fetchall()
+    return [dict(r) for r in rows]
+
+
+def _tuning_payload(conn) -> list[dict]:
+    rows = conn.execute("SELECT rule_id, param, value FROM rule_tuning").fetchall()
+    overrides = {(r["rule_id"], r["param"]): r["value"] for r in rows}
+    knobs = []
+    for name, (rule_id, type_name, default) in TUNABLE_DEFAULTS.items():
+        raw = overrides.get((rule_id, name))
+        knobs.append(
+            {
+                "param": name,
+                "rule_id": rule_id,
+                "type": type_name,
+                "default": default,
+                "current": default if raw is None else _parse_value(name, raw),
+                "tuned": raw is not None,
+            }
+        )
+    return knobs
+
+
+@router.get("/rules/pack", response_model=None)
+def export_rule_pack() -> dict:
+    """The full operational rule surface as one versioned JSON document."""
+    from datetime import datetime, timezone
+
+    with db_session() as conn:
+        pack = {
+            "schema": PACK_SCHEMA,
+            "exported_at": datetime.now(timezone.utc).isoformat(),
+            "tuning": _tuning_payload(conn),
+            "suppressions": _suppressions_payload(conn),
+            "enum_patterns": _default_patterns_dict(),
+            "fp_threshold": _fp_threshold(conn),
+        }
+        # Effective enum patterns (operator-edited tables), not just defaults.
+        pack["enum_patterns"] = {
+            platform: [{"pattern": pat, "label": label} for pat, label in rows]
+            for platform, rows in load_enum_patterns(conn).items()
+        }
+    return pack
+
+
+class RulePackIn(BaseModel):
+    # `schema` aliased to schema_ — the raw name shadows pydantic's BaseModel
+    # attribute, which warns and breaks validation in older versions.
+    schema_: int = Field(default=PACK_SCHEMA, alias="schema")
+    tuning: list[dict] = []
+    suppressions: list[dict] = []
+    enum_patterns: dict[str, list[dict]] | None = None
+    fp_threshold: int | None = None
+    exported_at: str | None = None
+
+    model_config = {"populate_by_name": True}
+
+
+@router.post("/rules/pack", response_model=None)
+def import_rule_pack(body: RulePackIn, request: Request) -> dict:
+    """Re-apply a rule pack. Tuning is a full sync (the pack's `tuned` flag
+    decides override vs default), enum patterns + FP threshold replace
+    wholesale, and suppressions apply additively (identical scope is
+    idempotent — never clobbers live triage). Unknown knobs/rules 422 so a
+    pack from a newer schema can't silently half-apply."""
+    if body.schema_ != PACK_SCHEMA:
+        raise HTTPException(status_code=422, detail=f"Unsupported pack schema {body.schema_} (want {PACK_SCHEMA})")
+
+    # Tuning — full sync: tuned=True → upsert override, tuned=False → restore
+    # default. Every param must exist, or the pack is from a different engine.
+    tuning_applied = 0
+    for knob in body.tuning:
+        param = knob.get("param")
+        if param not in TUNABLE_DEFAULTS:
+            raise HTTPException(status_code=422, detail=f"Unknown tuning knob: {param}")
+        rule_id = TUNABLE_DEFAULTS[param][0]
+        if knob.get("tuned"):
+            _parse_value(param, str(knob["current"]))  # validates; 422 on bad type
+            with db_session() as conn:
+                conn.execute(
+                    "INSERT INTO rule_tuning (rule_id, param, value) VALUES (?, ?, ?) "
+                    "ON CONFLICT(rule_id) DO UPDATE SET value = excluded.value",
+                    (rule_id, param, str(knob["current"])),
+                )
+        else:
+            with db_session() as conn:
+                conn.execute("DELETE FROM rule_tuning WHERE rule_id = ? AND param = ?", (rule_id, param))
+        tuning_applied += 1
+
+    # Suppressions — additive + idempotent (skip an identical scope that
+    # already exists; never remove live triage state).
+    added = 0
+    skipped = 0
+    now = datetime.now(timezone.utc).isoformat()
+    for s in body.suppressions:
+        rule_id = s.get("rule_id")
+        if rule_id not in _KNOWN_RULES:
+            raise HTTPException(status_code=422, detail=f"Unknown rule_id: {rule_id}")
+        run_id = s.get("run_id") or None
+        with db_session() as conn:
+            existing = conn.execute(
+                "SELECT id FROM rule_suppressions WHERE rule_id = ? AND run_id IS ?",
+                (rule_id, run_id),
+            ).fetchone()
+            if existing:
+                skipped += 1
+                continue
+            conn.execute(
+                "INSERT INTO rule_suppressions (rule_id, run_id, reason, created_at) VALUES (?, ?, ?, ?)",
+                (rule_id, run_id, (s.get("reason") or "").strip() or None, now),
+            )
+        added += 1
+
+    # Enum patterns + FP threshold — wholesale replace when present.
+    enum_applied = False
+    if body.enum_patterns is not None:
+        for platform in body.enum_patterns:
+            if platform not in _PLATFORMS:
+                raise HTTPException(status_code=422, detail=f"Unknown platform: {platform}")
+        clean = {}
+        for platform in _PLATFORMS:
+            rows = body.enum_patterns.get(platform, [])
+            cleaned = []
+            for item in rows:
+                if not isinstance(item, dict):
+                    continue
+                pattern = item.get("pattern")
+                label = item.get("label")
+                if isinstance(pattern, str) and pattern.strip() and isinstance(label, str) and label.strip():
+                    cleaned.append({"pattern": pattern.strip(), "label": label.strip()})
+            clean[platform] = cleaned
+        with db_session() as conn:
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES ('enum_patterns', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (json.dumps(clean),),
+            )
+        enum_applied = True
+
+    fp_applied = False
+    if body.fp_threshold is not None:
+        if body.fp_threshold < 1:
+            raise HTTPException(status_code=422, detail="fp_threshold must be >= 1")
+        with db_session() as conn:
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (FP_THRESHOLD_KEY, str(body.fp_threshold)),
+            )
+        fp_applied = True
+
+    actor = auth.role_from_request(request)
+    with db_session() as conn:
+        audit.log(
+            conn, actor, "rules.pack.import",
+            target_type="rules", target_id=f"schema:{PACK_SCHEMA}",
+            detail=(
+                f"{tuning_applied} tuning knob(s) synced, {added} suppression(s) added "
+                f"({skipped} skipped), enum_patterns={enum_applied}, fp_threshold={fp_applied}"
+            ),
+        )
+    return {
+        "schema": PACK_SCHEMA,
+        "tuning_applied": tuning_applied,
+        "suppressions_added": added,
+        "suppressions_skipped": skipped,
+        "enum_patterns_applied": enum_applied,
+        "fp_threshold_applied": fp_applied,
+    }

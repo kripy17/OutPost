@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS alerts (
     details TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open', 'acknowledged', 'resolved')),
     status_comment TEXT,
-    status_at TEXT
+    status_at TEXT,
+    assignee TEXT
 );
 
 CREATE TABLE IF NOT EXISTS events (
@@ -55,7 +56,15 @@ CREATE TABLE IF NOT EXISTS events (
     protocol TEXT,
     file_path TEXT,
     registry_key TEXT,
-    host_id TEXT NOT NULL DEFAULT 'local'
+    host_id TEXT NOT NULL DEFAULT 'local',
+    -- The raw record as shipped by the collector (JSON) — the Event Viewer's
+    -- "raw record" view, for pivoting from a normalized row to the original
+    -- auditd/Sysmon line. NULL for rows predating the column.
+    raw_record TEXT,
+    -- The exact log channel the event came from: 'auditd' (Linux collector)
+    -- or 'sysmon' (Windows collector). NULL for webapp/sandbox/seed events.
+    -- The Event Log's source tabs split collectors by this.
+    log_source TEXT
 );
 
 CREATE TABLE IF NOT EXISTS enrichment_cache (
@@ -114,6 +123,29 @@ CREATE TABLE IF NOT EXISTS host_snapshots (
     host_id TEXT PRIMARY KEY,
     payload TEXT NOT NULL,
     collected_at TEXT NOT NULL
+);
+
+-- Agent liveness: the collector pings every ~60s (HEARTBEAT_INTERVAL) so the
+-- fleet view can show last-seen/uptime per host and flag hosts that went
+-- silent — independent of whether the host shipped events in that window.
+CREATE TABLE IF NOT EXISTS agent_heartbeats (
+    host_id TEXT PRIMARY KEY,
+    last_heartbeat TEXT NOT NULL,
+    platform TEXT,
+    version TEXT
+);
+
+-- Per-host behavioral baseline (roadmap 4.x): what binaries execute and which
+-- IPs a host talks to, learned from its own telemetry. The learner upserts
+-- counts on every ingested batch; the deviation check flags first-time
+-- process/IPs once the baseline is established.
+CREATE TABLE IF NOT EXISTS host_baselines (
+    host_id TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK(kind IN ('process', 'net')),
+    value TEXT NOT NULL,
+    count INTEGER NOT NULL DEFAULT 1,
+    last_seen TEXT NOT NULL,
+    PRIMARY KEY (host_id, kind, value)
 );
 
 -- Watchlist live-alerting: first-seen-per-run dedup. A (run, ioc) row is
@@ -257,6 +289,15 @@ def _migrate_alerts_triage(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _migrate_alerts_assignee(conn: sqlite3.Connection) -> None:
+    """Idempotent: add the analyst assignee column (triage queue) to DBs
+    created before the queue pass. Fresh DBs get it from SCHEMA."""
+    cols = _column_names(conn, "alerts")
+    if "assignee" not in cols:
+        conn.execute("ALTER TABLE alerts ADD COLUMN assignee TEXT")
+    conn.commit()
+
+
 def _migrate_runs_source(conn: sqlite3.Connection) -> None:
     """Idempotent: add the `source` provenance column (where a run came from:
     monitor / live / sandbox:<provider> / seed / cli) to pre-existing DBs.
@@ -274,6 +315,26 @@ def _migrate_events_host_id(conn: sqlite3.Connection) -> None:
     zero-config webapp path where events originate on the same machine."""
     if "host_id" not in _column_names(conn, "events"):
         conn.execute("ALTER TABLE events ADD COLUMN host_id TEXT NOT NULL DEFAULT 'local'")
+        conn.commit()
+
+
+def _migrate_events_log_source(conn: sqlite3.Connection) -> None:
+    """Idempotent: add the `log_source` channel column (auditd / sysmon) to
+    DBs created before collectors tagged their events. Fresh DBs get it from
+    SCHEMA; older installs need the ALTER."""
+    cols = _column_names(conn, "events")
+    if "log_source" not in cols:
+        conn.execute("ALTER TABLE events ADD COLUMN log_source TEXT")
+        conn.commit()
+
+
+def _migrate_events_raw_record(conn: sqlite3.Connection) -> None:
+    """Idempotent: add the `raw_record` column (the collector's original JSON
+    payload) to pre-existing DBs. Fresh DBs get it from SCHEMA; older installs
+    need the ALTER. Existing rows stay NULL — only newly ingested events carry
+    a raw record."""
+    if "raw_record" not in _column_names(conn, "events"):
+        conn.execute("ALTER TABLE events ADD COLUMN raw_record TEXT")
         conn.commit()
 
 
@@ -359,10 +420,13 @@ def init_db() -> None:
         conn.executescript(SCHEMA)
         _migrate_alerts_related_pids(conn)
         _migrate_alerts_triage(conn)
+        _migrate_alerts_assignee(conn)
         _migrate_samples_platform_unknown(conn)
         _migrate_runs_platform_macos(conn)
         _migrate_runs_source(conn)
         _migrate_events_host_id(conn)
+        _migrate_events_raw_record(conn)
+        _migrate_events_log_source(conn)
 
 
 @contextmanager

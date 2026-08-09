@@ -15,8 +15,11 @@ def test_platform_detects_host_os(client):
     assert resp.status_code == 200
     body = resp.json()
     assert body["os"] in {"windows", "linux", "macos"}
-    assert body["collector"] in {"sysmon", "auditd", "unified-logs"}
+    assert body["collector"] in {"sysmon", "auditd", "unsupported"}
     assert body["name"] and body["release"] and body["machine"]
+    # The backend host's identity — the Overview compares it to the fleet to
+    # answer "is THIS host monitored?" (auto-OS front door).
+    assert body["hostname"]
 
 
 def test_create_run_and_ingest_batch(client):

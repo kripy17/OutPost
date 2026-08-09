@@ -96,18 +96,13 @@ const GROUPS: { label: string; links: NavItem[] }[] = [
   },
   {
     label: "Analysis",
-    links: [
-      { to: "/samples", label: "Samples", iconName: "box" },
-      { to: "/history", label: "History", iconName: "clock" },
-      { to: "/compare", label: "Compare", iconName: "compare" },
-    ],
+    links: [{ to: "/history", label: "History", iconName: "clock" }],
   },
   {
     label: "Intelligence",
     links: [
       { to: "/search", label: "IOC Search", iconName: "search" },
       { to: "/campaigns", label: "Campaigns", iconName: "flag" },
-      { to: "/coverage", label: "ATT&CK Coverage", iconName: "target" },
       { to: "/footprint", label: "Footprint", iconName: "globe" },
     ],
   },
@@ -116,9 +111,17 @@ const GROUPS: { label: string; links: NavItem[] }[] = [
     links: [
       { to: "/watchlist", label: "Watchlist", iconName: "star" },
       { to: "/agents", label: "Agents", iconName: "terminal" },
-      { to: "/audit", label: "Audit Log", iconName: "notes" },
       { to: "/rules", label: "Rules", iconName: "shield" },
       { to: "/settings", label: "Settings", iconName: "bell" },
+    ],
+  },
+  {
+    label: "Tools",
+    links: [
+      { to: "/triage", label: "Triage", iconName: "alert" },
+      { to: "/samples", label: "Samples", iconName: "box" },
+      { to: "/coverage", label: "ATT&CK Coverage", iconName: "target" },
+      { to: "/audit", label: "Audit Log", iconName: "notes" },
     ],
   },
 ];

@@ -147,6 +147,72 @@ def test_tuning_changes_detection_behavior(client):
         client.delete("/rules/tuning/BEACON_MIN_CONNECTIONS")
 
 
+# -- Rule packs: versioned, diffable rule-set export/import --------------------
+
+
+def test_rule_pack_round_trip(client):
+    """Export → mutate → re-import the pack → state matches the export."""
+    # Mutate: one tuned knob, one suppression, custom enum pattern.
+    client.put("/rules/tuning/BEACON_MIN_CONNECTIONS", json={"value": "3"})
+    client.post(
+        "/rules/suppressions",
+        json={"rule_id": "beaconing", "reason": "pack test"},
+    )
+    enum_resp = client.get("/rules/enum-patterns").json()
+    custom = enum_resp["platforms"]
+    custom["linux"].append({"pattern": "pack-util", "label": "pack test"})
+    client.put("/rules/enum-patterns", json={"patterns": custom})
+
+    pack = client.get("/rules/pack").json()
+    assert pack["schema"] == 1
+    assert any(k["param"] == "BEACON_MIN_CONNECTIONS" and k["tuned"] for k in pack["tuning"])
+    assert any(s["rule_id"] == "beaconing" and s["run_id"] is None for s in pack["suppressions"])
+    assert any(p["pattern"] == "pack-util" for p in pack["enum_patterns"]["linux"])
+
+    # Revert everything to defaults, then re-import the pack.
+    client.delete("/rules/tuning/BEACON_MIN_CONNECTIONS")
+    client.delete("/rules/enum-patterns")
+    for s in client.get("/rules/suppressions").json():
+        client.delete(f"/rules/suppressions/{s['id']}")
+
+    summary = client.post("/rules/pack", json=pack).json()
+    assert summary["tuning_applied"] >= 1
+    assert summary["suppressions_added"] == 1
+    assert summary["enum_patterns_applied"] is True
+
+    knob = next(k for k in client.get("/rules/tuning").json()["knobs"] if k["param"] == "BEACON_MIN_CONNECTIONS")
+    assert knob["tuned"] is True and knob["current"] == 3
+    assert any(s["rule_id"] == "beaconing" for s in client.get("/rules/suppressions").json())
+    assert any(p["pattern"] == "pack-util" for p in client.get("/rules/enum-patterns").json()["platforms"]["linux"])
+
+    # Clean up the pack's suppression so later tests see a clean scope.
+    for s in client.get("/rules/suppressions").json():
+        if s["rule_id"] == "beaconing" and s["run_id"] is None:
+            client.delete(f"/rules/suppressions/{s['id']}")
+
+
+def test_rule_pack_rejects_future_schema_and_unknown_knob(client):
+    pack = client.get("/rules/pack").json()
+    bad_schema = {**pack, "schema": 99}
+    assert client.post("/rules/pack", json=bad_schema).status_code == 422
+    bad_knob = {**pack, "tuning": [{"param": "NOT_A_KNOB", "rule_id": "x", "current": 1, "tuned": True}]}
+    assert client.post("/rules/pack", json=bad_knob).status_code == 422
+
+
+def test_rule_pack_suppressions_are_idempotent(client):
+    """Re-importing a pack never duplicates an identical suppression scope."""
+    # Start from a clean scope (shared DB — other tests may have added one).
+    for s in client.get("/rules/suppressions").json():
+        if s["rule_id"] == "beaconing" and s["run_id"] is None:
+            client.delete(f"/rules/suppressions/{s['id']}")
+    pack = client.get("/rules/pack").json()
+    pack["suppressions"] = [{"rule_id": "beaconing", "run_id": None, "reason": "idem"}]
+    first = client.post("/rules/pack", json=pack).json()
+    second = client.post("/rules/pack", json=pack).json()
+    assert first["suppressions_added"] == 1
+    assert second["suppressions_added"] == 0 and second["suppressions_skipped"] == 1
+
+
 # -- Roadmap 3.2: macOS rules ----------------------------------------------------
 
 

@@ -36,20 +36,45 @@ export interface StreamWatchlist {
   matches: WatchlistMatch[];
 }
 
+/** A run-level push — a batch of events landed, or the run completed. */
+export interface StreamRunUpdate {
+  run_id: string;
+  events: number;
+  completed?: boolean;
+}
+
+/** A fleet-status push — an agent heartbeated, or a host went silent. */
+export interface StreamFleetUpdate {
+  host_id: string;
+  online: boolean;
+  silent: boolean;
+  last_heartbeat?: string | null;
+}
+
 /**
  * Subscribe to live pushes. `onAlert` fires for every detection alert;
- * `onWatchlist` (optional) fires when a watched IOC appears in a new batch.
+ * `onWatchlist` (optional) fires when a watched IOC appears in a new batch;
+ * `onRunUpdate` (optional) fires when any run gains events or completes;
+ * `onFleetUpdate` (optional) fires when an agent heartbeats or a host goes
+ * silent — live views use these to refresh instead of waiting for the next
+ * poll tick (polling stays as the fallback).
  * Returns nothing (lifecycle is managed by React); EventSource auto-reconnects,
  * so no manual retry loop is needed.
  */
 export function useEventStream(
   onAlert: (a: StreamAlert) => void,
   onWatchlist?: (w: StreamWatchlist) => void,
+  onRunUpdate?: (r: StreamRunUpdate) => void,
+  onFleetUpdate?: (f: StreamFleetUpdate) => void,
 ): void {
   const alertRef = useRef(onAlert);
   alertRef.current = onAlert;
   const watchlistRef = useRef(onWatchlist);
   watchlistRef.current = onWatchlist;
+  const runUpdateRef = useRef(onRunUpdate);
+  runUpdateRef.current = onRunUpdate;
+  const fleetUpdateRef = useRef(onFleetUpdate);
+  fleetUpdateRef.current = onFleetUpdate;
 
   useEffect(() => {
     let es: EventSource | null = null;
@@ -78,6 +103,28 @@ export function useEventStream(
         try {
           const data = JSON.parse((e as MessageEvent).data as string) as StreamWatchlist;
           watchlistRef.current?.(data);
+        } catch {
+          /* malformed frame — ignore, keep the stream alive */
+        }
+      });
+    }
+
+    if (runUpdateRef.current) {
+      es.addEventListener("run-update", (e) => {
+        try {
+          const data = JSON.parse((e as MessageEvent).data as string) as StreamRunUpdate;
+          runUpdateRef.current?.(data);
+        } catch {
+          /* malformed frame — ignore, keep the stream alive */
+        }
+      });
+    }
+
+    if (fleetUpdateRef.current) {
+      es.addEventListener("fleet-update", (e) => {
+        try {
+          const data = JSON.parse((e as MessageEvent).data as string) as StreamFleetUpdate;
+          fleetUpdateRef.current?.(data);
         } catch {
           /* malformed frame — ignore, keep the stream alive */
         }

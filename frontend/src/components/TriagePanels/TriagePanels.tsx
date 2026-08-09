@@ -23,6 +23,80 @@ import type { Alert, AllowlistKind } from "../../types";
 
 const KINDS: AllowlistKind[] = ["ip", "file", "registry", "process", "hash"];
 
+/* ── QuickAllowlist — two-click allowlisting from the network table and the
+   process tree, so an analyst can whitelist a destination mid-triage without
+   opening the panel: click 1 arms the button ("confirm?"), click 2 adds the
+   entry for this run (auto-acks already-open matching alerts via the API's
+   `acked` count). Already-allowlisted values render as a quiet check. Shares
+   the ["allowlist", runId] query cache with AllowlistPanel, so the panel and
+   the inline affordance always agree. */
+export function QuickAllowlist({
+  runId,
+  kind,
+  value,
+  note,
+}: {
+  runId: string;
+  kind: AllowlistKind;
+  value: string;
+  note?: string;
+}) {
+  const queryClient = useQueryClient();
+  const { data: entries = [] } = useQuery({
+    queryKey: ["allowlist", runId],
+    queryFn: () => getRunAllowlist(runId),
+    staleTime: 30_000,
+  });
+  const [armed, setArmed] = useState(false);
+
+  const exists = entries.some((e) => e.kind === kind && e.value.toLowerCase() === value.toLowerCase());
+
+  const add = useMutation({
+    mutationFn: () => addRunAllowlist(runId, kind, value, note ?? `quick-add from ${kind === "ip" ? "network table" : "process tree"}`),
+    onSuccess: () => {
+      setArmed(false);
+      // The allowlist refetch below flips this button into the "allowed"
+      // check chip — that IS the feedback, no extra flash needed.
+      void queryClient.invalidateQueries({ queryKey: ["allowlist", runId] });
+      void queryClient.invalidateQueries({ queryKey: ["run", runId] });
+    },
+  });
+
+  if (exists) {
+    return (
+      <span
+        className="inline-flex items-center gap-1 font-mono text-[9px] text-risk-clean"
+        title={`Allowlisted for this run — matching alerts suppressed (${kind}: ${value})`}
+      >
+        <Icon name="check" size={9} />
+        allowed
+      </span>
+    );
+  }
+
+  return (
+    <button
+      onClick={(e) => {
+        e.stopPropagation(); // never trigger row select / node expand
+        if (armed) add.mutate();
+        else setArmed(true);
+      }}
+      onBlur={() => setArmed(false)}
+      disabled={add.isPending}
+      className={`press inline-flex items-center gap-1 rounded border px-1.5 py-0.5 font-mono text-[9px] transition-colors duration-150 disabled:opacity-50 ${
+        armed
+          ? "border-risk-suspicious/60 bg-risk-suspicious/10 text-risk-suspicious"
+          : "border-border-subtle text-text-faint hover:border-accent/60 hover:text-accent"
+      }`}
+      title={armed ? "Click again to allowlist for this run" : `Allowlist ${value} for this run`}
+      aria-label={`Allowlist ${value} for this run`}
+    >
+      <Icon name={add.isPending ? "refresh" : armed ? "alert" : "shield"} size={9} className={add.isPending ? "animate-spin" : ""} />
+      {add.isPending ? "adding…" : armed ? "confirm?" : "allowlist"}
+    </button>
+  );
+}
+
 export function AllowlistPanel({ runId }: { runId: string }) {
   const queryClient = useQueryClient();
   const [kind, setKind] = useState<AllowlistKind>("ip");

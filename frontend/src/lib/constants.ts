@@ -98,6 +98,21 @@ export function enumKindsFromDetails(details: string): string[] {
     .filter(Boolean);
 }
 
+// Reputation cache age — "checked 5h ago", so an analyst sees how stale a
+// verdict is before trusting it, and knows when a force-refresh is worth it.
+// Shared by the run-detail network panel and the live Monitor's table.
+export function intelAgeLabel(checkedAt: string | null, now: number = Date.now()): string | null {
+  if (!checkedAt) return null;
+  const ageMs = now - new Date(checkedAt).getTime();
+  if (!Number.isFinite(ageMs) || ageMs < 0) return "checked just now";
+  const m = Math.floor(ageMs / 60_000);
+  if (m < 1) return "checked just now";
+  if (m < 60) return `checked ${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `checked ${h}h ago`;
+  return `checked ${Math.floor(h / 24)}d ago`;
+}
+
 // Risk bands (roadmap 1.3) — score → color + label, reused by the detail
 // gauge and the history-card badge. Bands: 0 none, 1-29 low, 30-59 elevated,
 // 60+ critical.

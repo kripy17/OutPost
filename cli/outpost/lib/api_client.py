@@ -149,3 +149,17 @@ def notes_add(run_id: str, note: str) -> dict:
 def get_rules_meta() -> list[dict]:
     """ATT&CK technique/tactic + risk weight per rule (webapp parity)."""
     return _get("/rules/meta")
+
+
+def refresh_ip(run_id: str, ip: str) -> dict:
+    """Bypass the enrichment TTL ONCE for one destination IP of a run — the
+    terminal mirror of the run-detail force-refresh button."""
+    from urllib.parse import quote
+
+    return _post(f"/runs/{run_id}/enrichment/refresh?ip={quote(ip)}", {})
+
+
+def refresh_stale(limit: int = 50) -> dict:
+    """The stale-only maintenance sweep — re-query just the cached verdicts
+    past the TTL (oldest first), the Settings sweep's terminal mirror."""
+    return _post(f"/intel/refresh-stale?max={limit}", {})

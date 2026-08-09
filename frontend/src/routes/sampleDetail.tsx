@@ -252,21 +252,36 @@ function SandboxDetonation({ sample }: { sample: { sample_id: string; original_n
 
   return (
     <Panel
-      kicker="Sandbox · dynamic"
+      kicker="Sandbox · roadmap"
       title="Detonate in an external sandbox"
       className="mt-6"
       right={
         providers ? (
-          <span className="font-mono text-[10px] uppercase tracking-wide text-text-faint">
-            {providers.mode === "live" ? `live · ${providerName(providers.active)}` : "demo mode — no API key configured"}
+          <span
+            className={`inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wide ${
+              providers.mode === "live" ? "text-risk-clean" : "text-text-faint"
+            }`}
+          >
+            <span
+              className={`h-1.5 w-1.5 rounded-full ${
+                providers.mode === "live" ? "bg-risk-clean" : "bg-text-faint"
+              }`}
+              aria-hidden
+            />
+            {providers.mode === "live"
+              ? `live · ${providerName(providers.active)}`
+              : "roadmap · no provider configured"}
           </span>
         ) : undefined
       }
     >
       <p className="mb-4 max-w-2xl text-sm text-text-muted">
         Push the sample to an external sandbox (Any.Run, Triage, or Joe) and stream the report back
-        through the detection pipeline as a normal run. With no API key configured the labeled demo
-        detonates locally — same pipeline, clearly marked.
+        through the detection pipeline as a normal run. This is a roadmap integration: until an API
+        key is configured (<code className="font-mono text-accent">ANYRUN_API_KEY</code> /{" "}
+        <code className="font-mono text-accent">TRIAGE_API_KEY</code> /{" "}
+        <code className="font-mono text-accent">JOE_API_KEY</code>) the labeled demo detonates locally —
+        same pipeline, clearly marked.
       </p>
 
       <div className="mb-4 flex flex-wrap items-center gap-2">

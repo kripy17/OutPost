@@ -146,7 +146,7 @@ export default function Topology({
         {/* Destinations — right column, clickable to IOC search */}
         {ips.map((ip, j) => (
           <g
-            key={ip.ip}
+            key={`${ip.ip}:${ip.port ?? ""}`}
             role="link"
             tabIndex={0}
             className="cursor-pointer"

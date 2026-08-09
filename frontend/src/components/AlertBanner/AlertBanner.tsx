@@ -1,5 +1,7 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
+import { Icon } from "../Icon";
 import { SEVERITY_BG } from "../../lib/constants";
 import { addSuppression, getRuleMeta, setTuning } from "../../lib/api";
 import type { Alert, AlertStatus, FpResponse, FpSuggestion } from "../../types";
@@ -258,6 +260,36 @@ export default function AlertBanner({
                   {rule.technique} · {rule.tactic}
                 </span>
               )}
+              {/* Process jump (Event-Manager parity): alerts that name a
+                  process link straight to everything that PID did. A recon
+                  sweep lists every enumerating PID at once. */}
+              {(() => {
+                const pids = alert.related_pids ?? [];
+                const recon = alert.rule_id === "enumeration-burst" && pids.length > 1;
+                const pid = alert.related_pid ?? pids[0] ?? null;
+                if (recon) {
+                  return (
+                    <Link
+                      to={`/events?pid=${pids.join(",")}`}
+                      className="press inline-flex items-center gap-1 rounded border border-risk-suspicious/50 bg-risk-suspicious/10 px-1.5 py-0.5 font-mono text-[10px] text-risk-suspicious transition-colors duration-150 hover:border-risk-suspicious hover:bg-risk-suspicious/15"
+                      title={`Recon sweep — ${pids.length} enumerating processes — jump to the process view`}
+                    >
+                      <Icon name="process" size={10} />
+                      recon actors · {pids.length}
+                    </Link>
+                  );
+                }
+                return pid ? (
+                  <Link
+                    to={`/events?pid=${pid}`}
+                    className="press inline-flex items-center gap-1 rounded border border-border-subtle px-1.5 py-0.5 font-mono text-[10px] text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
+                    title={`Everything process ${pid} did (${alert.rule_name}) — jump to the process view`}
+                  >
+                    <Icon name="process" size={10} />
+                    pid {pid}
+                  </Link>
+                ) : null;
+              })()}
               {triage && aid !== null && (
                 <span className={`rounded-full border px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wide ${statusMeta.cls}`}>
                   {statusMeta.label}
