@@ -176,12 +176,12 @@ async def upload_sample(
     sha256 = hashlib.sha256(body).hexdigest()
 
     # Roadmap 2.2 — reputation evidence attached at upload time: a YARA scan
-    # (pure-Python, always available) plus a cache-first VirusTotal file
-    # lookup by SHA-256 (no API key → all-None, honest "no intel").
-    yara_hits = yara_service.scan_sample(body)
-    yara_names = [h["name"] for h in yara_hits]
-
+    # (pure-Python, always available; bundled + persisted custom lab rules)
+    # plus a cache-first VirusTotal file lookup by SHA-256 (no API key →
+    # all-None, honest "no intel").
     with db_session() as conn:
+        yara_hits = yara_service.scan_sample_with_custom(body, conn)
+        yara_names = [h["name"] for h in yara_hits]
         async with httpx.AsyncClient() as client:
             hash_intel = await enrichment.enrich_hash(client, conn, sha256)
 

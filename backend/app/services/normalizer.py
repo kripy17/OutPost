@@ -12,7 +12,7 @@ from typing import Any
 _PASSTHROUGH = (
     "run_id", "platform", "event_type", "timestamp", "pid", "ppid",
     "process_name", "command_line", "dest_ip", "dest_port", "protocol",
-    "file_path", "registry_key",
+    "file_path", "registry_key", "host_id",
 )
 
 
@@ -33,5 +33,10 @@ def normalize_event(raw: dict) -> dict:
     # Timestamps: accept ISO strings as-is; anything else becomes now (UTC).
     if not isinstance(out.get("timestamp"), str):
         out["timestamp"] = raw.get("timestamp")
+
+    # Fleet identity: events that don't name a host (webapp detonations,
+    # sandbox runs) belong to the machine running the backend.
+    if not out.get("host_id"):
+        out["host_id"] = "local"
 
     return out

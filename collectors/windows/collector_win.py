@@ -106,6 +106,8 @@ def main(run_id: str | None, backend_url: str, mode: str = "analysis", timeout: 
     # Read only new records (skip what's already in the channel).
     flags = win32evtlog.EVENTLOG_BACKWARDS_READ | win32evtlog.EVENTLOG_SEQUENTIAL_READ
     start = time.time()
+    snapshot_interval = float(os.getenv("SNAPSHOT_INTERVAL", "30"))
+    last_snapshot = 0.0
 
     print(f"[collector-win] run_id={run_id} mode={mode} backend={backend_url}")
     try:
@@ -116,6 +118,10 @@ def main(run_id: str | None, backend_url: str, mode: str = "analysis", timeout: 
                 if ev:
                     shipper.add(ev)
             shipper.flush()
+            # Live system snapshot on an interval — the "running now" view.
+            if time.time() - last_snapshot > snapshot_interval:
+                shipper.ship_snapshot(platform="windows")
+                last_snapshot = time.time()
             time.sleep(1)
             if mode == "analysis" and time.time() - start > timeout:
                 break

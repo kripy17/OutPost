@@ -1,10 +1,10 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Icon, platformIconName } from "../components/Icon";
 import { Chip, PageHeader, Panel } from "../components/ui";
-import { downloadSample, getRuns, getSample, getSampleStatic, watchlistAdd } from "../lib/api";
-import type { RunSummary, SampleStatic } from "../types";
+import { downloadSample, getRuns, getSample, getSampleStatic, getSandboxProviders, getSandboxTask, sandboxDetonate, watchlistAdd } from "../lib/api";
+import type { Platform, RunSummary, SampleStatic, SandboxTask } from "../types";
 
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -170,6 +170,211 @@ function StaticAnalysis({ sample }: { sample: { sample_id: string; sha256: strin
         </Panel>
       )}
     </div>
+  );
+}
+
+/* ── Sandbox detonation (roadmap 3.3) ───────────────────────────────────── */
+
+const SANDBOX_PLATFORMS: { value: Platform | ""; label: string }[] = [
+  { value: "", label: "Use sample OS" },
+  { value: "windows", label: "Windows" },
+  { value: "linux", label: "Linux" },
+  { value: "macos", label: "macOS" },
+];
+
+function SandboxDetonation({ sample }: { sample: { sample_id: string; original_name: string; detected_platform: string } }) {
+  const queryClient = useQueryClient();
+  const [provider, setProvider] = useState("auto");
+  const [platform, setPlatform] = useState<Platform | "">("");
+  const [task, setTask] = useState<SandboxTask | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [polling, setPolling] = useState(false);
+  const mounted = useRef(true);
+  const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const { data: providers } = useQuery({
+    queryKey: ["sandbox", "providers"],
+    queryFn: getSandboxProviders,
+  });
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      if (pollRef.current) clearTimeout(pollRef.current);
+    };
+  }, []);
+
+  const poll = async (taskId: string, attempt = 0) => {
+    if (!mounted.current || attempt >= 120) {
+      if (mounted.current) setPolling(false);
+      return;
+    }
+    try {
+      const t = await getSandboxTask(taskId);
+      if (!mounted.current) return;
+      setTask(t);
+      if (t.status === "completed" || t.status === "error") {
+        setPolling(false);
+        void queryClient.invalidateQueries({ queryKey: ["runs", "q", sample.original_name] });
+        return;
+      }
+    } catch {
+      /* transient poll failure — keep trying */
+    }
+    pollRef.current = setTimeout(() => void poll(taskId, attempt + 1), 2500);
+  };
+
+  const detonate = async () => {
+    setError(null);
+    setTask(null);
+    try {
+      const t = await sandboxDetonate({
+        sample_id: sample.sample_id,
+        provider,
+        platform: platform || undefined,
+      });
+      if (!mounted.current) return;
+      setTask(t);
+      if (t.status === "submitted" || t.status === "running") {
+        setPolling(true);
+        void poll(t.task_id);
+      } else {
+        void queryClient.invalidateQueries({ queryKey: ["runs", "q", sample.original_name] });
+      }
+    } catch (e) {
+      if (mounted.current) setError(e instanceof Error ? e.message : "Detonation failed");
+    }
+  };
+
+  const providerName = (id: string) => providers?.providers.find((p) => p.id === id)?.name ?? id;
+  const isBusy = polling || task?.status === "submitted" || task?.status === "running";
+
+  return (
+    <Panel
+      kicker="Sandbox · dynamic"
+      title="Detonate in an external sandbox"
+      className="mt-6"
+      right={
+        providers ? (
+          <span className="font-mono text-[10px] uppercase tracking-wide text-text-faint">
+            {providers.mode === "live" ? `live · ${providerName(providers.active)}` : "demo mode — no API key configured"}
+          </span>
+        ) : undefined
+      }
+    >
+      <p className="mb-4 max-w-2xl text-sm text-text-muted">
+        Push the sample to an external sandbox (Any.Run, Triage, or Joe) and stream the report back
+        through the detection pipeline as a normal run. With no API key configured the labeled demo
+        detonates locally — same pipeline, clearly marked.
+      </p>
+
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <button
+          onClick={() => setProvider("auto")}
+          disabled={isBusy}
+          className={`press rounded border px-3 py-1.5 font-mono text-[11px] transition-colors duration-150 ${
+            provider === "auto"
+              ? "border-accent/60 bg-accent/10 text-accent"
+              : "border-border-subtle text-text-muted hover:border-accent/40 hover:text-accent"
+          }`}
+        >
+          auto
+        </button>
+        {providers?.providers.map((p) => (
+          <button
+            key={p.id}
+            onClick={() => setProvider(p.id)}
+            disabled={isBusy}
+            className={`press inline-flex items-center gap-1.5 rounded border px-3 py-1.5 font-mono text-[11px] transition-colors duration-150 ${
+              provider === p.id
+                ? "border-accent/60 bg-accent/10 text-accent"
+                : "border-border-subtle text-text-muted hover:border-accent/40 hover:text-accent"
+            }`}
+            title={p.configured ? `Live detonation via ${p.name}` : `${p.name} needs an API key — use demo instead`}
+          >
+            {p.id === "demo" ? <Icon name="terminal" size={10} /> : <Icon name="box" size={10} />}
+            {p.id}
+            <span
+              className={`rounded px-1 py-px text-[9px] uppercase tracking-wide ${
+                p.configured ? "bg-risk-clean/15 text-risk-clean" : "bg-bg-elevated/60 text-text-faint"
+              }`}
+            >
+              {p.configured ? "live" : "off"}
+            </span>
+          </button>
+        ))}
+      </div>
+
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <label className="flex items-center gap-2 font-mono text-[11px] text-text-muted">
+          <Icon name="linux" size={11} className="text-text-faint" />
+          Detonation OS
+          <select
+            value={platform}
+            onChange={(e) => setPlatform(e.target.value as Platform | "")}
+            disabled={isBusy}
+            className="rounded border border-border-subtle bg-bg-base px-2 py-1 font-mono text-[11px] text-text-primary focus:border-accent/60 focus:outline-none"
+            aria-label="Detonation OS"
+          >
+            {SANDBOX_PLATFORMS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.value === "" ? `${o.label} (${sample.detected_platform})` : o.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button
+          onClick={() => void detonate()}
+          disabled={isBusy}
+          className="press inline-flex items-center gap-1.5 rounded border border-accent/60 bg-accent/10 px-4 py-2 font-mono text-xs text-accent transition-colors duration-150 hover:bg-accent/20 disabled:cursor-default disabled:opacity-50"
+        >
+          <Icon name={isBusy ? "refresh" : "play"} size={12} className={isBusy ? "animate-spin" : undefined} />
+          {isBusy ? "detonating…" : "detonate"}
+        </button>
+      </div>
+
+      {error && <p className="mb-3 font-mono text-[11px] text-risk-malicious">{error}</p>}
+
+      {task && (
+        <div className="rounded-lg border border-border-subtle bg-bg-elevated/30 p-4">
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <span
+              className={`font-mono text-[10px] uppercase tracking-wide ${
+                task.status === "completed"
+                  ? "text-risk-clean"
+                  : task.status === "error"
+                    ? "text-risk-malicious"
+                    : "text-accent"
+              }`}
+            >
+              {task.status === "completed" ? "● completed" : task.status === "error" ? "● error" : `● ${task.status}`}
+            </span>
+            <span className="font-mono text-[10px] text-text-faint">
+              {providerName(task.provider)} · {task.platform} · {task.task_id}
+            </span>
+          </div>
+          {task.status === "completed" ? (
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="font-mono text-xs text-text-primary">
+                {task.events} events · {task.alerts} alerts · risk {task.risk_score}
+              </span>
+              <Link
+                to={`/runs/${task.run_id}`}
+                className="press inline-flex items-center gap-1 font-mono text-[11px] text-accent transition-colors hover:underline"
+              >
+                open run
+                <Icon name="arrowRight" size={11} />
+              </Link>
+            </div>
+          ) : task.status === "error" ? (
+            <p className="font-mono text-[11px] text-risk-malicious">{task.error}</p>
+          ) : (
+            <p className="font-mono text-[11px] text-text-muted">Waiting for the sandbox report…</p>
+          )}
+        </div>
+      )}
+    </Panel>
   );
 }
 
@@ -387,6 +592,8 @@ export default function SampleDetailPage() {
       </div>
 
       <StaticAnalysis sample={sample} />
+
+      <SandboxDetonation sample={sample} />
 
       <Panel kicker="Detonations" title={`Runs of ${sample.original_name}`} className="mt-6" pad={false}>
         {runs.length === 0 ? (

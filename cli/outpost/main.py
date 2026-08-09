@@ -19,6 +19,7 @@ app = typer.Typer(
 
 def _register_commands() -> None:
     from .commands.agent import app as agent_app
+    from .commands.auth import app as auth_app
     from .commands.campaigns import campaigns
     from .commands.compare import compare
     from .commands.coverage import coverage
@@ -47,6 +48,7 @@ def _register_commands() -> None:
     app.add_typer(watchlist_app, name="watchlist")
     app.add_typer(notes_app, name="notes")
     app.add_typer(agent_app, name="agent")
+    app.add_typer(auth_app, name="auth")
 
 
 @app.callback(invoke_without_command=True)

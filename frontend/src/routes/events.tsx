@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { EVENT_ICON, Icon, platformIconName } from "../components/Icon";
 import { PageHeader } from "../components/ui";
 import { exportEventsCsv, getEvents, saveBlob } from "../lib/api";
@@ -69,6 +69,7 @@ function RecordPane({ event, onClose }: { event: EventFeedEvent; onClose: () => 
   const rows: [string, string][] = [
     ["Event type", event.event_type.replace("_", " ")],
     ["Timestamp", event.timestamp],
+    ["Host", event.host_id ?? "local"],
     ["Sample", event.sample_name],
     ["Run", event.run_id],
     ["PID", String(event.pid ?? "—")],
@@ -139,11 +140,13 @@ function RecordPane({ event, onClose }: { event: EventFeedEvent; onClose: () => 
 /* ── Page ──────────────────────────────────────────────────────────────── */
 
 export default function EventsPage() {
+  const [searchParams] = useSearchParams();
+  const initialQ = searchParams.get("q") ?? ""; // deep links: /events?q=<host or ioc>
   const [category, setCategory] = useState<EventType | "">("");
   const [severity, setSeverity] = useState<Severity | "">("");
   const [platform, setPlatform] = useState<Platform | "">("");
-  const [q, setQ] = useState("");
-  const [submittedQ, setSubmittedQ] = useState("");
+  const [q, setQ] = useState(initialQ);
+  const [submittedQ, setSubmittedQ] = useState(initialQ);
   const [offset, setOffset] = useState(0);
   const [selected, setSelected] = useState<EventFeedEvent | null>(null);
   const [live, setLive] = useState(false);
@@ -403,6 +406,10 @@ export default function EventsPage() {
                               {eventMeta(e).map((m) => (
                                 <span key={m} className="font-mono">{m}</span>
                               ))}
+                              <span className="inline-flex items-center gap-1 font-mono">
+                                <Icon name="terminal" size={10} className="opacity-60" />
+                                {e.host_id ?? "local"}
+                              </span>
                               <Link
                                 to={`/runs/${e.run_id}`}
                                 className="inline-flex items-center gap-1 font-mono font-medium text-accent hover:underline"

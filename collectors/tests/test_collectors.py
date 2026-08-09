@@ -259,3 +259,45 @@ def test_shipper_replays_spool_after_recovery(monkeypatch, tmp_path):
     sh.flush()  # now reachable → replay + clear
     assert not spool.exists()
     assert posted and any("bash" in str(e) for batch in posted for e in batch)
+
+
+def test_snapshot_collect_shapes_and_ships(monkeypatch, tmp_path):
+    """The Linux snapshot has the fixed schema (processes + listening), and
+    the shipper POSTs it to /ingest/snapshot best-effort without dying."""
+    import snapshot as snap_mod  # collectors/common on sys.path (see imports)
+
+    payload = snap_mod.collect_snapshot("host-1", platform="linux")
+    assert set(payload.keys()) == {"host_id", "platform", "collected_at", "processes", "listening"}
+    assert isinstance(payload["processes"], list) and isinstance(payload["listening"], list)
+    if payload["processes"]:
+        assert {"pid", "name", "user", "cmdline"} <= set(payload["processes"][0].keys())
+
+    posted = {}
+
+    class FakeResp:
+        def raise_for_status(self):
+            return None
+
+    def fake_post(url, json=None, timeout=None):
+        posted["url"] = url
+        posted["json"] = json
+        return FakeResp()
+
+    monkeypatch.setattr("shipper.requests.post", fake_post)
+    sh = Shipper("http://backend", "run-snap", spool_path=str(tmp_path / "s.jsonl"))
+    sh.ship_snapshot(platform="linux")
+    assert posted["url"] == "http://backend/ingest/snapshot"
+    assert posted["json"]["host_id"] == sh.host_id
+
+
+def test_snapshot_ship_failure_is_best_effort(monkeypatch, tmp_path):
+    """A down backend must never raise out of ship_snapshot — the event loop
+    keeps running even when the snapshot can't ship."""
+    import requests
+
+    def boom(url, json=None, timeout=None):
+        raise requests.ConnectionError("down")
+
+    monkeypatch.setattr("shipper.requests.post", boom)
+    sh = Shipper("http://down", "run-x", spool_path=str(tmp_path / "s.jsonl"))
+    assert sh.ship_snapshot(platform="linux") is None

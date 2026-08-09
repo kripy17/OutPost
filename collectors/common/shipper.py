@@ -17,6 +17,15 @@ import requests
 log = logging.getLogger("outpost.shipper")
 
 
+def _default_host_id() -> str:
+    """A stable-enough host label for fleet attribution: hostname, lowercased.
+    Override with OUTPOST_HOST_ID for multi-host fleets where hostnames could
+    collide (then the fleet view shows the operator-chosen label)."""
+    import socket
+
+    return os.getenv("OUTPOST_HOST_ID", "").strip() or socket.gethostname().lower()
+
+
 def claim_active_live_run(backend_url: str) -> str:
     """Claim the newest open live session the webapp started.
 
@@ -50,22 +59,51 @@ class Shipper:
         flush_interval: float = 2.0,
         spool_path: str | None = None,
         max_retries: int = 3,
+        host_id: str | None = None,
     ):
         self.backend_url = backend_url.rstrip("/")
         self.run_id = run_id
         self.batch_size = batch_size
         self.flush_interval = flush_interval
         self.max_retries = max_retries
+        self.host_id = host_id or _default_host_id()
         self.buffer: list[dict] = []
         self.last_flush = time.time()
         self.spool_path = spool_path or str(Path.cwd() / f"outpost-spool-{run_id}.jsonl")
 
     def add(self, event: dict) -> None:
-        """Queue one normalized event dict; flush when thresholds are hit."""
+        """Queue one normalized event dict; flush when thresholds are hit.
+
+        Every event is stamped with this shipper's host identity (fleet
+        attribution — the backend's /agents view groups by it). An event that
+        already names a host keeps its own."""
         event["run_id"] = self.run_id
+        event.setdefault("host_id", self.host_id)
         self.buffer.append(event)
         if len(self.buffer) >= self.batch_size or time.time() - self.last_flush > self.flush_interval:
             self.flush()
+
+    def ship_snapshot(self, platform: str | None = None) -> dict | None:
+        """POST the live system snapshot (processes + listening ports) for this
+        host. Best-effort: a failure just logs — the event stream must never
+        die because the snapshot couldn't ship."""
+        try:
+            from . import snapshot as snapshot_mod  # package import (collectors.common)
+        except ImportError:
+            import snapshot as snapshot_mod  # top-level module (test sys.path)
+
+        try:
+            payload = snapshot_mod.collect_snapshot(self.host_id, platform)
+            resp = requests.post(
+                f"{self.backend_url}/ingest/snapshot",
+                json=payload,
+                timeout=5,
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as exc:  # noqa: BLE001 — snapshot is best-effort
+            log.warning("Snapshot ship failed: %s", exc)
+            return None
 
     def flush(self) -> None:
         batch = self.buffer

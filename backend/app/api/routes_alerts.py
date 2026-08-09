@@ -14,11 +14,13 @@ import csv
 import io
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
 
+from ..core import auth
 from ..core.db import db_session
 from ..core.schema import Alert, AlertStatusIn
+from ..models import audit
 from ..models import event as event_store
 from ..models.event import _parse_related_pids
 from ..models import run as run_store
@@ -36,22 +38,117 @@ def get_alerts(run_id: str) -> list[Alert]:
 
 
 @router.patch("/alerts/{alert_id}", response_model=Alert)
-def update_alert_status(alert_id: int, body: AlertStatusIn) -> Alert:
+def update_alert_status(alert_id: int, body: AlertStatusIn, request: Request) -> Alert:
     """Move one alert through the triage lifecycle. `comment` is optional and
-    recorded at the transition; an empty comment is stored as NULL."""
+    recorded at the transition; an empty comment is stored as NULL. Every
+    transition lands in the audit trail with the acting identity."""
     comment = (body.comment or "").strip() or None
+    actor = auth.role_from_request(request)
     with db_session() as conn:
         row = conn.execute("SELECT * FROM alerts WHERE id = ?", (alert_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail=f"Unknown alert id: {alert_id}")
+        old = row["status"]
         conn.execute(
             "UPDATE alerts SET status = ?, status_comment = ?, status_at = ? WHERE id = ?",
             (body.status, comment, datetime.now(timezone.utc).isoformat(), alert_id),
+        )
+        audit.log(
+            conn, actor, "alert.status",
+            target_type="alert", target_id=str(alert_id),
+            detail=f"{old} → {body.status}" + (f" — {comment}" if comment else ""),
         )
         row = conn.execute("SELECT * FROM alerts WHERE id = ?", (alert_id,)).fetchone()
     d = dict(row)
     _parse_related_pids(d)
     return Alert(**d)
+
+
+class FalsePositiveIn(BaseModel):
+    comment: str = ""
+
+
+def _fp_suggestions(conn, rule_id: str, run_id: str, fp_count: int) -> list[dict]:
+    """What should the analyst do about a rule that keeps false-positiving?
+
+    - **threshold**: rules with an int-count tunable (beaconing/rename-burst/
+      enumeration-burst) get a suggested bump — the knob, its current value,
+      and a concrete nudge (+1 per FP, min 2). The existing
+      PUT /rules/tuning/{param} applies it live, no restart.
+    - **suppress**: suppress this rule for this run — one click, stops future
+      batches of this run from re-firing it.
+    """
+    from ..services.detection import TUNABLE_DEFAULTS
+
+    suggestions: list[dict] = []
+    for name, (rid, type_name, default) in TUNABLE_DEFAULTS.items():
+        if rid != rule_id or type_name != "int":
+            continue
+        current = conn.execute(
+            "SELECT value FROM rule_tuning WHERE rule_id = ? AND param = ?",
+            (rule_id, name),
+        ).fetchone()
+        current = int(current["value"]) if current else int(default)
+        suggested = max(current + 1, fp_count + 1)
+        if suggested > current:
+            suggestions.append(
+                {
+                    "kind": "threshold",
+                    "param": name,
+                    "current": current,
+                    "suggested": suggested,
+                    "detail": f"Raise {name} from {current} to {suggested} — this rule has fired {fp_count} false positive(s)",
+                }
+            )
+    suggestions.append(
+        {
+            "kind": "suppress",
+            "run_id": run_id,
+            "rule_id": rule_id,
+            "detail": f"Suppress {rule_id} for this run so its future batches stop re-firing it",
+        }
+    )
+    return suggestions
+
+
+@router.post("/alerts/{alert_id}/false-positive", response_model=None)
+def mark_false_positive(alert_id: int, body: FalsePositiveIn, request: Request) -> dict:
+    """Mark an alert as a false positive (analyst feedback loop).
+
+    Resolves the alert with an `FP` comment, increments the rule's FP
+    counter, and returns actionable suggestions — a threshold nudge for rules
+    with an int-count tunable and a per-run suppression — that the run-detail
+    UI offers as one-click buttons wired to the existing tuning/suppression
+    endpoints. The FP count also feeds the Rules page so noisy rules surface.
+    """
+    comment = (body.comment or "").strip()
+    now = datetime.now(timezone.utc).isoformat()
+    actor = auth.role_from_request(request)
+    with db_session() as conn:
+        row = conn.execute("SELECT * FROM alerts WHERE id = ?", (alert_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail=f"Unknown alert id: {alert_id}")
+        rule_id = row["rule_id"]
+        run_id = row["run_id"]
+        conn.execute(
+            "UPDATE alerts SET status = 'resolved', status_comment = ?, status_at = ? WHERE id = ?",
+            (f"FP{': ' + comment if comment else ''}", now, alert_id),
+        )
+        conn.execute(
+            "INSERT INTO rule_fp (rule_id, count, last_fp_at) VALUES (?, 1, ?) "
+            "ON CONFLICT(rule_id) DO UPDATE SET count = count + 1, last_fp_at = excluded.last_fp_at",
+            (rule_id, now),
+        )
+        fp_count = conn.execute(
+            "SELECT count FROM rule_fp WHERE rule_id = ?", (rule_id,)
+        ).fetchone()["count"]
+        audit.log(
+            conn, actor, "alert.false-positive",
+            target_type="alert", target_id=str(alert_id),
+            detail=f"rule {rule_id} · FP#{fp_count}" + (f" — {comment}" if comment else ""),
+        )
+        suggestions = _fp_suggestions(conn, rule_id, run_id, fp_count)
+    return {"alert_id": alert_id, "rule_id": rule_id, "fp_count": fp_count, "suggestions": suggestions}
 
 
 @router.get("/alerts/export", response_model=None)
@@ -83,7 +180,7 @@ class BulkStatusIn(BaseModel):
 
 
 @router.post("/alerts/bulk", response_model=None)
-def bulk_update_alert_status(body: BulkStatusIn) -> dict:
+def bulk_update_alert_status(body: BulkStatusIn, request: Request) -> dict:
     """Apply one triage transition to many alerts (bulk ack / bulk resolve).
 
     Only alerts that actually exist are updated; the response reports the
@@ -106,6 +203,11 @@ def bulk_update_alert_status(body: BulkStatusIn) -> dict:
             f"SELECT COUNT(*) AS n FROM alerts WHERE id IN ({placeholders})",
             body.ids,
         ).fetchone()["n"]
+        audit.log(
+            conn, auth.role_from_request(request), "alert.status",
+            target_type="alert", target_id=f"bulk:{len(body.ids)}",
+            detail=f"{updated} of {len(body.ids)} → {body.status}" + (f" — {comment}" if comment else ""),
+        )
     return {"updated": updated}
 
 

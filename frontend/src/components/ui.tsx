@@ -122,6 +122,28 @@ export function Chip({
   );
 }
 
+/** Run provenance badge — where a run came from. Values mirror the backend's
+ *  `source` column (monitor / live / cli / seed / sandbox:<provider>). */
+const SOURCE_META: Record<string, { label: string; tone: "clean" | "suspicious" | "malicious" | "muted" | "accent"; title: string }> = {
+  monitor: { label: "MON", tone: "muted", title: "Detonated from the webapp Monitor" },
+  live: { label: "LIVE", tone: "clean", title: "Live host-collector session" },
+  cli: { label: "CLI", tone: "muted", title: "Created from the outpost CLI" },
+  seed: { label: "SEED", tone: "muted", title: "Seeded demo data" },
+  "sandbox:demo": { label: "DEMO", tone: "suspicious", title: "Sandbox detonation · local demo (no API key)" },
+  "sandbox:anyrun": { label: "ANYRUN", tone: "accent", title: "Sandbox detonation · Any.Run" },
+  "sandbox:triage": { label: "TRIAGE", tone: "accent", title: "Sandbox detonation · Hatching Triage" },
+  "sandbox:joe": { label: "JOE", tone: "accent", title: "Sandbox detonation · Joe Sandbox" },
+};
+
+export function SourceBadge({ source }: { source?: string }) {
+  const meta = SOURCE_META[source ?? "monitor"] ?? SOURCE_META.monitor;
+  return (
+    <Chip tone={meta.tone} title={meta.title}>
+      {meta.label}
+    </Chip>
+  );
+}
+
 /** Deck stat — dt/dd pair (label above a tabular value). Must sit inside a
     `<dl>` (optionally wrapped in a `<div>` per the HTML spec) so screen
     readers keep the label ↔ value pairing. */

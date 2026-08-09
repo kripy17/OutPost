@@ -35,6 +35,9 @@ class EventIn(BaseModel):
     protocol: Optional[str] = None
     file_path: Optional[str] = None
     registry_key: Optional[str] = None
+    # Fleet identity — which agent/host the event came from. Omitted events
+    # (webapp detonations, sandbox runs) default to 'local' at normalization.
+    host_id: Optional[str] = None
 
 
 class EventOut(EventIn):
@@ -46,6 +49,13 @@ class RunSummary(BaseModel):
     sample_name: str
     platform: Platform
     session_type: SessionType = "analysis"
+    # Provenance — where the run came from: monitor (webapp detonation), live
+    # (host collector), sandbox:<provider> (external detonation), seed, cli.
+    source: str = "monitor"
+    # Fleet attribution — the distinct hosts whose events landed in this run
+    # (webapp/sandbox runs are all 'local'). Lets the run card/detail show
+    # which machines contributed, and the fleet link back to its runs.
+    host_ids: list[str] = []
     started_at: datetime
     completed_at: Optional[datetime] = None
     process_count: int = 0
@@ -174,3 +184,41 @@ class RunCreate(BaseModel):
     sample_name: str
     platform: Platform
     session_type: SessionType = "analysis"
+    # Provenance marker — the webapp sends "monitor" by default; the host
+    # collector path is forced to "live" server-side when session_type=live.
+    source: str = Field(default="monitor", max_length=32)
+
+
+class SandboxDetonateIn(BaseModel):
+    """Push a vault sample to an external sandbox for dynamic detonation.
+
+    `provider` is one of anyrun/triage/joe/demo (or auto = the configured
+    provider, falling back to the labeled demo when none is configured).
+    `platform` overrides the sample's sniffed OS for the detonation VM;
+    default is the sample's detected platform.
+    """
+
+    sample_id: str = Field(min_length=1, max_length=64)
+    provider: str = Field(default="auto", max_length=16)
+    platform: Optional[Platform] = None
+    note: Optional[str] = Field(default=None, max_length=500)
+
+
+class SandboxTaskOut(BaseModel):
+    """One sandbox detonation task — the shape both the POST response and the
+    status poll return, so the webapp can render the same card."""
+
+    task_id: str
+    run_id: str
+    sample_id: str
+    sample_name: str
+    provider: str
+    platform: Platform
+    status: Literal["submitted", "running", "completed", "error"]
+    events: int = 0
+    alerts: int = 0
+    risk_score: int = 0
+    highest_severity: Optional[Severity] = None
+    error: Optional[str] = None
+    started_at: str
+    finished_at: Optional[str] = None

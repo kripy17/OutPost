@@ -22,6 +22,11 @@ export interface RunSummary {
   sample_name: string;
   platform: Platform;
   session_type: SessionType;
+  // Provenance — where the run came from (monitor / live / cli / seed /
+  // sandbox:<provider>). Older backends omit it; the badge defaults to MON.
+  source?: string;
+  // The distinct fleet hosts whose events landed in this run.
+  host_ids?: string[];
   started_at: string;
   completed_at: string | null;
   process_count: number;
@@ -401,6 +406,150 @@ export interface EventFeedEvent extends EventOut {
   sample_name: string;
   session_type: SessionType;
   run_severity: Severity | null;
+  host_id?: string | null;
+}
+
+// -- Agent fleet (which hosts stream telemetry) ------------------------------
+
+export interface AgentInfo {
+  host_id: string;
+  last_seen: string;
+  online: boolean;
+  event_count: number;
+  run_count: number;
+  alert_count: number;
+  platforms: string[];
+  recent_run_ids?: string[];
+  /** Latest live snapshot time — present when the agent shipped one. */
+  last_snapshot_at?: string | null;
+}
+
+export interface AgentsResponse {
+  total: number;
+  online: number;
+  online_window_seconds: number;
+  agents: AgentInfo[];
+}
+
+// -- Analyst audit trail -------------------------------------------------------
+
+export interface AuditEntry {
+  id: number;
+  ts: string;
+  actor: string;
+  action: string;
+  target_type: string | null;
+  target_id: string | null;
+  detail: string | null;
+}
+
+export interface AuditResponse {
+  total: number;
+  limit: number;
+  action: string | null;
+  events: AuditEntry[];
+}
+
+// -- False-positive feedback loop ----------------------------------------------
+
+export interface FpSuggestion {
+  kind: "threshold" | "suppress";
+  param?: string;
+  current?: number;
+  suggested?: number;
+  run_id?: string;
+  rule_id?: string;
+  detail: string;
+}
+
+export interface FpResponse {
+  alert_id: number;
+  rule_id: string;
+  fp_count: number;
+  suggestions: FpSuggestion[];
+}
+
+// -- Live system snapshot (processes + listening ports) ------------------------
+
+export interface SnapshotProcess {
+  pid: number;
+  name: string;
+  user?: string;
+  cmdline?: string;
+}
+
+export interface SnapshotListener {
+  proto: string;
+  addr: string;
+  port: number;
+  pid: number | null;
+}
+
+export interface HostSnapshot {
+  host_id: string;
+  platform: string;
+  collected_at: string;
+  processes: SnapshotProcess[];
+  listening: SnapshotListener[];
+  stored_at?: string;
+}
+
+// -- Retention & backup --------------------------------------------------------
+
+export interface RetentionStatus {
+  retention_days: number;
+  auto_prune: "off" | "hourly" | "daily";
+  auto_prune_enabled: boolean;
+  last_prune_at: string | null;
+  next_prune_in_seconds: number | null;
+}
+
+// -- Rule false-positive surface (Rules page tuning panel) --------------------
+
+export interface RuleFpSuggestion {
+  kind: string;
+  param: string;
+  rule_id: string;
+  current: number;
+  suggested: number;
+  detail: string;
+}
+
+export interface RuleFpEntry {
+  rule_id: string;
+  count: number;
+  last_fp_at: string;
+  over_threshold: boolean;
+  suggestion: RuleFpSuggestion | null;
+}
+
+export interface RuleFpResponse {
+  threshold: number;
+  default_threshold: number;
+  rules: RuleFpEntry[];
+}
+
+export interface PruneResponse {
+  deleted_runs: number;
+  days: number;
+  cutoff: string;
+}
+
+// -- Auth brute-force guard (read-only Settings view) -------------------------
+
+export interface LockedIp {
+  ip: string;
+  remaining_seconds: number;
+}
+
+export interface RateLimitStatus {
+  enabled: boolean;
+  max_attempts: number;
+  window_seconds: number;
+  lockout_seconds: number;
+  tracked_ips: number;
+  locked_ips: number;
+  locked: LockedIp[];
 }
 
 export interface EventFeedResponse {
@@ -424,6 +573,79 @@ export interface EventFeedParams {
 
 export interface GlobalAlert extends Alert {
   sample_name: string;
+}
+
+// -- YARA signature lab (custom rule authoring) ------------------------------
+
+export interface YaraTestSample {
+  sample_id: string;
+  original_name: string;
+  detected_platform: string;
+  size: number;
+  matched: boolean;
+  hits: string[];
+}
+
+export interface YaraTestResponse {
+  compiled: boolean;
+  rule_name: string;
+  error?: string;
+  total?: number;
+  matched?: number;
+  samples?: YaraTestSample[];
+}
+
+export interface CustomYaraRule {
+  name: string;
+  family: string;
+  description: string;
+  strings: string[];
+  source: string;
+}
+
+export interface CustomYaraRulesResponse {
+  count: number;
+  rules: CustomYaraRule[];
+}
+
+// -- Sandbox detonation adapter (roadmap 3.3) --------------------------------
+
+export interface SandboxProviderInfo {
+  id: string;
+  name: string;
+  configured: boolean;
+}
+
+export interface SandboxProvidersResponse {
+  providers: SandboxProviderInfo[];
+  active: string;
+  mode: "live" | "demo";
+}
+
+export type SandboxTaskStatus = "submitted" | "running" | "completed" | "error";
+
+export interface SandboxTask {
+  task_id: string;
+  run_id: string;
+  sample_id: string;
+  sample_name: string;
+  provider: string;
+  platform: Platform;
+  status: SandboxTaskStatus;
+  events: number;
+  alerts: number;
+  risk_score: number;
+  highest_severity: Severity | null;
+  error: string | null;
+  started_at: string;
+  finished_at: string | null;
+}
+
+export interface SandboxDetonateIn {
+  sample_id: string;
+  provider: string;
+  platform?: Platform;
+  note?: string;
 }
 
 // -- Digital footprinting (roadmap scaffold) ---------------------------------

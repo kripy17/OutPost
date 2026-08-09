@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS runs (
     sample_name TEXT NOT NULL,
     platform TEXT NOT NULL CHECK(platform IN ('windows', 'linux')),
     session_type TEXT NOT NULL DEFAULT 'analysis' CHECK(session_type IN ('live', 'analysis')),
+    source TEXT NOT NULL DEFAULT 'monitor',
     started_at TEXT NOT NULL,
     completed_at TEXT
 );
@@ -53,7 +54,8 @@ CREATE TABLE IF NOT EXISTS events (
     dest_port INTEGER,
     protocol TEXT,
     file_path TEXT,
-    registry_key TEXT
+    registry_key TEXT,
+    host_id TEXT NOT NULL DEFAULT 'local'
 );
 
 CREATE TABLE IF NOT EXISTS enrichment_cache (
@@ -80,6 +82,38 @@ CREATE TABLE IF NOT EXISTS watchlist (
     value TEXT PRIMARY KEY,
     label TEXT NOT NULL,
     added_at TEXT NOT NULL
+);
+
+-- Analyst audit trail (who did what, when): triage transitions, logins,
+-- rotation, allowlist/suppression edits, retention prunes, backups. Actor is
+-- the role ('admin'/'analyst') when auth is on, 'local' for the zero-config
+-- default, or the CLI/source label for non-web writers.
+CREATE TABLE IF NOT EXISTS audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT NOT NULL,
+    actor TEXT NOT NULL,
+    action TEXT NOT NULL,
+    target_type TEXT,
+    target_id TEXT,
+    detail TEXT
+);
+
+-- False-positive feedback loop: per-rule FP counters. Every "mark as false
+-- positive" increments the rule's count; the run-detail UI reads these to
+-- suggest threshold nudges / suppressions for noisy rules.
+CREATE TABLE IF NOT EXISTS rule_fp (
+    rule_id TEXT PRIMARY KEY,
+    count INTEGER NOT NULL DEFAULT 1,
+    last_fp_at TEXT NOT NULL
+);
+
+-- Latest live-system snapshot per host (processes + listening ports), shipped
+-- by the collectors on an interval while an agent is running. Payload is the
+-- JSON snapshot; the webapp renders it as the "running now" view.
+CREATE TABLE IF NOT EXISTS host_snapshots (
+    host_id TEXT PRIMARY KEY,
+    payload TEXT NOT NULL,
+    collected_at TEXT NOT NULL
 );
 
 -- Watchlist live-alerting: first-seen-per-run dedup. A (run, ioc) row is
@@ -223,6 +257,26 @@ def _migrate_alerts_triage(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _migrate_runs_source(conn: sqlite3.Connection) -> None:
+    """Idempotent: add the `source` provenance column (where a run came from:
+    monitor / live / sandbox:<provider> / seed / cli) to pre-existing DBs.
+    Fresh DBs get it from SCHEMA; older installs need the ALTER. Existing
+    runs are conservatively marked 'monitor' (the webapp detonation path)."""
+    if "source" not in _column_names(conn, "runs"):
+        conn.execute("ALTER TABLE runs ADD COLUMN source TEXT NOT NULL DEFAULT 'monitor'")
+        conn.commit()
+
+
+def _migrate_events_host_id(conn: sqlite3.Connection) -> None:
+    """Idempotent: add the `host_id` fleet column (which agent a host event
+    came from) to pre-existing DBs. Fresh DBs get it from SCHEMA; older
+    installs need the ALTER. Pre-existing events are marked 'local' — the
+    zero-config webapp path where events originate on the same machine."""
+    if "host_id" not in _column_names(conn, "events"):
+        conn.execute("ALTER TABLE events ADD COLUMN host_id TEXT NOT NULL DEFAULT 'local'")
+        conn.commit()
+
+
 def _migrate_alerts_related_pids(conn: sqlite3.Connection) -> None:
     """Idempotent: add the JSON `related_pids` column to pre-existing DBs.
 
@@ -307,6 +361,8 @@ def init_db() -> None:
         _migrate_alerts_triage(conn)
         _migrate_samples_platform_unknown(conn)
         _migrate_runs_platform_macos(conn)
+        _migrate_runs_source(conn)
+        _migrate_events_host_id(conn)
 
 
 @contextmanager

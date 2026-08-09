@@ -62,7 +62,7 @@ def main() -> dict:
     init_db()
     with db_session() as conn:
         rid = uuid.uuid4().hex[:12]
-        run_store.create_run(conn, rid, sample_name=SAMPLE, platform="macos", session_type="analysis")
+        run_store.create_run(conn, rid, sample_name=SAMPLE, platform="macos", session_type="analysis", source="seed")
         events = _events(rid)
         for ev in events:
             event_store.insert_event(conn, ev)

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
-import React from "react";
+import React, { Suspense, lazy } from "react";
 import ReactDOM from "react-dom/client";
 import { createBrowserRouter, Outlet, RouterProvider, useLocation } from "react-router-dom";
 import "./index.css";
@@ -7,29 +7,44 @@ import "./index.css";
 import Nav from "./components/Nav";
 import WatchlistToaster from "./components/WatchlistToaster/WatchlistToaster";
 import { getMe } from "./lib/api";
-import LoginPage from "./routes/login";
-import CampaignsPage from "./routes/campaigns";
-import ComparePage from "./routes/compare";
-import CoveragePage from "./routes/coverage";
-import EventsPage from "./routes/events";
-import FootprintPage from "./routes/footprint";
-import MonitorPage from "./routes/monitor";
-import RunDetailPage from "./routes/runDetail";
-import RunHistoryPage from "./routes/index";
-import OverviewPage from "./routes/overview";
-import RulesPage from "./routes/rules";
-import SampleDetailPage from "./routes/sampleDetail";
-import SamplesPage from "./routes/samples";
-import SearchPage from "./routes/search";
-import SettingsPage from "./routes/settings";
-import ThemesPage from "./routes/themes";
-import WatchlistPage from "./routes/watchlist";
+
+// Route-level code splitting: each page ships as its own chunk so first paint
+// only loads the shell + the page you land on (kills the single-bundle chunk
+// warning). The Monitor page pulls in the SSE/process-tree machinery, so it
+// stays on its own chunk like everything else.
+const LoginPage = lazy(() => import("./routes/login"));
+const AgentsPage = lazy(() => import("./routes/agents"));
+const AuditPage = lazy(() => import("./routes/audit"));
+const CampaignsPage = lazy(() => import("./routes/campaigns"));
+const ComparePage = lazy(() => import("./routes/compare"));
+const CoveragePage = lazy(() => import("./routes/coverage"));
+const EventsPage = lazy(() => import("./routes/events"));
+const FootprintPage = lazy(() => import("./routes/footprint"));
+const MonitorPage = lazy(() => import("./routes/monitor"));
+const RunDetailPage = lazy(() => import("./routes/runDetail"));
+const RunHistoryPage = lazy(() => import("./routes/index"));
+const OverviewPage = lazy(() => import("./routes/overview"));
+const RulesPage = lazy(() => import("./routes/rules"));
+const SampleDetailPage = lazy(() => import("./routes/sampleDetail"));
+const SamplesPage = lazy(() => import("./routes/samples"));
+const SearchPage = lazy(() => import("./routes/search"));
+const SettingsPage = lazy(() => import("./routes/settings"));
+const ThemesPage = lazy(() => import("./routes/themes"));
+const WatchlistPage = lazy(() => import("./routes/watchlist"));
 
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: { refetchOnWindowFocus: true, staleTime: 5_000 },
   },
 });
+
+function RouteFallback() {
+  return (
+    <div className="flex min-h-[40vh] items-center justify-center">
+      <p className="animate-pulse text-sm text-text-muted">Loading…</p>
+    </div>
+  );
+}
 
 function Layout() {
   const location = useLocation();
@@ -60,7 +75,9 @@ function Layout() {
       <main className="transition-[padding] duration-200 ease-out lg:pl-[var(--rail-w)]">
         {/* Route-keyed fade-up: every navigation rises in once, deliberately. */}
         <div key={location.pathname} className="animate-fade-up">
-          <Outlet />
+          <Suspense fallback={<RouteFallback />}>
+            <Outlet />
+          </Suspense>
         </div>
       </main>
     </div>
@@ -77,6 +94,8 @@ const router = createBrowserRouter([
       { path: "/search", element: <SearchPage /> },
       { path: "/compare", element: <ComparePage /> },
       { path: "/watchlist", element: <WatchlistPage /> },
+      { path: "/agents", element: <AgentsPage /> },
+      { path: "/audit", element: <AuditPage /> },
       { path: "/campaigns", element: <CampaignsPage /> },
       { path: "/coverage", element: <CoveragePage /> },
       { path: "/rules", element: <RulesPage /> },

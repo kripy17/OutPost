@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { Icon, platformIconName } from "../Icon";
-import { Chip } from "../ui";
+import { Chip, SourceBadge } from "../ui";
 import { riskBand } from "../../lib/constants";
 import type { RunSummary } from "../../types";
 
@@ -45,11 +45,7 @@ export default function RunCard({ run }: { run: RunSummary }) {
       <div className="flex min-w-0 items-center gap-3">
         <PlatformIcon platform={run.platform} />
         <span className="truncate font-mono text-sm text-text-primary">{run.sample_name}</span>
-        {run.session_type === "live" && (
-          <span className="rounded border border-border-subtle px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-text-muted">
-            live
-          </span>
-        )}
+        <SourceBadge source={run.source} />
         {inProgress && (
           <span className="animate-outpost-pulse text-xs text-accent" title="Still tracing">
             ● tracing

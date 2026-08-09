@@ -3,6 +3,7 @@
 // token-driven via CSS var() so a wrapper with a data-palette attribute
 // re-scopes the colors instantly (no JS color plumbing).
 
+import { useNavigate } from "react-router-dom";
 import { riskBand } from "../../lib/constants";
 import type { RunSummary } from "../../types";
 
@@ -98,6 +99,89 @@ export function SeverityDonut({ malicious, suspicious, clean }: { malicious: num
           </li>
         ))}
       </ul>
+    </div>
+  );
+}
+
+/* ── Risk trend — aggregated by sample ────────────────────────────────────
+ * One bar per unique binary, sized by its peak risk and colored by band, so
+ * the console reads "which samples are the worst" at a glance instead of 60
+ * near-identical session dots. Per-session detail lives on History; clicking
+ * a bar jumps there pre-filtered to that sample. */
+
+export interface RiskTrendBar {
+  sample: string;
+  peak: number;
+  count: number;
+  last: string;
+}
+
+export function RiskTrendBars({ bars }: { bars: RiskTrendBar[] }) {
+  const navigate = useNavigate();
+  if (bars.length === 0) {
+    return <p className="py-10 text-center text-sm text-text-muted">No detonations yet — risk appears here as samples run.</p>;
+  }
+  const W = 100;
+  const H = 36;
+  const max = Math.max(100, ...bars.map((b) => b.peak));
+  const step = W / bars.length;
+  const bw = Math.max(0.9, step * 0.66);
+  return (
+    <div>
+      <div className="flex items-center justify-between">
+        <p className="kicker">Risk trend</p>
+        <p className="font-mono text-[10px] text-text-faint">
+          {bars.length} sample{bars.length === 1 ? "" : "s"} · peak per binary
+        </p>
+      </div>
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        className="mt-1 h-[46px] w-full"
+        preserveAspectRatio="none"
+        role="img"
+        aria-label="Risk trend by sample — each bar is a binary's peak risk"
+      >
+        {[0, 0.5, 1].map((f) => (
+          <line
+            key={f}
+            x1="0"
+            x2={W}
+            y1={H - f * (H - 4) - 2}
+            y2={H - f * (H - 4) - 2}
+            stroke="var(--border-subtle)"
+            strokeDasharray="2 3"
+            strokeWidth="0.5"
+          />
+        ))}
+        {bars.map((b, i) => {
+          const band = riskBand(b.peak);
+          const h = Math.max(1.5, (b.peak / max) * (H - 4));
+          const x = i * step;
+          return (
+            <g
+              key={b.sample}
+              role="link"
+              tabIndex={0}
+              className="cursor-pointer"
+              onClick={() => navigate(`/history?q=${encodeURIComponent(b.sample)}`)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") navigate(`/history?q=${encodeURIComponent(b.sample)}`);
+              }}
+            >
+              <title>{`${b.sample}: peak risk ${b.peak} (${band.label}) · ${b.count} session${b.count === 1 ? "" : "s"} — open its sessions`}</title>
+              <rect
+                x={x}
+                y={H - h - 2}
+                width={bw}
+                height={h}
+                fill={`var(--risk-${band.color.replace("text-risk-", "")})`}
+                fillOpacity="0.9"
+                rx="0.6"
+              />
+            </g>
+          );
+        })}
+      </svg>
     </div>
   );
 }

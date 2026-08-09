@@ -2,8 +2,22 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Icon } from "../components/Icon";
 import { PageHeader, Panel } from "../components/ui";
-import { getEnumPatterns, getTuning, resetTuning, setEnumPatterns, setTuning } from "../lib/api";
-import type { EnumPatternRow, TuningKnob } from "../types";
+import {
+  deleteCustomYaraRule,
+  getCustomYaraRules,
+  getEnumPatterns,
+  getRuleFp,
+  getSamples,
+  getTuning,
+  resetFpThreshold,
+  resetTuning,
+  saveCustomYaraRule,
+  setEnumPatterns,
+  setFpThreshold,
+  setTuning,
+  testYaraRule,
+} from "../lib/api";
+import type { CustomYaraRule, EnumPatternRow, RuleFpEntry, TuningKnob, YaraTestResponse } from "../types";
 
 const PLATFORM_LABELS: Record<string, string> = {
   windows: "Windows",
@@ -166,10 +180,269 @@ const KNOB_LABELS: Record<string, string> = {
   STAGING_WINDOW_SECONDS: "Archive-then-upload window (s)",
 };
 
+const YARA_TEMPLATE = `rule my_signature {
+    strings:
+        $a = "suspicious-string"
+        $b = { 4D 5A 90 }
+    condition:
+        any of them
+}`;
+
+function YaraLab() {
+  const queryClient = useQueryClient();
+  const { data: savedRules } = useQuery({ queryKey: ["yara-rules"], queryFn: getCustomYaraRules });
+  const [ruleText, setRuleText] = useState(YARA_TEMPLATE);
+  const [family, setFamily] = useState("custom");
+  const [description, setDescription] = useState("");
+  const [scope, setScope] = useState<"all" | "picked">("all");
+  const [picked, setPicked] = useState<string[]>([]);
+  const [result, setResult] = useState<YaraTestResponse | null>(null);
+  const [status, setStatus] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const { data: vault } = useQuery({ queryKey: ["samples", "lab"], queryFn: () => getSamples({ limit: 200 }) });
+
+  const runTest = useMutation({
+    mutationFn: () => testYaraRule(ruleText, scope === "picked" && picked.length ? picked : undefined),
+    onSuccess: (res) => {
+      setResult(res);
+      setStatus(res.compiled ? { ok: true, text: `Compiled "${res.rule_name}" — ${res.matched}/${res.total} samples matched.` } : { ok: false, text: res.error ?? "Couldn't compile the rule." });
+    },
+    onError: () => setStatus({ ok: false, text: "Test failed — is the backend running?" }),
+  });
+
+  const save = useMutation({
+    mutationFn: () => saveCustomYaraRule(ruleText, family, description),
+    onSuccess: (res) => {
+      void queryClient.invalidateQueries({ queryKey: ["yara-rules"] });
+      setStatus({ ok: true, text: `Saved "${res.name}" — it now scans every new upload.` });
+    },
+    onError: (e: unknown) => setStatus({ ok: false, text: e instanceof Error ? e.message : "Couldn't save the rule." }),
+  });
+
+  const remove = useMutation({
+    mutationFn: (name: string) => deleteCustomYaraRule(name),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["yara-rules"] });
+      setStatus({ ok: true, text: "Rule removed — future uploads skip it." });
+    },
+  });
+
+  const loadRule = (r: CustomYaraRule) => {
+    setRuleText(r.source);
+    setFamily(r.family);
+    setDescription(r.description);
+    setResult(null);
+  };
+
+  const togglePick = (id: string) =>
+    setPicked((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+
+  const matches = (result?.samples ?? []).filter((s) => s.matched);
+
+  return (
+    <div className="mt-8">
+      <div className="mb-4 flex items-start justify-between gap-4">
+        <div>
+          <p className="kicker">Signature lab · custom YARA</p>
+          <h2 className="mt-1 text-base font-semibold text-text-primary">Author & test rules against the vault</h2>
+          <p className="mt-1 text-xs leading-relaxed text-text-muted">
+            Write a rule in the YARA-subset, test it against every stored sample (or a chosen subset) to see exactly which
+            strings hit, then save it — a saved rule scans every future upload, no restart. Supported: quoted ASCII atoms,            {"{"} hex blocks with `??` wildcards, and conditions with `any of them` / `all of them` / `none of them` / `$id`
+            / `not` / `and` / `or` / parens.
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            onClick={() => {
+              setRuleText(YARA_TEMPLATE);
+              setResult(null);
+            }}
+            className="press rounded border border-border-subtle px-3 py-1.5 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
+          >
+            Reset template
+          </button>
+          <button
+            onClick={() => runTest.mutate()}
+            disabled={runTest.isPending || !ruleText.trim()}
+            className="press inline-flex items-center gap-1.5 rounded border border-accent/60 bg-accent/10 px-4 py-1.5 font-mono text-xs text-accent transition-colors duration-150 hover:shadow-[var(--glow-accent)] disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <Icon name={runTest.isPending ? "refresh" : "play"} size={12} className={runTest.isPending ? "animate-spin" : ""} />
+            {runTest.isPending ? "Scanning…" : "Test against vault"}
+          </button>
+        </div>
+      </div>
+
+      <Panel title="Rule editor" pad={false}>
+        <textarea
+          value={ruleText}
+          onChange={(e) => setRuleText(e.target.value)}
+          spellCheck={false}
+          rows={12}
+          className="w-full resize-y rounded-t-lg border-0 bg-bg-base p-4 font-mono text-xs leading-relaxed text-text-primary outline-none placeholder:text-text-faint"
+          placeholder="rule my_signature { … }"
+          aria-label="Rule text"
+        />
+        <div className="flex flex-wrap items-center gap-3 border-t border-border-subtle px-4 py-2.5">
+          <label className="flex items-center gap-1.5">
+            <span className="kicker">Family</span>
+            <input
+              value={family}
+              onChange={(e) => setFamily(e.target.value)}
+              className="w-32 rounded border border-border-subtle bg-bg-base px-2 py-1 font-mono text-[11px] text-text-primary focus:border-accent/60 focus:outline-none"
+              aria-label="Rule family"
+            />
+          </label>
+          <label className="flex min-w-48 flex-1 items-center gap-1.5">
+            <span className="kicker">Description</span>
+            <input
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              className="min-w-0 flex-1 rounded border border-border-subtle bg-bg-base px-2 py-1 font-mono text-[11px] text-text-muted focus:border-accent/60 focus:outline-none"
+              placeholder="optional…"
+              aria-label="Rule description"
+            />
+          </label>
+          <button
+            onClick={() => save.mutate()}
+            disabled={save.isPending || !ruleText.trim()}
+            className="press inline-flex items-center gap-1.5 rounded border border-risk-clean/60 bg-risk-clean/10 px-3 py-1.5 font-mono text-xs text-risk-clean transition-colors duration-150 hover:shadow-[var(--glow-clean)] disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <Icon name="check" size={12} />
+            {save.isPending ? "Saving…" : "Save rule"}
+          </button>
+        </div>
+      </Panel>
+
+      {/* Test scope */}
+      {vault && vault.samples.length > 0 && (
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-1 rounded-lg border border-border-subtle p-0.5">
+            <button
+              onClick={() => setScope("all")}
+              className={`rounded-md px-2.5 py-1 font-mono text-[11px] transition-colors ${scope === "all" ? "bg-accent/15 text-accent" : "text-text-muted hover:text-text-primary"}`}
+            >
+              All {vault.total} samples
+            </button>
+            <button
+              onClick={() => setScope("picked")}
+              className={`rounded-md px-2.5 py-1 font-mono text-[11px] transition-colors ${scope === "picked" ? "bg-accent/15 text-accent" : "text-text-muted hover:text-text-primary"}`}
+            >
+              Pick {picked.length > 0 ? `(${picked.length})` : ""}
+            </button>
+          </div>
+          {scope === "picked" && (
+            <div className="flex max-w-xl flex-wrap gap-1">
+              {vault.samples.map((s) => (
+                <button
+                  key={s.sample_id}
+                  onClick={() => togglePick(s.sample_id)}
+                  title={s.original_name}
+                  className={`rounded border px-1.5 py-0.5 font-mono text-[10px] transition-colors ${
+                    picked.includes(s.sample_id)
+                      ? "border-accent/60 bg-accent/10 text-accent"
+                      : "border-border-subtle text-text-faint hover:text-text-muted"
+                  }`}
+                >
+                  {s.original_name.slice(0, 18)}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {status && <p className={`mt-3 font-mono text-[11px] ${status.ok ? "text-risk-clean" : "text-risk-malicious"}`}>{status.text}</p>}
+
+      {/* Results */}
+      {result?.compiled && (
+        <div className="mt-4">
+          <Panel
+            kicker="Scan results"
+            title={`${result.matched} / ${result.total} matched — ${matches.length > 0 ? "" : "no hits"}`}
+            pad={false}
+          >
+            {matches.length === 0 ? (
+              <p className="p-4 text-sm text-text-muted">No stored sample matched this rule. Either it's too specific or the signal isn't in the vault.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead className="border-b border-border-subtle">
+                    <tr className="text-xs font-semibold text-text-muted">
+                      <th className="px-4 py-2.5">Sample</th>
+                      <th className="px-4 py-2.5">Platform</th>
+                      <th className="px-4 py-2.5">Size</th>
+                      <th className="px-4 py-2.5">Matched strings</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {matches.map((s) => (
+                      <tr key={s.sample_id} className="border-b border-border-subtle/50">
+                        <td className="px-4 py-2 font-mono text-xs text-accent">{s.original_name}</td>
+                        <td className="px-4 py-2 font-mono text-[11px] text-text-muted">{s.detected_platform}</td>
+                        <td className="px-4 py-2 font-mono text-[11px] text-text-faint">{s.size} B</td>
+                        <td className="px-4 py-2">
+                          <span className="flex flex-wrap gap-1">
+                            {s.hits.map((h) => (
+                              <code key={h} className="rounded border border-risk-malicious/40 bg-risk-malicious/10 px-1.5 py-0.5 font-mono text-[10px] text-risk-malicious">
+                                {h}
+                              </code>
+                            ))}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Panel>
+        </div>
+      )}
+
+      {/* Saved rules */}
+      {savedRules && savedRules.rules.length > 0 && (
+        <div className="mt-6">
+          <p className="kicker">Saved signatures · applied to future uploads</p>
+          <div className="mt-2 space-y-2">
+            {savedRules.rules.map((r) => (
+              <div key={r.name} className="flex flex-wrap items-center gap-2 rounded-lg border border-border-subtle bg-bg-elevated/40 px-3 py-2">
+                <button onClick={() => loadRule(r)} className="press font-mono text-xs text-accent transition-colors hover:underline" title="Load into editor">
+                  {r.name}
+                </button>
+                <span className="rounded border border-accent/40 bg-accent/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wide text-accent">
+                  {r.family}
+                </span>
+                <span className="font-mono text-[10px] text-text-faint">
+                  {r.strings.length} string{r.strings.length > 1 ? "s" : ""}
+                </span>
+                {r.description && <span className="text-[11px] text-text-muted">— {r.description}</span>}
+                <button
+                  onClick={() => remove.mutate(r.name)}
+                  className="press ml-auto rounded border border-border-subtle px-2 py-1 text-text-faint transition-colors duration-150 hover:border-risk-malicious/50 hover:text-risk-malicious"
+                  aria-label={`Delete ${r.name}`}
+                >
+                  <Icon name="x" size={11} />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 export default function RulesPage() {
   const queryClient = useQueryClient();
   const { data, isLoading, isError } = useQuery({ queryKey: ["tuning"], queryFn: getTuning });
+  const { data: fp } = useQuery({ queryKey: ["rule-fp"], queryFn: getRuleFp });
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [fpDraft, setFpDraft] = useState<string>("");
+
+  useEffect(() => {
+    if (fp) setFpDraft((d) => (d === "" ? String(fp.threshold) : d));
+  }, [fp]);
 
   const save = useMutation({
     mutationFn: ({ param, value }: { param: string; value: string }) => setTuning(param, value),
@@ -179,72 +452,177 @@ export default function RulesPage() {
     mutationFn: (param: string) => resetTuning(param),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["tuning"] }),
   });
+  const saveFpThreshold = useMutation({
+    mutationFn: (threshold: number) => setFpThreshold(threshold),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["rule-fp"] });
+      setFpDraft("");
+    },
+  });
+  const resetFp = useMutation({
+    mutationFn: () => resetFpThreshold(),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["rule-fp"] });
+      setFpDraft("");
+    },
+  });
+  // One-click apply of an FP-driven threshold raise.
+  const applySuggestion = (s: RuleFpEntry["suggestion"]) => {
+    if (!s) return;
+    save.mutate({ param: s.param, value: String(s.suggested) }, {
+      onSuccess: () => {
+        void queryClient.invalidateQueries({ queryKey: ["rule-fp"] });
+        void queryClient.invalidateQueries({ queryKey: ["tuning"] });
+      },
+    });
+  };
+  const fpFor = (ruleId: string): RuleFpEntry | undefined => fp?.rules.find((r) => r.rule_id === ruleId);
+  const noisyCount = fp?.rules.filter((r) => r.over_threshold).length ?? 0;
 
   return (
     <div className="mx-auto max-w-4xl px-6 py-10">
       <PageHeader
-        kicker="Operations · tuning"
+        kicker="Operations · rules"
         title={
           <>
-            Detection rules <span className="font-normal text-text-muted">— tune thresholds live</span>
+            Detection rules <span className="font-normal text-text-muted">— tune thresholds &amp; author signatures</span>
           </>
         }
-        lede="Edit the knobs behind beaconing and ransomware-burst detection. Changes apply to the next ingested batch — no backend restart."
+        lede="Three knobs: live threshold tuning, per-OS enumeration pattern tables, and the signature lab — write, test, and save YARA-style rules against the sample vault."
       />
 
       {isLoading && <p className="mt-6 text-sm text-text-muted">Loading tunables…</p>}
       {isError && <p className="mt-6 text-sm text-risk-malicious">Couldn't load tunables — is the backend running?</p>}
 
+      <YaraLab />
+
       <EnumPatternsEditor />
 
-      {data && (
-        <div className="mt-8 space-y-3">
-          {data.knobs.map((knob: TuningKnob) => (
-            <Panel key={knob.param} title={KNOB_LABELS[knob.param] ?? knob.param}>
-              <div className="flex flex-wrap items-center gap-3">
-                <code className="rounded border border-border-subtle bg-bg-elevated/50 px-2 py-1 font-mono text-[11px] text-accent">
-                  {knob.param}
-                </code>
-                <span className="font-mono text-[10px] text-text-faint">
-                  default {knob.default} · type {knob.type} · rule {knob.rule_id}
-                </span>
-                <span
-                  className={`ml-auto rounded-full border px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide ${
-                    knob.tuned
-                      ? "border-accent/50 text-accent"
-                      : "border-border-subtle text-text-faint"
-                  }`}
-                >
-                  {knob.tuned ? "tuned" : "default"}
-                </span>
-              </div>
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  value={drafts[knob.param] ?? String(knob.current)}
-                  onChange={(e) => setDrafts((d) => ({ ...d, [knob.param]: e.target.value }))}
-                  className="w-24 rounded border border-border-subtle bg-bg-base px-2 py-1.5 font-mono text-sm text-text-primary focus:border-accent/60 focus:outline-none"
-                  aria-label={`${knob.param} value`}
-                />
+      {/* FP feedback surface — noise threshold + per-rule counters */}
+      {fp && (
+        <div className="mt-8">
+          <div className="mb-3 flex flex-wrap items-center gap-3">
+            <div>
+              <p className="kicker">False-positive feedback · tunable</p>
+              <h2 className="mt-1 text-base font-semibold text-text-primary">Noise threshold</h2>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min={1}
+                value={fpDraft !== "" ? fpDraft : String(fp.threshold)}
+                onChange={(e) => setFpDraft(e.target.value)}
+                className="w-20 rounded border border-border-subtle bg-bg-base px-2 py-1.5 font-mono text-sm text-text-primary focus:border-accent/60 focus:outline-none"
+                aria-label="FP suggestion threshold"
+              />
+              <button
+                onClick={() => {
+                  const n = Math.max(1, Math.floor(Number(fpDraft) || fp.threshold));
+                  saveFpThreshold.mutate(n);
+                }}
+                disabled={saveFpThreshold.isPending}
+                className="press rounded border border-accent/60 px-3 py-1.5 font-mono text-xs text-accent transition-colors duration-150 hover:bg-accent/10 disabled:opacity-50"
+              >
+                Set
+              </button>
+              {fp.threshold !== fp.default_threshold && (
                 <button
-                  onClick={() => save.mutate({ param: knob.param, value: drafts[knob.param] ?? "" })}
-                  disabled={save.isPending}
-                  className="press rounded border border-accent/60 px-3 py-1.5 font-mono text-xs text-accent transition-colors duration-150 hover:bg-accent/10 disabled:opacity-50"
+                  onClick={() => resetFp.mutate()}
+                  className="press rounded border border-border-subtle px-3 py-1.5 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-risk-malicious/50 hover:text-risk-malicious"
                 >
-                  Apply
+                  Reset
                 </button>
-                {knob.tuned && (
-                  <button
-                    onClick={() => reset.mutate(knob.param)}
-                    className="press rounded border border-border-subtle px-3 py-1.5 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-risk-malicious/50 hover:text-risk-malicious"
+              )}
+            </div>
+            <p className="w-full text-xs leading-relaxed text-text-muted">
+              A rule whose false-positive count reaches this value gets a one-click threshold-raise suggestion on its knob
+              below (raised by marking alerts as false positives on run detail). Currently{" "}
+              {noisyCount === 0 ? (
+                "no rule is over it."
+              ) : (
+                <span className="text-risk-suspicious">{noisyCount} rule{noisyCount === 1 ? " is" : "s are"} over it.</span>
+              )}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {data && (
+        <div className="mt-6 space-y-3">
+          {data.knobs.map((knob: TuningKnob) => {
+            const fpRow = fpFor(knob.rule_id);
+            return (
+              <Panel key={knob.param} title={KNOB_LABELS[knob.param] ?? knob.param}>
+                <div className="flex flex-wrap items-center gap-3">
+                  <code className="rounded border border-border-subtle bg-bg-elevated/50 px-2 py-1 font-mono text-[11px] text-accent">
+                    {knob.param}
+                  </code>
+                  <span className="font-mono text-[10px] text-text-faint">
+                    default {knob.default} · type {knob.type} · rule {knob.rule_id}
+                  </span>
+                  {fpRow && fpRow.count > 0 && (
+                    <span
+                      className={`rounded-full border px-2 py-0.5 font-mono text-[10px] tabular-nums ${
+                        fpRow.over_threshold
+                          ? "border-risk-suspicious/60 bg-risk-suspicious/10 text-risk-suspicious"
+                          : "border-border-subtle text-text-muted"
+                      }`}
+                      title={`${fpRow.count} false positive(s) — last ${fpRow.last_fp_at}`}
+                    >
+                      {fpRow.count} FP
+                    </span>
+                  )}
+                  <span
+                    className={`ml-auto rounded-full border px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide ${
+                      knob.tuned
+                        ? "border-accent/50 text-accent"
+                        : "border-border-subtle text-text-faint"
+                    }`}
                   >
-                    Reset
+                    {knob.tuned ? "tuned" : "default"}
+                  </span>
+                </div>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={drafts[knob.param] ?? String(knob.current)}
+                    onChange={(e) => setDrafts((d) => ({ ...d, [knob.param]: e.target.value }))}
+                    className="w-24 rounded border border-border-subtle bg-bg-base px-2 py-1.5 font-mono text-sm text-text-primary focus:border-accent/60 focus:outline-none"
+                    aria-label={`${knob.param} value`}
+                  />
+                  <button
+                    onClick={() => save.mutate({ param: knob.param, value: drafts[knob.param] ?? "" })}
+                    disabled={save.isPending}
+                    className="press rounded border border-accent/60 px-3 py-1.5 font-mono text-xs text-accent transition-colors duration-150 hover:bg-accent/10 disabled:opacity-50"
+                  >
+                    Apply
                   </button>
+                  {knob.tuned && (
+                    <button
+                      onClick={() => reset.mutate(knob.param)}
+                      className="press rounded border border-border-subtle px-3 py-1.5 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-risk-malicious/50 hover:text-risk-malicious"
+                    >
+                      Reset
+                    </button>
+                  )}
+                </div>
+                {fpRow?.over_threshold && fpRow.suggestion && (
+                  <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-risk-suspicious/40 bg-risk-suspicious/10 px-3 py-2">
+                    <Icon name="alert" size={12} className="text-risk-suspicious" />
+                    <span className="text-xs text-text-muted">{fpRow.suggestion.detail}</span>
+                    <button
+                      onClick={() => applySuggestion(fpRow.suggestion)}
+                      disabled={save.isPending}
+                      className="press ml-auto rounded border border-risk-suspicious/60 px-2.5 py-1 font-mono text-[11px] text-risk-suspicious transition-colors duration-150 hover:bg-risk-suspicious/15 disabled:opacity-50"
+                    >
+                      Apply suggested
+                    </button>
+                  </div>
                 )}
-              </div>
-            </Panel>
-          ))}
+              </Panel>
+            );
+          })}
         </div>
       )}
     </div>
