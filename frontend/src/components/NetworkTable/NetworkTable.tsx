@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { intelAgeLabel } from "../../lib/constants";
 import type { NetworkConnection } from "../../types";
 import ReputationBadge from "./ReputationBadge";
 
@@ -53,6 +54,7 @@ export default function NetworkTable({ connections }: { connections: NetworkConn
             <th className="pb-2">{header("Reputation", "reputation")}</th>
             <th className="pb-2">Abuse</th>
             <th className="pb-2">VT</th>
+            <th className="pb-2">Checked</th>
             <th className="pb-2">{header("First seen", "first_seen")}</th>
           </tr>
         </thead>
@@ -63,10 +65,18 @@ export default function NetworkTable({ connections }: { connections: NetworkConn
               <td className="py-2 font-mono text-xs tabular-nums text-text-muted">{c.dest_port ?? "-"}</td>
               <td className="py-2 font-mono text-xs text-text-muted">{c.protocol ?? "-"}</td>
               <td className="py-2">
-                <ReputationBadge reputation={c.reputation} watchlist={c.watchlist === true} watchlistLabel={c.watchlist_label} />
+                <ReputationBadge
+                  reputation={c.reputation}
+                  watchlist={c.watchlist === true}
+                  watchlistLabel={c.watchlist_label}
+                  abuseScore={c.abuse_score}
+                  vtCount={c.vt_malicious_count}
+                  checkedAt={c.checked_at}
+                />
               </td>
               <td className="py-2 font-mono text-xs text-text-muted">{c.abuse_score ?? "-"}</td>
               <td className="py-2 font-mono text-xs text-text-muted">{c.vt_malicious_count ?? "-"}</td>
+              <td className="py-2 font-mono text-xs text-text-faint">{intelAgeLabel(c.checked_at) ?? "-"}</td>
               <td className="py-2 font-mono text-xs text-text-faint">{c.first_seen.slice(0, 19).replace("T", " ")}</td>
             </tr>
           ))}

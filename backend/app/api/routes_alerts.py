@@ -234,3 +234,131 @@ def list_recent_alerts(limit: int = 20) -> list[dict]:
     for d in out:
         _parse_related_pids(d)
     return out
+
+
+class AssigneeIn(BaseModel):
+    assignee: str = ""
+
+
+@router.post("/alerts/{alert_id}/assign", response_model=None)
+def assign_alert(alert_id: int, body: AssigneeIn, request: Request) -> dict:
+    """Claim an alert for an analyst (triage queue). Empty string unassigns.
+    Every change lands in the audit trail."""
+    assignee = (body.assignee or "").strip() or None
+    now = datetime.now(timezone.utc).isoformat()
+    with db_session() as conn:
+        row = conn.execute("SELECT * FROM alerts WHERE id = ?", (alert_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail=f"Unknown alert id: {alert_id}")
+        old = row["assignee"]
+        conn.execute(
+            "UPDATE alerts SET assignee = ?, status_at = ? WHERE id = ?",
+            (assignee, now, alert_id),
+        )
+        audit.log(
+            conn, auth.role_from_request(request), "alert.assign",
+            target_type="alert", target_id=str(alert_id),
+            detail=f"{old or '—'} → {assignee or '—'}",
+        )
+    return {"alert_id": alert_id, "assignee": assignee}
+
+
+@router.get("/alerts/queue", response_model=None)
+def list_alert_queue(
+    status: str = "open",
+    rule_id: str | None = None,
+    severity: str | None = None,
+    host_id: str | None = None,
+    assignee: str | None = None,
+    campaign: str | None = None,
+    q: str | None = None,
+    sort: str = "aging",
+    limit: int = 50,
+    offset: int = 0,
+) -> dict:
+    """The analyst triage queue — alerts across every run with run context.
+
+    Filters: status (open/acknowledged/resolved/all), rule, severity, host,
+    assignee, campaign (a shared IOC value), and free text across sample /
+    rule / details. `sort=aging` surfaces open-oldest-first (SLA pressure);
+    `sort=newest` flips it. Returns the envelope the queue page renders:
+    totals per status plus the page of rows.
+    """
+    if status not in ("open", "acknowledged", "resolved", "all"):
+        raise HTTPException(status_code=422, detail="status must be open, acknowledged, resolved, or all")
+    if severity not in ("suspicious", "malicious", None):
+        raise HTTPException(status_code=422, detail="severity must be suspicious or malicious")
+    if sort not in ("aging", "newest"):
+        raise HTTPException(status_code=422, detail="sort must be aging or newest")
+    limit = max(1, min(limit, 200))
+    offset = max(0, offset)
+
+    where: list[str] = []
+    params: list = []
+    if status != "all":
+        where.append("a.status = ?")
+        params.append(status)
+    if rule_id:
+        where.append("a.rule_id = ?")
+        params.append(rule_id)
+    if severity:
+        where.append("a.severity = ?")
+        params.append(severity)
+    if host_id:
+        where.append("a.run_id IN (SELECT DISTINCT run_id FROM events WHERE host_id = ?)")
+        params.append(host_id)
+    if assignee:
+        where.append("a.assignee = ?")
+        params.append(assignee)
+    if campaign:
+        where.append(
+            "a.run_id IN (SELECT DISTINCT run_id FROM events WHERE dest_ip = ? OR file_path = ? OR registry_key = ? OR process_name = ?)"
+        )
+        params.extend([campaign] * 4)
+    if q:
+        like = f"%{q}%"
+        where.append("(r.sample_name LIKE ? OR a.rule_id LIKE ? OR a.rule_name LIKE ? OR a.details LIKE ? OR a.related_ip LIKE ?)")
+        params.extend([like] * 5)
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+
+    order = "a.triggered_at ASC, a.id ASC" if sort == "aging" else "a.triggered_at DESC, a.id DESC"
+    with db_session() as conn:
+        counts = conn.execute(
+            f"""
+            SELECT a.status, COUNT(*) AS n
+            FROM alerts a JOIN runs r ON r.run_id = a.run_id
+            {where_sql}
+            GROUP BY a.status
+            """,
+            params,
+        ).fetchall()
+        rows = conn.execute(
+            f"""
+            SELECT a.*, r.sample_name,
+                   (SELECT GROUP_CONCAT(DISTINCT host_id) FROM events e
+                    WHERE e.run_id = a.run_id) AS host_ids
+            FROM alerts a
+            JOIN runs r ON r.run_id = a.run_id
+            {where_sql}
+            ORDER BY {order}
+            LIMIT ? OFFSET ?
+            """,
+            [*params, limit, offset],
+        ).fetchall()
+    total_by_status = {c["status"]: c["n"] for c in counts}
+    out = []
+    for r in rows:
+        d = dict(r)
+        _parse_related_pids(d)
+        d["host_ids"] = [h for h in (d.pop("host_ids") or "").split(",") if h]
+        out.append(d)
+    return {
+        "total": sum(total_by_status.values()),
+        "open": total_by_status.get("open", 0),
+        "acknowledged": total_by_status.get("acknowledged", 0),
+        "resolved": total_by_status.get("resolved", 0),
+        "sort": sort,
+        "limit": limit,
+        "offset": offset,
+        "alerts": out,
+    }

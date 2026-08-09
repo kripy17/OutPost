@@ -20,15 +20,16 @@ export interface ThemeColors {
 export function readColors(): ThemeColors {
   const css = getComputedStyle(document.documentElement);
   const get = (name: string) => css.getPropertyValue(name).trim();
-  // Fallbacks match the dark-first :root palette (index.css v6).
+  // Fallbacks match the dark-first :root palette (index.css v7 — forensics
+  // amber on deep slate).
   return {
-    clean: get("--risk-clean") || "#34d399",
-    suspicious: get("--risk-suspicious") || "#fbbf24",
-    malicious: get("--risk-malicious") || "#f87171",
-    accent: get("--accent") || "#8b7cf6",
-    grid: get("--border-subtle") || "#1d2431",
-    faint: get("--text-faint") || "#5f6a7d",
-    muted: get("--text-muted") || "#98a2b3",
+    clean: get("--risk-clean") || "#3fa796",
+    suspicious: get("--risk-suspicious") || "#d9a441",
+    malicious: get("--risk-malicious") || "#c4453b",
+    accent: get("--accent") || "#d9a441",
+    grid: get("--border-subtle") || "#262c38",
+    faint: get("--text-faint") || "#6a7480",
+    muted: get("--text-muted") || "#7a8290",
   };
 }
 

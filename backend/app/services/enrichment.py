@@ -20,6 +20,7 @@ from typing import Optional
 import httpx
 
 from ..core import config
+from ..core.api_keys import get_api_key
 from ..models.event import get_cache, upsert_cache
 from ..models.watchlist import get_watchlist
 from ..models.samples import get_hash_cache, upsert_hash_cache
@@ -53,14 +54,14 @@ def _cache_fresh(cached: dict) -> bool:
     return datetime.now(timezone.utc) - checked < timedelta(days=config.ENRICHMENT_TTL_DAYS)
 
 
-async def _query_abuseipdb(client: httpx.AsyncClient, ip: str) -> Optional[int]:
-    if not config.ABUSEIPDB_API_KEY:
+async def _query_abuseipdb(client: httpx.AsyncClient, ip: str, key: str) -> Optional[int]:
+    if not key:
         return None
     try:
         resp = await client.get(
             ABUSEIPDB_URL,
             params={"ipAddress": ip, "maxAgeInDays": 90},
-            headers={"Key": config.ABUSEIPDB_API_KEY, "Accept": "application/json"},
+            headers={"Key": key, "Accept": "application/json"},
             timeout=10,
         )
         resp.raise_for_status()
@@ -69,13 +70,13 @@ async def _query_abuseipdb(client: httpx.AsyncClient, ip: str) -> Optional[int]:
         return None
 
 
-async def _query_virustotal(client: httpx.AsyncClient, ip: str) -> Optional[int]:
-    if not config.VIRUSTOTAL_API_KEY:
+async def _query_virustotal(client: httpx.AsyncClient, ip: str, key: str) -> Optional[int]:
+    if not key:
         return None
     try:
         resp = await client.get(
             f"{VIRUSTOTAL_URL}/{ip}",
-            headers={"x-apikey": config.VIRUSTOTAL_API_KEY},
+            headers={"x-apikey": key},
             timeout=10,
         )
         resp.raise_for_status()
@@ -103,13 +104,16 @@ async def enrich_hash(client: httpx.AsyncClient, conn, sha256: str) -> dict:
             "malware_family": cached["malware_family"],
         }
 
+    # Effective key: DB-stored (Settings UI) if set, else the env fallback.
+    vt_key = get_api_key(conn, "virustotal")
+
     vt_detections: Optional[int] = None
     family: Optional[str] = None
-    if config.VIRUSTOTAL_API_KEY:
+    if vt_key:
         try:
             resp = await client.get(
                 f"{VIRUSTOTAL_FILE_URL}/{sha256}",
-                headers={"x-apikey": config.VIRUSTOTAL_API_KEY},
+                headers={"x-apikey": vt_key},
                 timeout=10,
             )
             if resp.status_code == 200:
@@ -128,7 +132,9 @@ async def enrich_hash(client: httpx.AsyncClient, conn, sha256: str) -> dict:
 
 
 async def enrich_ip(client: httpx.AsyncClient, conn, ip: str) -> dict:
-    """Cache-first enrichment for a single IP. Returns an enrichment dict."""
+    """Cache-first enrichment for a single IP. Returns an enrichment dict
+    including `checked_at` (when this verdict was fetched) so the UI can show
+    the cache age and offer a targeted TTL-bypassing refresh."""
     cached = get_cache(conn, ip)
     if cached and _cache_fresh(cached):
         return {
@@ -136,18 +142,24 @@ async def enrich_ip(client: httpx.AsyncClient, conn, ip: str) -> dict:
             "abuse_score": cached["abuse_score"],
             "vt_malicious_count": cached["vt_malicious_count"],
             "reputation": cached["reputation"],
+            "checked_at": cached.get("checked_at"),
         }
 
-    abuse_score = await _query_abuseipdb(client, ip)
-    vt_count = await _query_virustotal(client, ip)
+    # Effective keys per call — the Settings UI can swap them at runtime with
+    # no backend restart (DB overrides the env fallback).
+    abuse_key = get_api_key(conn, "abuseipdb")
+    vt_key = get_api_key(conn, "virustotal")
+    abuse_score = await _query_abuseipdb(client, ip, abuse_key)
+    vt_count = await _query_virustotal(client, ip, vt_key)
     reputation = _reputation_from_scores(abuse_score, vt_count)
 
-    upsert_cache(conn, ip, abuse_score, vt_count, reputation)
+    checked_at = upsert_cache(conn, ip, abuse_score, vt_count, reputation)
     return {
         "ip": ip,
         "abuse_score": abuse_score,
         "vt_malicious_count": vt_count,
         "reputation": reputation,
+        "checked_at": checked_at,
     }
 
 

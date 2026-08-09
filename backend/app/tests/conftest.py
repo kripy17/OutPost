@@ -51,10 +51,15 @@ def conn():
     c.close()
 
 
-def make_run(client, sample_name="synthetic-test.bin", platform="windows", session_type="analysis") -> str:
+def make_run(client, sample_name="synthetic-test.bin", platform="windows", session_type="analysis", source="monitor") -> str:
     resp = client.post(
         "/runs",
-        json={"sample_name": sample_name, "platform": platform, "session_type": session_type},
+        json={
+            "sample_name": sample_name,
+            "platform": platform,
+            "session_type": session_type,
+            "source": source,
+        },
     )
     assert resp.status_code == 201
     return resp.json()["run_id"]

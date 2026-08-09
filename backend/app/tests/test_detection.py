@@ -52,6 +52,41 @@ def test_rule1_masquerading_legit_path_not_flagged(client):
     assert all(a["rule_id"] != "masquerading" for a in _alerts(client, run_id))
 
 
+def test_rule1_masquerading_systemd_init_alias_ok(client):
+    """pid 1's /sbin/init execve is systemd on Arch/Ubuntu (symlink) — the
+    soak FP: real host init fired "systemd from unexpected path" (soak-discovered)."""
+    run_id = make_run(client)
+    for cmdline in ("/sbin/init", "/usr/sbin/init", "/usr/lib/systemd/systemd --user"):
+        _post(
+            client,
+            run_id,
+            [{
+                "run_id": run_id, "platform": "linux", "event_type": "process_create",
+                "timestamp": BASE_TS, "pid": 1, "ppid": 0,
+                "process_name": "systemd", "command_line": cmdline,
+            }],
+        )
+    assert all(a["rule_id"] != "masquerading" for a in _alerts(client, run_id))
+
+
+def test_rule1_masquerading_systemd_from_tmp_still_fires(client):
+    """The alias only whitelists the distro init symlinks — a real
+    masquerade (systemd dropped in /tmp) still fires."""
+    run_id = make_run(client)
+    _post(
+        client,
+        run_id,
+        [{
+            "run_id": run_id, "platform": "linux", "event_type": "process_create",
+            "timestamp": BASE_TS, "pid": 511, "ppid": 1,
+            "process_name": "systemd", "command_line": "/tmp/systemd --user",
+        }],
+    )
+    masq = [a for a in _alerts(client, run_id) if a["rule_id"] == "masquerading"]
+    assert len(masq) == 1
+    assert "expected /usr/lib/systemd/systemd" in masq[0]["details"]
+
+
 def test_rule2_suspicious_parent_child(client):
     """winword.exe spawning cmd.exe — macro-malware pattern."""
     run_id = make_run(client)
@@ -142,6 +177,73 @@ def test_rule4_irregular_traffic_not_beaconing(client):
         })
     _post(client, run_id, events)
     assert _alerts(client, run_id) == []
+
+
+def test_rule4_burst_not_beaconing(client):
+    """A rapid burst (intervals ≈ 0s) is traffic, not a beacon — needs a
+    minimum positive mean interval. Soak FP: 7 connections to one IP within
+    0.2s fired as "regular ~0s intervals"."""
+    from datetime import datetime, timedelta, timezone
+
+    run_id = make_run(client)
+    base = datetime(2026, 8, 1, 10, 0, 0, tzinfo=timezone.utc)
+    events = [{
+        "run_id": run_id, "platform": "windows", "event_type": "network_connection",
+        "timestamp": (base + timedelta(milliseconds=80 * i)).isoformat(),
+        "pid": 902, "dest_ip": "203.0.113.11", "dest_port": 443, "protocol": "TCP",
+    } for i in range(6)]
+    _post(client, run_id, events)
+    assert all(a["rule_id"] != "beaconing" for a in _alerts(client, run_id))
+
+
+def test_rule4_non_routable_ips_ignored(client):
+    """0.0.0.0 and loopback traffic never beacons — even at perfectly regular
+    30s intervals. Soak FPs: 6 conns to 0.0.0.0:8001 and 5 to 127.0.0.1:8001
+    (our own dev-stack polling) fired as beaconing."""
+    from datetime import datetime, timedelta, timezone
+
+    run_id = make_run(client)
+    base = datetime(2026, 8, 1, 10, 0, 0, tzinfo=timezone.utc)
+    events = []
+    for ip in ("0.0.0.0", "127.0.0.1"):
+        for i in range(6):
+            events.append({
+                "run_id": run_id, "platform": "linux", "event_type": "network_connection",
+                "timestamp": (base + timedelta(seconds=30 * i)).isoformat(),
+                "pid": 903, "dest_ip": ip, "dest_port": 8001, "protocol": "TCP",
+            })
+    _post(client, run_id, events)
+    assert all(a["rule_id"] != "beaconing" for a in _alerts(client, run_id))
+
+
+def test_rule3_unusual_port_loopback_not_flagged(client):
+    """A local listener on a C2-ish port is a dev service, not a plant — the
+    unusual-port rule only judges routable destinations. Soak-2 FP: a
+    127.0.0.1:9001 connection fired "port commonly used by C2 frameworks"."""
+    run_id = make_run(client)
+    _post(
+        client,
+        run_id,
+        [{
+            "run_id": run_id, "platform": "linux", "event_type": "network_connection",
+            "timestamp": BASE_TS, "pid": 904, "dest_ip": "127.0.0.1",
+            "dest_port": 9001, "protocol": "TCP",
+        }],
+    )
+    assert all(a["rule_id"] != "unusual-port" for a in _alerts(client, run_id))
+    # And the same port on a routable IP still fires.
+    _post(
+        client,
+        run_id,
+        [{
+            "run_id": run_id, "platform": "linux", "event_type": "network_connection",
+            "timestamp": BASE_TS, "pid": 905, "dest_ip": "203.0.113.20",
+            "dest_port": 4444, "protocol": "TCP",
+        }],
+    )
+    up = [a for a in _alerts(client, run_id) if a["rule_id"] == "unusual-port"]
+    assert len(up) == 1
+    assert "203.0.113.20:4444" in up[0]["details"]
 
 
 def test_rule5_registry_persistence(client):

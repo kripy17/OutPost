@@ -32,20 +32,37 @@ def _collect(conn, run_id: str, column: str, event_type: str, ioc_type: str) -> 
 
 
 def extract_iocs(conn, run_id: str) -> dict:
-    """Collect every IOC observed in a run, deduplicated, oldest first."""
+    """Collect every IOC observed in a run, deduplicated, oldest first.
+
+    IP-type IOCs carry `checked_at` from the enrichment cache (the age of the
+    reputation verdict), so exports show the same staleness the UI does.
+    """
     iocs: list[dict] = []
     iocs += _collect(conn, run_id, "dest_ip", "network_connection", "ip")
     iocs += _collect(conn, run_id, "file_path", "file_write", "file_path")
     iocs += _collect(conn, run_id, "registry_key", "registry_write", "registry_key")
     iocs += _collect(conn, run_id, "process_name", "process_create", "process")
+    for ioc in iocs:
+        if ioc["type"] == "ip":
+            cached = conn.execute(
+                "SELECT checked_at FROM enrichment_cache WHERE ip = ?",
+                (ioc["value"],),
+            ).fetchone()
+            ioc["checked_at"] = cached["checked_at"] if cached else None
+        else:
+            ioc["checked_at"] = None
     return {"run_id": run_id, "count": len(iocs), "iocs": iocs}
 
 
 def iocs_to_csv(data: dict) -> str:
-    """Serialize extracted IOCs to CSV (type, value, first_seen)."""
+    """Serialize extracted IOCs to CSV (type, value, first_seen, checked_at).
+
+    `checked_at` carries the reputation cache age for IP IOCs (blank for
+    other types / never-checked) — the export's staleness column.
+    """
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["type", "value", "first_seen"])
+    writer.writerow(["type", "value", "first_seen", "checked_at"])
     for ioc in data["iocs"]:
-        writer.writerow([ioc["type"], ioc["value"], ioc["first_seen"]])
+        writer.writerow([ioc["type"], ioc["value"], ioc["first_seen"], ioc.get("checked_at") or ""])
     return buf.getvalue()

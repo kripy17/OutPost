@@ -5,6 +5,7 @@
 
 import { useState } from "react";
 import { Icon } from "../Icon";
+import { QuickAllowlist } from "../TriagePanels/TriagePanels";
 import type { ProcessNode, Reputation } from "../../types";
 
 // Default-expand to depth 2 so the initial view stays scannable (docs/07).
@@ -87,11 +88,22 @@ function TreeNode({
   depth,
   reconPids,
   highlightPid,
+  selectedPid,
+  onSelect,
+  allowlistForRun,
 }: {
   node: ProcessNode;
   depth: number;
   reconPids: Set<number>;
   highlightPid?: number | null;
+  /** Selected process — the run detail filters its network + timeline to it. */
+  selectedPid?: number | null;
+  /** Called when the row is clicked (the spec's highest-value interaction:
+   *  "what did THIS process do"). The chevron still toggles expansion only. */
+  onSelect?: (pid: number) => void;
+  /** When set (run detail), each node gets a two-click allowlist quick-add
+   *  so a process can be whitelisted for the run without opening the panel. */
+  allowlistForRun?: string;
 }) {
   const [expanded, setExpanded] = useState(depth < DEFAULT_EXPAND_DEPTH || node.children.length === 0);
   const hasChildren = node.children.length > 0;
@@ -105,24 +117,44 @@ function TreeNode({
   // The flash composes with the recon state so an enumerating process keeps
   // its amber ring while the accent ring rings around it.
   const isHighlighted = highlightPid !== null && highlightPid !== undefined && node.pid === highlightPid;
+  const isSelected = selectedPid !== null && selectedPid !== undefined && node.pid === selectedPid;
 
   return (
     <div className="select-none">
       <div
         data-pid={node.pid}
+        role={onSelect ? "button" : undefined}
+        tabIndex={onSelect ? 0 : undefined}
+        onClick={onSelect && node.pid !== undefined ? () => onSelect(node.pid as number) : undefined}
+        onKeyDown={
+          onSelect && node.pid !== undefined
+            ? (e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onSelect(node.pid as number);
+                }
+              }
+            : undefined
+        }
+        title={onSelect ? "Click to filter this run's network + timeline to this process" : undefined}
         className={`group flex items-baseline gap-2 rounded border-l-2 px-1 py-0.5 transition-colors duration-150 ${
           isHighlighted
             ? "animate-node-flash border-accent bg-accent/10 pl-2"
-            : rep && HALO[rep]
-              ? `${HALO[rep].ring} pl-2`
-              : isRecon
-                ? "border-risk-suspicious/70 bg-risk-suspicious/[0.06] pl-2"
-                : "border-transparent pl-3 hover:bg-bg-elevated"
-        } ${isHighlighted && isRecon ? "ring-1 ring-inset ring-risk-suspicious/70" : ""}`}
+            : isSelected
+              ? "border-accent bg-accent/10 pl-2 ring-1 ring-inset ring-accent/50"
+              : rep && HALO[rep]
+                ? `${HALO[rep].ring} pl-2`
+                : isRecon
+                  ? "border-risk-suspicious/70 bg-risk-suspicious/[0.06] pl-2"
+                  : "border-transparent pl-3 hover:bg-bg-elevated"
+        } ${(isHighlighted || isSelected) && isRecon ? "ring-1 ring-inset ring-risk-suspicious/70" : ""} ${onSelect ? "cursor-pointer" : ""}`}
       >
         {hasChildren ? (
           <button
-            onClick={toggle}
+            onClick={(e) => {
+              e.stopPropagation();
+              toggle();
+            }}
             aria-expanded={expanded}
             className="flex w-4 shrink-0 items-center justify-center text-[11px] text-text-muted transition-transform duration-150 hover:text-accent"
           >
@@ -142,11 +174,25 @@ function TreeNode({
             {node.command_line}
           </span>
         )}
+        {allowlistForRun && node.process_name && (
+          <span className="ml-auto pl-1">
+            <QuickAllowlist runId={allowlistForRun} kind="process" value={node.process_name} />
+          </span>
+        )}
       </div>
       {expanded && hasChildren && (
         <div className="ml-3 border-l border-border-subtle pl-3">
           {node.children.map((child) => (
-            <TreeNode key={child.pid} node={child} depth={depth + 1} reconPids={reconPids} highlightPid={highlightPid} />
+            <TreeNode
+              key={child.pid}
+              node={child}
+              depth={depth + 1}
+              reconPids={reconPids}
+              highlightPid={highlightPid}
+              selectedPid={selectedPid}
+              onSelect={onSelect}
+              allowlistForRun={allowlistForRun}
+            />
           ))}
         </div>
       )}
@@ -166,11 +212,20 @@ export default function ProcessTree({
   roots,
   reconPids = EMPTY_RECON,
   highlightPid = null,
+  selectedPid = null,
+  onSelect,
+  allowlistForRun,
 }: {
   roots: ProcessNode[];
   reconPids?: Set<number>;
   /** Scroll target for the run-detail recon-actors list (brief flash ring). */
   highlightPid?: number | null;
+  /** Selected process — the run detail filters its network + timeline to it. */
+  selectedPid?: number | null;
+  /** Click-to-filter: the run detail narrows network + timeline to this pid. */
+  onSelect?: (pid: number) => void;
+  /** Run id for the two-click allowlist quick-add on each node. */
+  allowlistForRun?: string;
 }) {
   if (roots.length === 0) {
     return <p className="text-sm text-text-muted">No process activity recorded for this run.</p>;
@@ -202,7 +257,16 @@ export default function ProcessTree({
         )}
       </div>
       {roots.map((root) => (
-        <TreeNode key={root.pid} node={root} depth={0} reconPids={reconPids} highlightPid={highlightPid} />
+        <TreeNode
+          key={root.pid}
+          node={root}
+          depth={0}
+          reconPids={reconPids}
+          highlightPid={highlightPid}
+          selectedPid={selectedPid}
+          onSelect={onSelect}
+          allowlistForRun={allowlistForRun}
+        />
       ))}
     </div>
   );

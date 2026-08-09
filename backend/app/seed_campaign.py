@@ -121,6 +121,11 @@ def main() -> dict[str, str]:
     init_db()
 
     with db_session() as conn:
+        # Same demo label as seed_demo — the webapp banner marks seeded data.
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('demo_mode', '1') "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+        )
         rid_a = uuid.uuid4().hex[:12]
         rid_b = uuid.uuid4().hex[:12]
 

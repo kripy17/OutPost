@@ -71,6 +71,36 @@ def publish_alerts(alerts: list[Any]) -> int:
     return sent
 
 
+def publish_run_update(run_id: str, event_count: int, completed: bool = False) -> int:
+    """Publish a run-level update (new events ingested, or the run completed).
+
+    The Monitor and Event Log subscribe to this so process trees, network
+    tables, and the live feed refresh the moment a batch lands instead of
+    waiting for the next poll tick — polling stays as the fallback.
+    """
+    return publish(
+        "run-update",
+        {"run_id": run_id, "events": event_count, "completed": completed},
+    )
+
+
+def publish_fleet_update(host_id: str, online: bool, silent: bool, last_heartbeat: str | None = None) -> int:
+    """Publish a fleet-status change (agent heartbeat landed, or a host went
+    silent). The Agents page and the Overview host panel invalidate their
+    fleet queries on this — a heartbeat flips the UI live without waiting for
+    the 15-30 s poll; polling stays as the fallback.
+    """
+    return publish(
+        "fleet-update",
+        {
+            "host_id": host_id,
+            "online": online,
+            "silent": silent,
+            "last_heartbeat": last_heartbeat,
+        },
+    )
+
+
 def publish_watchlist(run_id: str, sample_name: str, platform: str, matches: list[dict]) -> int:
     """Publish a watched-IOC hit (live watchlist alerting).
 

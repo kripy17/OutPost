@@ -23,7 +23,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
 
-from shipper import Shipper, claim_active_live_run  # noqa: E402
+from shipper import Shipper, resolve_live_run_id  # noqa: E402
 
 CHANNEL = "Microsoft-Windows-Sysmon/Operational"
 
@@ -95,10 +95,12 @@ def main(run_id: str | None, backend_url: str, mode: str = "analysis", timeout: 
         print("ERROR: pywin32 required — install with: pip install pywin32", file=sys.stderr)
         sys.exit(2)
 
-    # Claim the webapp's open live session when no run_id was given.
+    # Resolve the live session when no run_id was given: webapp Live Monitor
+    # > today's open agent run > create a fresh source=agent session — the
+    # standalone nssm service needs no browser open (Linux parity).
     if not run_id:
-        run_id = claim_active_live_run(backend_url)
-        print(f"[collector-win] claimed active live session {run_id}")
+        run_id = resolve_live_run_id(backend_url, platform="windows")
+        print(f"[collector-win] resolved live session {run_id}")
 
     shipper = Shipper(backend_url, run_id)
     handle = win32evtlog.OpenEventLog(None, CHANNEL)
@@ -108,6 +110,7 @@ def main(run_id: str | None, backend_url: str, mode: str = "analysis", timeout: 
     start = time.time()
     snapshot_interval = float(os.getenv("SNAPSHOT_INTERVAL", "30"))
     last_snapshot = 0.0
+    heartbeat_interval = float(os.getenv("HEARTBEAT_INTERVAL", "60"))
 
     print(f"[collector-win] run_id={run_id} mode={mode} backend={backend_url}")
     try:
@@ -122,6 +125,8 @@ def main(run_id: str | None, backend_url: str, mode: str = "analysis", timeout: 
             if time.time() - last_snapshot > snapshot_interval:
                 shipper.ship_snapshot(platform="windows")
                 last_snapshot = time.time()
+            # Liveness ping — the fleet view's last-seen/silent signal.
+            shipper.maybe_heartbeat(platform="windows", interval=heartbeat_interval)
             time.sleep(1)
             if mode == "analysis" and time.time() - start > timeout:
                 break

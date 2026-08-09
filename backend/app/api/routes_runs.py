@@ -6,12 +6,14 @@
 - GET /runs/{id}/export — JSON report or PDF (Task 21)
 """
 
+import httpx
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 
 from datetime import datetime, timezone
 
 from ..core import auth
 from ..core.db import db_session
+from ..models import audit
 from ..core.schema import (
     AllowlistEntry,
     Alert,
@@ -31,6 +33,90 @@ from ..services import enrichment, killchain, process_tree
 from ..services.detection import allowlist_matches, load_run_sample_sha256
 
 router = APIRouter(tags=["runs"])
+
+
+@router.post("/runs/{run_id}/re-enrich", response_model=None)
+async def re_enrich_run(run_id: str, request: Request) -> dict:
+    """The 'I just added a key' button: drop this run's cached IP intel (and
+    its sample's hash intel when a sample is attached), then re-run
+    enrichment with the CURRENT keys — cache-first becomes cache-miss, so
+    fresh AbuseIPDB/VT lookups happen right now and the run detail shows the
+    new badges on next fetch. Audited."""
+    with db_session() as conn:
+        exists = conn.execute("SELECT run_id FROM runs WHERE run_id = ?", (run_id,)).fetchone()
+        if not exists:
+            raise HTTPException(status_code=404, detail=f"Unknown run: {run_id}")
+        ips = [
+            r["dest_ip"]
+            for r in conn.execute(
+                "SELECT DISTINCT dest_ip FROM events WHERE run_id = ? AND dest_ip IS NOT NULL",
+                (run_id,),
+            ).fetchall()
+        ]
+        if ips:
+            conn.executemany("DELETE FROM enrichment_cache WHERE ip = ?", [(ip,) for ip in ips])
+        sample = conn.execute(
+            "SELECT s.sha256, s.sample_id FROM samples s JOIN runs r ON r.sample_name = s.original_name "
+            "WHERE r.run_id = ?",
+            (run_id,),
+        ).fetchone()
+        if sample:
+            conn.execute("DELETE FROM hash_cache WHERE sha256 = ?", (sample["sha256"],))
+
+        enriched = await enrichment.enrich_run(conn, run_id)
+        if sample:
+            async with httpx.AsyncClient() as client:
+                hi = await enrichment.enrich_hash(client, conn, sample["sha256"])
+            conn.execute(
+                "UPDATE samples SET vt_detections = ?, malware_family = ? WHERE sample_id = ?",
+                (hi["vt_detections"], hi["malware_family"], sample["sample_id"]),
+            )
+        audit.log(
+            conn, auth.role_from_request(request), "run.re-enrich",
+            target_type="run", target_id=run_id,
+            detail=f"cleared {len(ips)} IP cache row(s), re-enriched with current keys",
+        )
+    return {
+        "run_id": run_id,
+        "ips_cleared": len(ips),
+        "reputation": {ip: (d.get("reputation") or "unknown") for ip, d in enriched.items()},
+    }
+
+
+@router.post("/runs/{run_id}/enrichment/refresh", response_model=None)
+async def refresh_ip_enrichment(run_id: str, ip: str = Query(..., min_length=1, max_length=200), request: Request = None) -> dict:
+    """Bypass the enrichment TTL ONCE for a single destination IP of this run:
+    drop its cache row and re-query AbuseIPDB/VirusTotal with the CURRENT
+    keys. The run detail network panel pairs its "checked Xh ago" age with
+    this per-row force-refresh — "I just added a key / this IP changed".
+    Audited; only IPs this run actually reached are refresheable."""
+    with db_session() as conn:
+        exists = conn.execute("SELECT run_id FROM runs WHERE run_id = ?", (run_id,)).fetchone()
+        if not exists:
+            raise HTTPException(status_code=404, detail=f"Unknown run: {run_id}")
+        member = conn.execute(
+            "SELECT 1 FROM events WHERE run_id = ? AND dest_ip = ? LIMIT 1",
+            (run_id, ip),
+        ).fetchone()
+        if not member:
+            raise HTTPException(status_code=404, detail=f"{ip} is not a destination of run {run_id}")
+
+        conn.execute("DELETE FROM enrichment_cache WHERE ip = ?", (ip,))
+        async with httpx.AsyncClient() as client:
+            data = await enrichment.enrich_ip(client, conn, ip)
+        conn.commit()
+        audit.log(
+            conn, auth.role_from_request(request), "intel.refresh-ip",
+            target_type="run", target_id=run_id,
+            detail=f"force-refreshed reputation for {ip} (TTL bypassed)",
+        )
+    return {
+        "ip": ip,
+        "abuse_score": data.get("abuse_score"),
+        "vt_malicious_count": data.get("vt_malicious_count"),
+        "reputation": data.get("reputation") or "unknown",
+        "checked_at": data.get("checked_at"),
+    }
 
 
 @router.get("/runs", response_model=list[RunSummary])
@@ -134,6 +220,7 @@ async def get_run_detail(run_id: str) -> RunDetail:
                     vt_malicious_count=data.get("vt_malicious_count"),
                     watchlist=data.get("watchlist"),
                     watchlist_label=data.get("watchlist_label"),
+                    checked_at=data.get("checked_at"),
                 )
             )
 

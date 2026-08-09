@@ -140,6 +140,8 @@ def _human_line(payload: dict) -> str:
             f"OutPost watchlist hit — {payload.get('sample_name')} ({payload.get('platform')}) "
             f"run {payload.get('run_id')}: {vals}"
         )
+    if payload.get("event") == "outpost.fleet":
+        return f"OutPost fleet — {payload.get('kind')} · host {payload.get('host_id')}: {payload.get('detail')}"
     return (
         f"[{payload.get('severity', '').upper()}] {payload.get('rule_name')} "
         f"({payload.get('rule_id')}) — {payload.get('details')} — run {payload.get('run_id')}"
@@ -296,6 +298,50 @@ async def notify_new_alerts(alerts: list[Alert]) -> list[str]:
                 except Exception:
                     pass
     return [_target_label(kind, params) for kind, params in channels]
+
+
+async def notify_fleet_event(kind: str, host_id: str, detail: str) -> list[str]:
+    """Deliver a fleet-health event (host went silent, baseline anomaly) to
+    every configured channel.
+
+    Same contract as the other notifiers: reads settings from its own DB
+    session, quiet on failure, returns the targets attempted. The payload
+    reuses the channel senders with `outpost.fleet` event semantics.
+    """
+    from datetime import datetime, timezone
+
+    from ..core.db import db_session
+
+    with db_session() as conn:
+        settings = get_settings(conn)
+    channels = _channels(settings)
+    if not channels:
+        return []
+
+    payload = {
+        "event": "outpost.fleet",
+        "kind": kind,
+        "host_id": host_id,
+        "detail": detail,
+        "severity": "suspicious",
+        "sent_at": datetime.now(timezone.utc).isoformat(),
+    }
+    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        for kind_name, params in channels:
+            try:
+                if kind_name == "webhook":
+                    await _send_generic_webhook(client, params["url"], payload)
+                elif kind_name == "slack":
+                    await _send_slack(client, params["url"], payload)
+                elif kind_name == "discord":
+                    await _send_discord(client, params["url"], payload)
+                elif kind_name == "telegram":
+                    await _send_telegram(client, params["token"], params["chat_id"], payload)
+                else:  # smtp
+                    await asyncio.to_thread(_send_smtp_sync, settings, payload)
+            except Exception:
+                pass
+    return [_target_label(kind_name, params) for kind_name, params in channels]
 
 
 async def notify_watchlist_hits(

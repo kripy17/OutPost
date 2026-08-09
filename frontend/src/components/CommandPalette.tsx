@@ -18,18 +18,20 @@ interface Item {
 
 const NAV_ITEMS: Item[] = [
   { kind: "nav", label: "Overview", hint: "Console home", icon: "grid", to: "/" },
-  { kind: "nav", label: "Live Monitor", hint: "Detonate + watch in real time", icon: "activity", to: "/monitor" },
+  { kind: "nav", label: "Live Monitor", hint: "Watch this machine + detonate in real time", icon: "activity", to: "/monitor" },
   { kind: "nav", label: "Event Log", hint: "System activity viewer", icon: "list", to: "/events" },
-  { kind: "nav", label: "Sample vault", hint: "Uploaded binaries", icon: "box", to: "/samples" },
-  { kind: "nav", label: "Session history", hint: "All runs", icon: "clock", to: "/history" },
-  { kind: "nav", label: "Compare runs", hint: "Diff two samples", icon: "compare", to: "/compare" },
+  { kind: "nav", label: "Session history", hint: "All runs + compare two samples", icon: "clock", to: "/history" },
   { kind: "nav", label: "IOC search", hint: "IP / hash / domain lookup", icon: "search", to: "/search" },
   { kind: "nav", label: "Campaigns", hint: "Clustered by shared infrastructure", icon: "flag", to: "/campaigns" },
-  { kind: "nav", label: "ATT&CK coverage", hint: "The tactic matrix we see — and the gaps", icon: "target", to: "/coverage" },
   { kind: "nav", label: "Digital footprint", hint: "Passive infrastructure mapping", icon: "globe", to: "/footprint" },
   { kind: "nav", label: "Watchlist", hint: "Track known-bad infrastructure", icon: "star", to: "/watchlist" },
   { kind: "nav", label: "Detection rules", hint: "Suricata / Sigma + tuning", icon: "shield", to: "/rules" },
   { kind: "nav", label: "Settings", hint: "Notifications and behavior", icon: "sliders", to: "/settings" },
+  // Tools — reachable, but not destinations
+  { kind: "nav", label: "Triage queue", hint: "Open alerts across every run", icon: "alert", to: "/triage" },
+  { kind: "nav", label: "Sample vault", hint: "Uploaded binaries", icon: "box", to: "/samples" },
+  { kind: "nav", label: "ATT&CK coverage", hint: "The tactic matrix we see — and the gaps", icon: "target", to: "/coverage" },
+  { kind: "nav", label: "Audit log", hint: "Admin write trail", icon: "notes", to: "/audit" },
 ];
 
 export default function CommandPalette({ onClose }: { onClose: () => void }) {

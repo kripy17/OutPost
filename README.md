@@ -128,6 +128,27 @@ bash scripts/dev.sh start
 Prefer to drive it by hand? [`scripts/install.sh`](scripts/install.sh) shows
 every step it performs, in order.
 
+### 🐳 Run with Docker (one command)
+
+No local Python/Node needed — the whole stack (backend + webapp) builds and
+runs in containers, with the SQLite database persisted in a named volume.
+
+```bash
+docker compose up --build
+#    → webapp  http://localhost:5174   API: http://localhost:8001
+```
+
+The data volume survives restarts and rebuilds. On a remote server, rebuild
+the frontend so the browser reaches the API at that server:
+
+```bash
+docker compose build --build-arg VITE_API_URL=http://<server>:8001 frontend
+```
+
+The **host agent is not part of the stack** — the collectors live on the
+machines you monitor and stream into this backend (`outpost agent install`
+on the target host, pointing `OUTPOST_API_URL` at the server).
+
 ### Try it without a collector
 
 The webapp and CLI run against **seeded demo data** — no live telemetry

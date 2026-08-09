@@ -7,12 +7,13 @@
 // host, and a one-line reminder of how to bring a new host online.
 
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { Icon, platformIconName } from "../components/Icon";
 import { PageHeader, Panel } from "../components/ui";
-import { getAgents, getHostSnapshot } from "../lib/api";
-import type { AgentInfo } from "../types";
+import { getAgents, getHostBaseline, getHostSnapshot, resetHostBaseline } from "../lib/api";
+import { useEventStream } from "../lib/useEventStream";
+import type { AgentInfo, HostBaseline } from "../types";
 
 function relativeTime(iso: string): string {
   const then = new Date(iso).getTime();
@@ -29,14 +30,29 @@ function relativeTime(iso: string): string {
 function AgentRow({ agent }: { agent: AgentInfo }) {
   const isLocal = agent.host_id === "local";
   const recent = agent.recent_run_ids ?? [];
+  const status: "online" | "offline" | "silent" = agent.silent ? "silent" : agent.online ? "online" : "offline";
+  const statusTone =
+    status === "online"
+      ? "border-signal/40 bg-signal/10 text-signal"
+      : status === "silent"
+        ? "border-risk-malicious/50 bg-risk-malicious/10 text-risk-malicious"
+        : "border-border-subtle text-text-faint";
+  const dotTone =
+    status === "online"
+      ? "animate-outpost-pulse bg-signal"
+      : status === "silent"
+        ? "animate-outpost-pulse bg-risk-malicious"
+        : "bg-text-faint";
   return (
     <li className="group relative overflow-hidden rounded-xl border border-border-subtle bg-bg-surface transition-all duration-150 hover:border-accent/40 hover:shadow-[var(--shadow-panel)]">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-3 px-5 py-4">
         <span
           className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border ${
-            agent.online
+            status === "online"
               ? "border-signal/40 bg-signal/10 text-signal"
-              : "border-border-subtle bg-bg-elevated/60 text-text-faint"
+              : status === "silent"
+                ? "border-risk-malicious/50 bg-risk-malicious/10 text-risk-malicious"
+                : "border-border-subtle bg-bg-elevated/60 text-text-faint"
           }`}
         >
           <Icon name="terminal" size={18} />
@@ -46,14 +62,15 @@ function AgentRow({ agent }: { agent: AgentInfo }) {
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-mono text-sm font-semibold text-text-primary">{agent.host_id}</span>
             <span
-              className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-px font-mono text-[10px] ${
-                agent.online
-                  ? "border-signal/40 bg-signal/10 text-signal"
-                  : "border-border-subtle text-text-faint"
-              }`}
+              className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-px font-mono text-[10px] ${statusTone}`}
+              title={
+                status === "silent"
+                  ? "Heartbeated before but quiet for over the silent window — the collector may be down"
+                  : undefined
+              }
             >
-              <span className={`h-1.5 w-1.5 rounded-full ${agent.online ? "animate-outpost-pulse bg-signal" : "bg-text-faint"}`} aria-hidden />
-              {agent.online ? "online" : "offline"}
+              <span className={`h-1.5 w-1.5 rounded-full ${dotTone}`} aria-hidden />
+              {status}
             </span>
             {isLocal && (
               <span className="rounded-full border border-border-subtle bg-bg-elevated/60 px-2 py-px font-mono text-[10px] text-text-muted" title="Events from the machine running the backend (webapp detonations, sandbox runs)">
@@ -74,6 +91,15 @@ function AgentRow({ agent }: { agent: AgentInfo }) {
               ))}
             </span>
             <span>last event {relativeTime(agent.last_seen)}</span>
+            {agent.last_heartbeat && (
+              <span className={agent.silent ? "font-semibold text-risk-malicious" : undefined}>
+                heartbeat {relativeTime(agent.last_heartbeat)}
+                {agent.silent && " · went silent"}
+              </span>
+            )}
+            {agent.heartbeat_version && !agent.silent && (
+              <span className="text-text-faint">{agent.heartbeat_version}</span>
+            )}
           </p>
         </div>
 
@@ -242,12 +268,125 @@ function SnapshotPanel({ agents }: { agents: AgentInfo[] }) {
   );
 }
 
+/** Host behavioral baselines — what each host normally executes / talks to,
+ *  learned from its own telemetry. The anomaly layer flags first-times; this
+ *  panel makes the learned profile visible and lets an operator reset it
+ *  (e.g. after deliberately changing what a host should do). */
+function BaselinePanel({ agents }: { agents: AgentInfo[] }) {
+  const queryClient = useQueryClient();
+  const hosts = agents.map((a) => a.host_id);
+  const { data: baselines, isLoading } = useQuery({
+    queryKey: ["baselines", hosts.join(",")],
+    queryFn: async (): Promise<HostBaseline[]> => {
+      const out: HostBaseline[] = [];
+      for (const h of hosts) {
+        try {
+          out.push(await getHostBaseline(h));
+        } catch {
+          // 404/empty — host never shipped events; skip.
+        }
+      }
+      return out;
+    },
+    enabled: hosts.length > 0,
+  });
+  const reset = useMutation({
+    mutationFn: (hostId: string) => resetHostBaseline(hostId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["baselines"] }),
+  });
+  const rows = (baselines ?? []).filter((b) => b.total_observations > 0 || b.anomaly_count > 0);
+
+  return (
+    <Panel
+      kicker="Behavioral baselines"
+      title="Host profiles"
+      right={
+        <span className="font-mono text-[10px] text-text-faint">
+          anomaly layer — first-time processes & IPs fire baseline-anomaly
+        </span>
+      }
+    >
+      {isLoading && <div className="skeleton h-16 w-full" />}
+      {!isLoading && rows.length === 0 && (
+        <p className="py-3 text-center text-sm text-text-muted">
+          No host has crossed the baseline gate yet — a host must ship{" "}
+          <code className="rounded bg-bg-elevated px-1.5 py-0.5 font-mono text-[11px]">
+            BASELINE_MIN_EVENTS
+          </code>{" "}
+          observations before first-times start firing.
+        </p>
+      )}
+      {rows.length > 0 && (
+        <div className="overflow-auto rounded-lg border border-border-subtle">
+          <table className="w-full text-left font-mono text-[11px]">
+            <thead className="sticky top-0 bg-bg-elevated text-[10px] uppercase tracking-wide text-text-faint">
+              <tr>
+                <th className="px-2.5 py-1.5">Host</th>
+                <th className="px-2.5 py-1.5">Processes learned</th>
+                <th className="px-2.5 py-1.5">IPs learned</th>
+                <th className="px-2.5 py-1.5">Observations</th>
+                <th className="px-2.5 py-1.5">Anomalies</th>
+                <th className="px-2.5 py-1.5" />
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((b) => (
+                <tr key={b.host_id} className="border-t border-border-subtle/60 odd:bg-bg-surface">
+                  <td className="px-2.5 py-1.5 font-semibold text-text-primary">{b.host_id}</td>
+                  <td className="px-2.5 py-1.5 text-text-muted" title={b.processes.map((p) => `${p.value} ×${p.count}`).join("\n")}>
+                    {b.processes.length} distinct
+                  </td>
+                  <td className="px-2.5 py-1.5 text-text-muted" title={b.networks.map((n) => `${n.value} ×${n.count}`).join("\n")}>
+                    {b.networks.length} distinct
+                  </td>
+                  <td className="px-2.5 py-1.5 tabular-nums text-text-faint">{b.total_observations}</td>
+                  <td className="px-2.5 py-1.5">
+                    {b.anomaly_count > 0 ? (
+                      <Link to="/triage" className="rounded-full border border-risk-suspicious/50 bg-risk-suspicious/10 px-2 py-px text-[10px] text-risk-suspicious hover:bg-risk-suspicious/20">
+                        {b.anomaly_count} fired
+                      </Link>
+                    ) : (
+                      <span className="text-text-faint">—</span>
+                    )}
+                  </td>
+                  <td className="px-2.5 py-1.5 text-right">
+                    <button
+                      onClick={() => reset.mutate(b.host_id)}
+                      disabled={reset.isPending}
+                      className="press rounded border border-border-subtle px-2 py-0.5 font-mono text-[10px] text-text-faint hover:border-risk-malicious/50 hover:text-risk-malicious disabled:opacity-50"
+                    >
+                      Reset
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Panel>
+  );
+}
+
 export default function AgentsPage() {
+  const queryClient = useQueryClient();
   const { data, isLoading, isError } = useQuery({
     queryKey: ["agents"],
     queryFn: getAgents,
     refetchInterval: 15_000,
   });
+
+  // Live fleet: a heartbeat push flips a host to online (and the fleet-health
+  // loop flips silent hosts) the moment it happens — the 15 s poll stays as
+  // the fallback.
+  useEventStream(
+    () => undefined,
+    undefined,
+    undefined,
+    () => {
+      void queryClient.invalidateQueries({ queryKey: ["agents"] });
+    },
+  );
 
   const agents = data?.agents ?? [];
   const totalEvents = agents.reduce((n, a) => n + a.event_count, 0);
@@ -275,10 +414,11 @@ export default function AgentsPage() {
       />
 
       {/* Fleet summary strip */}
-      <div className="mb-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="mb-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
         {[
           { label: "Hosts", value: data?.total ?? "…", icon: "terminal" as const },
           { label: "Online now", value: data?.online ?? "…", icon: "activity" as const, tone: data?.online ? "text-signal" : "text-text-muted" },
+          { label: "Silent hosts", value: data?.silent ?? "…", icon: "alert" as const, tone: data?.silent ? "text-risk-malicious" : "text-text-muted" },
           { label: "Events shipped", value: totalEvents.toLocaleString(), icon: "list" as const },
           { label: "Findings", value: totalAlerts.toLocaleString(), icon: "alert" as const, tone: totalAlerts ? "text-risk-malicious" : "text-text-muted" },
         ].map((s) => (
@@ -330,7 +470,11 @@ export default function AgentsPage() {
           <Panel
             kicker="Fleet"
             title="Hosts"
-            right={<span className="font-mono text-[10px] text-text-faint">heartbeat window · {data?.online_window_seconds}s</span>}
+            right={
+              <span className="font-mono text-[10px] text-text-faint">
+                online &lt; {data?.online_window_seconds}s · silent &gt; {data?.silent_window_seconds}s
+              </span>
+            }
           >
             <ul className="space-y-2.5">
               {agents.map((a) => (
@@ -340,6 +484,9 @@ export default function AgentsPage() {
           </Panel>
           <div className="mt-5">
             <SnapshotPanel agents={agents} />
+          </div>
+          <div className="mt-5">
+            <BaselinePanel agents={agents} />
           </div>
         </>
       )}

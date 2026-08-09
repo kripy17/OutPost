@@ -1,26 +1,46 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { browserNotifyEnabled, browserPermission, setBrowserNotifyEnabled } from "../components/BrowserNotifications/BrowserNotifications";
 import { Icon } from "../components/Icon";
 import { PageHeader, Panel } from "../components/ui";
 import {
+  clearIntelKey,
   downloadBackup,
+  getIntelFreshness,
+  getIntelKeys,
   getMe,
   getNotificationSettings,
   getRateLimitStatus,
   getRetention,
   pruneRuns,
+  refreshStaleIntel,
   restoreBackup,
   saveBlob,
   setAuthToken,
+  setIntelKey,
   setNotificationSettings,
   setPassword,
   setRetention,
+  testIntelKey,
 } from "../lib/api";
 import type { NotificationSettings, NotificationSettingsIn } from "../types";
 
 const inputCls =
   "w-full rounded border border-border-subtle bg-bg-base px-3 py-2 font-mono text-sm text-text-primary placeholder:text-text-faint focus:border-accent/60 focus:outline-none";
+
+/* Numbered section divider — keeps the growing settings page scannable:
+   each cluster gets a numbered heading so the eye can land anywhere. */
+function SectionHeader({ n, title, desc }: { n: string; title: string; desc: string }) {
+  return (
+    <div className="mb-4 mt-2 flex items-baseline gap-3 border-b border-border-subtle pb-2">
+      <span className="font-mono text-[11px] font-semibold text-accent">{n}</span>
+      <div>
+        <h2 className="text-[13px] font-semibold text-text-primary">{title}</h2>
+        <p className="mt-0.5 text-[11px] text-text-faint">{desc}</p>
+      </div>
+    </div>
+  );
+}
 
 function Field({
   label,
@@ -46,6 +66,73 @@ function Field({
         className={inputCls}
       />
     </label>
+  );
+}
+
+/** Theme & palette — the former /themes Theme Lab folded into Settings.
+ *  The rail footer toggles dark/light; this picks the dark accent/base
+ *  palette. Applied instantly to <html data-palette> and persisted. */
+const PALETTES = [
+  { id: "", name: "Graphite", note: "deep graphite base · violet accent · cyan signal", dot: "bg-accent" },
+  { id: "slate", name: "Slate", note: "cooler blue-gray base, same violet accent", dot: "bg-sky-400" },
+  { id: "ocean", name: "Ocean", note: "deep navy base, blue accent", dot: "bg-blue-400" },
+  { id: "teal", name: "Teal", note: "graphite base, teal accent + sky signal", dot: "bg-teal-400" },
+];
+
+function ThemePalettePanel() {
+  const [current, setCurrent] = useState(() => document.documentElement.dataset.palette ?? "");
+
+  const apply = (id: string) => {
+    document.documentElement.dataset.theme = "dark"; // palettes are dark-only
+    if (id) {
+      document.documentElement.dataset.palette = id;
+      localStorage.setItem("outpost-palette", id);
+      localStorage.setItem("outpost-theme-v2", "dark");
+    } else {
+      delete document.documentElement.dataset.palette;
+      localStorage.removeItem("outpost-palette");
+    }
+    setCurrent(id);
+  };
+
+  return (
+    <Panel
+      kicker="Appearance"
+      title="Theme & palette"
+      right={
+        <span className="font-mono text-[10px] text-text-faint">
+          {current ? `active: ${PALETTES.find((p) => p.id === current)?.name ?? current}` : "active: graphite (default)"}
+        </span>
+      }
+    >
+      <p className="mb-3 text-xs leading-relaxed text-text-muted">
+        Toggle dark/light from the rail footer. In dark mode you can swap the base/accent palette — applied instantly,
+        saved across reloads.
+      </p>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {PALETTES.map((p) => {
+          const active = current === p.id;
+          return (
+            <button
+              key={p.id || "graphite"}
+              onClick={() => apply(p.id)}
+              aria-pressed={active}
+              title={p.note}
+              className={`press rounded-lg border p-3 text-left transition-colors duration-150 ${
+                active ? "border-accent/60 bg-accent/10" : "border-border-subtle hover:border-accent/40"
+              }`}
+            >
+              <span className="flex items-center gap-2">
+                <span className={`h-3 w-3 rounded-full ${p.dot}`} aria-hidden />
+                <span className="text-xs font-semibold text-text-primary">{p.name}</span>
+              </span>
+              <span className="mt-1 block truncate font-mono text-[9px] text-text-faint">{p.note}</span>
+              {active && <span className="mt-1 block font-mono text-[9px] uppercase tracking-wide text-accent">✓ applied</span>}
+            </button>
+          );
+        })}
+      </div>
+    </Panel>
   );
 }
 
@@ -317,6 +404,178 @@ function RetentionPanel() {
   );
 }
 
+/* ── Threat-intel API keys — AbuseIPDB / VirusTotal, DB-backed with masked
+   status (never a raw key in the payload), env fallback, and a per-key live
+   test. Applies to the next enrichment call — no backend restart. */
+const KEY_LABELS: Record<string, string> = {
+  abuseipdb: "AbuseIPDB",
+  virustotal: "VirusTotal",
+};
+const KEY_HINTS: Record<string, string> = {
+  abuseipdb: "IP reputation lookups (abuseConfidenceScore per destination)",
+  virustotal: "IP + file-hash reputation (malicious-vendor counts on run detail)",
+};
+
+function IntelKeysPanel() {
+  const queryClient = useQueryClient();
+  const { data } = useQuery({ queryKey: ["intel-keys"], queryFn: getIntelKeys });
+  const { data: freshness } = useQuery({ queryKey: ["intel-freshness"], queryFn: getIntelFreshness, staleTime: 30_000 });
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [results, setResults] = useState<Record<string, { ok: boolean; detail: string }>>({});
+  const [busy, setBusy] = useState<Record<string, "saving" | "testing" | undefined>>({});
+
+  const sweep = useMutation({
+    mutationFn: () => refreshStaleIntel(50),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["intel-freshness"] }),
+  });
+
+  const keys = data?.keys ?? [];
+  const invalidate = () => void queryClient.invalidateQueries({ queryKey: ["intel-keys"] });
+
+  const save = async (name: string) => {
+    const value = (drafts[name] ?? "").trim();
+    if (!value) return;
+    setBusy((b) => ({ ...b, [name]: "saving" }));
+    try {
+      await setIntelKey(name, value);
+      setDrafts((d) => ({ ...d, [name]: "" }));
+      await invalidate();
+    } catch {
+      setResults((prev) => ({ ...prev, [name]: { ok: false, detail: "Couldn't store the key — backend reachable?" } }));
+    }
+    setBusy((b) => ({ ...b, [name]: undefined }));
+  };
+
+  const clear = async (name: string) => {
+    await clearIntelKey(name);
+    setResults((prev) => ({ ...prev, [name]: { ok: false, detail: "" } }));
+    await invalidate();
+  };
+
+  const test = async (name: string) => {
+    setBusy((b) => ({ ...b, [name]: "testing" }));
+    try {
+      const r = await testIntelKey(name);
+      setResults((prev) => ({ ...prev, [name]: { ok: r.ok, detail: r.detail } }));
+    } catch {
+      setResults((prev) => ({ ...prev, [name]: { ok: false, detail: "Test failed — is the backend running?" } }));
+    }
+    setBusy((b) => ({ ...b, [name]: undefined }));
+  };
+
+  return (
+    <Panel title="Threat-intel keys" right={<ChannelBadge active={keys.some((k) => k.set)} />}>
+      <p className="text-xs leading-relaxed text-text-muted">
+        AbuseIPDB and VirusTotal keys drive IP and file-hash enrichment (reputation badges on run detail and the
+        hash pre-check on upload). Stored in the backend's settings table — the raw value is never shown back to the
+        browser, and the env vars (<span className="font-mono">ABUSEIPDB_API_KEY</span> /{" "}
+        <span className="font-mono">VIRUSTOTAL_API_KEY</span>) remain the zero-config fallback. A key applies to the
+        next enrichment call — no restart.
+      </p>
+      <div className="mt-4 space-y-4">
+        {keys.map((k) => {
+          return (
+            <div key={k.name} className="rounded-lg border border-border-subtle bg-bg-elevated/30 p-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[13px] font-semibold text-text-primary">{KEY_LABELS[k.name] ?? k.name}</span>
+                <span
+                  className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[10px] ${
+                    k.source === "db"
+                      ? "border-risk-clean/50 bg-risk-clean/10 text-risk-clean"
+                      : k.source === "env"
+                        ? "border-accent/50 bg-accent/10 text-accent"
+                        : "border-border-subtle bg-bg-elevated/60 text-text-faint"
+                  }`}
+                >
+                  {k.set ? (k.source === "db" ? `configured · …${k.suffix}` : `env fallback · …${k.suffix}`) : "not configured"}
+                </span>
+                <span className="ml-auto font-mono text-[10px] text-text-faint">{KEY_HINTS[k.name] ?? ""}</span>
+              </div>
+              <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                <input
+                  type="password"
+                  value={drafts[k.name] ?? ""}
+                  onChange={(e) => setDrafts((d) => ({ ...d, [k.name]: e.target.value }))}
+                  placeholder={k.source === "db" ? "•••••••• (keep existing — enter a new one to replace)" : "paste key"}
+                  className="w-64 rounded border border-border-subtle bg-bg-base px-2.5 py-1.5 font-mono text-xs text-text-primary placeholder:text-text-faint focus:border-accent/60 focus:outline-none"
+                  aria-label={`${k.name} key`}
+                  autoComplete="off"
+                />
+                <button
+                  onClick={() => void save(k.name)}
+                  disabled={busy[k.name] === "saving" || !(drafts[k.name] ?? "").trim()}
+                  className="press rounded border border-accent/60 bg-accent/10 px-3 py-1.5 font-mono text-xs text-accent transition-colors duration-150 hover:bg-accent/15 disabled:cursor-default disabled:opacity-40"
+                >
+                  {busy[k.name] === "saving" ? "Saving…" : "Save"}
+                </button>
+                <button
+                  onClick={() => void test(k.name)}
+                  disabled={!k.set || busy[k.name] === "testing"}
+                  className="press rounded border border-border-subtle px-3 py-1.5 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent disabled:cursor-default disabled:opacity-40"
+                  title="Live probe of the effective key against the provider (costs one quota unit on free tiers)"
+                >
+                  {busy[k.name] === "testing" ? "Testing…" : "Test key"}
+                </button>
+                {k.source === "db" && (
+                  <button
+                    onClick={() => void clear(k.name)}
+                    className="press rounded border border-border-subtle px-3 py-1.5 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-risk-malicious/50 hover:text-risk-malicious"
+                    title="Remove the stored key — the env fallback (if any) becomes effective again"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+              {results[k.name]?.detail && (
+                <p className={`mt-2 font-mono text-[10px] ${results[k.name]?.ok ? "text-risk-clean" : "text-risk-malicious"}`}>
+                  {results[k.name]?.ok ? "✓ " : "✗ "}
+                  {results[k.name]?.detail}
+                </p>
+              )}
+              {/* Rotation hint — a stored key past 90 days is flagged so
+                  credentials don't go stale unnoticed (best practice for
+                  third-party API keys). */}
+              {k.source === "db" && k.age_days !== null && k.age_days > 90 && (
+                <p className="mt-2 inline-flex items-center gap-1.5 font-mono text-[10px] text-risk-suspicious">
+                  <Icon name="alert" size={10} />
+                  stored {k.age_days} days ago — consider rotating this key
+                </p>
+              )}
+            </div>
+          );
+        })}
+
+        {/* Stale-only maintenance sweep — re-query just the cache rows past
+            the TTL (oldest first), leaving fresh verdicts untouched. */}
+        <div className="mt-4 border-t border-border-subtle/60 pt-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => sweep.mutate()}
+              disabled={sweep.isPending || !freshness || freshness.stale_count === 0}
+              className="press inline-flex items-center gap-1.5 rounded border border-accent/50 px-2.5 py-1 font-mono text-[11px] text-accent transition-colors hover:bg-accent/10 disabled:cursor-not-allowed disabled:opacity-40"
+              title="Re-query only the cached verdicts older than the TTL (stale-only sweep) — fresh rows are left untouched"
+            >
+              <Icon name="refresh" size={11} className={sweep.isPending ? "animate-spin" : ""} />
+              {sweep.isPending ? "Refreshing stale…" : "Refresh stale intel"}
+            </button>
+            {freshness && (
+              <span className="font-mono text-[10px] text-text-faint">
+                {freshness.stale_count} of {freshness.total} cached verdicts past the{" "}
+                {freshness.oldest_age_hours !== null ? `${freshness.oldest_age_hours}h-old oldest · ` : ""}TTL
+              </span>
+            )}
+          </div>
+          {sweep.data && (
+            <p className="mt-2 font-mono text-[10px] text-risk-clean">
+              ✓ refreshed {sweep.data.refreshed} stale verdict{sweep.data.refreshed === 1 ? "" : "s"}
+            </p>
+          )}
+        </div>
+      </div>
+    </Panel>
+  );
+}
+
 function ChannelBadge({ active }: { active: boolean }) {
   return (
     <span
@@ -358,7 +617,6 @@ export default function SettingsPage() {
   });
 
   // Password rotation (admin only) — stored server-side as a salted PBKDF2 hash.
-  const [pwRole, setPwRole] = useState<"admin" | "analyst">("admin");
   const [newPass, setNewPass] = useState("");
   const [confirmPass, setConfirmPass] = useState("");
   const [pwMsg, setPwMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -384,12 +642,29 @@ export default function SettingsPage() {
       setPwMsg({ ok: false, text: "Passwords don't match." });
       return;
     }
-    rotate.mutate({ role: pwRole, password: newPass });
+    rotate.mutate({ role: "admin", password: newPass });
   };
 
   const ready = (draft ?? data) as NotificationSettings | undefined;
   const set = (patch: Partial<NotificationSettingsIn>) =>
     setDraft((d) => ({ ...(d ?? (data as NotificationSettings)), ...patch }));
+
+  // Browser notifications (native desktop-toast equivalent) — opt-in via this
+  // panel, stored client-side; the Layout-level listener does the rest.
+  const [notifyPref, setNotifyPref] = useState(browserNotifyEnabled());
+  const [perm, setPerm] = useState<NotificationPermission>(browserPermission());
+  const toggleNotify = () => {
+    const next = !notifyPref;
+    setBrowserNotifyEnabled(next);
+    setNotifyPref(next);
+  };
+  const requestPerm = async () => {
+    try {
+      setPerm(await Notification.requestPermission());
+    } catch {
+      /* non-secure context / unsupported — stays denied */
+    }
+  };
 
   const webhookActive = Boolean(ready?.webhook_url);
   const slackActive = Boolean(ready?.slack_webhook);
@@ -403,35 +678,18 @@ export default function SettingsPage() {
         kicker="Operations · settings"
         title={
           <>
-            Alert channels{" "}
-            <span className="font-normal text-text-muted">— webhook, Slack, Discord, Telegram, email</span>
+            Settings <span className="font-normal text-text-muted">— look, access, store, and alert channels</span>
           </>
         }
-        lede="Route findings to any number of channels: a generic JSON webhook, Slack, Discord, a Telegram bot, or SMTP email. Every channel receives the same alert the moment it fires — one POST per alert, sent asynchronously on ingest, plus a watchlist-hit message when a watched IOC appears in a new run."
+        lede="Tune the console: theme, access & passwords, data retention and intel keys, and where findings are routed. Everything here is optional — the zero-config default just works."
       />
 
-      <div className="mb-6">
-        <Panel
-          kicker="Appearance"
-          title="Theme & palette"
-          right={
-            <Link
-              to="/themes"
-              className="press inline-flex items-center gap-1 font-mono text-[10px] text-accent transition-colors hover:underline"
-            >
-              open theme lab <Icon name="arrowRight" size={11} />
-            </Link>
-          }
-        >
-          <div className="flex flex-wrap items-center gap-2">
-            <Icon name="sliders" size={13} className="text-accent" />
-            <span className="text-xs text-text-muted">
-              Toggle dark/light from the rail footer, or fine-tune the accent, base, and risk palettes in the theme lab.
-            </span>
-            <span className="ml-auto font-mono text-[10px] text-text-faint">persisted in localStorage</span>
-          </div>
-        </Panel>
+      <SectionHeader n="01" title="Look & feel" desc="Theme and palette — the instrument-panel look." />
+      <div className="mb-8">
+        <ThemePalettePanel />
       </div>
+
+      <SectionHeader n="02" title="Access & security" desc="Optional auth: one password gates the console; login rate limiting protects it." />
 
       {me?.enabled && (
         <div className="mb-6">
@@ -477,9 +735,17 @@ export default function SettingsPage() {
         <LoginRateLimitPanel />
       </div>
 
+      <SectionHeader n="03" title="Store & intel" desc="Retention, backup, restore, and the threat-intel keys used for enrichment." />
+
       <div className="mb-6">
         <RetentionPanel />
       </div>
+
+      <div className="mb-8">
+        <IntelKeysPanel />
+      </div>
+
+      <SectionHeader n="04" title="Alert channels" desc="Where findings are routed — webhook, Slack, Discord, Telegram, email, and browser notifications." />
 
       {me?.enabled && me.authenticated && !me.read_only && (
         <div className="mb-6">
@@ -493,19 +759,8 @@ export default function SettingsPage() {
             }
           >
             <div className="flex flex-wrap items-end gap-2">
-              <label className="block">
-                <span className="kicker mb-1 block">Role</span>
-                <select
-                  value={pwRole}
-                  onChange={(e) => setPwRole(e.target.value as "admin" | "analyst")}
-                  className="rounded border border-border-subtle bg-bg-base px-3 py-2 font-mono text-sm text-text-primary focus:border-accent/60 focus:outline-none"
-                >
-                  <option value="admin">admin</option>
-                  <option value="analyst">analyst</option>
-                </select>
-              </label>
               <label className="block min-w-40 flex-1">
-                <span className="kicker mb-1 block">New password</span>
+                <span className="kicker mb-1 block">Password</span>
                 <input
                   type="password"
                   value={newPass}
@@ -533,8 +788,8 @@ export default function SettingsPage() {
               </button>
             </div>
             <p className="mt-2 text-[11px] text-text-muted">
-              Stored server-side as a salted PBKDF2 hash — never in plaintext. Rotating a role's password invalidates
-              that role's existing sessions.
+              One optional password for the whole console — stored server-side as a salted PBKDF2 hash, never in
+              plaintext. Rotating it invalidates existing sessions.
             </p>
             {pwMsg && <p className={`mt-2 text-xs ${pwMsg.ok ? "text-accent" : "text-risk-malicious"}`}>{pwMsg.text}</p>}
           </Panel>
@@ -671,8 +926,42 @@ export default function SettingsPage() {
               <p className="text-xs text-text-muted">Read-only analyst — changes blocked by the API gate.</p>
             )}
           </div>
+
+          <Panel
+            title="Browser notifications"
+            right={<ChannelBadge active={notifyPref && perm === "granted"} />}
+          >
+            <p className="text-xs leading-relaxed text-text-muted">
+              The webapp's desktop-toast equivalent: while this tab is unfocused, a fired suspicious or malicious
+              alert raises a native browser notification (deduped per run + rule — clicking it jumps to the run).
+              Purely client-side, no backend channel involved. Requires the browser's permission below.
+            </p>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <button
+                onClick={toggleNotify}
+                className={`press inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 font-mono text-xs transition-colors duration-150 ${
+                  notifyPref
+                    ? "border-accent/60 bg-accent/10 text-accent"
+                    : "border-border-subtle text-text-muted hover:border-accent/60 hover:text-accent"
+                }`}
+              >
+                <Icon name="bell" size={12} />
+                {notifyPref ? "Enabled — click to disable" : "Enable browser notifications"}
+              </button>
+              {perm !== "granted" && (
+                <button
+                  onClick={() => void requestPerm()}
+                  className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-2 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
+                >
+                  Allow notifications
+                </button>
+              )}
+              <span className="font-mono text-[10px] text-text-faint">permission: {perm}</span>
+            </div>
+          </Panel>
         </div>
       )}
+
     </div>
   );
 }

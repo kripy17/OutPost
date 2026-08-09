@@ -15,6 +15,8 @@ import type {
   EnumPatternsResponse,
   EventIn,
   Campaign,
+  HostWatchResponse,
+  MetaInfo,
   EventFeedParams,
   EventFeedResponse,
   Footprint,
@@ -47,6 +49,18 @@ import type {
   TuningResponse,
   WatchlistEntry,
   WatchlistImportResponse,
+  QueueResponse,
+  HostBaseline,
+  ProcessSummary,
+  RulePack,
+  RulePackImportSummary,
+  IntelKeysResponse,
+  IntelKeyStatus,
+  KeyTestResult,
+  RunReEnrichResponse,
+  IpIntelRefreshResponse,
+  IntelFreshness,
+  RefreshStaleResponse,
 } from "../types";
 
 export const BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
@@ -168,6 +182,17 @@ export async function getHealth(): Promise<boolean> {
 // Host-OS auto-detection (vision: no manual OS picker anywhere).
 export async function getPlatform(): Promise<PlatformInfo> {
   return get<PlatformInfo>("/platform");
+}
+
+// App metadata — demo-mode flag (seeded data vs real telemetry) + version
+// + first-run state (the router shows the welcome screen until it's resolved).
+export async function getMeta(): Promise<MetaInfo> {
+  return get<MetaInfo>("/meta");
+}
+
+// First-run choice: seed the labeled demo campaign, or start empty.
+export async function onboard(choice: "demo" | "empty"): Promise<{ status: string; choice: string; demo_mode: boolean }> {
+  return post("/setup/onboard", { choice });
 }
 
 // -- runs -------------------------------------------------------------------
@@ -308,6 +333,61 @@ export async function resetTuning(param: string): Promise<void> {
   if (res.status !== 204) throw new Error(`DELETE /rules/tuning/${param} → ${res.status}`);
 }
 
+// -- Threat-intel API keys (Settings) ------------------------------------------
+export async function getIntelKeys(): Promise<IntelKeysResponse> {
+  return get<IntelKeysResponse>("/settings/keys");
+}
+
+export async function setIntelKey(name: string, value: string): Promise<IntelKeyStatus> {
+  return put<IntelKeyStatus>(`/settings/keys/${name}`, { value });
+}
+
+export async function clearIntelKey(name: string): Promise<void> {
+  return del(`/settings/keys/${name}`);
+}
+
+export async function testIntelKey(name: string): Promise<KeyTestResult> {
+  return post<KeyTestResult>(`/settings/keys/${name}/test`, {});
+}
+
+/** Drop a run's cached IP/hash intel and re-run enrichment with the current
+ *  keys — the 'I just added a key' button on run detail. */
+export async function reEnrichRun(runId: string): Promise<RunReEnrichResponse> {
+  return post<RunReEnrichResponse>(`/runs/${runId}/re-enrich`, {});
+}
+
+/** Bypass the enrichment TTL ONCE for one destination IP of a run — the
+ *  per-row 'force refresh' on the run detail network panel. */
+export async function refreshIpIntel(runId: string, ip: string): Promise<IpIntelRefreshResponse> {
+  return post<IpIntelRefreshResponse>(`/runs/${runId}/enrichment/refresh?ip=${encodeURIComponent(ip)}`, {});
+}
+
+/** Global one-shot TTL bypass for any IP — the Footprint page's per-seed
+ *  force refresh (sample-scoped, across runs). */
+export async function refreshEnrichmentIp(ip: string): Promise<IpIntelRefreshResponse> {
+  return post<IpIntelRefreshResponse>(`/enrichment/${encodeURIComponent(ip)}/refresh`, {});
+}
+
+/** Cache-age summary over the enrichment cache (Overview freshness strip). */
+export async function getIntelFreshness(): Promise<IntelFreshness> {
+  return get<IntelFreshness>("/intel/freshness");
+}
+
+/** The stale-only maintenance sweep: re-query just the cache rows past the
+ *  TTL (oldest first, capped). Settings button + `outpost refresh --stale`. */
+export async function refreshStaleIntel(max = 50): Promise<RefreshStaleResponse> {
+  return post<RefreshStaleResponse>(`/intel/refresh-stale?max=${max}`, {});
+}
+
+// -- Rule packs — versioned, diffable rule-set export/import -------------------
+export async function exportRulePack(): Promise<RulePack> {
+  return get<RulePack>("/rules/pack");
+}
+
+export async function importRulePack(pack: RulePack): Promise<RulePackImportSummary> {
+  return post<RulePackImportSummary>("/rules/pack", pack);
+}
+
 // -- Alert triage (analyst workflow) -------------------------------------------
 export async function updateAlertStatus(alertId: number, status: AlertStatus, comment?: string): Promise<Alert> {
   return patch<Alert>(`/alerts/${alertId}`, { status, comment: comment ?? "" });
@@ -379,6 +459,16 @@ export async function getRecentAlerts(limit = 20): Promise<GlobalAlert[]> {
 // -- Agent fleet (which hosts stream telemetry) ------------------------------
 export async function getAgents(): Promise<AgentsResponse> {
   return get<AgentsResponse>("/agents");
+}
+
+// -- Host watch (Monitor 'watch a host' mode) --------------------------------
+export async function watchHost(hostId: string): Promise<HostWatchResponse> {
+  return get<HostWatchResponse>(`/hosts/${encodeURIComponent(hostId)}/watch`);
+}
+
+// -- Process summary (hover preview on process-jump links) -------------------
+export async function getProcessSummary(pid: number): Promise<ProcessSummary> {
+  return get<ProcessSummary>(`/events/process-summary?pid=${pid}`);
 }
 
 // -- Auth brute-force guard (read-only Settings view) ------------------------
@@ -489,6 +579,8 @@ export async function exportEventsCsv(params: EventFeedParams = {}): Promise<Blo
   if (params.platform) qs.set("platform", params.platform);
   if (params.severity) qs.set("severity", params.severity);
   if (params.q) qs.set("q", params.q);
+  if (params.pid) qs.set("pid", params.pid);
+  if (params.source) qs.set("source", params.source);
   const suffix = qs.toString();
   const res = await fetch(`${BASE_URL}/events/export${suffix ? `?${suffix}` : ""}`, { headers: authHeaders() });
   if (!res.ok) throw new Error(`GET /events/export → ${res.status}`);
@@ -503,6 +595,39 @@ export async function exportAlertsCsv(): Promise<Blob> {
 
 export async function bulkUpdateAlertStatus(ids: number[], status: AlertStatus, comment?: string): Promise<{ updated: number }> {
   return post<{ updated: number }>("/alerts/bulk", { ids, status, comment: comment ?? "" });
+}
+
+export interface AlertQueueParams {
+  status?: string;
+  rule_id?: string;
+  severity?: string;
+  host_id?: string;
+  assignee?: string;
+  campaign?: string;
+  q?: string;
+  sort?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export async function getAlertQueue(params: AlertQueueParams): Promise<QueueResponse> {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== "") qs.set(k, String(v));
+  }
+  return get<QueueResponse>(`/alerts/queue?${qs.toString()}`);
+}
+
+export async function assignAlert(alertId: number, assignee: string): Promise<{ alert_id: number; assignee: string | null }> {
+  return post(`/alerts/${alertId}/assign`, { assignee });
+}
+
+export async function getHostBaseline(hostId: string): Promise<HostBaseline> {
+  return get<HostBaseline>(`/baselines/${encodeURIComponent(hostId)}`);
+}
+
+export async function resetHostBaseline(hostId: string): Promise<void> {
+  return del(`/baselines/${encodeURIComponent(hostId)}`);
 }
 
 // Generic CSV download helper — fetch a Blob then trigger a browser save.
@@ -572,6 +697,8 @@ export async function getEvents(params: EventFeedParams = {}): Promise<EventFeed
   if (params.platform) qs.set("platform", params.platform);
   if (params.severity) qs.set("severity", params.severity);
   if (params.q) qs.set("q", params.q);
+  if (params.pid) qs.set("pid", params.pid);
+  if (params.source) qs.set("source", params.source);
   if (params.limit !== undefined) qs.set("limit", String(params.limit));
   if (params.offset !== undefined) qs.set("offset", String(params.offset));
   const suffix = qs.toString();

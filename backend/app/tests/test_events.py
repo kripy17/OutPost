@@ -30,6 +30,96 @@ def _event(run_id: str, event_type: str, platform: str, **kw) -> dict:
     return base
 
 
+def test_events_source_facet_filters_by_provenance(client):
+    """The Event Log's source tabs (Collectors / Webapp / Sandbox) map onto
+    run provenance: `live` = host collectors, `sandbox:%` = external sandbox
+    detonations, everything else = webapp/CLI/seeds."""
+    live = make_run(client, sample_name="src-live.bin", session_type="live")
+    web = make_run(client, sample_name="src-web.bin", source="monitor")
+    sand = make_run(client, sample_name="src-sand.bin", source="sandbox:anyrun")
+    for run_id, ev_type in ((live, "process_create"), (web, "process_create"), (sand, "process_create")):
+        _ingest(client, run_id, [_event(run_id, ev_type, "windows", process_name=f"p-{run_id}.exe", timestamp=_ts(1))])
+
+    # Each facet sees exactly its own run's event, and events carry `source`.
+    # The shared test DB holds other runs, so scope each facet by the unique
+    # process name to prove provenance routing (not global totals).
+    live_hit = client.get("/events", params={"source": "live", "q": f"p-{live}.exe"}).json()
+    assert live_hit["total"] == 1
+    assert live_hit["events"][0]["source"] == "live"
+    assert live_hit["events"][0]["sample_name"] == "src-live.bin"
+
+    web_hit = client.get("/events", params={"source": "webapp", "q": f"p-{web}.exe"}).json()
+    assert web_hit["total"] == 1
+    assert web_hit["events"][0]["source"] == "monitor"
+    assert web_hit["events"][0]["sample_name"] == "src-web.bin"
+
+    sand_hit = client.get("/events", params={"source": "sandbox", "q": f"p-{sand}.exe"}).json()
+    assert sand_hit["total"] == 1
+    assert sand_hit["events"][0]["source"] == "sandbox:anyrun"
+    assert sand_hit["events"][0]["sample_name"] == "src-sand.bin"
+
+    # Facets are mutually exclusive: each scoped event only appears in its own.
+    assert client.get("/events", params={"source": "webapp", "q": f"p-{live}.exe"}).json()["total"] == 0
+    assert client.get("/events", params={"source": "live", "q": f"p-{sand}.exe"}).json()["total"] == 0
+
+    # CSV export honors the facet and carries the source column.
+    csv_resp = client.get("/events/export", params={"source": "sandbox", "q": f"p-{sand}.exe"})
+    assert csv_resp.status_code == 200
+    text = csv_resp.text
+    assert text.splitlines()[0].startswith("timestamp,run_id,sample_name,platform,source")
+    assert "src-sand.bin" in text and "src-live.bin" not in text
+
+    # Unknown provenance is rejected loudly.
+    assert client.get("/events", params={"source": "not-a-source"}).status_code == 422
+
+    # Close the open live run so /runs/active-live's 404 contract holds for
+    # the other tests (shared-DB interference, same pattern as test_agents).
+    client.post(f"/runs/{live}/complete")
+
+
+def test_events_channel_facets_split_collector_stream(client):
+    """Collectors tag each event with its exact log channel (auditd/sysmon);
+    the source tabs split on that tag — authoritative, not inferred from the
+    platform label (a linux-platform webapp event is NOT auditd)."""
+    aud = make_run(client, sample_name="chan-aud.bin", session_type="live")
+    sys = make_run(client, sample_name="chan-sys.bin", session_type="live")
+    web = make_run(client, sample_name="chan-web.bin", source="monitor")
+    for run_id, chan, name in ((aud, "auditd", "aud"), (sys, "sysmon", "sys"), (web, None, "web")):
+        ev = _event(
+            run_id, "process_create", "windows" if run_id == sys else "linux",
+            process_name=f"c-{run_id}.exe", timestamp=_ts(1),
+        )
+        if chan:
+            ev["log_source"] = chan
+        _ingest(client, run_id, [ev])
+
+    # Each channel tab sees exactly its tagged event, and the tag rides out.
+    aud_hit = client.get("/events", params={"source": "auditd", "q": f"c-{aud}.exe"}).json()
+    assert aud_hit["total"] == 1 and aud_hit["events"][0]["log_source"] == "auditd"
+    sys_hit = client.get("/events", params={"source": "sysmon", "q": f"c-{sys}.exe"}).json()
+    assert sys_hit["total"] == 1 and sys_hit["events"][0]["log_source"] == "sysmon"
+    web_hit = client.get("/events", params={"source": "webapp", "q": f"c-{web}.exe"}).json()
+    assert web_hit["total"] == 1 and web_hit["events"][0]["log_source"] is None
+
+    # The tag is authoritative: the linux-platform webapp event is NOT auditd,
+    # and channels are mutually exclusive.
+    assert client.get("/events", params={"source": "auditd", "q": f"c-{web}.exe"}).json()["total"] == 0
+    assert client.get("/events", params={"source": "sysmon", "q": f"c-{aud}.exe"}).json()["total"] == 0
+
+    # Both tagged events still count under the coarse Collectors tab.
+    assert client.get("/events", params={"source": "live", "q": f"c-{aud}.exe"}).json()["total"] == 1
+    assert client.get("/events", params={"source": "live", "q": f"c-{sys}.exe"}).json()["total"] == 1
+
+    # CSV export carries the channel and honors the facet.
+    csv_resp = client.get("/events/export", params={"source": "sysmon", "q": f"c-{sys}.exe"})
+    assert csv_resp.status_code == 200
+    assert "sysmon" in csv_resp.text and f"c-{aud}.exe" not in csv_resp.text
+
+    # Close the live runs so /runs/active-live's 404 contract holds.
+    client.post(f"/runs/{aud}/complete")
+    client.post(f"/runs/{sys}/complete")
+
+
 def test_events_feed_shape_and_pagination(client):
     marker = "feedshape-"
     a = make_run(client, sample_name="feed-a.bin")
@@ -115,3 +205,106 @@ def test_events_invalid_filters_422(client):
     assert client.get("/events", params={"platform": "plan9"}).status_code == 422
     assert client.get("/events", params={"severity": "fatal"}).status_code == 422
     assert client.get("/events", params={"limit": 0}).status_code == 422
+    assert client.get("/events", params={"pid": 0}).status_code == 422
+    assert client.get("/events", params={"pid": "1,2,three"}).status_code == 422
+
+
+def test_events_pid_filter_scopes_to_one_process(client):
+    """Process-centric drill-down: ?pid=N returns everything that PID did
+    (children, files, network, registry) — the Event-Manager parity pivot."""
+    marker = "feedpid-"
+    a = make_run(client, sample_name="feed-pid.bin")
+    _ingest(client, a, [
+        _event(a, "process_create", "windows", pid=9001, ppid=4, process_name=f"{marker}a.exe", command_line=marker, timestamp=_ts(1)),
+        _event(a, "network_connection", "windows", pid=9001, dest_ip="198.51.100.201", command_line=marker, timestamp=_ts(2)),
+        _event(a, "file_write", "windows", pid=9002, file_path=f"C:\\tmp\\{marker}b.txt", command_line=marker, timestamp=_ts(3)),
+    ])
+
+    only_9001 = client.get("/events", params={"q": marker, "pid": 9001}).json()
+    assert only_9001["total"] == 2
+    assert {e["pid"] for e in only_9001["events"]} == {9001}
+    assert {e["event_type"] for e in only_9001["events"]} == {"process_create", "network_connection"}
+
+    only_9002 = client.get("/events", params={"q": marker, "pid": 9002}).json()
+    assert only_9002["total"] == 1
+    assert only_9002["events"][0]["event_type"] == "file_write"
+
+    # Comma-separated list — the recon-sweep jump (every enumerating PID).
+    multi = client.get("/events", params={"q": marker, "pid": "9001,9002"}).json()
+    assert multi["total"] == 3
+    assert {e["pid"] for e in multi["events"]} == {9001, 9002}
+    assert client.get("/events", params={"q": marker, "pid": "9002,9003"}).json()["total"] == 1
+    # Invalid tokens are rejected, not silently ignored.
+    assert client.get("/events", params={"q": marker, "pid": "abc"}).status_code == 422
+    assert client.get("/events", params={"q": marker, "pid": "9001,-2"}).status_code == 422
+
+
+def test_events_process_summary(client):
+    """The hover-preview endpoint: process identity + run + impact counts."""
+    marker = "procsum-"
+    a = make_run(client, sample_name="feed-procsum.bin")
+    _ingest(client, a, [
+        _event(a, "process_create", "windows", pid=9201, ppid=4, process_name=f"{marker}one.exe",
+               command_line=f"{marker}one.exe --payload x", timestamp=_ts(1)),
+        _event(a, "network_connection", "windows", pid=9201, dest_ip="198.51.100.231",
+               command_line=marker, timestamp=_ts(2)),
+    ])
+
+    s = client.get("/events/process-summary", params={"pid": 9201}).json()
+    assert s["process_name"] == f"{marker}one.exe"
+    assert s["command_line"] == f"{marker}one.exe --payload x"
+    assert s["event_count"] == 2
+    assert s["run_id"] == a and s["sample_name"] == "feed-procsum.bin"
+    assert s["alert_count"] == 0  # unique marker name → no detection fired
+
+    # An alert naming the same PID in another run counts too.
+    b = make_run(client, sample_name="feed-procsum2.bin")
+    _ingest(client, b, [
+        {"run_id": b, "platform": "windows", "event_type": "process_create",
+         "timestamp": _ts(5), "pid": 9201, "ppid": 4, "process_name": "powershell.exe",
+         "command_line": "powershell.exe -enc SQBFAFgAAGgBdAA="},
+    ])
+    s2 = client.get("/events/process-summary", params={"pid": 9201}).json()
+    assert s2["alert_count"] == 1
+    assert s2["run_id"] == b  # newest process-create row wins
+    assert s2["event_count"] == 3
+
+    assert client.get("/events/process-summary", params={"pid": 999999}).status_code == 404
+    assert client.get("/events/process-summary", params={"pid": 0}).status_code == 422
+
+
+def test_events_multi_pid_csv_export(client):
+    marker = "feedmulticsv-"
+    a = make_run(client, sample_name="feed-multicsv.bin")
+    _ingest(client, a, [
+        _event(a, "process_create", "windows", pid=9101, ppid=4, process_name=f"{marker}a.exe", command_line=marker, timestamp=_ts(1)),
+        _event(a, "file_write", "windows", pid=9102, file_path=f"C:\\tmp\\{marker}b.txt", command_line=marker, timestamp=_ts(2)),
+        _event(a, "file_write", "windows", pid=9103, file_path=f"C:\\tmp\\{marker}c.txt", command_line=marker, timestamp=_ts(3)),
+    ])
+    csv = client.get("/events/export", params={"q": marker, "pid": "9101,9102"}).text
+    assert "9101" in csv and "9102" in csv and "9103" not in csv
+
+
+def test_events_carry_raw_record_from_collector_payload(client):
+    """Ingest stores the collector's original payload as the event's raw
+    record — the Event Viewer's side-by-side raw line."""
+    import json as _json
+
+    marker = "feedraw-"
+    a = make_run(client, sample_name="feed-raw.bin")
+    _ingest(client, a, [
+        _event(a, "registry_write", "windows", pid=9003, command_line=marker, timestamp=_ts(1),
+               registry_key=r"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run\Bad"),
+    ])
+
+    ev = client.get("/events", params={"q": marker}).json()["events"][0]
+    raw = _json.loads(ev["raw_record"])
+    assert raw["event_type"] == "registry_write"
+    assert raw["pid"] == 9003
+    assert raw["registry_key"].endswith(r"Run\Bad")
+    # The raw record and the normalized row agree on the event identity.
+    assert raw["timestamp"] == ev["timestamp"]
+
+    # CSV export honors the pid filter too.
+    csv = client.get("/events/export", params={"q": marker, "pid": 9003}).text
+    assert "registry_write" in csv and "Run\\Bad" in csv

@@ -22,8 +22,32 @@ router = APIRouter(tags=["analysis"])
 _EVENT_TYPES = {"process_create", "network_connection", "file_write", "registry_write"}
 _PLATFORMS = {"windows", "linux"}
 _SEVERITIES = {"suspicious", "malicious"}
+# Provenance facets for the Event Log's source tabs: `live` = host collectors
+# (auditd/Sysmon), `sandbox` = external-sandbox detonations, `webapp` =
+# everything else (webapp synthetic detonations, CLI runs, seeds). The
+# collectors stamp each shipped event with its exact channel (`log_source`:
+# auditd / sysmon), so `auditd` and `sysmon` split the collector stream by
+# log source — not by inference from the platform.
+_SOURCES = {"live", "webapp", "sandbox", "auditd", "sysmon"}
 _DEFAULT_LIMIT = 100
 _MAX_LIMIT = 500
+
+
+def _source_clause(source: str) -> tuple[str, list]:
+    """WHERE fragment for a provenance facet, mirroring how runs record it:
+    live sessions are forced to `source='live'` server-side; sandbox runs are
+    `sandbox:<provider>`; webapp/CLI/seeds carry their own marker. The
+    channel facets (`auditd` / `sysmon`) filter on the event's own
+    log_source tag, so they work across any run type."""
+    if source == "live":
+        return "r.source = 'live'", []
+    if source == "sandbox":
+        return "r.source LIKE 'sandbox:%'", []
+    if source == "auditd":
+        return "e.log_source = 'auditd'", []
+    if source == "sysmon":
+        return "e.log_source = 'sysmon'", []
+    return "r.source != 'live' AND r.source NOT LIKE 'sandbox:%'", []
 
 
 def _like(value: str) -> str:
@@ -32,12 +56,35 @@ def _like(value: str) -> str:
     return f"%{escaped}%"
 
 
+def _parse_pids(raw: Optional[str]) -> list[int]:
+    """Parse the `pid` filter — one integer or a comma-separated list (the
+    recon-sweep jump: every enumerating PID of an enumeration-burst alert).
+    422 on any token that isn't a positive integer."""
+    if not raw:
+        return []
+    pids: list[int] = []
+    for token in raw.split(","):
+        t = token.strip()
+        if not t:
+            continue
+        try:
+            n = int(t)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="pid must be a positive integer or comma-separated list")
+        if n < 1:
+            raise HTTPException(status_code=422, detail="pid must be a positive integer or comma-separated list")
+        pids.append(n)
+    return pids
+
+
 @router.get("/events", response_model=None)
 def list_events(
     event_type: Optional[str] = None,
     platform: Optional[str] = None,
     severity: Optional[str] = None,
     q: Optional[str] = None,
+    pid: Optional[str] = None,
+    source: Optional[str] = None,
     limit: int = Query(_DEFAULT_LIMIT, ge=1, le=_MAX_LIMIT),
     offset: int = Query(0, ge=0),
 ):
@@ -46,6 +93,12 @@ def list_events(
     - `severity` filters to events whose *run* carries at least one alert of
       that severity — triage: "show me everything from findings-bearing runs".
     - `q` matches process name, file path, registry key, command line, dest IP.
+    - `pid` filters to one process — the process-centric drill-down (everything
+      that PID did: children, files, network, registry). Accepts a
+      comma-separated list too, so a recon sweep jumps to every enumerating
+      process at once.
+    - `source` filters by provenance facet: `live` (host collectors),
+      `sandbox` (external sandboxes), `webapp` (everything else).
     """
     if event_type is not None and event_type not in _EVENT_TYPES:
         raise HTTPException(status_code=422, detail=f"event_type must be one of {sorted(_EVENT_TYPES)}")
@@ -53,10 +106,16 @@ def list_events(
         raise HTTPException(status_code=422, detail=f"platform must be one of {sorted(_PLATFORMS)}")
     if severity is not None and severity not in _SEVERITIES:
         raise HTTPException(status_code=422, detail=f"severity must be one of {sorted(_SEVERITIES)}")
+    if source is not None and source not in _SOURCES:
+        raise HTTPException(status_code=422, detail=f"source must be one of {sorted(_SOURCES)}")
 
     where = ["1=1"]
     params: list = []
 
+    pids = _parse_pids(pid)
+    if pids:
+        where.append(f"e.pid IN ({','.join('?' * len(pids))})")
+        params += pids
     if event_type:
         where.append("e.event_type = ?")
         params.append(event_type)
@@ -75,14 +134,21 @@ def list_events(
             "OR e.host_id LIKE ? ESCAPE '\\')"
         )
         params += [like, like, like, like, q, like, like]
+    if source:
+        frag, extra = _source_clause(source)
+        where.append(frag)
+        params += extra
 
     clause = " AND ".join(where)
 
     with db_session() as conn:
-        total = conn.execute(f"SELECT COUNT(*) AS n FROM events e WHERE {clause}", params).fetchone()["n"]
+        total = conn.execute(
+            f"SELECT COUNT(*) AS n FROM events e JOIN runs r ON r.run_id = e.run_id WHERE {clause}",
+            params,
+        ).fetchone()["n"]
         rows = conn.execute(
             f"""
-            SELECT e.*, r.sample_name, r.session_type,
+            SELECT e.*, r.sample_name, r.session_type, r.source,
                    (SELECT MAX(CASE a.severity WHEN 'malicious' THEN 2 WHEN 'suspicious' THEN 1 ELSE 0 END)
                     FROM alerts a WHERE a.run_id = e.run_id) AS run_sev
             FROM events e
@@ -108,12 +174,68 @@ def list_events(
     }
 
 
+@router.get("/events/process-summary", response_model=None)
+def process_summary(pid: int) -> dict:
+    """One process's identity + impact, for the hover preview on process-jump
+    links: name + command line from its process-create record, the run it
+    belongs to, its total event count, and how many alerts in those runs name
+    this PID (related_pid or in related_pids). 404 when the pid has no events.
+    """
+    if pid < 1:
+        raise HTTPException(status_code=422, detail="pid must be a positive integer")
+    with db_session() as conn:
+        row = conn.execute(
+            """
+            SELECT e.*, r.sample_name FROM events e
+            JOIN runs r ON r.run_id = e.run_id
+            WHERE e.pid = ?
+            -- The identity is the process-CREATE record (name + command line);
+            -- fall back to any event for pids with no create observed.
+            ORDER BY (e.event_type = 'process_create') DESC, e.timestamp DESC
+            LIMIT 1
+            """,
+            (pid,),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail=f"No events for pid {pid}")
+        event_count = conn.execute(
+            "SELECT COUNT(*) AS n FROM events WHERE pid = ?", (pid,)
+        ).fetchone()["n"]
+        run_ids = [
+            r["run_id"]
+            for r in conn.execute("SELECT DISTINCT run_id FROM events WHERE pid = ?", (pid,)).fetchall()
+        ]
+        alert_count = 0
+        if run_ids:
+            placeholders = ",".join("?" * len(run_ids))
+            alert_count = conn.execute(
+                f"""
+                SELECT COUNT(*) AS n FROM alerts
+                WHERE run_id IN ({placeholders}) AND (related_pid = ? OR related_pids LIKE ?)
+                """,
+                (*run_ids, pid, f"%{pid}%"),
+            ).fetchone()["n"]
+    return {
+        "pid": pid,
+        "process_name": row["process_name"],
+        "command_line": row["command_line"],
+        "platform": row["platform"],
+        "host_id": row["host_id"],
+        "run_id": row["run_id"],
+        "sample_name": row["sample_name"],
+        "event_count": event_count,
+        "alert_count": alert_count,
+    }
+
+
 @router.get("/events/export", response_model=None)
 def export_events(
     event_type: Optional[str] = None,
     platform: Optional[str] = None,
     severity: Optional[str] = None,
     q: Optional[str] = None,
+    pid: Optional[str] = None,
+    source: Optional[str] = None,
     limit: int = Query(1000, ge=1, le=5000),
 ):
     """CSV export of the filtered event feed (same filters as GET /events).
@@ -121,13 +243,14 @@ def export_events(
     `limit` defaults much higher than the feed's (1000, up to 5000) — export
     is the bulk path; the webapp caps at 500 for interactive pagination.
     """
-    feed = list_events(event_type=event_type, platform=platform, severity=severity, q=q, limit=limit, offset=0)
+    feed = list_events(event_type=event_type, platform=platform, severity=severity, q=q, pid=pid, source=source, limit=limit, offset=0)
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["timestamp", "run_id", "sample_name", "platform", "event_type", "pid", "ppid", "process_name", "command_line", "dest_ip", "dest_port", "protocol", "file_path", "registry_key", "host_id", "run_severity"])
+    writer.writerow(["timestamp", "run_id", "sample_name", "platform", "source", "log_source", "event_type", "pid", "ppid", "process_name", "command_line", "dest_ip", "dest_port", "protocol", "file_path", "registry_key", "host_id", "run_severity"])
     for ev in feed["events"]:
         writer.writerow([
-            ev["timestamp"], ev["run_id"], ev["sample_name"], ev["platform"],
+            ev["timestamp"], ev["run_id"], ev["sample_name"], ev["platform"], ev.get("source", ""),
+            ev.get("log_source") or "",
             ev["event_type"], ev["pid"], ev["ppid"], ev["process_name"],
             ev["command_line"], ev["dest_ip"], ev["dest_port"], ev["protocol"],
             ev["file_path"], ev["registry_key"], ev.get("host_id", "local"), ev["run_severity"],

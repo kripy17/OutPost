@@ -1,78 +1,84 @@
 @import "tailwindcss";
 
-/* OutPost design system — v6 "signal console".
-   Dark-first by default. Deep graphite surfaces with a cool blue cast, a
-   violet interaction accent, and a cyan *signal* token for telemetry (live
-   data, network, timing) so the accent and the data never compete. Functional
-   risk colors (green/amber/red) stay. :root IS dark; [data-theme="light"] is
-   the secondary opt-in. Set before first paint by the inline script in
-   index.html (fresh storage key so every user starts dark). */
+/* OutPost design system — v7 "forensics lab" (spec-aligned identity).
+   Dark-first by default: deep slate fields (#14171C), an amber signature
+   accent that doubles as the in-progress state AND as risk-suspicious
+   (deliberate reuse), desaturated brick for malicious, teal for clean, and a
+   cyan *signal* token for telemetry (live data, network, timing) so the
+   accent and the data never compete. IBM Plex Sans + Mono. :root IS dark;
+   [data-theme="light"] is the secondary opt-in. Set before first paint by
+   the inline script in index.html (fresh storage key so every user starts
+   dark). */
 
 :root {
-  /* ── Field (backgrounds) — deep graphite with a cool cast ────────────── */
-  --bg-base: #0a0c11;
-  --bg-surface: #10141c;
-  --bg-elevated: #171d28;
-  --bg-inset: #0d1017;
-  --bg-overlay: #161c27;
+  /* ── Field (backgrounds) — the forensics-lab slate ─────────────────────
+     Deep slate, not pure black; surfaces step up a notch, never jump. */
+  --bg-base: #14171c;
+  --bg-surface: #1c2028;
+  --bg-elevated: #242a35;
+  --bg-inset: #101318;
+  --bg-overlay: #1f2530;
 
-  /* Atmosphere — faint violet bloom (top-left) + cool depth (bottom-right). */
-  --atmos-a: 63 55 145;
-  --atmos-b: 14 34 66;
+  /* Atmosphere — faint amber lab-light (top-left) + cool depth (bottom-right). */
+  --atmos-a: 110 84 22;
+  --atmos-b: 12 30 58;
 
   /* ── Text ────────────────────────────────────────────────────────────── */
-  --text-primary: #e8ebf2;
-  --text-muted: #98a2b3;
-  --text-faint: #6d788e; /* ≥4.5:1 on --bg-base (WCAG AA for 9–11px metadata) */
+  --text-primary: #e4e7eb;
+  --text-muted: #7a8290;
+  --text-faint: #6a7480; /* ≥4.5:1 on --bg-base (WCAG AA for 9–11px metadata) */
 
-  /* ── Signature accent — violet (interaction) + signal cyan (telemetry) ─ */
-  --accent: #8b7cf6;
-  --accent-soft: #a5b4fc;
-  --signal: #22d3ee;
+  /* ── Signature accent — amber (interaction AND in-progress state; the
+     same hue deliberately reused as risk-suspicious below) + a cyan
+     *signal* token for telemetry so data never competes with the accent. */
+  --accent: #d9a441;
+  --accent-soft: #e8bd6a;
+  --signal: #4fd1c5;
 
-  /* ── Risk scale — functional, never decorative ───────────────────────── */
-  --risk-clean: #34d399;
-  --risk-suspicious: #fbbf24;
-  --risk-malicious: #f87171;
+  /* ── Risk scale — functional, never decorative. Suspicious IS the accent
+     amber (reused on purpose); malicious is a desaturated brick, not neon. */
+  --risk-clean: #3fa796;
+  --risk-suspicious: #d9a441;
+  --risk-malicious: #c4453b;
 
   /* ── Structure ───────────────────────────────────────────────────────── */
-  --border-subtle: #1d2431;
-  --border-strong: #2a3242;
+  --border-subtle: #262c38;
+  --border-strong: #333b4a;
 
   /* ── Depth — layered, soft on dark ───────────────────────────────────── */
   --shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.5);
   --shadow-raised: 0 4px 12px rgba(0, 0, 0, 0.45), 0 18px 44px -14px rgba(0, 0, 0, 0.65);
 
   /* ── Glows — make a finding read at a glance (literal rgba per theme). ─ */
-  --glow-accent: 0 0 0 1px rgba(139, 124, 246, 0.3), 0 0 16px rgba(139, 124, 246, 0.22);
-  --glow-signal: 0 0 0 1px rgba(34, 211, 238, 0.3), 0 0 14px rgba(34, 211, 238, 0.2);
-  --glow-amber: 0 0 0 1px rgba(251, 191, 36, 0.3), 0 0 12px rgba(251, 191, 36, 0.2);
-  --glow-malicious: 0 0 0 1px rgba(248, 113, 113, 0.35), 0 0 16px rgba(248, 113, 113, 0.26);
-  --glow-clean: 0 0 0 1px rgba(52, 211, 153, 0.3), 0 0 12px rgba(52, 211, 153, 0.18);
+  --glow-accent: 0 0 0 1px rgba(217, 164, 65, 0.3), 0 0 16px rgba(217, 164, 65, 0.22);
+  --glow-signal: 0 0 0 1px rgba(79, 209, 197, 0.3), 0 0 14px rgba(79, 209, 197, 0.2);
+  --glow-amber: 0 0 0 1px rgba(217, 164, 65, 0.3), 0 0 12px rgba(217, 164, 65, 0.2);
+  --glow-malicious: 0 0 0 1px rgba(196, 69, 59, 0.35), 0 0 16px rgba(196, 69, 59, 0.26);
+  --glow-clean: 0 0 0 1px rgba(63, 167, 150, 0.3), 0 0 12px rgba(63, 167, 150, 0.18);
 }
 
 /* Light — the secondary opt-in theme. */
 [data-theme="light"] {
-  --bg-base: #f6f7f9;
+  --bg-base: #f4f5f7;
   --bg-surface: #ffffff;
-  --bg-elevated: #eef0f4;
-  --bg-inset: #f1f3f6;
+  --bg-elevated: #eceef2;
+  --bg-inset: #eff1f4;
   --bg-overlay: #ffffff;
 
-  --atmos-a: 226 229 255;
-  --atmos-b: 226 238 255;
+  --atmos-a: 244 231 200;
+  --atmos-b: 224 234 246;
 
   --text-primary: #17191f;
   --text-muted: #5b6472;
   --text-faint: #778190;
 
-  --accent: #4f46e5;
-  --accent-soft: #6366f1;
-  --signal: #0891b2;
+  --accent: #a16207;
+  --accent-soft: #b8771c;
+  --signal: #0e7490;
 
-  --risk-clean: #059669;
-  --risk-suspicious: #d97706;
-  --risk-malicious: #dc2626;
+  --risk-clean: #0f766e;
+  --risk-suspicious: #a16207;
+  --risk-malicious: #b23c33;
 
   --border-subtle: #e6e9ef;
   --border-strong: #d2d8e2;
@@ -80,11 +86,11 @@
   --shadow-panel: 0 1px 2px rgba(23, 25, 31, 0.04), 0 1px 3px rgba(23, 25, 31, 0.05);
   --shadow-raised: 0 2px 4px rgba(23, 25, 31, 0.06), 0 8px 24px -8px rgba(23, 25, 31, 0.12);
 
-  --glow-accent: 0 0 0 1px rgba(79, 70, 229, 0.25), 0 0 14px rgba(79, 70, 229, 0.14);
-  --glow-signal: 0 0 0 1px rgba(8, 145, 178, 0.25), 0 0 12px rgba(8, 145, 178, 0.14);
-  --glow-amber: 0 0 0 1px rgba(217, 119, 6, 0.25), 0 0 12px rgba(217, 119, 6, 0.13);
-  --glow-malicious: 0 0 0 1px rgba(220, 38, 38, 0.28), 0 0 14px rgba(220, 38, 38, 0.16);
-  --glow-clean: 0 0 0 1px rgba(5, 150, 105, 0.22), 0 0 10px rgba(5, 150, 105, 0.12);
+  --glow-accent: 0 0 0 1px rgba(161, 98, 7, 0.25), 0 0 14px rgba(161, 98, 7, 0.14);
+  --glow-signal: 0 0 0 1px rgba(14, 116, 144, 0.25), 0 0 12px rgba(14, 116, 144, 0.14);
+  --glow-amber: 0 0 0 1px rgba(161, 98, 7, 0.25), 0 0 12px rgba(161, 98, 7, 0.13);
+  --glow-malicious: 0 0 0 1px rgba(178, 60, 51, 0.28), 0 0 14px rgba(178, 60, 51, 0.16);
+  --glow-clean: 0 0 0 1px rgba(15, 118, 110, 0.22), 0 0 10px rgba(15, 118, 110, 0.12);
 }
 
 /* ── Left rail — the workspace shell. --rail-w drives BOTH the rail width and
@@ -120,8 +126,8 @@ html[data-rail="collapsed"] {
   --color-border-subtle: var(--border-subtle);
   --color-border-strong: var(--border-strong);
 
-  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
 }
 
 /* Smooth cross-fade when switching themes (skipped under reduced motion). */
@@ -435,6 +441,71 @@ button {
 }
 .animate-slide-in {
   animation: outpost-slide-in 0.22s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+/* ── Print / PDF export (run report → Save as PDF) ──────────────────────
+   The run detail page's "Export PDF" button calls window.print(); these
+   rules re-theme the report ink-on-paper: light tokens, chrome (rail,
+   toasters, buttons) hidden, no decorative shadows/gradients, status pills
+   and process-tree nodes (role=button divs) kept. */
+@media print {
+  :root {
+    --bg-base: #ffffff;
+    --bg-surface: #ffffff;
+    --bg-elevated: #f6f7f9;
+    --bg-inset: #f6f7f9;
+    --bg-overlay: #ffffff;
+    --text-primary: #16181d;
+    --text-muted: #4a5260;
+    --text-faint: #6b7280;
+    --accent: #8a6d1d;
+    --accent-soft: #a3822f;
+    --signal: #0e7490;
+    --risk-clean: #0f766e;
+    --risk-suspicious: #8a6d1d;
+    --risk-malicious: #a33a31;
+    --border-subtle: #e3e6eb;
+    --border-strong: #c9cfd8;
+    --glow-accent: none;
+    --glow-signal: none;
+    --glow-amber: none;
+    --glow-malicious: none;
+    --glow-clean: none;
+    --shadow-panel: none;
+    --shadow-raised: none;
+  }
+
+  body {
+    background: #fff !important;
+    background-image: none !important;
+  }
+
+  /* Chrome: the left rail (aside), any floating toaster, and interactive
+     controls. Status pills are spans/chips, not buttons, so they survive. */
+  aside,
+  nav,
+  button {
+    display: none !important;
+  }
+
+  /* Keep clickable-looking content (process-tree nodes) readable as text. */
+  [role="button"] {
+    cursor: default;
+  }
+
+  * {
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
+
+  .animate-outpost-pulse,
+  .animate-fade-up {
+    animation: none !important;
+  }
+
+  main {
+    padding-left: 0 !important;
+  }
 }
 
 /* ── Gallery tiles — samples / runs as cards, not rows ─────────────────── */

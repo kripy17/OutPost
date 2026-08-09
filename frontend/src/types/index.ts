@@ -11,6 +11,9 @@ export interface PlatformInfo {
   machine: string;
   python: string;
   collector: "sysmon" | "auditd" | string;
+  /** Backend host identity — the Overview compares it to the fleet to answer
+   *  "is THIS host monitored?" (auto-OS front door). */
+  hostname: string;
 }
 export type Reputation = "clean" | "suspicious" | "malicious" | "unknown";
 export type SessionType = "live" | "analysis";
@@ -104,6 +107,8 @@ export interface NetworkConnection {
   malware_family: string | null;
   watchlist: boolean | null;
   watchlist_label: string | null;
+  /** When the reputation verdict was last fetched (cache age); null = never. */
+  checked_at: string | null;
 }
 
 export interface EventOut {
@@ -121,6 +126,9 @@ export interface EventOut {
   protocol: string | null;
   file_path: string | null;
   registry_key: string | null;
+  // The collector's original payload (JSON) — the Event Viewer's raw-record
+  // pane. Null for events ingested before the column existed.
+  raw_record?: string | null;
 }
 
 export interface RunDetail {
@@ -179,6 +187,36 @@ export interface EnumPatternsResponse {
   defaults: Record<string, EnumPatternRow[]>;
 }
 
+// -- Rule packs — versioned, diffable rule-set export/import -----------------
+// The whole operational rule surface as one JSON document (git-diffable):
+// tuning overrides, suppressions, enum-pattern tables, FP threshold.
+
+export interface RulePackSuppression {
+  id?: number;
+  rule_id: string;
+  run_id: string | null;
+  reason: string | null;
+  created_at?: string;
+}
+
+export interface RulePack {
+  schema: number;
+  exported_at: string;
+  tuning: TuningKnob[];
+  suppressions: RulePackSuppression[];
+  enum_patterns: Record<string, EnumPatternRow[]>;
+  fp_threshold: number;
+}
+
+export interface RulePackImportSummary {
+  schema: number;
+  tuning_applied: number;
+  suppressions_added: number;
+  suppressions_skipped: number;
+  enum_patterns_applied: boolean;
+  fp_threshold_applied: boolean;
+}
+
 // -- Roadmap 3.1 — notification settings ---------------------------------------
 
 export interface NotificationSettings {
@@ -209,6 +247,56 @@ export interface NotificationSettingsIn {
   smtp_pass?: string;
   smtp_from?: string;
   smtp_to?: string;
+}
+
+// -- Threat-intel API keys (Settings) ----------------------------------------
+// Per-key status for the Settings UI — the backend NEVER returns the raw key,
+// only whether it's set, where it came from (db / env fallback), and a masked
+// suffix.
+
+export interface IntelKeyStatus {
+  name: "abuseipdb" | "virustotal";
+  set: boolean;
+  source: "db" | "env" | "none";
+  suffix: string;
+  /** Rotation hint — when the key was stored (db source) and its age in days. */
+  set_at: string | null;
+  age_days: number | null;
+}
+
+export interface IntelKeysResponse {
+  keys: IntelKeyStatus[];
+}
+
+export interface KeyTestResult extends IntelKeyStatus {
+  ok: boolean;
+  detail: string;
+}
+
+export interface RunReEnrichResponse {
+  run_id: string;
+  ips_cleared: number;
+  reputation: Record<string, string>;
+}
+
+export interface IpIntelRefreshResponse {
+  ip: string;
+  abuse_score: number | null;
+  vt_malicious_count: number | null;
+  reputation: Reputation;
+  checked_at: string | null;
+}
+
+export interface IntelFreshness {
+  total: number;
+  stale_count: number;
+  oldest_checked_at: string | null;
+  oldest_age_hours: number | null;
+}
+
+export interface RefreshStaleResponse {
+  refreshed: number;
+  rows: { ip: string; reputation: Reputation; checked_at: string | null }[];
 }
 
 // -- Webapp-first API surfaces (monitor / dynamic analysis / Phase 6) --------
@@ -405,6 +493,11 @@ export interface RuleMeta {
 export interface EventFeedEvent extends EventOut {
   sample_name: string;
   session_type: SessionType;
+  /** Run provenance — the Event Log's source tabs: live | webapp | sandbox. */
+  source: string;
+  /** The exact log channel a collector stamped on the event (auditd / sysmon)
+   *  — the source tabs split the collector stream by this, not by platform. */
+  log_source?: string | null;
   run_severity: Severity | null;
   host_id?: string | null;
 }
@@ -415,6 +508,12 @@ export interface AgentInfo {
   host_id: string;
   last_seen: string;
   online: boolean;
+  /** Heartbeated before but quiet past the silent window — the dead-agent flag. */
+  silent?: boolean;
+  /** Latest liveness ping — present when the agent heartbeats. */
+  last_heartbeat?: string | null;
+  heartbeat_age_seconds?: number | null;
+  heartbeat_version?: string | null;
   event_count: number;
   run_count: number;
   alert_count: number;
@@ -427,7 +526,9 @@ export interface AgentInfo {
 export interface AgentsResponse {
   total: number;
   online: number;
+  silent: number;
   online_window_seconds: number;
+  silent_window_seconds: number;
   agents: AgentInfo[];
 }
 
@@ -515,18 +616,78 @@ export interface RuleFpSuggestion {
   detail: string;
 }
 
+export interface FpDayPoint {
+  day: string;
+  fired: number;
+  fp: number;
+}
+
 export interface RuleFpEntry {
   rule_id: string;
   count: number;
+  /** Total alerts fired for this rule (the FP-rate denominator). */
+  fired_count: number;
   last_fp_at: string;
   over_threshold: boolean;
   suggestion: RuleFpSuggestion | null;
+  /** 14-day fired/FP history — the FP-rate trend (FP ÷ fired over time). */
+  history: FpDayPoint[];
 }
 
 export interface RuleFpResponse {
   threshold: number;
   default_threshold: number;
   rules: RuleFpEntry[];
+}
+
+// -- Triage queue (the analyst work list) -------------------------------------
+
+export interface QueueAlert {
+  id: number;
+  run_id: string;
+  sample_name: string;
+  rule_id: string;
+  rule_name: string;
+  severity: Severity;
+  triggered_at: string;
+  status: AlertStatus;
+  status_comment: string | null;
+  status_at: string | null;
+  assignee: string | null;
+  related_pid: number | null;
+  related_ip: string | null;
+  related_pids: number[];
+  host_ids: string[];
+  details: string;
+}
+
+export interface QueueResponse {
+  total: number;
+  open: number;
+  acknowledged: number;
+  resolved: number;
+  sort: string;
+  limit: number;
+  offset: number;
+  alerts: QueueAlert[];
+}
+
+// -- Host behavioral baseline (anomaly layer) ---------------------------------
+
+export interface BaselineObservation {
+  kind: string;
+  value: string;
+  count: number;
+  last_seen: string;
+}
+
+export interface HostBaseline {
+  host_id: string;
+  total_observations: number;
+  distinct_observations: number;
+  processes: BaselineObservation[];
+  networks: BaselineObservation[];
+  anomaly_count: number;
 }
 
 export interface PruneResponse {
@@ -560,13 +721,54 @@ export interface EventFeedResponse {
   events: EventFeedEvent[];
 }
 
+export type EventSource = "live" | "webapp" | "sandbox" | "auditd" | "sysmon";
+
 export interface EventFeedParams {
   event_type?: EventType | "";
   platform?: Platform | "";
   severity?: Severity | "";
   q?: string;
+  // Process-centric drill-down: everything one PID did. Comma-separated list
+  // supported (the recon-sweep jump — every enumerating PID at once).
+  pid?: string;
+  // Provenance facet — the Event Log's source tabs (Collectors / Webapp / Sandbox).
+  source?: EventSource | "";
   limit?: number;
   offset?: number;
+}
+
+// -- App metadata (GET /meta) ------------------------------------------------
+
+export interface MetaInfo {
+  demo_mode: boolean;
+  version: string;
+  /** True only while no onboarding choice is recorded AND no sessions exist —
+   *  the router shows the welcome screen instead of an empty deck. */
+  first_run: boolean;
+  /** The first-run choice: "demo" | "empty", or null before it's made. */
+  onboarding: string | null;
+}
+
+// -- Host watch (GET /hosts/{host}/watch) — Monitor 'watch a host' mode ------
+
+export interface HostWatchResponse {
+  run_id: string;
+  open: boolean;
+  run: RunSummary;
+}
+
+// -- Process summary (GET /events/process-summary) — the hover preview card --
+
+export interface ProcessSummary {
+  pid: number;
+  process_name: string | null;
+  command_line: string | null;
+  platform: Platform;
+  host_id: string;
+  run_id: string;
+  sample_name: string;
+  event_count: number;
+  alert_count: number;
 }
 
 // -- Dashboard / global findings feed ----------------------------------------
@@ -659,6 +861,8 @@ export interface FootprintSeedIp {
   reputation: Reputation;
   abuse_score: number | null;
   vt_malicious_count: number | null;
+  /** When the reputation verdict was last fetched (cache age); null = never. */
+  checked_at: string | null;
 }
 
 export interface FootprintPassive {

@@ -18,7 +18,7 @@ sys.path.insert(0, str(_COMMON))
 sys.path.insert(0, str(_LINUX))
 sys.path.insert(0, str(_WINDOWS))
 
-from shipper import Shipper, claim_active_live_run  # noqa: E402
+from shipper import Shipper, agent_run_name, claim_active_live_run, resolve_live_run_id  # noqa: E402
 from collector_linux import _parse_saddr, parse_audit_line  # noqa: E402
 
 
@@ -174,6 +174,34 @@ def test_shipper_batches_at_batch_size(monkeypatch, tmp_path):
     assert all(e["run_id"] == "run-1" for e in posted[0])
 
 
+def test_shipper_stamps_log_channel_from_platform(monkeypatch, tmp_path):
+    """Every shipped event carries its exact log channel (auditd / sysmon),
+    stamped from its own platform — the Event Log's source tabs split the
+    collector stream by this tag, not by inference."""
+    posted: list[list[dict]] = []
+
+    class FakeResp:
+        def raise_for_status(self):
+            return None
+
+    def fake_post(url, json=None, timeout=None):
+        posted.append(json or [])
+        return FakeResp()
+
+    monkeypatch.setattr("shipper.requests.post", fake_post)
+    sh = Shipper("http://backend", "run-chan", batch_size=2, flush_interval=999, spool_path=str(tmp_path / "c.jsonl"))
+    sh.add({"event_type": "process_create", "platform": "linux", "pid": 1})
+    sh.add({"event_type": "process_create", "platform": "windows", "pid": 2})
+    sh.add({"event_type": "file_write", "file_path": "/tmp/x"})  # no platform → untagged
+    sh.flush()
+
+    all_events = [e for batch in posted for e in batch]
+    tagged = {e["platform"]: e.get("log_source") for e in all_events if "platform" in e}
+    assert tagged == {"linux": "auditd", "windows": "sysmon"}
+    # Untagged events (no platform) stay untagged — the tag is never guessed.
+    assert all(e.get("log_source") is None for e in all_events if "platform" not in e)
+
+
 def test_shipper_spools_when_backend_down(monkeypatch, tmp_path):
     import requests
 
@@ -301,3 +329,130 @@ def test_snapshot_ship_failure_is_best_effort(monkeypatch, tmp_path):
     monkeypatch.setattr("shipper.requests.post", boom)
     sh = Shipper("http://down", "run-x", spool_path=str(tmp_path / "s.jsonl"))
     assert sh.ship_snapshot(platform="linux") is None
+
+
+def test_heartbeat_pings_once_per_interval(monkeypatch, tmp_path):
+    """Liveness: the shipper pings /agents/{host}/heartbeat at most once per
+    interval (a quiet host still reads online) and is best-effort — a down
+    backend never raises out of the loop."""
+    import requests
+
+    posted: list[tuple] = []
+
+    def fake_post(url, json=None, timeout=None):
+        if url.endswith("/heartbeat"):
+            posted.append((url, json))
+
+        class _R:
+            def raise_for_status(self):
+                return None
+
+        return _R()
+
+    monkeypatch.setattr("shipper.requests.post", fake_post)
+    sh = Shipper("http://backend:8001", "run-hb", host_id="hb-host", spool_path=str(tmp_path / "s.jsonl"))
+
+    sh.maybe_heartbeat(platform="linux", interval=60.0)
+    sh.maybe_heartbeat(platform="linux", interval=60.0)  # within interval → no-op
+    assert len(posted) == 1
+    url, body = posted[0]
+    assert url == "http://backend:8001/agents/hb-host/heartbeat"
+    assert body["platform"] == "linux"
+    assert body["version"] == "outpost-collector/1.0"
+
+    # Interval elapsed → pings again.
+    sh.maybe_heartbeat(platform="linux", interval=0.0)
+    assert len(posted) == 2
+
+    # Down backend: silent failure, next tick retries.
+    def boom(url, json=None, timeout=None):
+        raise requests.ConnectionError("down")
+
+    monkeypatch.setattr("shipper.requests.post", boom)
+    sh.maybe_heartbeat(platform="linux", interval=0.0)  # must not raise
+    assert len(posted) == 2  # nothing new posted
+    assert sh._last_heartbeat > 0  # retry bookkeeping still advances
+
+
+# ---------------------------------------------------------------------------
+# Standalone live session resolution (systemd service — no webapp needed)
+# ---------------------------------------------------------------------------
+
+
+def test_agent_run_name_is_one_session_per_host_per_day():
+    import datetime as dt
+
+    when = dt.datetime(2026, 8, 9, 12, 0, tzinfo=dt.timezone.utc)
+    assert agent_run_name("archlinux", when) == "agent-archlinux-2026-08-09"
+
+
+def _resp(ok=True, status=200, data=None):
+    # Class bodies don't close over enclosing function locals — thread the
+    # values through __init__ instead.
+    class _R:
+        def __init__(self, ok, status, data):
+            self.ok = ok
+            self.status_code = status
+            self._data = data
+
+        def json(self):
+            return self._data
+
+        def raise_for_status(self):
+            if not self.ok:
+                raise RuntimeError(f"HTTP {self.status_code}")
+
+    return _R(ok, status, data)
+
+
+def test_resolve_claims_webapp_live_session_first(monkeypatch):
+    """Precedence 1: the webapp's open live session wins (Live Monitor parity)."""
+    monkeypatch.setattr(
+        "shipper.requests.get",
+        lambda *a, **k: _resp(data={"run_id": "webapp-live", "session_type": "live"}),
+    )
+    assert resolve_live_run_id("http://backend:8001", "linux") == "webapp-live"
+
+
+def test_resolve_reuses_todays_open_agent_run(monkeypatch):
+    """Precedence 2: crash-restart of the service reuses today's run — the
+    daily FP measurement stays one session per host per day."""
+    today = agent_run_name("archlinux")
+    calls = {"n": 0}
+
+    def fake_get(url, timeout=None):
+        calls["n"] += 1
+        if "/runs/active-live" in url:
+            return _resp(ok=False, status=404)
+        return _resp(data=[
+            {"run_id": "old-run", "sample_name": "agent-archlinux-2026-08-08", "session_type": "live", "completed_at": None},
+            {"run_id": "today-run", "sample_name": today, "session_type": "live", "completed_at": None},
+        ])
+
+    monkeypatch.setattr("shipper.requests.get", fake_get)
+    assert resolve_live_run_id("http://backend:8001", "linux") == "today-run"
+
+
+def test_resolve_creates_fresh_run_when_none_open(monkeypatch):
+    """Precedence 3: no webapp session and no today run → the service creates
+    its own live session (source=agent)."""
+    posted = {}
+
+    def fake_get(url, timeout=None):
+        if "/runs/active-live" in url:
+            return _resp(ok=False, status=404)
+        return _resp(data=[])
+
+    def fake_post(url, json=None, timeout=None):
+        posted["url"] = url
+        posted["json"] = json
+        return _resp(status=201, data={"run_id": "brand-new"})
+
+    monkeypatch.setattr("shipper.requests.get", fake_get)
+    monkeypatch.setattr("shipper.requests.post", fake_post)
+    rid = resolve_live_run_id("http://backend:8001", "linux")
+    assert rid == "brand-new"
+    assert posted["url"] == "http://backend:8001/runs"
+    assert posted["json"]["session_type"] == "live"
+    assert posted["json"]["source"] == "agent"
+    assert posted["json"]["sample_name"].startswith("agent-")

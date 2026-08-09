@@ -13,8 +13,8 @@ def insert_event(conn: sqlite3.Connection, event: dict) -> None:
         INSERT INTO events (
             run_id, platform, event_type, timestamp, pid, ppid, process_name,
             command_line, dest_ip, dest_port, protocol, file_path, registry_key,
-            host_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            host_id, raw_record, log_source
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             event["run_id"],
@@ -31,6 +31,8 @@ def insert_event(conn: sqlite3.Connection, event: dict) -> None:
             event.get("file_path"),
             event.get("registry_key"),
             event.get("host_id", "local"),
+            event.get("raw_record"),
+            event.get("log_source"),
         ),
     )
 
@@ -94,7 +96,9 @@ def get_cache(conn: sqlite3.Connection, ip: str) -> Optional[dict]:
     return dict(row) if row else None
 
 
-def upsert_cache(conn: sqlite3.Connection, ip: str, abuse_score, vt_malicious_count, reputation) -> None:
+def upsert_cache(conn: sqlite3.Connection, ip: str, abuse_score, vt_malicious_count, reputation) -> str:
+    """Store/refresh an IP's enrichment row. Returns the checked_at stamp the
+    row now carries (callers surface it as the cache age on run detail)."""
     from datetime import datetime, timezone
 
     checked_at = datetime.now(timezone.utc).isoformat()
@@ -110,3 +114,4 @@ def upsert_cache(conn: sqlite3.Connection, ip: str, abuse_score, vt_malicious_co
         """,
         (ip, abuse_score, vt_malicious_count, reputation, checked_at),
     )
+    return checked_at

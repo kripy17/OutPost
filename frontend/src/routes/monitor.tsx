@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from "react";
 import { copyToClipboard } from "../lib/clipboard";
 import { Link } from "react-router-dom";
 import AlertBanner from "../components/AlertBanner/AlertBanner";
@@ -9,13 +9,24 @@ import { PageHeader } from "../components/ui";
 import NetworkTable from "../components/NetworkTable/NetworkTable";
 import ProcessTree from "../components/ProcessTree/ProcessTree";
 import TimelineView from "../components/TimelineView/TimelineView";
-import { BASE_URL, completeRun, createRun, getPlatform, getRunDetail, ingestBatch, uploadSample } from "../lib/api";
+import {
+  BASE_URL,
+  completeRun,
+  createRun,
+  getAgents,
+  getHostBaseline,
+  getPlatform,
+  getRunDetail,
+  ingestBatch,
+  uploadSample,
+  watchHost,
+} from "../lib/api";
 import { enumKindsFromDetails } from "../lib/constants";
 import { useEventStream } from "../lib/useEventStream";
 import { buildDetonationScenario, detonationSampleName } from "../lib/synthetic";
 import type { Platform, SampleMeta, Severity } from "../types";
 
-type Mode = "idle" | "live" | "detonate";
+type Mode = "idle" | "live" | "detonate" | "host";
 
 interface Toast {
   key: number;
@@ -28,6 +39,10 @@ interface Toast {
 export default function MonitorPage() {
   const [runId, setRunId] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>("idle");
+  // 'Watch a host' mode — the host whose newest session is on screen, plus
+  // its behavioral baseline line (observations / anomaly count).
+  const [hostId, setHostId] = useState<string | null>(null);
+  const [watchError, setWatchError] = useState<string | null>(null);
   const [streaming, setStreaming] = useState(false);
   const [phase, setPhase] = useState("");
   const cancelRef = useRef(false);
@@ -46,10 +61,21 @@ export default function MonitorPage() {
   const { data: host } = useQuery({ queryKey: ["platform"], queryFn: getPlatform, staleTime: Infinity });
   const hostPlatform: Platform = host?.os === "windows" ? "windows" : host?.os === "macos" ? "macos" : "linux";
 
+  // Fleet hosts for the host picker (the 'watch a host' live mode).
+  const { data: fleet } = useQuery({ queryKey: ["agents"], queryFn: getAgents, staleTime: 15_000, refetchInterval: 30_000 });
+  // When watching a host, its learned baseline rides along (anomaly count).
+  const { data: baseline } = useQuery({
+    queryKey: ["baseline", hostId],
+    queryFn: () => getHostBaseline(hostId!),
+    enabled: mode === "host" && hostId !== null,
+    refetchInterval: 15_000,
+  });
+
   // Uploaded sample — OS auto-detected from magic bytes (roadmap 1.4); its
   // platform drives the detonation scenario and its name is used for the run.
   const [sample, setSample] = useState<SampleMeta | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState(false);
 
   // Effective target: the uploaded sample's OS if one is attached (magic
   // bytes are authoritative for that file), otherwise the detected host OS.
@@ -58,9 +84,9 @@ export default function MonitorPage() {
       ? sample.detected_platform
       : hostPlatform;
 
-  const onUpload = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  // Shared upload path: the file input and drag-and-drop both land here, so
+  // the VT pre-check (below) and OS sniffing behave identically either way.
+  const processFile = useCallback(async (file: File) => {
     setUploadError(null);
     try {
       const meta = await uploadSample(file.name, file);
@@ -69,6 +95,18 @@ export default function MonitorPage() {
       setSample(null);
       setUploadError(err instanceof Error ? err.message.slice(0, 220) : "Upload failed — backend reachable?");
     }
+  }, []);
+
+  const onUpload = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) void processFile(file);
+  };
+
+  const onDropFile = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) void processFile(file);
   };
 
   const { data, refetch } = useQuery({
@@ -94,24 +132,36 @@ export default function MonitorPage() {
   // from one analysis into the next.
   const [reconPids, setReconPids] = useState<Set<number>>(new Set());
   const [reconKinds, setReconKinds] = useState<string[]>([]);
-  useEventStream((a) => {
-    if (a.run_id !== runId) return;
-    if (a.rule_id === "enumeration-burst") {
-      // Belt-and-suspenders: reconciliation (below) is the source of truth
-      // and already prefers the poll data for any run with alerts — this only
-      // matters in the sub-second window before the post-completion refetch.
-      const run = data?.run;
-      if (run && run.completed_at !== null) return;
-      const pids = a.related_pids;
-      if (pids?.length) setReconPids((prev) => new Set([...prev, ...pids]));
-      // Kind chips (CLI parity): capture the distinct enumeration commands
-      // from the pushed alert's details so the badges appear the moment the
-      // sweep lands, not only after the refetch resolves.
-      const kinds = enumKindsFromDetails(a.details);
-      if (kinds.length) setReconKinds((prev) => [...new Set([...prev, ...kinds])]);
-    }
-    void refetch();
-  });
+  useEventStream(
+    (a) => {
+      if (a.run_id !== runId) return;
+      if (a.rule_id === "enumeration-burst") {
+        // Belt-and-suspenders: reconciliation (below) is the source of truth
+        // and already prefers the poll data for any run with alerts — this only
+        // matters in the sub-second window before the post-completion refetch.
+        const run = data?.run;
+        if (run && run.completed_at !== null) return;
+        const pids = a.related_pids;
+        if (pids?.length) setReconPids((prev) => new Set([...prev, ...pids]));
+        // Kind chips (CLI parity): capture the distinct enumeration commands
+        // from the pushed alert's details so the badges appear the moment the
+        // sweep lands, not only after the refetch resolves.
+        const kinds = enumKindsFromDetails(a.details);
+        if (kinds.length) setReconKinds((prev) => [...new Set([...prev, ...kinds])]);
+      }
+      void refetch();
+    },
+    undefined,
+    // Run-level push: any batch that lands in THIS run (new tree nodes,
+    // connections, timeline entries) refetches instantly — the 2.5 s poll
+    // stays as the fallback, push makes it feel live. Completion pushes also
+    // land here (a collector-timeout run ends without an alert), so the
+    // streaming UI stops the moment the backend closes it.
+    (r) => {
+      if (r.run_id !== runId) return;
+      void refetch();
+    },
+  );
 
   // Reconciliation: the run-detail poll is the source of truth for which
   // enumeration pids exist (SSE may miss an alert if the tab was closed). A
@@ -216,6 +266,27 @@ export default function MonitorPage() {
     setPhase(`live — waiting for collector events (${hostPlatform})`);
   };
 
+  // Watch a fleet host: open its newest session (open live run first, else
+  // its most recent) and stream it exactly like a detonation.
+  const startWatch = async (hostIdToWatch: string) => {
+    setWatchError(null);
+    try {
+      const { run_id } = await watchHost(hostIdToWatch);
+      setReconPids(new Set());
+      setReconKinds([]);
+      setRunId(run_id);
+      setHostId(hostIdToWatch);
+      setMode("host");
+      setPhase(`watching host ${hostIdToWatch} — its newest session`);
+    } catch (e) {
+      setWatchError(
+        e instanceof Error && !e.message.startsWith("GET")
+          ? e.message.slice(0, 160)
+          : `No sessions from ${hostIdToWatch} yet — start live monitoring and run the agent on it.`,
+      );
+    }
+  };
+
   const startDetonation = async () => {
     const name = sample?.original_name ?? detonationSampleName(targetPlatform);
     const { run_id } = await createRun(name, targetPlatform, "analysis");
@@ -286,65 +357,69 @@ export default function MonitorPage() {
           lede="Start a session and watch it unfold in real time — process tree, network connections, timeline, and detection alerts as they fire. The webapp is the primary interface; the CLI mirrors the same API."
         />
 
-        {/* One-command agent bootstrap — real host telemetry into the live
-            session (outpost agent install / run parity). The command targets
-            this backend and auto-claims the open live run. */}
-        <div className="panel mt-8 p-5">
+        {/* Hero — watch THIS machine live. The default flow: one click opens
+            the live session on the auto-detected host, and the collector
+            command streams real auditd/Sysmon events into it. */}
+        <div className="panel mt-8 p-6">
           <div className="flex flex-wrap items-center gap-3">
             <span className="inline-flex items-center gap-2 font-mono text-sm text-accent">
-              <Icon name="terminal" size={15} />
-              Ship real host events
+              <Icon name="activity" size={15} />
+              Watch this machine live
+            </span>
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-accent/50 bg-accent/10 px-2.5 py-0.5 font-mono text-[10px] text-accent">
+              <Icon name={platformIconName(hostPlatform)} size={12} />
+              {hostPlatform === "macos" ? "macos" : hostPlatform} — auto-detected
             </span>
             <span className="rounded-full border border-border-subtle px-2 py-0.5 font-mono text-[10px] text-text-faint">
               auditd / Sysmon → live session
             </span>
-            <span className="ml-auto flex items-center gap-2">
-              <button
-                onClick={() =>
-                  void copyToClipboard(agentCmd).then(() => {
-                    setAgentCopied(true);
-                    setTimeout(() => setAgentCopied(false), 1600);
-                  })
-                }
-                className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 px-3 py-1.5 font-mono text-xs text-accent transition-colors duration-150 hover:bg-accent/10"
-                title="Copy the collector command"
-              >
-                <Icon name={agentCopied ? "check" : "copy"} size={12} />
-                {agentCopied ? "copied" : "copy command"}
-              </button>
-              <Link
-                to="/events"
-                className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-1.5 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
-              >
-                Event log
-                <Icon name="arrowRight" size={12} />
-              </Link>
-            </span>
           </div>
           <p className="mt-2 text-xs leading-relaxed text-text-muted">
-            Start live monitoring, then run this on the machine you want to watch — it streams real
-            processes, connections, and file activity into this Monitor. Persistent install (systemd / scheduled
-            task): <code className="font-mono text-accent">outpost agent install</code>.
+            This page auto-detected the host OS. Open a live session below, then run the one-line collector on this
+            machine — real processes, connections, and file activity stream straight into the Monitor. Persistent
+            install: <code className="font-mono text-accent">outpost agent install</code>.
           </p>
-          <code className="mt-3 block overflow-x-auto rounded-lg border border-border-subtle bg-bg-elevated/40 px-3 py-2 font-mono text-[11px] text-text-primary">
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <button
+              onClick={startLive}
+              disabled={hostPlatform === "macos"}
+              className="press inline-flex items-center gap-2 rounded-lg border border-accent/60 bg-accent/10 px-4 py-2.5 font-mono text-xs font-medium text-accent transition-all duration-150 hover:shadow-[var(--glow-accent)] disabled:cursor-default disabled:opacity-50"
+            >
+              <Icon name="play" size={13} />
+              Start live monitoring
+            </button>
+            <button
+              onClick={() =>
+                void copyToClipboard(agentCmd).then(() => {
+                  setAgentCopied(true);
+                  setTimeout(() => setAgentCopied(false), 1600);
+                })
+              }
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-2 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
+              title="Copy the collector command"
+            >
+              <Icon name={agentCopied ? "check" : "copy"} size={12} />
+              {agentCopied ? "copied" : "copy command"}
+            </button>
+            <Link
+              to="/events"
+              className="press ml-auto inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-2 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
+            >
+              Event log
+              <Icon name="arrowRight" size={12} />
+            </Link>
+          </div>
+          {hostPlatform === "macos" && (
+            <p className="mt-2 text-[11px] text-risk-suspicious">
+              Live monitoring on macOS isn't supported yet — no collector ships for it (Windows/Linux focus).
+            </p>
+          )}
+          <code className="mt-4 block overflow-x-auto rounded-lg border border-border-subtle bg-bg-elevated/40 px-3 py-2 font-mono text-[11px] text-text-primary">
             {agentCmd}
           </code>
         </div>
 
         <div className="mt-10 grid gap-4 sm:grid-cols-2">
-          <button
-            onClick={startLive}
-            className="press panel group p-6 text-left transition-all duration-150 hover:-translate-y-0.5 hover:border-accent/60 hover:shadow-[var(--shadow-raised)]"
-          >
-            <span className="inline-flex items-center gap-2 font-mono text-sm text-accent">
-              <Icon name="activity" size={15} />
-              Start live monitoring
-            </span>
-            <p className="mt-2 text-xs leading-relaxed text-text-muted">
-              Opens a continuous session. Feed it events from a real collector (Sysmon / auditd) on any machine, or keep
-              it open while one streams in.
-            </p>
-          </button>
           <div className="panel p-6">
             <button onClick={startDetonation} className="press group w-full text-left">
               <span className="inline-flex items-center gap-2 font-mono text-sm text-risk-malicious">
@@ -367,16 +442,29 @@ export default function MonitorPage() {
               </span>
             </div>
 
-            {/* Sample upload — OS auto-detection (roadmap 1.4) */}
-            <div className="mt-4 border-t border-border-subtle pt-3">
-              <label className="block">
+            {/* Sample upload — OS auto-detection (roadmap 1.4). Drag-and-drop
+                plus the picker, with the cache-first VirusTotal hash pre-check
+                surfaced BEFORE the run: if the hash is already known-bad, the
+                operator sees it before spending a detonation on it. */}
+            <div
+              className={`mt-4 rounded-lg border-t border-border-subtle pt-3 transition-colors duration-150 ${
+                dragOver ? "ring-1 ring-accent/60 ring-offset-0" : ""
+              }`}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDragOver(true);
+              }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={onDropFile}
+            >
+              <label className="block cursor-pointer">
                 <span className="text-[11px] font-semibold text-text-faint">
-                  Upload sample — auto-detect OS
+                  Upload sample — auto-detect OS <span className="font-normal text-text-faint/70">(or drop a file here)</span>
                 </span>
                 <input
                   type="file"
                   accept=".exe,.bin,.elf,.dll,.so,.dylib,.docm,.lnk"
-                  onChange={(e) => void onUpload(e)}
+                  onChange={onUpload}
                   className="mt-1.5 block w-full text-xs text-text-muted file:mr-3 file:rounded file:border file:border-border-subtle file:bg-bg-elevated file:px-3 file:py-1.5 file:font-mono file:text-[11px] file:text-text-muted hover:file:border-accent/60"
                 />
               </label>
@@ -398,9 +486,65 @@ export default function MonitorPage() {
                     </span>
                   </div>
                   <p className="mt-1 break-all text-text-faint">{sample.sha256}</p>
+                  {sample.vt_detections !== null && sample.vt_detections !== undefined && (
+                    <p
+                      className={`mt-1.5 flex items-center gap-1.5 ${
+                        sample.vt_detections > 0 ? "text-risk-malicious" : "text-risk-clean"
+                      }`}
+                    >
+                      <Icon name={sample.vt_detections > 0 ? "alert" : "check"} size={11} />
+                      {sample.vt_detections > 0
+                        ? `${sample.vt_detections} VirusTotal detection${sample.vt_detections === 1 ? "" : "s"} on this hash — known-bad intel before you spend a run on it`
+                        : "VirusTotal hash pre-check: clean (0 detections)"}
+                    </p>
+                  )}
                 </div>
               )}
             </div>
+          </div>
+
+          <div className="panel p-6">
+            {/* 'Watch a host' — the host-centric live view. Pick any fleet
+                host; its newest session streams in with its baseline. */}
+            <p className="mb-1.5 font-mono text-sm text-accent">
+              <Icon name="terminal" size={14} className="mr-1.5" />
+              Watch a fleet host
+            </p>
+            <p className="text-xs leading-relaxed text-text-muted">
+              Follow a specific host's live session (process tree, network, baseline deviations) instead of the
+              machine above.
+            </p>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <select
+                value={hostId ?? ""}
+                onChange={(e) => {
+                  setHostId(e.target.value || null);
+                  setWatchError(null);
+                }}
+                className="min-w-44 flex-1 rounded-lg border border-border-subtle bg-bg-surface px-3 py-2 font-mono text-xs text-text-primary transition-colors focus:border-accent/60 focus:outline-none"
+                aria-label="Pick a host to watch"
+              >
+                <option value="">— pick a host —</option>
+                {(fleet?.agents ?? [])
+                  .slice()
+                  .sort((a, z) => Number(z.online) - Number(a.online))
+                  .map((a) => (
+                    <option key={a.host_id} value={a.host_id}>
+                      {a.host_id}
+                      {a.silent ? " · silent" : a.online ? " · online" : " · offline"}
+                    </option>
+                  ))}
+              </select>
+              <button
+                onClick={() => hostId && void startWatch(hostId)}
+                disabled={!hostId}
+                className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/10 px-3 py-2 font-mono text-xs text-accent transition-all duration-150 hover:shadow-[var(--glow-accent)] disabled:cursor-default disabled:opacity-40"
+              >
+                <Icon name="activity" size={12} />
+                Watch
+              </button>
+            </div>
+            {watchError && <p className="mt-2 text-[11px] text-risk-malicious">{watchError}</p>}
           </div>
         </div>
       </div>
@@ -427,6 +571,12 @@ export default function MonitorPage() {
           <p className="mt-1 font-mono text-xs text-text-muted">
             {runId ?? "…"}
             {mode === "live" && <span className="ml-2 rounded border border-border-subtle px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-accent">live</span>}
+            {mode === "host" && hostId && (
+              <span className="ml-2 inline-flex items-center gap-1 rounded border border-accent/50 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-accent">
+                <Icon name="terminal" size={10} />
+                watching {hostId}
+              </span>
+            )}
             {mode === "detonate" && streaming && (
               <span className="ml-2 animate-outpost-pulse inline-flex items-center gap-1 rounded border border-signal/50 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-signal shadow-[var(--glow-signal)]">
                 <Icon name="activity" size={10} />
@@ -435,6 +585,17 @@ export default function MonitorPage() {
             )}
           </p>
           {phase && <p className="mt-2 text-xs text-text-muted">{phase}</p>}
+          {/* Baseline ride-along: the watched host's learned norm + anomalies. */}
+          {mode === "host" && hostId && baseline && (
+            <p className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[10px] text-text-faint">
+              <span>baseline {baseline.total_observations} obs · {baseline.distinct_observations} distinct</span>
+              <span
+                className={baseline.anomaly_count > 0 ? "text-risk-suspicious" : "text-risk-clean"}
+              >
+                {baseline.anomaly_count} anomal{baseline.anomaly_count === 1 ? "y" : "ies"}
+              </span>
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-2">
           {inProgress && (
@@ -515,7 +676,7 @@ export default function MonitorPage() {
       </div>
 
       {/* Live-alert toast stream — newest findings slide in as they fire. */}
-      <div className="pointer-events-none fixed bottom-4 right-4 z-50 flex w-80 flex-col gap-2">
+      <div className="pointer-events-none fixed bottom-4 right-4 z-50 flex w-80 flex-col gap-2 print:hidden">
         {toasts.map((t) => (
           <div
             key={t.key}

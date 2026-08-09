@@ -22,9 +22,12 @@ from .api.routes_events import router as events_router
 from .api.routes_footprint import router as footprint_router
 from .api.routes_health import router as health_router
 from .api.routes_ioc import router as ioc_router
+from .api.routes_keys import router as keys_router
 from .api.routes_ingest import router as ingest_router
+from .api.routes_intel import router as intel_router
 from .api.routes_notifications import router as notifications_router
 from .api.routes_rules import router as rules_router
+from .api.routes_setup import router as setup_router
 from .api.routes_runs import router as runs_router
 from .api.routes_samples import router as samples_router
 from .api.routes_sandbox import router as sandbox_router
@@ -50,10 +53,16 @@ async def lifespan(app: FastAPI):
     # Background auto-prune scheduler (off by default) — wakes every 60s and
     # runs the retention prune when a schedule is set. Canceled on shutdown.
     prune_task = asyncio.create_task(auto_prune_loop())
+    # Fleet health watcher — pages when a heartbeat-enabled host goes silent
+    # (one page per incident; recovery clears the flag).
+    from .services import fleet_health
+
+    fleet_task = asyncio.create_task(fleet_health.fleet_health_loop())
     try:
         yield
     finally:
         prune_task.cancel()
+        fleet_task.cancel()
 
 
 app = FastAPI(
@@ -100,6 +109,9 @@ app.add_middleware(
 
 app.include_router(auth_router)
 app.include_router(health_router)
+app.include_router(keys_router)
+app.include_router(setup_router)
+app.include_router(intel_router)
 app.include_router(footprint_router)
 app.include_router(ingest_router)
 app.include_router(alerts_router)
