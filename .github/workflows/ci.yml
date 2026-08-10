@@ -5,14 +5,20 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  schedule:
+    # Weekly self-heal: recompute the badges even if a push-run's refresh
+    # step ever failed (Monday 05:00 UTC). Runs on the default branch.
+    - cron: '0 5 * * 1'
 
 jobs:
   verify:
     name: verify.sh — backend · collectors · CLI · frontend
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # workflow_dispatch / schedule run the refresh job instead of the full sweep.
+    if: github.event_name != 'workflow_dispatch' && github.event_name != 'schedule'
     permissions:
-      contents: write  # the badge-refresh step commits badges/tests.json on main
+      contents: write  # the badge-refresh step commits badges/*.json on main
     steps:
       - uses: actions/checkout@v7
 
@@ -47,26 +53,41 @@ jobs:
 
       - name: Publish dynamic badges (main only)
         if: github.ref == 'refs/heads/main' && success()
+        run: bash scripts/refresh-badges.sh --commit
+
+  # On-demand badge refresh — no code push needed. Dispatch this workflow and
+  # it recomputes the three counts from main and publishes any change.
+  refresh-badges:
+    name: Refresh dynamic badges
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      - name: Create venv + install backend & CLI
         run: |
-          set -e
-          # Tests — the four suites the sweep gates.
-          BE=$( cd backend && ../.venv/bin/pytest --collect-only -q 2>/dev/null | grep -oE '[0-9]+ tests collected' | grep -oE '^[0-9]+' )
-          COL=$( cd collectors && ../.venv/bin/pytest --collect-only -q 2>/dev/null | grep -oE '[0-9]+ tests collected' | grep -oE '^[0-9]+' )
-          CLI=$( cd cli && ../.venv/bin/pytest --collect-only -q 2>/dev/null | grep -oE '[0-9]+ tests collected' | grep -oE '^[0-9]+' )
-          FE=$( cd frontend && npm exec -- vitest list 2>/dev/null | wc -l | tr -d ' ' )
-          SUM=$((BE + COL + CLI + FE))
-          # Rules (RULE_META) and CLI commands (the Typer registry).
-          RULES=$( cd backend && ../.venv/bin/python -c 'from app.services.risk import RULE_META; print(len(RULE_META))' )
-          CMDS=$( ../.venv/bin/python -c 'from outpost.main import app; print(len(app.registered_commands) + len(app.registered_groups))' )
-          printf '{"schemaVersion":1,"label":"tests","message":"%s passing","color":"2ea44f"}\n' "$SUM" > badges/tests.json
-          printf '{"schemaVersion":1,"label":"rules","message":"%s","color":"D9A441"}\n' "$RULES" > badges/rules.json
-          printf '{"schemaVersion":1,"label":"commands","message":"%s","color":"3FA796"}\n' "$CMDS" > badges/commands.json
-          if git diff --quiet badges/; then
-            echo "badges unchanged (tests $SUM, rules $RULES, commands $CMDS) — nothing to commit"
-          else
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add badges/
-            git commit -m "chore: refresh badges (tests $SUM, rules $RULES, commands $CMDS)"
-            git push
-          fi
+          python -m venv .venv
+          .venv/bin/pip install --upgrade pip
+          .venv/bin/pip install -e "./backend[dev]" -e ./cli
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Refresh and publish badges
+        run: bash scripts/refresh-badges.sh --commit
