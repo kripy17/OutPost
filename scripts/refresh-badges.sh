@@ -10,6 +10,7 @@
 #
 # Usage:
 #   bash scripts/refresh-badges.sh          # dry-run: recompute, print, no write
+#   bash scripts/refresh-badges.sh --check  # gate: exit 1 if any badge is stale
 #   bash scripts/refresh-badges.sh --commit # write badges/*.json; commit+push if changed
 #
 # Assumes the venv is at $ROOT/.venv with backend+CLI installed (pytest,
@@ -38,16 +39,49 @@ CMDS=$("$PY" -c 'from outpost.main import app; print(len(app.registered_commands
 
 SUM=$((BE + COL + CLI + FE))
 mkdir -p "$ROOT/badges"
-printf '{"schemaVersion":1,"label":"tests","message":"%s passing","color":"2ea44f"}\n' "$SUM" > "$ROOT/badges/tests.json"
-printf '{"schemaVersion":1,"label":"rules","message":"%s","color":"D9A441"}\n' "$RULES" > "$ROOT/badges/rules.json"
-printf '{"schemaVersion":1,"label":"commands","message":"%s","color":"3FA796"}\n' "$CMDS" > "$ROOT/badges/commands.json"
-printf '{"schemaVersion":1,"label":"tactics","message":"%s","color":"3D8BFD"}\n' "$COV" > "$ROOT/badges/coverage.json"
+T_BADGE=$(printf '{"schemaVersion":1,"label":"tests","message":"%s passing","color":"2ea44f"}' "$SUM")
+R_BADGE=$(printf '{"schemaVersion":1,"label":"rules","message":"%s","color":"D9A441"}' "$RULES")
+CM_BADGE=$(printf '{"schemaVersion":1,"label":"commands","message":"%s","color":"3FA796"}' "$CMDS")
+CV_BADGE=$(printf '{"schemaVersion":1,"label":"tactics","message":"%s","color":"3D8BFD"}' "$COV")
 echo "badges computed: tests=$SUM (be=$BE + col=$COL + cli=$CLI + fe=$FE), rules=$RULES, tactics=$COV, commands=$CMDS"
 
-if [ "${1:-}" != "--commit" ]; then
-  echo "(dry-run — pass --commit to publish changes)"
-  exit 0
-fi
+MODE="${1:-}"
+case "$MODE" in
+  --check)
+    stale=0
+    for spec in tests:T_BADGE rules:R_BADGE commands:CM_BADGE coverage:CV_BADGE; do
+      name=${spec%%:*}
+      var=${spec#*:}
+      want=${!var}
+      file="$ROOT/badges/$name.json"
+      if [ ! -f "$file" ] || [ "$(cat "$file")" != "$want" ]; then
+        echo "  stale: badges/$name.json" >&2
+        diff -u "$file" <(printf '%s\n' "$want") 2>&1 | sed 's/^/    /' || true
+        stale=1
+      fi
+    done
+    if [ "$stale" = 1 ]; then
+      echo "STALE — run 'bash scripts/refresh-badges.sh --commit' (or PUBLISH_BADGES=1 bash verify.sh) to publish" >&2
+      exit 1
+    fi
+    echo "badges fresh — all 4 payloads match the committed files"
+    exit 0
+    ;;
+  --commit) ;;
+  "")
+    echo "(dry-run — pass --check to gate or --commit to publish changes)"
+    exit 0
+    ;;
+  *)
+    echo "unknown mode: $MODE (use --check or --commit)" >&2
+    exit 2
+    ;;
+esac
+
+printf '%s\n' "$T_BADGE" > "$ROOT/badges/tests.json"
+printf '%s\n' "$R_BADGE" > "$ROOT/badges/rules.json"
+printf '%s\n' "$CM_BADGE" > "$ROOT/badges/commands.json"
+printf '%s\n' "$CV_BADGE" > "$ROOT/badges/coverage.json"
 
 if git diff --quiet -- badges/; then
   echo "badges unchanged — nothing to commit"

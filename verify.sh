@@ -219,22 +219,22 @@ step "Doc counts     (stale-reference gate)" \
   '
 
 # Badge refresh — recompute the dynamic badge payloads with the shared
-# refresh-badges.sh. Dry-run by default (confirms the script agrees with the
-# measured counts); PUBLISH_BADGES=1 bash verify.sh also commits + pushes them
-# (needs a git checkout with push rights — CI does this automatically after
-# the sweep).
+# refresh-badges.sh. Default is --check: the sweep FAILS if any badge is
+# stale (counts moved but badges/*.json didn't), gating without committing.
+# PUBLISH_BADGES=1 bash verify.sh instead commits + pushes them (needs a git
+# checkout with push rights — CI does this automatically after the sweep).
 step "Badge refresh   (refresh-badges.sh)" \
   env ROOT="$ROOT" PUBLISH="${PUBLISH_BADGES:-0}" bash -c '
     cd "$ROOT"
     if [ "$PUBLISH" = "1" ]; then
       if [ ! -d "$ROOT/.git" ]; then
-        echo "PUBLISH_BADGES=1 needs a git checkout (this tree has no .git) — running dry-run instead" >&2
-        bash scripts/refresh-badges.sh
+        echo "PUBLISH_BADGES=1 needs a git checkout (this tree has no .git) — running --check instead" >&2
+        bash scripts/refresh-badges.sh --check
       else
         bash scripts/refresh-badges.sh --commit
       fi
     else
-      bash scripts/refresh-badges.sh
+      bash scripts/refresh-badges.sh --check
     fi
   '
 
