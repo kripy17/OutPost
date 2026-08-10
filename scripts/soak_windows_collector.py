@@ -203,9 +203,13 @@ def _report(phase: str, alerts: list[dict]) -> None:
 
 def main() -> int:
     global BASE
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--backend", default="http://127.0.0.1:8001")
     ap.add_argument("--host", default="archlinux")
+    ap.add_argument("--gate", action="store_true",
+                    help="CI gate: exit 1 if the benign baseline fires ANY alert "
+                         "(FP budget zero) or the malicious story misses its core "
+                         "detections. verify.sh step 8 runs this mode.")
     args = ap.parse_args()
     BASE = args.backend.rstrip("/")
 
@@ -252,6 +256,26 @@ def main() -> int:
     print(f"  Shared (expected noise: first-seen on novel processes): "
           f"{sorted(fp_rules & {a['rule_id'] for a in alerts_b})}")
     print(f"  Run: {run_id} — open in the webapp at /runs/{run_id}")
+
+    if args.gate:
+        # The gate: FP budget is ZERO on the modeled benign baseline, and the
+        # malicious story must still land its core detections (guards against
+        # over-exemption — a fix that silences benign AND evil alike fails).
+        core = {"suspicious-parent-child", "lolbin-abuse",
+                "registry-persistence", "unusual-port"}
+        fired_b = {a["rule_id"] for a in alerts_b}
+        problems: list[str] = []
+        if fp_rules:
+            problems.append(f"benign baseline fired {sorted(fp_rules)} — FP budget exceeded")
+        missing = sorted(core - fired_b)
+        if missing:
+            problems.append(f"malicious story missed core detections: {missing}")
+        if problems:
+            print("\nGATE FAILED:")
+            for p in problems:
+                print(f"  ✗ {p}")
+            return 1
+        print("\nGATE PASSED — benign baseline clean, all core detections fired.")
     return 0
 
 

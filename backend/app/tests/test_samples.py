@@ -439,6 +439,29 @@ def test_static_analysis_unknown_sample_404(client):
     assert resp.status_code == 404
 
 
+def test_static_analysis_bytes_missing_is_200_unavailable(client):
+    """A known sample whose bytes were never stored (pre-persistence uploads)
+    returns 200 with `available: false` — NOT a 404 — so the browser logs no
+    error and the panel renders its re-upload state from data."""
+    from ..core import config
+
+    meta = _upload(client, MZ + b"bytes-missing-marker", "ghost.exe").json()
+    sid = meta["sample_id"]
+    # Drop the stored bytes, as if the upload predated byte persistence.
+    blob_path = config.SAMPLES_DIR / f"{sid}.bin"
+    assert blob_path.exists()
+    blob_path.unlink()
+
+    resp = client.get(f"/samples/{sid}/static")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["available"] is False
+    assert data["sha256"] == meta["sha256"]
+    assert data["strings"] == []
+    assert data["iocs"] == {"urls": [], "ips": [], "domains": [], "hashes": [], "emails": []}
+    assert data["pe"] is None and data["elf"] is None
+
+
 def test_sample_download_roundtrip(client):
     blob = MZ + b"\x00" * 32 + b"download-me-marker"
     meta = _upload(client, blob, "roundtrip.exe").json()

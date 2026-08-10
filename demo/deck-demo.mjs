@@ -4,11 +4,13 @@
  *
  * Records the redesigned SOC deck end-to-end: Overview pan → Sample vault
  * (library + detail) → Monitor detonation (live toast stream) → Run detail
- * (risk gauge, kill chain, process-tree halos, timeline, analyst notes).
+ * (risk gauge, kill chain, process-tree halos, timeline, analyst notes) →
+ * Findings triage queue (select → acknowledge → resolve — the alert
+ * lifecycle, scoped to the detonation this run just created).
  *
  * Output:
- *   demo/deck-demo.webm            — the full recording (cursor + subtitles)
- *   demo/screenshots/deck/0X-*.png — per-step stills
+ *   demo/deck-demo.webm              — the full recording (cursor + subtitles)
+ *   demo/screenshots/deck/0X-*.png   — per-step stills (01–19; 20–25 findings)
  *
  * Prereqs (once):
  *   cd demo && npm i
@@ -187,7 +189,7 @@ async function shot(page, name) {
 // -- acts ----------------------------------------------------------------------
 
 async function actOverview(page) {
-  log("Act 1/4 — Overview: the command deck");
+  log("Act 1/5 — Overview: the command deck");
   await page.goto(`${WEBAPP}/`, { waitUntil: "domcontentloaded" });
   await injectCursor(page);
   await injectSubtitleBar(page);
@@ -228,7 +230,7 @@ async function actOverview(page) {
 }
 
 async function actVault(page) {
-  log("Act 2/4 — Sample vault: the binary library");
+  log("Act 2/5 — Sample vault: the binary library");
   await page.goto(`${WEBAPP}/samples`, { waitUntil: "domcontentloaded" });
   await injectCursor(page);
   await injectSubtitleBar(page);
@@ -252,27 +254,29 @@ async function actVault(page) {
   await page.waitForTimeout(1100); // debounce + fetch
   await shot(page, "09-vault-filter");
 
-  // Open a sample detail — full hash, YARA evidence, detonations.
+  // Open a sample detail — full hash, YARA evidence, detonations. The vault
+  // renders a tile grid (not a table): each tile's name links to /samples/:id.
   await showSubtitle(page, "Sample detail - full evidence");
-  await moveAndClick(page, page.locator("tbody tr a").first(), "Sample row", { postClickDelay: 1400 });
+  await moveAndClick(page, page.locator("li.tile a[href*='/samples/']").first(), "Sample row", { postClickDelay: 1400 });
   await panElements(page, ".panel", 2, { sweepMs: 600 });
   await shot(page, "10-vault-detail");
   await showSubtitle(page, "");
 }
 
 async function actMonitor(page) {
-  log("Act 3/4 — Monitor: detonate a sample");
+  log("Act 3/5 — Monitor: detonate a sample");
   await page.goto(`${WEBAPP}/monitor`, { waitUntil: "domcontentloaded" });
   await injectCursor(page);
   await injectSubtitleBar(page);
   await showSubtitle(page, "Step 2 - Detonate a sample");
   await page.waitForTimeout(1500);
 
-  await showSubtitle(page, "Choose a platform");
-  await moveAndClick(page, page.getByRole("radio", { name: /Windows/i }), "Windows chip", { postClickDelay: 600 });
-  await moveAndClick(page, page.getByRole("radio", { name: /Linux/i }), "Linux chip", { postClickDelay: 600 });
+  // No OS picker — the vision: the host OS is auto-detected and the
+  // detonation targets it (Target OS chip below the button).
+  await showSubtitle(page, "Host OS auto-detected");
+  await panElements(page, "span:has-text('auto-detected')", 2, { sweepMs: 700 });
 
-  const before = await apiGet("/runs");
+  const before = await apiGet("/runs?include_synthetic=true");
   const beforeIds = new Set(before.map((r) => r.run_id)); // any run created by the detonation counts
 
   await showSubtitle(page, "Detonate a synthetic dropper");
@@ -283,7 +287,10 @@ async function actMonitor(page) {
 
   let rid = null;
   await waitFor(async () => {
-    const runs = await apiGet("/runs");
+    // include_synthetic=true: the raw /runs API hides webapp-demo detonations
+    // by default (archive reads real telemetry first), so the script must
+    // opt back in to see the run it just created.
+    const runs = await apiGet("/runs?include_synthetic=true");
     const fresh = runs.find((r) => !beforeIds.has(r.run_id) && r.completed_at);
     if (!fresh) return false;
     rid = fresh.run_id;
@@ -298,8 +305,57 @@ async function actMonitor(page) {
   return rid;
 }
 
+async function actFindings(page) {
+  log("Act 5/5 — Findings: triage the alert queue");
+  await page.goto(`${WEBAPP}/findings`, { waitUntil: "domcontentloaded" });
+  await injectCursor(page);
+  await injectSubtitleBar(page);
+  await showSubtitle(page, "Step 4 - Triage the findings queue");
+  await page.waitForTimeout(1600);
+
+  // Scope the queue to the demo sample's findings — the Monitor act just
+  // created them, so the lifecycle acts on THIS recording's alerts.
+  await showSubtitle(page, "Scope to this run's findings");
+  await moveAndClick(page, page.getByLabel("Search findings"), "Findings search", { postClickDelay: 400 });
+  await page.keyboard.type("detonate-demo", { delay: 90 });
+  await page.keyboard.press("Enter");
+  await page.waitForTimeout(1200);
+  await shot(page, "20-findings-open");
+
+  // Select the first finding — the bulk action bar appears.
+  await showSubtitle(page, "Select a finding to triage");
+  await moveAndClick(page, page.getByLabel(/Select .* finding/).first(), "First finding checkbox", { postClickDelay: 700 });
+  await shot(page, "21-findings-selected");
+
+  // Acknowledge — the lifecycle's first move. (The Ack button reads
+  // "Ack (1)"; /^Ack \(/ keeps it off the "Acknowledged" tab.)
+  await showSubtitle(page, "Acknowledge while you investigate");
+  await moveAndClick(page, page.getByRole("button", { name: /^Ack \(/ }), "Ack button", { postClickDelay: 1000 });
+  await page.waitForTimeout(800); // queue refetch after the status update
+  await shot(page, "22-findings-acked");
+
+  // Verify the lifecycle moved: the Acknowledged tab now holds it.
+  await showSubtitle(page, "The alert lifecycle moves");
+  await moveAndClick(page, page.getByRole("button", { name: /Acknowledged/ }), "Acknowledged tab", { postClickDelay: 1100 });
+  await shot(page, "23-findings-acknowledged");
+
+  // Resolve it — the lifecycle completes. (/^Resolve$/ is the bulk button;
+  // the "Resolved" tab would otherwise match too.)
+  await showSubtitle(page, "Resolve when you're done");
+  await moveAndClick(page, page.getByLabel(/Select .* finding/).first(), "Acked finding checkbox", { postClickDelay: 700 });
+  await moveAndClick(page, page.getByRole("button", { name: /^Resolve$/ }), "Resolve button", { postClickDelay: 1000 });
+  await page.waitForTimeout(800);
+  await shot(page, "24-findings-resolved");
+
+  // Resolved tab — the final state.
+  await showSubtitle(page, "Resolved — lifecycle complete");
+  await moveAndClick(page, page.getByRole("button", { name: /Resolved/ }), "Resolved tab", { postClickDelay: 1100 });
+  await shot(page, "25-findings-resolved-tab");
+  await showSubtitle(page, "");
+}
+
 async function actRunDetail(page, rid) {
-  log(`Act 4/4 — Run detail: ${rid}`);
+  log(`Act 4/5 — Run detail: ${rid}`);
   await page.goto(`${WEBAPP}/runs/${rid}`, { waitUntil: "domcontentloaded" });
   await injectCursor(page);
   await injectSubtitleBar(page);
@@ -390,6 +446,7 @@ async function main() {
     await actVault(page);
     const rid = await actMonitor(page); // detonation feeds the run-detail act
     await actRunDetail(page, rid);
+    await actFindings(page); // triage the alerts the detonation just created
     log("");
     log("✅ Walkthrough complete");
   } finally {

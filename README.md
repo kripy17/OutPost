@@ -18,6 +18,18 @@ dark/light web deck with a full terminal mirror.
 ![CI](https://github.com/kripy17/OutPost/actions/workflows/ci.yml/badge.svg)
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 
+<p align="center">
+  <img src="demo/deck-demo-hero.gif" alt="OutPost — the command deck: risk over time, detection volume, live findings" width="82%">
+  <br>
+  <em>The command deck — risk-over-time, detection volume, and the live findings feed.</em>
+</p>
+
+<p align="center">
+  <img src="demo/deck-demo-hero2.gif" alt="OutPost — live analysis: monitor streaming and the run-detail process tree" width="82%">
+  <br>
+  <em>Live analysis — a detonation streaming on the Monitor, then the run detail's process tree with risk halos.</em>
+</p>
+
 </div>
 
 ---
@@ -220,7 +232,7 @@ One command runs the whole sweep:
 
 | Suite | Count | Covers |
 |---|---|---|
-| Backend pytest | **406** | ingestion, OS-aware rules (win/linux/macOS), risk + ATT&CK, campaigns, events search, samples vault, SSE broadcast, notes, storm caps, triage, footprint, YARA, auth, roadmap tiers |
+| Backend pytest | **411** | ingestion, OS-aware rules (win/linux/macOS), risk + ATT&CK, campaigns, events search, samples vault, SSE broadcast, notes, storm caps, triage, footprint, YARA, auth, roadmap tiers |
 | Collector pytest | **23** | Sysmon + auditd shipping, normalization |
 | CLI pytest | **49** | rendering regressions, campaigns output, risk columns, YARA + footprint mirrors, rules knobs |
 | Frontend | clean `tsc --noEmit` + Vite build + unit tests | — |

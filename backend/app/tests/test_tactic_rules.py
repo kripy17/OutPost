@@ -79,6 +79,48 @@ def test_network_scan_few_hosts_never_fires(client):
     assert all(a["rule_id"] != "network-scan" for a in _alerts(client, run_id))
 
 
+def test_network_scan_browsing_ports_exempt(client):
+    """Windows soak FP #1 — a pid fanning out across many distinct hosts on
+    the web ports (443) is browsing, not scanning."""
+    run_id = make_run(client, sample_name="browser.exe", platform="windows")
+    for i in range(6):
+        _ingest(client, run_id, [_conn(run_id, 4000, f"198.51.100.{i}", 443, ts=i, platform="windows")])
+    fired = [a for a in _alerts(client, run_id) if a["rule_id"] == "network-scan"]
+    assert fired == []
+
+
+def test_network_scan_reputation_clean_fanout_exempt(client):
+    """Every distinct target cached 'clean' → known-good infra fan-out, not a
+    sweep — the exemption requires positive evidence, not absence of data.
+    The cache is seeded through the app's own db_session (closed before the
+    batch evaluates — the rule reads the cache at ingest time)."""
+    from ..core.db import db_session
+    from ..models.event import upsert_cache
+
+    run_id = make_run(client, sample_name="apifan.exe")
+    with db_session() as conn:
+        for i in range(6):
+            upsert_cache(conn, f"10.0.{i}.1", 0, 0, "clean")
+    _ingest(client, run_id, [_conn(run_id, 4000, f"10.0.{i}.1", 8443, ts=i) for i in range(6)])
+    fired = [a for a in _alerts(client, run_id) if a["rule_id"] == "network-scan"]
+    assert fired == []
+
+
+def test_network_scan_flagged_target_keeps_signal(client):
+    """One cached-malicious target keeps the sweep — the exemption requires
+    ALL targets clean (the uncached .1–.5 are not clean by absence)."""
+    from ..core.db import db_session
+    from ..models.event import upsert_cache
+
+    run_id = make_run(client, sample_name="sweep.exe")
+    with db_session() as conn:
+        upsert_cache(conn, "203.0.113.0", 90, 12, "malicious")
+    _ingest(client, run_id, [_conn(run_id, 4000, f"203.0.113.{i}", 22, ts=i) for i in range(6)])
+    fired = [a for a in _alerts(client, run_id) if a["rule_id"] == "network-scan"]
+    assert len(fired) == 1
+    assert "port 22" in fired[0]["details"]
+
+
 def test_network_scan_flags_every_scanning_pid(client):
     """Two pids sweeping at once → an alert per scanner (the old (None, None)
     dedup key collapsed every pid into the first alert of the run)."""
