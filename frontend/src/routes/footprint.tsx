@@ -279,9 +279,9 @@ export default function FootprintPage() {
           </p>
           <p className="mt-1 text-xs leading-relaxed text-text-muted">
             The inner ring is genuine: every IP this sample reached, aggregated from its runs with cache-first reputations. The outer layer expands it
-            through keyless public sources — PTR reverse DNS for resolutions, Certificate Transparency logs (crt.sh) for TLS certificates, and RDAP for
-            registration + sibling networks. When the sources are unreachable the page degrades to an honest empty state; the preview toggle renders
-            clearly-labeled synthetic data for demos.
+            through keyless public sources — PTR reverse DNS for resolutions, Certificate Transparency logs (crt.sh) for passive DNS history + TLS
+            certificates, and RDAP for registration + sibling networks. When the sources are unreachable the page degrades to an honest empty state; the
+            preview toggle renders clearly-labeled synthetic data for demos.
           </p>
         </div>
       </div>
@@ -346,12 +346,18 @@ export default function FootprintPage() {
 
           {/* Passive layer — live providers (PTR → crt.sh + RDAP), with an
               honest offline empty state and the labeled synthetic preview. */}
-          <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-4">
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
             <PassiveCard
               title="Resolutions"
               note={passiveNote(footprint.passive.source, "PTR")}
               empty="No reverse-DNS records for the seed IPs — nothing to resolve, or the sources are unreachable."
               nodes={footprint.passive.resolutions.map((r) => ({ label: r.domain, sub: `${r.first_seen.slice(0, 10)} → ${r.last_seen.slice(0, 10)}`, synthetic: r.synthetic }))}
+            />
+            <PassiveCard
+              title="Passive DNS history"
+              note={passiveNote(footprint.passive.source, "crt.sh")}
+              empty="No hostnames indexed in Certificate Transparency logs for the seed infrastructure — crt.sh may be unreachable, or none are registered."
+              nodes={footprint.passive.passive_dns.map((d) => ({ label: d.domain, sub: `${d.first_seen.slice(0, 10)} → ${d.last_seen.slice(0, 10)}`, synthetic: d.synthetic }))}
             />
             <PassiveCard
               title="Certificates"

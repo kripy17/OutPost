@@ -222,15 +222,17 @@ def _parse_rdap(ip: str, doc: dict) -> dict:
 
 
 def _parse_crtsh(rows: list[dict]) -> dict:
-    """crt.sh `output=json` rows → certificates + SAN domains.
+    """crt.sh `output=json` rows → certificates + passive-DNS names.
 
-    Pure function. Dedupes by CN / domain; wildcard SANs are stripped to the
-    base name for the resolution rows.
+    Pure function. Certificates dedupe by CN. The `name_value` SANs are
+    aggregated per name across ALL rows into a first→last seen range — that
+    span IS the passive-DNS history crt.sh can honestly provide (a name seen
+    in a 2026-01 cert and again in a 2026-12 cert has a 01→12 history).
+    Wildcard SANs are stripped to the base name for the resolution rows.
     """
     certificates: list[dict] = []
-    domains: list[dict] = []
+    domains: dict[str, list[str]] = {}
     seen_cn: set[str] = set()
-    seen_dom: set[str] = set()
     for r in rows:
         if not isinstance(r, dict):
             continue
@@ -247,10 +249,20 @@ def _parse_crtsh(rows: list[dict]) -> dict:
             name = name.strip().lower()
             while name.startswith("*."):  # strip wildcard prefixes precisely
                 name = name[2:]
-            if name and name not in seen_dom:
-                seen_dom.add(name)
-                domains.append({"domain": name, "first_seen": nb, "last_seen": na, "synthetic": False})
-    return {"certificates": certificates[:40], "domains": domains[:60]}
+            if not name:
+                continue
+            span = domains.setdefault(name, ["", ""])
+            if nb and (not span[0] or nb < span[0]):
+                span[0] = nb
+            if na and (na > span[1] or not span[1]):
+                span[1] = na
+    return {
+        "certificates": certificates[:40],
+        "domains": [
+            {"domain": name, "first_seen": span[0], "last_seen": span[1], "synthetic": False}
+            for name, span in sorted(domains.items())
+        ][:60],
+    }
 
 
 async def _rdap_lookup(ip: str) -> dict:
@@ -286,7 +298,7 @@ async def _fetch_ip_passive(seed: dict) -> dict:
     ip = seed["ip"]
     ts0 = (seed.get("first_seen") or "")[:10]
     ts1 = (seed.get("last_seen") or "")[:10]
-    out = {"resolutions": [], "certificates": [], "sibling_ips": [], "networks": []}
+    out = {"resolutions": [], "certificates": [], "passive_dns": [], "sibling_ips": [], "networks": []}
 
     # 1. Reverse DNS — the resolution signal (fast, reliable).
     ptr = _ptr_for_ip(ip)
@@ -321,9 +333,9 @@ async def _fetch_ip_passive(seed: dict) -> dict:
         except Exception:
             ct = {"certificates": [], "domains": []}
         out["certificates"] = ct["certificates"]
-        for d in ct["domains"]:
-            if d["domain"] != ptr and not any(x["domain"] == d["domain"] for x in out["resolutions"]):
-                out["resolutions"].append(d)
+        # Every hostname crt.sh has seen for this domain — the passive-DNS
+        # history (the apex PTR name itself stays in resolutions).
+        out["passive_dns"] = [d for d in ct["domains"] if d["domain"] != ptr]
 
     # 4. ASN / owner mapping — keyless ip-api.com (free tier, 45 req/min,
     # plenty for a footprint page). RDAP gives registration; this gives the
@@ -423,6 +435,25 @@ def _mock_certificates(seed: dict) -> list[dict]:
     ]
 
 
+def _mock_passive_dns(seed: dict) -> list[dict]:
+    """Deterministic fake passive-DNS history rows (synthetic)."""
+    digest = hashlib.sha256(seed["ip"].encode()).hexdigest()[:6]
+    return [
+        {
+            "domain": f"panel-{digest}.shelf.example",
+            "first_seen": seed["first_seen"],
+            "last_seen": seed["last_seen"],
+            "synthetic": True,
+        },
+        {
+            "domain": f"cdn-{digest}.shelf.example",
+            "first_seen": seed["first_seen"],
+            "last_seen": seed["last_seen"],
+            "synthetic": True,
+        },
+    ]
+
+
 def _mock_sibling_ips(seed: dict) -> list[dict]:
     """Same-/24 neighbors, synthetically marked — 'shared host' hypothesis."""
     try:
@@ -460,11 +491,13 @@ async def _passive_layer(seeds: list[dict], mock: bool) -> dict:
     if mock:
         resolutions = [r for s in seeds for r in _mock_resolutions(s)]
         certificates = [c for s in seeds for c in _mock_certificates(s)]
+        passive_dns = [d for s in seeds for d in _mock_passive_dns(s)]
         sibling_ips = [sib for s in seeds for sib in _mock_sibling_ips(s)]
         return {
             "source": "synthetic_demo",
             "resolutions": resolutions,
             "certificates": certificates,
+            "passive_dns": passive_dns,
             "sibling_ips": sibling_ips,
             "networks": [],
             "asn": [],
@@ -476,6 +509,7 @@ async def _passive_layer(seeds: list[dict], mock: bool) -> dict:
 
     resolutions: list[dict] = []
     certificates: list[dict] = []
+    passive_dns: list[dict] = []
     sibling_ips: list[dict] = []
     networks: list[dict] = []
     asn_rows: list[dict] = []
@@ -485,11 +519,12 @@ async def _passive_layer(seeds: list[dict], mock: bool) -> dict:
             continue  # a failed/errored fetch — carry on with the rest
         resolutions += res.get("resolutions", [])
         certificates += res.get("certificates", [])
+        passive_dns += res.get("passive_dns", [])
         sibling_ips += res.get("sibling_ips", [])
         networks += res.get("networks", [])
         if res.get("asn"):
             asn_rows.append(res["asn"])
-        if res.get("resolutions") or res.get("certificates") or res.get("sibling_ips") or res.get("networks"):
+        if res.get("resolutions") or res.get("certificates") or res.get("passive_dns") or res.get("sibling_ips") or res.get("networks"):
             any_data = True
 
     if not any_data:
@@ -498,6 +533,7 @@ async def _passive_layer(seeds: list[dict], mock: bool) -> dict:
             "source": "not_configured",
             "resolutions": [],
             "certificates": [],
+            "passive_dns": [],
             "sibling_ips": [],
             "networks": [],
             "asn": [],
@@ -507,6 +543,7 @@ async def _passive_layer(seeds: list[dict], mock: bool) -> dict:
         "source": "live",
         "resolutions": _dedupe(resolutions, "domain")[:60],
         "certificates": _dedupe(certificates, "cn")[:40],
+        "passive_dns": _dedupe(passive_dns, "domain")[:60],
         "sibling_ips": _dedupe(sibling_ips, "ip")[:24],
         "networks": _dedupe(networks, "ip")[:8],
         "asn": _dedupe(asn_rows, "ip")[:8],

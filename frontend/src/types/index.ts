@@ -904,6 +904,9 @@ export interface FootprintSeedIp {
 export interface FootprintPassive {
   source: "not_configured" | "synthetic_demo" | "live";
   resolutions: { domain: string; first_seen: string; last_seen: string; synthetic?: boolean }[];
+  // crt.sh passive-DNS history — every hostname the CT logs have seen for the
+  // seed infrastructure, aggregated into a first→last seen range per domain.
+  passive_dns: { domain: string; first_seen: string; last_seen: string; synthetic?: boolean }[];
   certificates: { cn: string; issuer: string; not_before: string; not_after: string; synthetic?: boolean }[];
   sibling_ips: { ip: string; relation: string; synthetic?: boolean }[];
   // RDAP registration info per seed IP (live only): network name, CIDR,

@@ -540,10 +540,14 @@ export default function RunDetailPage() {
             ))}
             <span>{run.session_type}</span>
             <span>started {run.started_at.slice(0, 19).replace("T", " ")} UTC</span>
-            {inProgress && (
+            {inProgress ? (
               <span className="inline-flex items-center gap-1.5 animate-outpost-pulse text-signal">
                 <Icon name="activity" size={12} />
                 still tracing
+              </span>
+            ) : (
+              <span>
+                · ended {run.completed_at?.slice(0, 19).replace("T", " ")} UTC
               </span>
             )}
           </p>
