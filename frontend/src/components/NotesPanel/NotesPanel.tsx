@@ -1,13 +1,57 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Panel } from "../ui";
 import { addRunNote, getRunNotes } from "../../lib/api";
 
 /** Per-run analyst notes (docs/10 Tier 2 #7) — observations, hypotheses,
  *  reminders, attached to a single run. Full-width section on the detail page. */
+
+const draftKey = (runId: string) => `outpost-note-draft-${runId}`;
+
+function readNoteDraft(runId: string): string {
+  try {
+    return localStorage.getItem(draftKey(runId)) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function writeNoteDraft(runId: string, text: string) {
+  try {
+    if (text) localStorage.setItem(draftKey(runId), text);
+    else localStorage.removeItem(draftKey(runId));
+  } catch {
+    /* storage unavailable — note still works for this visit */
+  }
+}
+
 export default function NotesPanel({ runId }: { runId: string }) {
   const queryClient = useQueryClient();
-  const [draft, setDraft] = useState("");
+  // A half-typed note survives a reload: restored from localStorage in the
+  // initializer (NOT a mount effect — a mirror effect would clobber the stored
+  // draft with "" before the restore could read it), cleared on successful add.
+  const [draft, setDraft] = useState(() => readNoteDraft(runId));
+
+  // Live refs so the run-switch effect can persist the outgoing run's draft
+  // under its own key before loading the incoming run's.
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const runRef = useRef(runId);
+
+  // Mirror in-progress text to storage as it changes.
+  useEffect(() => {
+    writeNoteDraft(runId, draft);
+  }, [runId, draft]);
+
+  // /runs/:id reuses the same element across navigations — switching from one
+  // run's detail to another must not leak the previous run's unsent text into
+  // the next run's box (or into its storage key).
+  useEffect(() => {
+    if (runRef.current === runId) return;
+    writeNoteDraft(runRef.current, draftRef.current);
+    runRef.current = runId;
+    setDraft(readNoteDraft(runId));
+  }, [runId]);
 
   const { data: notes = [] } = useQuery({
     queryKey: ["notes", runId],
@@ -18,6 +62,7 @@ export default function NotesPanel({ runId }: { runId: string }) {
     mutationFn: () => addRunNote(runId, draft.trim()),
     onSuccess: () => {
       setDraft("");
+      writeNoteDraft(runId, "");
       void queryClient.invalidateQueries({ queryKey: ["notes", runId] });
     },
   });

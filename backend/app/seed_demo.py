@@ -26,12 +26,10 @@ def main() -> str:
     run_id = uuid.uuid4().hex[:12]
 
     with db_session() as conn:
-        # The webapp shows a dismissible demo banner while seeded data is the
-        # only story — honest labeling instead of fake host telemetry.
-        conn.execute(
-            "INSERT INTO settings (key, value) VALUES ('demo_mode', '1') "
-            "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
-        )
+        # Demo mode stays OFF by default: seeding demo data must not flip the
+        # banner on silently. The explicit onboarding "demo" choice sets the
+        # flag itself (routes_setup); the per-run SEED badges keep every seeded
+        # row honest regardless.
         run_store.create_run(conn, run_id, sample_name="demo-sample.exe", platform="windows", session_type="analysis", source="seed")
 
         events = [

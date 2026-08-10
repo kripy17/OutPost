@@ -184,11 +184,11 @@ def test_runs_filter_by_host(client):
     client.post("/ingest/batch", json=[_event(a, "windows", "host-echo", ts=now)])
     client.post("/ingest/batch", json=[_event(b, "linux", "host-foxtrot", ts=now)])
 
-    hits = client.get("/runs", params={"host": "host-echo"}).json()
+    hits = client.get("/runs", params={"host": "host-echo", "include_synthetic": "true"}).json()
     assert [r["run_id"] for r in hits] == [a]
-    assert client.get("/runs", params={"host": "host-foxtrot"}).json()[0]["run_id"] == b
+    assert client.get("/runs", params={"host": "host-foxtrot", "include_synthetic": "true"}).json()[0]["run_id"] == b
     # Runs with no matching events are excluded.
-    assert client.get("/runs", params={"host": "no-such-host"}).json() == []
+    assert client.get("/runs", params={"host": "no-such-host", "include_synthetic": "true"}).json() == []
 
 
 def test_agents_list_recent_run_ids(client):

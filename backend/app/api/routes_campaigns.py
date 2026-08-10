@@ -6,7 +6,7 @@
 See services/campaigns.py for the clustering rules.
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from ..core.db import db_session
 from ..services import campaigns as campaigns_service
@@ -16,10 +16,18 @@ router = APIRouter(tags=["campaigns"])
 
 
 @router.get("/campaigns", response_model=None)
-def list_campaigns():
-    """Every campaign found in run history, strongest first."""
+def list_campaigns(
+    include_synthetic: bool = Query(
+        False,
+        description="Include campaigns built from synthetic-provenance runs (seeds / webapp detonations / the sandbox demo)",
+    ),
+):
+    """Every campaign found in run history, strongest first. Synthetic-provenance
+    member runs are excluded by default (archive parity); campaigns that fall
+    below two real members are dropped. The CLI opts in with
+    `include_synthetic=true` to keep terminal parity with the full story."""
     with db_session() as conn:
-        return campaigns_service.build_campaigns(conn)
+        return campaigns_service.build_campaigns(conn, include_synthetic=include_synthetic)
 
 
 @router.get("/campaigns/{key}/export", response_model=None)

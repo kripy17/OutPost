@@ -21,7 +21,14 @@ from ..core import auth
 from ..core.db import db_session
 from ..core.schema import Suppression, SuppressionIn
 from ..models import audit
-from ..services.detection import ENUM_PATTERNS, TUNABLE_DEFAULTS, load_enum_patterns
+from ..services.detection import (
+    ENUM_PATTERNS,
+    LOG_CLEAR_PATTERNS,
+    LOG_SERVICE_STOP_PATTERNS,
+    TUNABLE_DEFAULTS,
+    load_enum_patterns,
+    load_log_patterns,
+)
 from ..services.risk import RULE_META
 
 # Valid rule ids — the engine's RULE_META registry, so a typo'd suppression
@@ -314,6 +321,112 @@ def reset_enum_patterns() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Anti-forensics pattern tables (log-service-stop / log-clearing) — the same
+# operator-editable-per-platform pattern treatment as enumeration, so the
+# signatures behind the log rules can be tuned without touching code.
+# ---------------------------------------------------------------------------
+_LOG_PATTERN_KINDS = ("service_stop", "log_clear")
+_LOG_PATTERN_DEFAULTS = {
+    "service_stop": LOG_SERVICE_STOP_PATTERNS,
+    "log_clear": LOG_CLEAR_PATTERNS,
+}
+
+
+class LogPatternsIn(BaseModel):
+    patterns: dict[str, dict[str, list[dict]]]  # kind -> platform -> [{pattern, label}]
+
+
+@router.get("/rules/log-patterns", response_model=None)
+def list_log_patterns() -> dict:
+    """Effective anti-forensics pattern tables per kind/platform, plus the
+    stock defaults so the editor can mark operator changes."""
+    with db_session() as conn:
+        effective = load_log_patterns(conn)
+    payload = {
+        kind: {
+            platform: [{"pattern": pat, "label": label} for pat, label in rows]
+            for platform, rows in tables.items()
+        }
+        for kind, tables in effective.items()
+    }
+    defaults = {
+        kind: {
+            platform: [{"pattern": pat, "label": label} for pat, label in rows]
+            for platform, rows in tables.items()
+        }
+        for kind, tables in _LOG_PATTERN_DEFAULTS.items()
+    }
+    return {"kinds": payload, "defaults": defaults}
+
+
+@router.put("/rules/log-patterns", response_model=None)
+def set_log_patterns(body: LogPatternsIn) -> dict:
+    """Replace the per-kind/per-platform pattern tables wholesale. Unknown
+    kinds or platforms are rejected; validation mirrors load_log_patterns so
+    the engine and the editor agree on shape."""
+    for kind in body.patterns:
+        if kind not in _LOG_PATTERN_KINDS:
+            raise HTTPException(status_code=422, detail=f"Unknown pattern kind: {kind}")
+    clean = {}
+    for kind in _LOG_PATTERN_KINDS:
+        kind_rows = body.patterns.get(kind, {})
+        per = {}
+        for platform in _PLATFORMS:
+            rows = kind_rows.get(platform, [])
+            cleaned = []
+            for item in rows:
+                if not isinstance(item, dict):
+                    continue
+                pattern = item.get("pattern")
+                label = item.get("label")
+                if isinstance(pattern, str) and pattern.strip() and isinstance(label, str) and label.strip():
+                    cleaned.append({"pattern": pattern.strip(), "label": label.strip()})
+            per[platform] = cleaned
+        clean[kind] = per
+    with db_session() as conn:
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('log_patterns', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (json.dumps(clean),),
+        )
+    return {"kinds": clean}
+
+
+@router.delete("/rules/log-patterns", status_code=204)
+def reset_log_patterns() -> None:
+    """Restore stock anti-forensics patterns for every kind/platform."""
+    with db_session() as conn:
+        conn.execute("DELETE FROM settings WHERE key = 'log_patterns'")
+    return None
+
+
+@router.delete("/rules/reset", response_model=None)
+def factory_reset_rules(request: Request) -> dict:
+    """Factory reset of the whole operational rule surface — one atomic call.
+
+    Clears every tuning override (rule_tuning), every suppression
+    (rule_suppressions), and the operator-edited pattern tables + FP
+    threshold (enum_patterns / log_patterns / FP_SUGGEST_THRESHOLD settings
+    keys), restoring the engine to stock behavior. Runs in one transaction so
+    a partial clear can never leave the engine in a half-tuned state, and is
+    audited. Idempotent — resetting an already-stock store clears 0 rows.
+    """
+    actor = auth.role_from_request(request)
+    with db_session() as conn:
+        tuning = conn.execute("DELETE FROM rule_tuning").rowcount
+        suppressions = conn.execute("DELETE FROM rule_suppressions").rowcount
+        patterns = 0
+        for key in ("enum_patterns", "log_patterns", FP_THRESHOLD_KEY):
+            patterns += conn.execute("DELETE FROM settings WHERE key = ?", (key,)).rowcount
+        audit.log(
+            conn, actor, "rules.reset",
+            target_type="rules", target_id="factory",
+            detail=f"{tuning} tuning override(s), {suppressions} suppression(s), {patterns} pattern/threshold key(s) cleared",
+        )
+    return {"tuning_cleared": tuning, "suppressions_cleared": suppressions, "settings_cleared": patterns}
+
+
+# ---------------------------------------------------------------------------
 # Alert triage — per-rule suppressions (run_id NULL = global; set = one run)
 # The detection engine loads these on every batch (detection.load_suppressions)
 # so a suppression applies to the next ingested batch — no backend restart.
@@ -435,6 +548,14 @@ def export_rule_pack() -> dict:
             platform: [{"pattern": pat, "label": label} for pat, label in rows]
             for platform, rows in load_enum_patterns(conn).items()
         }
+        # Same for the anti-forensics pattern tables (log rules).
+        pack["log_patterns"] = {
+            kind: {
+                platform: [{"pattern": pat, "label": label} for pat, label in rows]
+                for platform, rows in tables.items()
+            }
+            for kind, tables in load_log_patterns(conn).items()
+        }
     return pack
 
 
@@ -445,6 +566,7 @@ class RulePackIn(BaseModel):
     tuning: list[dict] = []
     suppressions: list[dict] = []
     enum_patterns: dict[str, list[dict]] | None = None
+    log_patterns: dict[str, dict[str, list[dict]]] | None = None
     fp_threshold: int | None = None
     exported_at: str | None = None
 
@@ -532,6 +654,36 @@ def import_rule_pack(body: RulePackIn, request: Request) -> dict:
             )
         enum_applied = True
 
+    # Log anti-forensics pattern tables — wholesale replace when present.
+    log_applied = False
+    if body.log_patterns is not None:
+        for kind in body.log_patterns:
+            if kind not in _LOG_PATTERN_KINDS:
+                raise HTTPException(status_code=422, detail=f"Unknown pattern kind: {kind}")
+        clean_logs = {}
+        for kind in _LOG_PATTERN_KINDS:
+            kind_rows = body.log_patterns.get(kind, {})
+            per = {}
+            for platform in _PLATFORMS:
+                rows = kind_rows.get(platform, [])
+                cleaned = []
+                for item in rows:
+                    if not isinstance(item, dict):
+                        continue
+                    pattern = item.get("pattern")
+                    label = item.get("label")
+                    if isinstance(pattern, str) and pattern.strip() and isinstance(label, str) and label.strip():
+                        cleaned.append({"pattern": pattern.strip(), "label": label.strip()})
+                per[platform] = cleaned
+            clean_logs[kind] = per
+        with db_session() as conn:
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES ('log_patterns', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (json.dumps(clean_logs),),
+            )
+        log_applied = True
+
     fp_applied = False
     if body.fp_threshold is not None:
         if body.fp_threshold < 1:
@@ -551,7 +703,8 @@ def import_rule_pack(body: RulePackIn, request: Request) -> dict:
             target_type="rules", target_id=f"schema:{PACK_SCHEMA}",
             detail=(
                 f"{tuning_applied} tuning knob(s) synced, {added} suppression(s) added "
-                f"({skipped} skipped), enum_patterns={enum_applied}, fp_threshold={fp_applied}"
+                f"({skipped} skipped), enum_patterns={enum_applied}, "
+                f"log_patterns={log_applied}, fp_threshold={fp_applied}"
             ),
         )
     return {

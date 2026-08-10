@@ -8,6 +8,8 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Optional
 
+from .run import SYNTHETIC_SOURCES
+
 
 def add_sample(
     conn: sqlite3.Connection,
@@ -42,31 +44,65 @@ def get_sample(conn: sqlite3.Connection, sample_id: str) -> Optional[dict]:
     return dict(row) if row else None
 
 
+def _visibility_clause(include_synthetic: bool) -> tuple[str, list]:
+    """A sample is synthetic when its *entire* detonation history comes from
+    synthetic-provenance runs (seed / webapp-demo / legacy monitor /
+    sandbox:demo); a run-less upload or one with any real run is real. The
+    clause keeps exactly the non-synthetic set: samples with no runs, or with
+    at least one run outside the synthetic markers."""
+    if include_synthetic:
+        return "", []
+    marks = ",".join("?" for _ in SYNTHETIC_SOURCES)
+    return (
+        "(NOT EXISTS (SELECT 1 FROM runs r WHERE r.sample_name = samples.original_name)"
+        f" OR EXISTS (SELECT 1 FROM runs r WHERE r.sample_name = samples.original_name"
+        f" AND r.source NOT IN ({marks})))",
+        list(SYNTHETIC_SOURCES),
+    )
+
+
 def list_samples(
     conn: sqlite3.Connection,
     q: str = "",
     limit: int = 100,
     offset: int = 0,
+    include_synthetic: bool = False,
 ) -> list[dict]:
-    """Sample library — newest first, optional name/hash/family filter."""
+    """Sample library — newest first, optional name/hash/family filter.
+    Synthetic-provenance binaries are hidden by default (archive parity)."""
     base = "SELECT * FROM samples"
     params: list = []
+    conds: list[str] = []
     if q:
         like = f"%{q}%"
-        base += " WHERE original_name LIKE ? OR sha256 LIKE ? OR malware_family LIKE ?"
-        params = [like, like, like]
+        conds.append("(original_name LIKE ? OR sha256 LIKE ? OR malware_family LIKE ?)")
+        params += [like, like, like]
+    vis, vis_args = _visibility_clause(include_synthetic)
+    if vis:
+        conds.append(vis)
+        params += vis_args
+    if conds:
+        base += " WHERE " + " AND ".join(conds)
     base += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
     params += [limit, offset]
     return [dict(r) for r in conn.execute(base, params).fetchall()]
 
 
-def count_samples(conn: sqlite3.Connection, q: str = "") -> int:
+def count_samples(conn: sqlite3.Connection, q: str = "", include_synthetic: bool = False) -> int:
     base = "SELECT COUNT(*) FROM samples"
+    params: list = []
+    conds: list[str] = []
     if q:
         like = f"%{q}%"
-        base += " WHERE original_name LIKE ? OR sha256 LIKE ? OR malware_family LIKE ?"
-        return conn.execute(base, (like, like, like)).fetchone()[0]
-    return conn.execute(base).fetchone()[0]
+        conds.append("(original_name LIKE ? OR sha256 LIKE ? OR malware_family LIKE ?)")
+        params += [like, like, like]
+    vis, vis_args = _visibility_clause(include_synthetic)
+    if vis:
+        conds.append(vis)
+        params += vis_args
+    if conds:
+        base += " WHERE " + " AND ".join(conds)
+    return conn.execute(base, params).fetchone()[0]
 
 
 def find_by_sha(conn: sqlite3.Connection, sha256: str) -> Optional[dict]:

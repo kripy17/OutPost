@@ -43,30 +43,53 @@ def get_run(conn: sqlite3.Connection, run_id: str) -> Optional[dict]:
     return dict(row) if row else None
 
 
-def list_runs(conn: sqlite3.Connection, q: str = "", host: str = "") -> list[dict]:
+# Provenance markers that are demo/synthetic by construction — seeds, the
+# webapp's generated detonations (current and legacy `monitor` label), and the
+# keyless sandbox demo. Hidden from the archive by default so it reads as real
+# telemetry first; `include_synthetic` reveals them. Real integrations
+# (sandbox:anyrun/triage/joe), host collectors (`live`), and CLI analyses stay
+# visible regardless.
+SYNTHETIC_SOURCES = ("seed", "webapp-demo", "monitor", "sandbox:demo")
+
+
+def _synthetic_clause(include_synthetic: bool) -> str:
+    if include_synthetic:
+        return ""
+    marks = ",".join("?" for _ in SYNTHETIC_SOURCES)
+    return f" AND r.source NOT IN ({marks})"
+
+
+def list_runs(conn: sqlite3.Connection, q: str = "", host: str = "", include_synthetic: bool = False) -> list[dict]:
     """All runs newest-first; `q` filters by sample-name substring (the
     sample-vault's detonation history links here with ?q=<sample>) and `host`
     filters to runs whose events came from that host_id (the fleet links here
-    with ?host=<host>)."""
+    with ?host=<host>). Synthetic provenance (seeds / webapp detonations / the
+    keyless sandbox demo) is hidden unless `include_synthetic` is set — the
+    archive reads as real telemetry first."""
+    excl = _synthetic_clause(include_synthetic)
+    args: tuple = SYNTHETIC_SOURCES if not include_synthetic else ()
     if q and host:
         rows = conn.execute(
             "SELECT DISTINCT r.* FROM runs r JOIN events e ON e.run_id = r.run_id "
-            "WHERE r.sample_name LIKE ? AND e.host_id = ? ORDER BY r.started_at DESC",
-            (f"%{q}%", host),
+            f"WHERE r.sample_name LIKE ? AND e.host_id = ?{excl} ORDER BY r.started_at DESC",
+            (f"%{q}%", host, *args),
         ).fetchall()
     elif host:
         rows = conn.execute(
             "SELECT DISTINCT r.* FROM runs r JOIN events e ON e.run_id = r.run_id "
-            "WHERE e.host_id = ? ORDER BY r.started_at DESC",
-            (host,),
+            f"WHERE e.host_id = ?{excl} ORDER BY r.started_at DESC",
+            (host, *args),
         ).fetchall()
     elif q:
         rows = conn.execute(
-            "SELECT * FROM runs WHERE sample_name LIKE ? ORDER BY started_at DESC",
-            (f"%{q}%",),
+            f"SELECT * FROM runs WHERE sample_name LIKE ?{excl.replace('r.source', 'source')} ORDER BY started_at DESC",
+            (f"%{q}%", *args),
         ).fetchall()
     else:
-        rows = conn.execute("SELECT * FROM runs ORDER BY started_at DESC").fetchall()
+        rows = conn.execute(
+            f"SELECT * FROM runs WHERE 1=1{excl.replace('r.source', 'source')} ORDER BY started_at DESC",
+            args,
+        ).fetchall()
     return [dict(r) for r in rows]
 
 

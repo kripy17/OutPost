@@ -48,7 +48,9 @@ def test_events_source_facet_filters_by_provenance(client):
     assert live_hit["events"][0]["source"] == "live"
     assert live_hit["events"][0]["sample_name"] == "src-live.bin"
 
-    web_hit = client.get("/events", params={"source": "webapp", "q": f"p-{web}.exe"}).json()
+    # The webapp tab is a deliberate provenance ask, so it opts into full
+    # content (the legacy monitor run would otherwise be hidden as synthetic).
+    web_hit = client.get("/events", params={"source": "webapp", "q": f"p-{web}.exe", "include_synthetic": "true"}).json()
     assert web_hit["total"] == 1
     assert web_hit["events"][0]["source"] == "monitor"
     assert web_hit["events"][0]["sample_name"] == "src-web.bin"
@@ -98,7 +100,7 @@ def test_events_channel_facets_split_collector_stream(client):
     assert aud_hit["total"] == 1 and aud_hit["events"][0]["log_source"] == "auditd"
     sys_hit = client.get("/events", params={"source": "sysmon", "q": f"c-{sys}.exe"}).json()
     assert sys_hit["total"] == 1 and sys_hit["events"][0]["log_source"] == "sysmon"
-    web_hit = client.get("/events", params={"source": "webapp", "q": f"c-{web}.exe"}).json()
+    web_hit = client.get("/events", params={"source": "webapp", "q": f"c-{web}.exe", "include_synthetic": "true"}).json()
     assert web_hit["total"] == 1 and web_hit["events"][0]["log_source"] is None
 
     # The tag is authoritative: the linux-platform webapp event is NOT auditd,
@@ -198,6 +200,46 @@ def test_events_free_text_search(client):
     # legitimately match a broader "198.51.100" search.
     assert client.get("/events", params={"q": "51.100.77"}).json()["total"] == 1  # partial IP
     assert client.get("/events", params={"q": "no-such-thing"}).json()["total"] == 0
+
+
+def test_events_hides_synthetic_by_default(client):
+    """The Event Log reads real-first like the History archive: events from
+    seed / webapp-demo / legacy monitor / sandbox:demo runs are hidden from
+    the bare feed, while live-host and CLI runs always show.
+    include_synthetic=true reveals everything, and the CSV export honors the
+    same contract. Explicit provenance facets (the source tabs) show their
+    full content — choosing a tab is a deliberate look at that provenance."""
+    runs = {}
+    for src, name in (
+        ("live", "evh-live"), ("cli", "evh-cli"), ("seed", "evh-seed"),
+        ("webapp-demo", "evh-web"), ("monitor", "evh-mon"), ("sandbox:demo", "evh-sand"),
+    ):
+        runs[name] = make_run(client, sample_name=f"{name}.bin", source=src)
+    for name, rid in runs.items():
+        _ingest(client, rid, [_event(rid, "process_create", "windows", process_name=f"{name}.exe", timestamp=_ts(1))])
+
+    # Bare feed (the page's default): real telemetry visible, synthetic hidden.
+    visible = {e["process_name"] for e in client.get("/events", params={"q": "evh-"}).json()["events"]}
+    assert {"evh-live.exe", "evh-cli.exe"} <= visible
+    assert not visible.intersection({"evh-seed.exe", "evh-web.exe", "evh-mon.exe", "evh-sand.exe"})
+
+    # Opt-in reveals everything.
+    shown = {e["process_name"] for e in client.get("/events", params={"q": "evh-", "include_synthetic": "true"}).json()["events"]}
+    assert {"evh-live.exe", "evh-cli.exe", "evh-seed.exe", "evh-web.exe", "evh-mon.exe", "evh-sand.exe"} <= shown
+
+    # An explicit webapp facet is a deliberate ask — it includes synthetic
+    # provenance (the tab tooltip says so: synthetic detonations, CLI, seeds).
+    web = {e["process_name"] for e in client.get("/events", params={"q": "evh-", "source": "webapp", "include_synthetic": "true"}).json()["events"]}
+    assert "evh-web.exe" in web and "evh-seed.exe" in web
+
+    # CSV export mirrors the feed's default hiding.
+    csv = client.get("/events/export", params={"q": "evh-"}).text
+    assert "evh-live.exe" in csv and "evh-seed.exe" not in csv
+    csv_full = client.get("/events/export", params={"q": "evh-", "include_synthetic": "true"}).text
+    assert "evh-seed.exe" in csv_full
+
+    # Close the live run so /runs/active-live's 404 contract holds.
+    client.post(f"/runs/{runs['evh-live']}/complete")
 
 
 def test_events_invalid_filters_422(client):

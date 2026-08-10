@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { Icon, platformIconName } from "../Icon";
 import { Chip, SourceBadge } from "../ui";
 import { riskBand } from "../../lib/constants";
@@ -33,19 +33,43 @@ function RiskBadge({ score }: { score: number }) {
   );
 }
 
-export default function RunCard({ run }: { run: RunSummary }) {
+export default function RunCard({ run, highlighted = false }: { run: RunSummary; highlighted?: boolean }) {
   const inProgress = run.completed_at === null;
+  const navigate = useNavigate();
   return (
     <Link
       to={`/runs/${run.run_id}`}
-      className="group relative grid grid-cols-[1fr_auto] items-center gap-4 border-b border-border-subtle bg-bg-surface px-4 py-3 transition-colors duration-150 last:border-b-0 hover:bg-bg-elevated/50"
+      aria-current={highlighted ? "true" : undefined}
+      className={`group relative grid grid-cols-[1fr_auto] items-center gap-4 border-b border-border-subtle px-4 py-3 transition-colors duration-150 last:border-b-0 hover:bg-bg-elevated/50 ${
+        highlighted ? "bg-accent/5" : "bg-bg-surface"
+      }`}
     >
-      {/* Hover accent bar — row is a target. */}
-      <span className="absolute left-0 top-0 h-full w-0.5 rounded-r bg-accent opacity-0 transition-opacity duration-150 group-hover:opacity-70" />
+      {/* Accent bar — hover or keyboard selection marks the row as the target. */}
+      <span
+        className={`absolute left-0 top-0 h-full w-0.5 rounded-r bg-accent transition-opacity duration-150 ${
+          highlighted ? "opacity-70" : "opacity-0 group-hover:opacity-70"
+        }`}
+      />
       <div className="flex min-w-0 items-center gap-3">
         <PlatformIcon platform={run.platform} />
         <span className="truncate font-mono text-sm text-text-primary">{run.sample_name}</span>
         <SourceBadge source={run.source} />
+        {run.host_ids?.map((host) => (
+          <button
+            key={host}
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              navigate(`/history?host=${encodeURIComponent(host)}`);
+            }}
+            title={`Filter the archive to host ${host}`}
+            className="inline-flex cursor-pointer items-center gap-1 rounded border border-border-subtle px-1.5 py-0.5 font-mono text-[11px] text-text-muted transition-colors hover:border-accent/40 hover:text-accent"
+          >
+            <Icon name="network" size={11} />
+            {host}
+          </button>
+        ))}
         {inProgress && (
           <span className="animate-outpost-pulse text-xs text-accent" title="Still tracing">
             ● tracing

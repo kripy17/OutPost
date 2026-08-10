@@ -312,6 +312,21 @@ export default function AlertBanner({
               </span>
             </div>
             <p className="mt-1.5 pl-4 font-mono text-xs text-text-muted">{alert.details}</p>
+            {rule?.remediation?.length ? (
+              <details className="group mt-1.5 pl-4">
+                <summary className="cursor-pointer select-none font-mono text-[10px] text-accent transition-colors hover:text-accent/80">
+                  What to do <span className="text-text-faint">→</span>
+                </summary>
+                <ul className="mt-1.5 space-y-1">
+                  {rule.remediation.map((step, i) => (
+                    <li key={i} className="flex items-start gap-1.5 font-mono text-[10px] leading-relaxed text-text-muted">
+                      <span className="mt-0.5 h-1 w-1 shrink-0 rounded-full bg-accent/70" />
+                      {step}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            ) : null}
             {alert.status_comment && (
               <p className="mt-1 pl-4 font-mono text-[10px] italic text-text-faint">
                 “{alert.status_comment}”

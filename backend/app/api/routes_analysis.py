@@ -15,7 +15,8 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query, Response
 
 from ..core.db import db_session
-from ..services.risk import RULE_META, rule_name
+from ..models.run import SYNTHETIC_SOURCES
+from ..services.risk import RULE_META, RULE_REMEDIATION, rule_name
 
 router = APIRouter(tags=["analysis"])
 
@@ -85,6 +86,10 @@ def list_events(
     q: Optional[str] = None,
     pid: Optional[str] = None,
     source: Optional[str] = None,
+    include_synthetic: bool = Query(
+        False,
+        description="Show events from synthetic-provenance runs (seeds / webapp detonations / the sandbox demo)",
+    ),
     limit: int = Query(_DEFAULT_LIMIT, ge=1, le=_MAX_LIMIT),
     offset: int = Query(0, ge=0),
 ):
@@ -99,6 +104,11 @@ def list_events(
       process at once.
     - `source` filters by provenance facet: `live` (host collectors),
       `sandbox` (external sandboxes), `webapp` (everything else).
+    - `include_synthetic` — synthetic provenance (seed / webapp-demo / legacy
+      monitor / sandbox:demo) is hidden by default, mirroring the runs
+      archive: the Event Log reads as real telemetry first. Callers that
+      deliberately opt into a provenance facet (the webapp source tabs) pass
+      `true` alongside, since choosing a tab is itself an explicit ask.
     """
     if event_type is not None and event_type not in _EVENT_TYPES:
         raise HTTPException(status_code=422, detail=f"event_type must be one of {sorted(_EVENT_TYPES)}")
@@ -138,6 +148,10 @@ def list_events(
         frag, extra = _source_clause(source)
         where.append(frag)
         params += extra
+    if not include_synthetic:
+        marks = ",".join("?" for _ in SYNTHETIC_SOURCES)
+        where.append(f"r.source NOT IN ({marks})")
+        params += list(SYNTHETIC_SOURCES)
 
     clause = " AND ".join(where)
 
@@ -236,14 +250,23 @@ def export_events(
     q: Optional[str] = None,
     pid: Optional[str] = None,
     source: Optional[str] = None,
+    include_synthetic: bool = Query(
+        False,
+        description="Show events from synthetic-provenance runs (seeds / webapp detonations / the sandbox demo)",
+    ),
     limit: int = Query(1000, ge=1, le=5000),
 ):
-    """CSV export of the filtered event feed (same filters as GET /events).
+    """CSV export of the filtered event feed (same filters as GET /events,
+    including the synthetic-hiding default — exports match what the feed
+    shows).
 
     `limit` defaults much higher than the feed's (1000, up to 5000) — export
     is the bulk path; the webapp caps at 500 for interactive pagination.
     """
-    feed = list_events(event_type=event_type, platform=platform, severity=severity, q=q, pid=pid, source=source, limit=limit, offset=0)
+    feed = list_events(
+        event_type=event_type, platform=platform, severity=severity, q=q, pid=pid,
+        source=source, include_synthetic=include_synthetic, limit=limit, offset=0,
+    )
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow(["timestamp", "run_id", "sample_name", "platform", "source", "log_source", "event_type", "pid", "ppid", "process_name", "command_line", "dest_ip", "dest_port", "protocol", "file_path", "registry_key", "host_id", "run_severity"])
@@ -264,9 +287,14 @@ def export_events(
 
 @router.get("/rules/meta", response_model=None)
 def get_rules_meta():
-    """ATT&CK technique/tactic + risk weight per rule (roadmap 1.3)."""
+    """ATT&CK technique/tactic + risk weight + remediation per rule."""
     return [
-        {"rule_id": rid, "rule_name": rule_name(rid), **RULE_META[rid]}
+        {
+            "rule_id": rid,
+            "rule_name": rule_name(rid),
+            "remediation": RULE_REMEDIATION.get(rid, []),
+            **RULE_META[rid],
+        }
         for rid in sorted(RULE_META)
     ]
 

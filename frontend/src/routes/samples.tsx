@@ -49,6 +49,11 @@ function SampleTile({ s }: { s: SampleRow }) {
         <Chip tone={plat.tone} dot title={`Detected ${s.detected_platform}`}>
           {plat.label}
         </Chip>
+        {s.synthetic && (
+          <Chip tone="accent" dot title="Entire detonation history is demo/synthetic (seed / webapp detonation / sandbox demo)">
+            demo
+          </Chip>
+        )}
       </div>
 
       <div className="mt-3 flex items-center gap-2 border-t border-border-subtle pt-3">
@@ -105,6 +110,23 @@ function SampleTile({ s }: { s: SampleRow }) {
 export default function SamplesPage() {
   const [q, setQ] = useState("");
   const [debounced, setDebounced] = useState("");
+  // The vault reads as real artifacts first: binaries whose entire detonation
+  // history is demo/synthetic are hidden unless the analyst asks (archive
+  // parity with History / the Event Log). Persisted like the other toggles.
+  const [showSynthetic, setShowSynthetic] = useState(() => {
+    try {
+      return localStorage.getItem("outpost-samples-synthetic") === "1";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem("outpost-samples-synthetic", showSynthetic ? "1" : "0");
+    } catch {
+      /* storage unavailable */
+    }
+  }, [showSynthetic]);
 
   useEffect(() => {
     const t = setTimeout(() => setDebounced(q.trim()), 300);
@@ -112,8 +134,8 @@ export default function SamplesPage() {
   }, [q]);
 
   const { data, isLoading, isError } = useQuery({
-    queryKey: ["samples", debounced],
-    queryFn: () => getSamples({ q: debounced, limit: 200 }),
+    queryKey: ["samples", debounced, showSynthetic],
+    queryFn: () => getSamples({ q: debounced, limit: 200, include_synthetic: showSynthetic || undefined }),
   });
 
   const samples = data?.samples ?? [];
@@ -121,7 +143,7 @@ export default function SamplesPage() {
 
   const onExport = async () => {
     try {
-      const blob = await exportSamplesCsv({ q: debounced });
+      const blob = await exportSamplesCsv({ q: debounced, include_synthetic: showSynthetic || undefined });
       saveBlob(blob, "outpost-samples.csv");
     } catch {
       setExportError("CSV export failed — is the backend running?");
@@ -144,6 +166,20 @@ export default function SamplesPage() {
         actions={
           <div className="flex items-center gap-2">
             {exportError && <span className="font-mono text-[10px] text-risk-malicious">{exportError}</span>}
+            <button
+              onClick={() => setShowSynthetic((v) => !v)}
+              aria-pressed={showSynthetic}
+              title={
+                showSynthetic
+                  ? "Hide demo/synthetic binaries again (those whose whole detonation history is demo)"
+                  : "Include binaries whose entire detonation history is demo/synthetic"
+              }
+              className={`press rounded-lg border px-3 py-2 font-mono text-xs transition-colors duration-150 ${
+                showSynthetic ? "border-accent/50 bg-accent/10 text-accent" : "border-border-subtle text-text-faint hover:text-text-primary"
+              }`}
+            >
+              {showSynthetic ? "Show synthetic · on" : "Show synthetic"}
+            </button>
             <button
               onClick={() => void onExport()}
               className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-2 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"

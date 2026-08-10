@@ -60,7 +60,7 @@ def test_run_summary_includes_risk_score(client):
         "registry_key": r"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run\Bad",
     }])
 
-    runs = client.get("/runs").json()
+    runs = client.get("/runs", params={"include_synthetic": "true"}).json()
     me = [r for r in runs if r["run_id"] == run_id][0]
     assert me["risk_score"] == 41
     detail = client.get(f"/runs/{run_id}").json()

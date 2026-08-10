@@ -21,7 +21,8 @@ CREATE TABLE IF NOT EXISTS runs (
     session_type TEXT NOT NULL DEFAULT 'analysis' CHECK(session_type IN ('live', 'analysis')),
     source TEXT NOT NULL DEFAULT 'monitor',
     started_at TEXT NOT NULL,
-    completed_at TEXT
+    completed_at TEXT,
+    suppressed_alerts TEXT
 );
 
 CREATE TABLE IF NOT EXISTS alerts (
@@ -64,7 +65,13 @@ CREATE TABLE IF NOT EXISTS events (
     -- The exact log channel the event came from: 'auditd' (Linux collector)
     -- or 'sysmon' (Windows collector). NULL for webapp/sandbox/seed events.
     -- The Event Log's source tabs split collectors by this.
-    log_source TEXT
+    log_source TEXT,
+    -- DNS query string (resolved name) for DNS events — feeds the DNS-tunnel
+    -- detection (high-entropy / oversized queries). NULL for non-DNS events.
+    query TEXT,
+    -- TLS Server Name Indication from the handshake (Sysmon Event ID 3
+    -- DestinationHostname) — feeds TLS-SNI and DNS-over-HTTPS detection.
+    tls_sni TEXT
 );
 
 CREATE TABLE IF NOT EXISTS enrichment_cache (
@@ -77,7 +84,18 @@ CREATE TABLE IF NOT EXISTS enrichment_cache (
 
 CREATE INDEX IF NOT EXISTS idx_events_run_id ON events(run_id);
 CREATE INDEX IF NOT EXISTS idx_events_dest_ip ON events(dest_ip);
+CREATE INDEX IF NOT EXISTS idx_events_run_type ON events(run_id, event_type);
 CREATE INDEX IF NOT EXISTS idx_alerts_run_id ON alerts(run_id);
+
+-- Write-through copy of the in-memory process map (persisted at completion)
+-- so a restarted backend restores a long run's parent map warm instead of
+-- re-scanning the whole run's process_create history on the next batch.
+CREATE TABLE IF NOT EXISTS run_process_maps (
+    run_id TEXT PRIMARY KEY,
+    last_event_id INTEGER NOT NULL,
+    pids_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 
 -- Standout features (docs/10-STANDOUT-FEATURES.md)
 CREATE TABLE IF NOT EXISTS run_notes (
@@ -194,6 +212,15 @@ CREATE TABLE IF NOT EXISTS rule_tuning (
     rule_id TEXT PRIMARY KEY,
     param TEXT NOT NULL,
     value TEXT NOT NULL
+);
+
+-- Explainability (run-level rule context): which tuning knobs were in effect
+-- while a run was evaluated, captured ONCE at first evaluation (immutable).
+-- The run-detail page shows these so a tuned finding is explainable — the
+-- exact thresholds it was scored under.
+CREATE TABLE IF NOT EXISTS run_tuning_snapshot (
+    run_id TEXT PRIMARY KEY,
+    params TEXT NOT NULL  -- JSON: {"DNS_TUNNEL_MIN_DISTINCT": 3, ...}
 );
 
 -- Roadmap 3.1 — notification settings (webhook endpoint, toggle).
@@ -328,6 +355,31 @@ def _migrate_events_log_source(conn: sqlite3.Connection) -> None:
         conn.commit()
 
 
+def _migrate_events_query(conn: sqlite3.Connection) -> None:
+    """Idempotent: add the DNS `query` string column (DNS-tunnel detection)."""
+    cols = _column_names(conn, "events")
+    if "query" not in cols:
+        conn.execute("ALTER TABLE events ADD COLUMN query TEXT")
+
+
+def _migrate_events_tls_sni(conn: sqlite3.Connection) -> None:
+    """Idempotent: add the TLS SNI column (TLS-SNI / DoH detection)."""
+    cols = _column_names(conn, "events")
+    if "tls_sni" not in cols:
+        conn.execute("ALTER TABLE events ADD COLUMN tls_sni TEXT")
+        conn.commit()
+
+
+def _migrate_runs_suppressed_alerts(conn: sqlite3.Connection) -> None:
+    """Idempotent: per-rule alert-cap suppressed counts on the run (storm
+    guard — burst-prone rules like first-seen cap per run; the counts are
+    recorded so the cap is visible, not silent)."""
+    cols = _column_names(conn, "runs")
+    if "suppressed_alerts" not in cols:
+        conn.execute("ALTER TABLE runs ADD COLUMN suppressed_alerts TEXT")
+        conn.commit()
+
+
 def _migrate_events_raw_record(conn: sqlite3.Connection) -> None:
     """Idempotent: add the `raw_record` column (the collector's original JSON
     payload) to pre-existing DBs. Fresh DBs get it from SCHEMA; older installs
@@ -427,6 +479,9 @@ def init_db() -> None:
         _migrate_events_host_id(conn)
         _migrate_events_raw_record(conn)
         _migrate_events_log_source(conn)
+        _migrate_events_query(conn)
+        _migrate_events_tls_sni(conn)
+        _migrate_runs_suppressed_alerts(conn)
 
 
 @contextmanager

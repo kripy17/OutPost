@@ -120,12 +120,19 @@ async def refresh_ip_enrichment(run_id: str, ip: str = Query(..., min_length=1, 
 
 
 @router.get("/runs", response_model=list[RunSummary])
-def list_runs(q: str = Query("", max_length=200), host: str = Query("", max_length=200)) -> list[RunSummary]:
+def list_runs(
+    q: str = Query("", max_length=200),
+    host: str = Query("", max_length=200),
+    include_synthetic: bool = Query(False, description="Show seeds / webapp-synthetic detonations / the sandbox demo in the archive"),
+) -> list[RunSummary]:
     """Run history, newest first. `?q=<sample>` filters by sample-name
     substring; `?host=<host_id>` filters to runs whose events came from that
-    fleet host (the Agents page links here). Both combine when given."""
+    fleet host (the Agents page links here). Both combine when given.
+    Synthetic provenance (seed / webapp-demo / legacy monitor / sandbox:demo)
+    is hidden by default so the archive reads as real telemetry first; the CLI
+    opts back in with `include_synthetic=true` to keep terminal parity."""
     with db_session() as conn:
-        rows = run_store.list_runs(conn, q=q.strip(), host=host.strip())
+        rows = run_store.list_runs(conn, q=q.strip(), host=host.strip(), include_synthetic=include_synthetic)
         return [run_store.to_summary(conn, r) for r in rows]
 
 
@@ -231,6 +238,20 @@ async def get_run_detail(run_id: str) -> RunDetail:
         # Roadmap 2.4 — correlated kill-chain sequence over the fired alerts.
         chain = killchain.correlate_chain(alerts_rows)
 
+        # Explainability — the tuned thresholds this run was scored under
+        # (captured once at first evaluation; {} when everything was stock).
+        effective_tuning: dict = {}
+        tuning_row = conn.execute(
+            "SELECT params FROM run_tuning_snapshot WHERE run_id = ?", (run_id,)
+        ).fetchone()
+        if tuning_row:
+            import json as _json
+
+            try:
+                effective_tuning = _json.loads(tuning_row["params"] or "{}")
+            except (ValueError, TypeError):
+                effective_tuning = {}
+
         # Roadmap 2.2 — if an uploaded binary matches this run's sample name,
         # surface its YARA + VirusTotal reputation evidence.
         sample_reputation = None
@@ -253,6 +274,21 @@ async def get_run_detail(run_id: str) -> RunDetail:
                 "malware_family": sample_row["malware_family"],
             }
 
+        # Storm guard — per-rule alert-cap suppressed counts (first-seen /
+        # enumeration-burst / network-scan), so a long live session shows
+        # what the cap held back instead of hiding it.
+        suppressed_alerts: dict = {}
+        sup_row = conn.execute(
+            "SELECT suppressed_alerts FROM runs WHERE run_id = ?", (run_id,)
+        ).fetchone()
+        if sup_row and sup_row["suppressed_alerts"]:
+            import json as _json
+
+            try:
+                suppressed_alerts = _json.loads(sup_row["suppressed_alerts"])
+            except (ValueError, TypeError):
+                suppressed_alerts = {}
+
         return RunDetail(
             run=summary,
             process_tree=tree,
@@ -261,6 +297,8 @@ async def get_run_detail(run_id: str) -> RunDetail:
             alerts=[Alert(**a) for a in alerts_rows],
             kill_chain=chain,
             sample_reputation=sample_reputation,
+            effective_tuning=effective_tuning,
+            suppressed_alerts=suppressed_alerts,
         )
     finally:
         conn.close()

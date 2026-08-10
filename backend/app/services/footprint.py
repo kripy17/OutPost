@@ -324,7 +324,43 @@ async def _fetch_ip_passive(seed: dict) -> dict:
         for d in ct["domains"]:
             if d["domain"] != ptr and not any(x["domain"] == d["domain"] for x in out["resolutions"]):
                 out["resolutions"].append(d)
+
+    # 4. ASN / owner mapping — keyless ip-api.com (free tier, 45 req/min,
+    # plenty for a footprint page). RDAP gives registration; this gives the
+    # autonomous-system identity that registration sits on.
+    try:
+        asn = await _asn_lookup(ip)
+    except Exception:
+        asn = {}
+    asn["ip"] = ip
+    out["asn"] = asn
+    if asn and reg.get("org") and not asn.get("org"):
+        asn["org"] = reg["org"]
     return out
+
+
+async def _asn_lookup(ip: str) -> dict:
+    """ASN / organization / country for an IP via ip-api.com (no API key).
+
+    Returns {} on any failure so the footprint card degrades to an honest
+    empty state exactly like the other providers.
+    """
+    url = f"http://ip-api.com/json/{ip}?fields=status,as,asname,org,isp,country,countryCode"
+    async with httpx.AsyncClient(timeout=_RDAP_TIMEOUT, headers={"User-Agent": _UA}) as client:
+        resp = await client.get(url)
+        if resp.status_code != 200:
+            raise ValueError("bad ip-api payload")
+        doc = resp.json()
+    if doc.get("status") != "success":
+        raise ValueError("ip-api lookup failed")
+    asn_raw = (doc.get("as") or "").split(" ")[0]
+    return {
+        "asn": asn_raw or None,
+        "as_name": doc.get("asname"),
+        "org": doc.get("org") or doc.get("isp"),
+        "country": doc.get("country"),
+        "country_code": doc.get("countryCode"),
+    }
 
 
 async def _cached_fetch(seed: dict) -> dict:
@@ -431,6 +467,7 @@ async def _passive_layer(seeds: list[dict], mock: bool) -> dict:
             "certificates": certificates,
             "sibling_ips": sibling_ips,
             "networks": [],
+            "asn": [],
         }
 
     # Top 4 seeds by activity — bounds latency and the free providers' load.
@@ -441,6 +478,7 @@ async def _passive_layer(seeds: list[dict], mock: bool) -> dict:
     certificates: list[dict] = []
     sibling_ips: list[dict] = []
     networks: list[dict] = []
+    asn_rows: list[dict] = []
     any_data = False
     for res in results:
         if not isinstance(res, dict):
@@ -449,6 +487,8 @@ async def _passive_layer(seeds: list[dict], mock: bool) -> dict:
         certificates += res.get("certificates", [])
         sibling_ips += res.get("sibling_ips", [])
         networks += res.get("networks", [])
+        if res.get("asn"):
+            asn_rows.append(res["asn"])
         if res.get("resolutions") or res.get("certificates") or res.get("sibling_ips") or res.get("networks"):
             any_data = True
 
@@ -460,6 +500,7 @@ async def _passive_layer(seeds: list[dict], mock: bool) -> dict:
             "certificates": [],
             "sibling_ips": [],
             "networks": [],
+            "asn": [],
         }
 
     return {
@@ -468,6 +509,7 @@ async def _passive_layer(seeds: list[dict], mock: bool) -> dict:
         "certificates": _dedupe(certificates, "cn")[:40],
         "sibling_ips": _dedupe(sibling_ips, "ip")[:24],
         "networks": _dedupe(networks, "ip")[:8],
+        "asn": _dedupe(asn_rows, "ip")[:8],
     }
 
 

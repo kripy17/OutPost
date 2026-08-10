@@ -169,6 +169,84 @@ RULE_META: dict[str, RuleMeta] = {
         "weight": 12,
         "severity": "suspicious",
     },
+    "lateral-psexec-smb": {
+        "technique": "T1021.002",
+        "tactic": "Lateral Movement",
+        "weight": 12,
+        "severity": "suspicious",
+    },
+    "lateral-winrm-wmi": {
+        "technique": "T1021.006",
+        "tactic": "Lateral Movement",
+        "weight": 12,
+        "severity": "suspicious",
+    },
+    "lateral-smb-share": {
+        "technique": "T1021.001",
+        "tactic": "Lateral Movement",
+        "weight": 8,
+        "severity": "suspicious",
+    },
+    "rdp-brute-force": {
+        "technique": "T1021.001",
+        "tactic": "Lateral Movement",
+        "weight": 14,
+        "severity": "suspicious",
+    },
+    "log-service-stop": {
+        "technique": "T1070.001",
+        "tactic": "Defense Evasion",
+        "weight": 14,
+        "severity": "malicious",
+    },
+    "log-clearing": {
+        "technique": "T1070.001",
+        "tactic": "Defense Evasion",
+        "weight": 16,
+        "severity": "malicious",
+    },
+    "dns-tunneling": {
+        "technique": "T1071.004",
+        "tactic": "Command and Control",
+        "weight": 16,
+        "severity": "suspicious",
+    },
+    "dns-long-label": {
+        "technique": "T1568.002",
+        "tactic": "Command and Control",
+        "weight": 10,
+        "severity": "suspicious",
+    },
+    "dns-unusual-port": {
+        "technique": "T1071.004",
+        "tactic": "Command and Control",
+        "weight": 8,
+        "severity": "suspicious",
+    },
+    "tls-sni-suspicious": {
+        "technique": "T1071.001",
+        "tactic": "Command and Control",
+        "weight": 12,
+        "severity": "suspicious",
+    },
+    "doh-resolver-use": {
+        "technique": "T1071.004",
+        "tactic": "Command and Control",
+        "weight": 10,
+        "severity": "suspicious",
+    },
+    "fanout-contact": {
+        "technique": "T1071.001",
+        "tactic": "Command and Control",
+        "weight": 14,
+        "severity": "suspicious",
+    },
+    "fanout-recurring": {
+        "technique": "T1071.001",
+        "tactic": "Command and Control",
+        "weight": 18,
+        "severity": "suspicious",
+    },
 }
 
 
@@ -209,9 +287,71 @@ RULE_NAMES: dict[str, str] = {
     "shell-history-wipe": "Shell history wiped (anti-forensics)",
     "enumeration-burst": "Discovery enumeration burst",
     "data-staging": "Data staging: archive then exfil",
+    "lateral-psexec-smb": "PsExec / SMB-admin remote execution",
+    "lateral-winrm-wmi": "WinRM / WMI remote execution",
+    "lateral-smb-share": "SMB share enumeration (lateral movement)",
+    "rdp-brute-force": "RDP connection burst (brute-force / spray)",
+    "log-service-stop": "Logging service stopped/disabled (anti-forensics)",
+    "log-clearing": "Event/journal logs purged (anti-forensics)",
+    "dns-tunneling": "DNS tunneling (suspicious label burst)",
+    "dns-long-label": "Long / high-entropy DNS query (DGA or tunneling)",
+    "dns-unusual-port": "DNS query on a non-standard port",
+    "tls-sni-suspicious": "TLS handshake with IP-literal or DGA-style SNI",
+    "doh-resolver-use": "DNS-over-HTTPS from a script host",
+    "fanout-contact": "Coordinated contact with one destination",
+    "fanout-recurring": "Recurring coordinated fan-out",
 }
 
 
 def rule_name(rule_id: str) -> str:
     """Human display name for a rule id (falls back to the id itself)."""
     return RULE_NAMES.get(rule_id, rule_id)
+
+
+# Per-alert remediation guidance — every finding carries a short "what to do"
+# checklist, turning detection into action (kill the PID, remove the
+# persistence point, revoke the credential). Served by GET /rules/meta and
+# rendered on the run detail alert list.
+RULE_REMEDIATION: dict[str, list[str]] = {
+    "network-scan": ["Identify the scanning PID and the target scope", "Block outbound to the scanned ranges at the firewall"],
+    "toolchain-build": ["Remove the compiled artifact from the writable location", "Review what was compiled and why"],
+    "document-dropper": ["Isolate the document and its parent application", "Scan the document with the YARA lab / AV", "Treat the spawned script host as compromised"],
+    "lateral-rdp-smb": ["Verify the connection was intentional", "Segment RDP/SMB exposure at the network layer"],
+    "screen-capture": ["Kill the capture process", "Check for exfil of the captured data"],
+    "masquerading": ["Kill the masquerading process", "Inspect the binary path and hash in the sample vault"],
+    "suspicious-parent-child": ["Terminate the child process chain", "Quarantine the parent sample"],
+    "lolbin-abuse": ["Terminate the LOLBin invocation", "Decode/analyze the payload it fetched"],
+    "beaconing": ["Block the beacon destination IP", "Inspect the beaconing process for persistence"],
+    "registry-persistence": ["Delete the Run key value", "Kill the process registered to run"],
+    "autostart-persistence": ["Remove the autostart file/symlink", "Kill the process it launches"],
+    "rename-burst": ["Isolate the machine from the network immediately", "Preserve the encrypted files for recovery research"],
+    "first-seen-process": ["Verify the process is expected on this host", "Quarantine if unknown"],
+    "unusual-port": ["Block the C2 port at the firewall", "Inspect the connecting process"],
+    "attack-chain": ["Treat the host as fully compromised", "Collect memory + disk images before cleanup"],
+    "baseline-anomaly": ["Review the anomalous item against the host baseline", "Escalate if unexplained"],
+    "ssh-authorized-keys": ["Remove the rogue key from authorized_keys", "Rotate the account's credentials"],
+    "suid-set": ["Clear the SUID/SGID bit", "Review how the binary was replaced"],
+    "scheduled-task": ["Delete the scheduled task", "Inspect the task payload"],
+    "credential-dump": ["Reset the affected credentials", "Rotate service accounts the dump touched"],
+    "suspicious-extension": ["Quarantine the double-extension file", "Block the file hash in the vault"],
+    "shell-history-wipe": ["Preserve the shell session logs if possible", "Note the wipe as a deliberate anti-forensics act"],
+    "enumeration-burst": ["Identify the enumerating PID (recon actors panel)", "Assume the host is being surveyed — hunt for the follow-on"],
+    "data-staging": ["Block the exfil destination", "Find and secure the staged archive"],
+    "lateral-psexec-smb": ["Revoke the account that mounted admin$", "Disable the remote-admin path used"],
+    "lateral-winrm-wmi": ["Revoke WinRM/WMI access for the abused account", "Review remote-execution allowlists"],
+    "lateral-smb-share": ["Identify what the enumerator accessed", "Restrict share permissions"],
+    "rdp-brute-force": ["Block the source IP at the firewall", "Check for successful logons after the burst"],
+    "log-service-stop": ["Re-enable the logging service", "Restore forwarding to the collector"],
+    "log-clearing": ["Preserve any remaining log copies", "Treat the cleared window as unknown activity"],
+    "dns-tunneling": ["Block the tunneled base domain at the DNS layer", "Inspect the resolving process"],
+    "dns-long-label": ["Block the DGA domain", "Hunt for sibling DGA domains"],
+    "dns-unusual-port": ["Block the non-standard DNS port", "Inspect the process doing covert DNS"],
+    "tls-sni-suspicious": ["Block the SNI/destination at the egress proxy", "Inspect the TLS client process and its cert chain"],
+    "doh-resolver-use": ["Review the script host's intent — DoH hides DNS from inspection", "Block the resolver at the firewall if unauthorized"],
+    "fanout-contact": ["Block the shared destination IP", "Treat every contacting process as potentially compromised"],
+    "fanout-recurring": [
+        "Block the shared destination IP at the firewall/EDR",
+        "Treat every contacting process as potentially compromised",
+        "Hunt the run's timeline for what changed between each fan-out window — the plant keeps spawning new processes",
+    ],
+}

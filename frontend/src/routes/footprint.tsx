@@ -366,10 +366,17 @@ export default function FootprintPage() {
               nodes={footprint.passive.sibling_ips.map((s) => ({ label: s.ip, sub: s.relation, synthetic: s.synthetic }))}
             />
             <PassiveCard
-              title="Registration (RDAP)"
-              note={passiveNote(footprint.passive.source, "RDAP")}
-              empty="Registration info for the seed networks (name, CIDR, organization, country) will appear here."
-              nodes={footprint.passive.networks.map((n) => ({ label: n.cidr, sub: [n.netname, n.org, n.country].filter(Boolean).join(" · ") || n.ip, synthetic: n.synthetic }))}
+              title="Registration + ASN"
+              note={passiveNote(footprint.passive.source, "RDAP · ip-api")}
+              empty="Registration info for the seed networks (name, CIDR, organization, country) and their ASN ownership will appear here."
+              nodes={[
+                ...footprint.passive.networks.map((n) => ({ label: n.cidr, sub: [n.netname, n.org, n.country].filter(Boolean).join(" · ") || n.ip, synthetic: n.synthetic })),
+                ...footprint.passive.asn.map((a) => ({
+                  label: a.asn ?? a.ip,
+                  sub: [a.as_name, a.org, a.country].filter(Boolean).join(" · ") || a.ip,
+                  synthetic: false,
+                })),
+              ]}
             />
           </div>
         </div>

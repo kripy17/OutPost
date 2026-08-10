@@ -7,26 +7,115 @@ import {
   exportRulePack,
   getCustomYaraRules,
   getEnumPatterns,
+  getLogPatterns,
   getRuleFp,
   getSamples,
   getTuning,
   importRulePack,
   resetFpThreshold,
+  resetRules,
   resetTuning,
   saveBlob,
   saveCustomYaraRule,
   setEnumPatterns,
   setFpThreshold,
+  setLogPatterns,
   setTuning,
   testYaraRule,
 } from "../lib/api";
-import type { CustomYaraRule, EnumPatternRow, FpDayPoint, RuleFpEntry, RulePack, TuningKnob, YaraTestResponse } from "../types";
+import type { CustomYaraRule, EnumPatternRow, FpDayPoint, LogPatternKind, RuleFpEntry, RulePack, TuningKnob, YaraTestResponse } from "../types";
 
 const PLATFORM_LABELS: Record<string, string> = {
   windows: "Windows",
   linux: "Linux",
   macos: "macOS",
 };
+
+/* ── Draft persistence ────────────────────────────────────────────────────
+ * The two authoring editors (recon patterns, YARA lab) persist their
+ * in-progress state to localStorage so unsaved work survives a reload. Both
+ * drafts are cleared on successful save — a returning analyst sees server
+ * state, never a stale draft. Restore happens in useState initializers (NOT a
+ * mount effect): a mirror effect would clobber the stored draft with the
+ * empty default before the restore could read it back. */
+
+type YaraDraft = {
+  ruleText: string;
+  family: string;
+  description: string;
+  scope: "all" | "picked";
+  picked: string[];
+};
+
+export function readYaraDraft(): YaraDraft | null {
+  try {
+    const raw = localStorage.getItem("outpost-yara-draft");
+    if (!raw) return null;
+    const d: unknown = JSON.parse(raw);
+    if (!d || typeof d !== "object") return null;
+    const o = d as Record<string, unknown>;
+    if (typeof o.ruleText !== "string" || typeof o.family !== "string" || typeof o.description !== "string") return null;
+    if (o.scope !== "all" && o.scope !== "picked") return null;
+    const picked = Array.isArray(o.picked) ? o.picked.filter((p): p is string => typeof p === "string") : [];
+    return { ruleText: o.ruleText, family: o.family, description: o.description, scope: o.scope, picked };
+  } catch {
+    return null;
+  }
+}
+
+function writeYaraDraft(d: YaraDraft) {
+  try {
+    localStorage.setItem("outpost-yara-draft", JSON.stringify(d));
+  } catch {
+    /* storage unavailable — drafting still works for this visit */
+  }
+}
+
+function clearYaraDraft() {
+  try {
+    localStorage.removeItem("outpost-yara-draft");
+  } catch {
+    /* ignore */
+  }
+}
+
+export function readEnumDrafts(): Record<string, EnumPatternRow[]> | null {
+  try {
+    const raw = localStorage.getItem("outpost-enum-drafts");
+    if (!raw) return null;
+    const d: unknown = JSON.parse(raw);
+    if (!d || typeof d !== "object" || Array.isArray(d)) return null;
+    const out: Record<string, EnumPatternRow[]> = {};
+    for (const [platform, rows] of Object.entries(d as Record<string, unknown>)) {
+      if (!Array.isArray(rows)) continue;
+      const clean = rows.filter(
+        (r): r is EnumPatternRow =>
+          !!r && typeof r === "object" && typeof (r as EnumPatternRow).pattern === "string" && typeof (r as EnumPatternRow).label === "string",
+      );
+      if (clean.length) out[platform] = clean;
+    }
+    return Object.keys(out).length ? out : null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeEnumDrafts(drafts: Record<string, EnumPatternRow[]>) {
+  try {
+    if (Object.keys(drafts).length) localStorage.setItem("outpost-enum-drafts", JSON.stringify(drafts));
+    else localStorage.removeItem("outpost-enum-drafts");
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+function clearEnumDrafts() {
+  try {
+    localStorage.removeItem("outpost-enum-drafts");
+  } catch {
+    /* ignore */
+  }
+}
 
 /** 14-day fired/FP sparkline — the FP-rate trend (FP ÷ fired over time).
  *  Grey bars = alerts fired that day, red overlay = marked FP. A rule whose
@@ -67,22 +156,23 @@ function FpSparkline({ history }: { history: FpDayPoint[] }) {
 function EnumPatternsEditor() {
   const queryClient = useQueryClient();
   const { data, isLoading, isError } = useQuery({ queryKey: ["enum-patterns"], queryFn: getEnumPatterns });
-  const [drafts, setDrafts] = useState<Record<string, EnumPatternRow[]>>({});
-  const [dirty, setDirty] = useState(false);
+  // Restore unsaved edits from localStorage so a reload mid-tuning doesn't
+  // lose work. dirty is derived — any draft row means unsaved changes.
+  const [drafts, setDrafts] = useState<Record<string, EnumPatternRow[]>>(() => readEnumDrafts() ?? {});
   const [saved, setSaved] = useState(false);
+  const dirty = Object.keys(drafts).length > 0;
 
+  // Mirror drafts to localStorage as they change.
   useEffect(() => {
-    if (data) {
-      setDrafts({});
-      setDirty(false);
-    }
-  }, [data]);
+    writeEnumDrafts(drafts);
+  }, [drafts]);
 
   const save = useMutation({
     mutationFn: (platforms: Record<string, EnumPatternRow[]>) => setEnumPatterns(platforms),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["enum-patterns"] });
-      setDirty(false);
+      setDrafts({});
+      clearEnumDrafts();
       setSaved(true);
       window.setTimeout(() => setSaved(false), 2000);
     },
@@ -99,7 +189,6 @@ function EnumPatternsEditor() {
   };
   const patch = (platform: string, rows: EnumPatternRow[]) => {
     setDrafts((d) => ({ ...d, [platform]: rows }));
-    setDirty(true);
   };
 
   return (
@@ -116,6 +205,19 @@ function EnumPatternsEditor() {
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {saved && <span className="font-mono text-[11px] text-risk-clean">saved ✓</span>}
+          {dirty && (
+            <button
+              onClick={() => {
+                if (!window.confirm("Discard ALL unsaved enumeration-pattern edits?")) return;
+                setDrafts({});
+                clearEnumDrafts();
+              }}
+              className="press rounded border border-border-subtle px-3 py-1.5 font-mono text-xs text-text-faint transition-colors duration-150 hover:border-risk-malicious/50 hover:text-risk-malicious"
+              title="Throw away every unsaved recon-pattern edit (and any restored draft)"
+            >
+              Discard drafts
+            </button>
+          )}
           <button
             onClick={() => save.mutate(
               Object.fromEntries(platforms.map((p) => [p, drafts[p] ?? data.platforms[p]])),
@@ -190,8 +292,7 @@ function EnumPatternsEditor() {
                       onClick={() => {
                         const next = { ...drafts };
                         delete next[platform];
-                        setDrafts(next);
-                        setDirty(Object.keys(next).length > 0);
+                        setDrafts(next); // dirty is derived from drafts
                       }}
                       className="press rounded border border-border-subtle px-2.5 py-1 font-mono text-[11px] text-text-faint transition-colors duration-150 hover:text-text-muted"
                     >
@@ -199,6 +300,232 @@ function EnumPatternsEditor() {
                     </button>
                   )}
                 </div>
+              </div>
+            </Panel>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+const LOG_KIND_LABELS: Record<LogPatternKind, { title: string; tactic: string; blurb: string }> = {
+  service_stop: {
+    title: "Logging-service stop patterns",
+    tactic: "Defense Evasion · T1070.001",
+    blurb: "The signatures behind log-service-stop — commands that silence the logging stack itself (auditd/rsyslog disabled, the Windows Event Log service stopped). Edits apply to the next ingested batch.",
+  },
+  log_clear: {
+    title: "Log-purge patterns",
+    tactic: "Defense Evasion · T1070.001",
+    blurb: "The signatures behind log-clearing — wevtutil / Clear-EventLog, journal vacuuming, mass log deletion. Edits apply to the next ingested batch.",
+  },
+};
+
+function readLogDrafts(): Record<LogPatternKind, Record<string, EnumPatternRow[]>> | null {
+  try {
+    const raw = localStorage.getItem("outpost-log-drafts");
+    if (!raw) return null;
+    const d: unknown = JSON.parse(raw);
+    if (!d || typeof d !== "object" || Array.isArray(d)) return null;
+    const out: Record<string, Record<string, EnumPatternRow[]>> = {};
+    for (const [kind, platforms] of Object.entries(d as Record<string, unknown>)) {
+      if (!platforms || typeof platforms !== "object" || Array.isArray(platforms)) continue;
+      const per: Record<string, EnumPatternRow[]> = {};
+      for (const [platform, rows] of Object.entries(platforms as Record<string, unknown>)) {
+        if (!Array.isArray(rows)) continue;
+        const clean = rows.filter(
+          (r): r is EnumPatternRow =>
+            !!r && typeof r === "object" && typeof (r as EnumPatternRow).pattern === "string" && typeof (r as EnumPatternRow).label === "string",
+        );
+        if (clean.length) per[platform] = clean;
+      }
+      if (Object.keys(per).length) out[kind] = per;
+    }
+    return Object.keys(out).length ? (out as Record<LogPatternKind, Record<string, EnumPatternRow[]>>) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeLogDrafts(drafts: Record<LogPatternKind, Record<string, EnumPatternRow[]>>) {
+  try {
+    if (Object.keys(drafts).length) localStorage.setItem("outpost-log-drafts", JSON.stringify(drafts));
+    else localStorage.removeItem("outpost-log-drafts");
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+function clearLogDrafts() {
+  try {
+    localStorage.removeItem("outpost-log-drafts");
+  } catch {
+    /* ignore */
+  }
+}
+
+const EMPTY_LOG_DRAFTS = {} as Record<LogPatternKind, Record<string, EnumPatternRow[]>>;
+
+function LogPatternsEditor() {
+  const queryClient = useQueryClient();
+  const { data, isLoading, isError } = useQuery({ queryKey: ["log-patterns"], queryFn: getLogPatterns });
+  const [kind, setKind] = useState<LogPatternKind>("service_stop");
+  // kind → platform → rows; restored from localStorage so a reload mid-edit
+  // doesn't lose work. dirty is derived — any draft row means unsaved edits.
+  const [drafts, setDrafts] = useState<Record<LogPatternKind, Record<string, EnumPatternRow[]>>>(() => readLogDrafts() ?? EMPTY_LOG_DRAFTS);
+  const [saved, setSaved] = useState(false);
+  const dirty = Object.keys(drafts).length > 0;
+
+  useEffect(() => {
+    writeLogDrafts(drafts);
+  }, [drafts]);
+
+  const save = useMutation({
+    mutationFn: (patterns: Record<LogPatternKind, Record<string, EnumPatternRow[]>>) => setLogPatterns(patterns),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["log-patterns"] });
+      setDrafts(EMPTY_LOG_DRAFTS);
+      clearLogDrafts();
+      setSaved(true);
+      window.setTimeout(() => setSaved(false), 2000);
+    },
+  });
+
+  if (isLoading) return <p className="mt-6 text-sm text-text-muted">Loading log patterns…</p>;
+  if (isError) return <p className="mt-6 text-sm text-risk-malicious">Couldn't load log patterns.</p>;
+  if (!data) return null;
+
+  const platforms = Object.keys(data.kinds[kind]);
+  const current = (platform: string): EnumPatternRow[] => drafts[kind]?.[platform] ?? data.kinds[kind][platform];
+  const patch = (platform: string, rows: EnumPatternRow[]) => {
+    setDrafts((d) => ({ ...d, [kind]: { ...(d[kind] ?? {}), [platform]: rows } }));
+  };
+  const revertPlatform = (platform: string) => {
+    setDrafts((d) => {
+      const next = { ...d };
+      const cur = { ...(next[kind] ?? {}) };
+      delete cur[platform];
+      if (Object.keys(cur).length) next[kind] = cur;
+      else delete next[kind];
+      return next;
+    });
+  };
+
+  return (
+    <div className="mt-8">
+      <div className="mb-4 flex items-start justify-between gap-4">
+        <div>
+          <p className="kicker">{LOG_KIND_LABELS[kind].tactic}</p>
+          <h2 className="mt-1 text-base font-semibold text-text-primary">Anti-forensics patterns</h2>
+          <p className="mt-1 text-xs leading-relaxed text-text-muted">{LOG_KIND_LABELS[kind].blurb}</p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          {saved && <span className="font-mono text-[11px] text-risk-clean">saved ✓</span>}
+          {dirty && (
+            <button
+              onClick={() => {
+                if (!window.confirm("Discard ALL unsaved anti-forensics pattern edits?")) return;
+                setDrafts(EMPTY_LOG_DRAFTS);
+                clearLogDrafts();
+              }}
+              className="press rounded border border-border-subtle px-3 py-1.5 font-mono text-xs text-text-faint transition-colors duration-150 hover:border-risk-malicious/50 hover:text-risk-malicious"
+              title="Throw away every unsaved log-pattern edit (and any restored draft)"
+            >
+              Discard drafts
+            </button>
+          )}
+          <button
+            onClick={() =>
+              save.mutate(
+                Object.fromEntries(
+                  (Object.keys(data.kinds) as LogPatternKind[]).map((k) => [
+                    k,
+                    Object.fromEntries(
+                      Object.keys(data.kinds[k]).map((p) => [p, drafts[k]?.[p] ?? data.kinds[k][p]]),
+                    ),
+                  ]),
+                ) as Record<LogPatternKind, Record<string, EnumPatternRow[]>>,
+              )
+            }
+            disabled={!dirty || save.isPending}
+            className="press rounded border border-accent/60 px-3 py-1.5 font-mono text-xs text-accent transition-colors duration-150 hover:bg-accent/10 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Save all platforms
+          </button>
+        </div>
+      </div>
+
+      <div className="mb-4 flex items-center gap-1">
+        {(Object.keys(LOG_KIND_LABELS) as LogPatternKind[]).map((k) => (
+          <button
+            key={k}
+            onClick={() => setKind(k)}
+            className={`rounded px-2.5 py-1 font-mono text-[10px] uppercase tracking-wide transition-colors duration-150 ${
+              kind === k ? "bg-bg-elevated text-accent" : "text-text-muted hover:text-text-primary"
+            }`}
+          >
+            {LOG_KIND_LABELS[k].title}
+          </button>
+        ))}
+      </div>
+
+      <div className="space-y-4">
+        {platforms.map((platform) => {
+          const rows = current(platform);
+          const defaults = data.defaults[kind][platform];
+          const isCustom = (r: EnumPatternRow) =>
+            defaults.some((d) => d.pattern === r.pattern && d.label === r.label) === false;
+          return (
+            <Panel key={platform} title={PLATFORM_LABELS[platform] ?? platform}>
+              <div className="space-y-2">
+                {rows.map((row, i) => (
+                  <div key={i} className="flex flex-wrap items-center gap-2">
+                    <input
+                      value={row.pattern}
+                      onChange={(e) => {
+                        const next = [...rows];
+                        next[i] = { ...row, pattern: e.target.value };
+                        patch(platform, next);
+                      }}
+                      className="min-w-0 flex-1 rounded border border-border-subtle bg-bg-base px-2 py-1.5 font-mono text-[11px] text-text-primary focus:border-accent/60 focus:outline-none"
+                      aria-label={`${platform} ${kind} pattern regex`}
+                      placeholder="regex…"
+                    />
+                    <input
+                      value={row.label}
+                      onChange={(e) => {
+                        const next = [...rows];
+                        next[i] = { ...row, label: e.target.value };
+                        patch(platform, next);
+                      }}
+                      className="min-w-0 flex-1 rounded border border-border-subtle bg-bg-base px-2 py-1.5 font-mono text-[11px] text-text-primary focus:border-accent/60 focus:outline-none"
+                      aria-label={`${platform} ${kind} pattern label`}
+                      placeholder="label…"
+                    />
+                    <button
+                      onClick={() => patch(platform, rows.filter((_, j) => j !== i))}
+                      className="press shrink-0 text-text-faint transition-colors hover:text-risk-malicious"
+                      aria-label={`Remove ${kind} pattern ${i + 1}`}
+                    >
+                      <Icon name="x" size={12} />
+                    </button>
+                  </div>
+                ))}
+                <button
+                  onClick={() => patch(platform, [...rows, { pattern: "", label: "" }])}
+                  className="press rounded border border-dashed border-border-subtle px-2.5 py-1 font-mono text-[11px] text-text-muted transition-colors duration-150 hover:border-accent/50 hover:text-accent"
+                >
+                  + add pattern
+                </button>
+                {isCustom(rows[0] ?? { pattern: "", label: "" }) && (
+                  <button
+                    onClick={() => revertPlatform(platform)}
+                    className="press rounded border border-border-subtle px-2.5 py-1 font-mono text-[11px] text-text-faint transition-colors duration-150 hover:text-text-muted"
+                  >
+                    Revert {PLATFORM_LABELS[platform] ?? platform}
+                  </button>
+                )}
               </div>
             </Panel>
           );
@@ -219,6 +546,24 @@ const KNOB_LABELS: Record<string, string> = {
   ENUM_WINDOW_SECONDS: "Enumeration look-back window (s)",
   STAGING_WINDOW_SECONDS: "Archive-then-upload window (s)",
   BASELINE_MIN_EVENTS: "Observations before baseline anomalies fire",
+  DNS_TUNNEL_WINDOW_SECONDS: "DNS-tunnel look-back window (s)",
+  DNS_TUNNEL_MIN_DISTINCT: "Distinct suspicious DNS labels to flag tunneling",
+  DNS_LABEL_LEN: "Min DNS label length counted as suspicious (chars)",
+  DNS_LABEL_ENTROPY: "Min DNS label entropy counted as suspicious (bits/char)",
+  DNS_LONG_LABEL_LEN: "Single-query DNS label length to flag (chars)",
+  DNS_LONG_LABEL_ENTROPY: "Single-query DNS label entropy to flag (bits/char)",
+  RDP_BRUTE_WINDOW_SECONDS: "RDP brute-force look-back window (s)",
+  RDP_BRUTE_MIN_CONNECTIONS: "RDP (3389) connections to flag a spray",
+  FANOUT_WINDOW_SECONDS: "Fan-out look-back window (s)",
+  FANOUT_MIN_PROCESSES: "Distinct processes on one destination to flag fan-out",
+  FIRST_SEEN_MAX_ALERTS: "Max first-seen alerts per run (storm cap)",
+  ENUM_BURST_MAX_ALERTS: "Max enumeration-burst alerts per run (storm cap)",
+  NETWORK_SCAN_MAX_ALERTS: "Max network-scan alerts per run (storm cap)",
+  BEACONING_MAX_ALERTS: "Max beaconing alerts per run (storm cap)",
+  FANOUT_MAX_ALERTS: "Max fan-out alerts per run (storm cap)",
+  FANOUT_RECUR_MIN_WINDOWS: "Distinct windows before fan-out is recurring",
+  FANOUT_RECUR_LOOKBACK_SECONDS: "How far back the recurrence scan looks (seconds)",
+  ALERT_CAP_DEFAULT: "Default per-rule alert cap for all other rules (storm guard)",
 };
 
 const YARA_TEMPLATE = `rule my_signature {
@@ -232,13 +577,28 @@ const YARA_TEMPLATE = `rule my_signature {
 function YaraLab() {
   const queryClient = useQueryClient();
   const { data: savedRules } = useQuery({ queryKey: ["yara-rules"], queryFn: getCustomYaraRules });
-  const [ruleText, setRuleText] = useState(YARA_TEMPLATE);
-  const [family, setFamily] = useState("custom");
-  const [description, setDescription] = useState("");
-  const [scope, setScope] = useState<"all" | "picked">("all");
-  const [picked, setPicked] = useState<string[]>([]);
+  // Restore the in-progress rule from localStorage — a half-written rule
+  // survives a reload; cleared on successful save.
+  const [draft] = useState(readYaraDraft);
+  const [ruleText, setRuleText] = useState(draft?.ruleText ?? YARA_TEMPLATE);
+  const [family, setFamily] = useState(draft?.family ?? "custom");
+  const [description, setDescription] = useState(draft?.description ?? "");
+  const [scope, setScope] = useState<"all" | "picked">(draft?.scope === "picked" ? "picked" : "all");
+  const [picked, setPicked] = useState<string[]>(draft?.picked ?? []);
   const [result, setResult] = useState<YaraTestResponse | null>(null);
   const [status, setStatus] = useState<{ ok: boolean; text: string } | null>(null);
+
+  // True when the editor holds nothing beyond the pristine template. The
+  // mirror persists only non-pristine state — a discarded draft truly clears
+  // storage instead of the effect re-writing the template over it.
+  const isPristine =
+    ruleText === YARA_TEMPLATE && family === "custom" && description === "" && scope === "all" && picked.length === 0;
+
+  // Mirror the draft on every change (authoring is keystroke-by-keystroke).
+  useEffect(() => {
+    if (isPristine) clearYaraDraft();
+    else writeYaraDraft({ ruleText, family, description, scope, picked });
+  }, [ruleText, family, description, scope, picked, isPristine]);
 
   const { data: vault } = useQuery({ queryKey: ["samples", "lab"], queryFn: () => getSamples({ limit: 200 }) });
 
@@ -255,6 +615,7 @@ function YaraLab() {
     mutationFn: () => saveCustomYaraRule(ruleText, family, description),
     onSuccess: (res) => {
       void queryClient.invalidateQueries({ queryKey: ["yara-rules"] });
+      clearYaraDraft();
       setStatus({ ok: true, text: `Saved "${res.name}" — it now scans every new upload.` });
     },
     onError: (e: unknown) => setStatus({ ok: false, text: e instanceof Error ? e.message : "Couldn't save the rule." }),
@@ -279,6 +640,18 @@ function YaraLab() {
     setPicked((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
 
   const matches = (result?.samples ?? []).filter((s) => s.matched);
+
+  const discardDraft = () => {
+    if (!window.confirm("Discard the in-progress rule draft and reset to the template?")) return;
+    clearYaraDraft();
+    setRuleText(YARA_TEMPLATE);
+    setFamily("custom");
+    setDescription("");
+    setScope("all");
+    setPicked([]);
+    setResult(null);
+    setStatus(null);
+  };
 
   return (
     <div className="mt-8">
@@ -351,6 +724,16 @@ function YaraLab() {
             <Icon name="check" size={12} />
             {save.isPending ? "Saving…" : "Save rule"}
           </button>
+          {!isPristine && (
+            <button
+              onClick={discardDraft}
+              className="press inline-flex items-center gap-1.5 rounded border border-border-subtle px-3 py-1.5 font-mono text-xs text-text-faint transition-colors duration-150 hover:border-risk-malicious/50 hover:text-risk-malicious"
+              title="Clear the in-progress draft (and any restored one) back to the template"
+            >
+              <Icon name="x" size={12} />
+              Discard draft
+            </button>
+          )}
         </div>
       </Panel>
 
@@ -561,6 +944,63 @@ function RulePackPanel() {
   );
 }
 
+function FactoryResetPanel() {
+  const queryClient = useQueryClient();
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const doReset = async () => {
+    const ok = window.confirm(
+      "Factory-reset the rule surface? This clears EVERY tuning override, suppression, and " +
+        "pattern-table edit — enumeration, anti-forensics, and the FP threshold — back to stock. " +
+        "Run triage state (alert statuses, allowlists) is untouched. This cannot be undone (export a rule pack first).",
+    );
+    if (!ok) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await resetRules();
+      setMsg(
+        `Reset to stock — ${r.tuning_cleared} tuning override(s), ${r.suppressions_cleared} suppression(s), ` +
+          `${r.settings_cleared} pattern/threshold key(s) cleared.`,
+      );
+      for (const key of [["tuning"], ["rule-fp"], ["enum-patterns"], ["log-patterns"], ["suppressions"]]) {
+        void queryClient.invalidateQueries({ queryKey: key });
+      }
+    } catch {
+      setErr("Reset failed — is the backend running?");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="mt-8">
+      <div className="mb-2">
+        <p className="kicker">Operations · danger zone</p>
+        <h2 className="mt-1 text-base font-semibold text-text-primary">Factory reset rules</h2>
+      </div>
+      <div className="flex flex-wrap items-center gap-3 rounded-lg border border-risk-malicious/30 bg-bg-surface p-4">
+        <p className="min-w-0 flex-1 text-xs leading-relaxed text-text-muted">
+          Clear every tuning override, suppression, and pattern-table edit (enumeration + anti-forensics + FP
+          threshold) back to the engine&apos;s stock behavior — one atomic call, audited. Export a rule pack first if
+          you might want the current surface back.
+        </p>
+        <button
+          onClick={() => void doReset()}
+          disabled={busy}
+          className="press shrink-0 rounded border border-risk-malicious/60 px-3 py-1.5 font-mono text-xs text-risk-malicious transition-colors duration-150 hover:bg-risk-malicious/10 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {busy ? "Resetting…" : "Factory reset"}
+        </button>
+        {msg && <p className="w-full font-mono text-[11px] leading-relaxed text-risk-clean">{msg}</p>}
+        {err && <p className="w-full font-mono text-[11px] leading-relaxed text-risk-malicious">{err}</p>}
+      </div>
+    </div>
+  );
+}
+
 
 export default function RulesPage() {
   const queryClient = useQueryClient();
@@ -625,9 +1065,13 @@ export default function RulesPage() {
 
       <RulePackPanel />
 
+      <FactoryResetPanel />
+
       <YaraLab />
 
       <EnumPatternsEditor />
+
+      <LogPatternsEditor />
 
       {/* FP feedback surface — noise threshold + per-rule counters */}
       {fp && (

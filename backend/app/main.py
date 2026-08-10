@@ -35,6 +35,7 @@ from .api.routes_watchlist import router as watchlist_router
 from .api.routes_yara import router as yara_router
 from .api.routes_agents import router as agents_router
 from .api.routes_audit import router as audit_router
+from .api.routes_metrics import router as metrics_router
 from .api.routes_admin import auto_prune_loop, router as admin_router
 from .core import auth as auth_service
 from .core.config import CORS_ORIGINS
@@ -109,6 +110,7 @@ app.add_middleware(
 
 app.include_router(auth_router)
 app.include_router(health_router)
+app.include_router(metrics_router)
 app.include_router(keys_router)
 app.include_router(setup_router)
 app.include_router(intel_router)

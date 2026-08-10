@@ -13,6 +13,8 @@ import type {
   CompareResponse,
   EnumPatternRow,
   EnumPatternsResponse,
+  LogPatternKind,
+  LogPatternsResponse,
   EventIn,
   Campaign,
   HostWatchResponse,
@@ -195,13 +197,31 @@ export async function onboard(choice: "demo" | "empty"): Promise<{ status: strin
   return post("/setup/onboard", { choice });
 }
 
+export type ResetResult = {
+  status: string;
+  host_id: string;
+  kept_runs: number;
+  demo_mode: boolean;
+  deleted_runs: number;
+  deleted_events: number;
+  deleted_alerts: number;
+};
+
+export async function resetStore(): Promise<ResetResult> {
+  return post<ResetResult>("/setup/reset", {});
+}
+
 // -- runs -------------------------------------------------------------------
-export async function getRuns(params: { q?: string; host?: string } = {}): Promise<RunSummary[]> {
+export async function getRuns(params: { q?: string; host?: string; include_synthetic?: boolean } = {}): Promise<RunSummary[]> {
   const qs = new URLSearchParams();
   if (params.q) qs.set("q", params.q);
   if (params.host) qs.set("host", params.host);
-  const suffix = qs.toString();
-  return get<RunSummary[]>(`/runs${suffix ? `?${suffix}` : ""}`);
+  // The archive API hides synthetic provenance (seeds / webapp detonations /
+  // the sandbox demo) by default. Surfaces that want the full story
+  // (Overview, palette, sample detonation history) explicitly opt back in to
+  // keep their behavior; the History page relies on the same default.
+  qs.set("include_synthetic", params.include_synthetic === false ? "false" : "true");
+  return get<RunSummary[]>(`/runs?${qs.toString()}`);
 }
 
 export async function getRunDetail(runId: string): Promise<RunDetail> {
@@ -309,6 +329,31 @@ export async function setEnumPatterns(patterns: Record<string, EnumPatternRow[]>
     body: JSON.stringify({ patterns }),
   });
   if (!res.ok) throw new Error(`PUT /rules/enum-patterns → ${res.status}`);
+  return res.json();
+}
+
+export async function getLogPatterns(): Promise<LogPatternsResponse> {
+  return get<LogPatternsResponse>("/rules/log-patterns");
+}
+
+export async function resetRules(): Promise<{ tuning_cleared: number; suppressions_cleared: number; settings_cleared: number }> {
+  const res = await fetch(`${BASE_URL}/rules/reset`, {
+    method: "DELETE",
+    headers: authHeaders({}),
+  });
+  if (!res.ok) throw new Error(`DELETE /rules/reset → ${res.status}`);
+  return res.json();
+}
+
+export async function setLogPatterns(
+  patterns: Record<LogPatternKind, Record<string, EnumPatternRow[]>>,
+): Promise<{ kinds: Record<LogPatternKind, Record<string, EnumPatternRow[]>> }> {
+  const res = await fetch(`${BASE_URL}/rules/log-patterns`, {
+    method: "PUT",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ patterns }),
+  });
+  if (!res.ok) throw new Error(`PUT /rules/log-patterns → ${res.status}`);
   return res.json();
 }
 
@@ -433,8 +478,13 @@ export async function setNotificationSettings(body: NotificationSettingsIn): Pro
 }
 
 // -- Campaigns (runs clustered by shared infrastructure) ---------------------
-export async function getCampaigns(): Promise<Campaign[]> {
-  return get<Campaign[]>("/campaigns");
+export async function getCampaigns(params: { include_synthetic?: boolean } = {}): Promise<Campaign[]> {
+  const qs = new URLSearchParams();
+  // Synthetic-provenance members are excluded by default (archive parity);
+  // the page's toggle reveals them.
+  if (params.include_synthetic !== undefined) qs.set("include_synthetic", String(params.include_synthetic));
+  const suffix = qs.toString();
+  return get<Campaign[]>(`/campaigns${suffix ? `?${suffix}` : ""}`);
 }
 
 // -- Analyst notes (Tier 2 #7, docs/10) --------------------------------------
@@ -536,10 +586,13 @@ export async function restoreBackup(data: ArrayBuffer): Promise<{ restored: bool
 }
 
 // -- Sample upload / OS auto-detection (roadmap 1.4) -------------------------
-export async function getSamples(params: { q?: string; limit?: number } = {}): Promise<SamplesResponse> {
+export async function getSamples(params: { q?: string; limit?: number; include_synthetic?: boolean } = {}): Promise<SamplesResponse> {
   const qs = new URLSearchParams();
   if (params.q) qs.set("q", params.q);
   if (params.limit !== undefined) qs.set("limit", String(params.limit));
+  // Binaries whose entire detonation history is demo/synthetic are hidden by
+  // default — the vault reads as real artifacts first.
+  if (params.include_synthetic !== undefined) qs.set("include_synthetic", String(params.include_synthetic));
   const suffix = qs.toString();
   return get<SamplesResponse>(`/samples${suffix ? `?${suffix}` : ""}`);
 }
@@ -566,9 +619,12 @@ export async function downloadSample(sampleId: string, name: string): Promise<vo
   URL.revokeObjectURL(url);
 }
 
-export async function exportSamplesCsv(params: { q?: string } = {}): Promise<Blob> {
-  const qs = params.q ? `?q=${encodeURIComponent(params.q)}` : "";
-  const res = await fetch(`${BASE_URL}/samples/export${qs}`, { headers: authHeaders() });
+export async function exportSamplesCsv(params: { q?: string; include_synthetic?: boolean } = {}): Promise<Blob> {
+  const qs = new URLSearchParams();
+  if (params.q) qs.set("q", params.q);
+  if (params.include_synthetic !== undefined) qs.set("include_synthetic", String(params.include_synthetic));
+  const suffix = qs.toString();
+  const res = await fetch(`${BASE_URL}/samples/export${suffix ? `?${suffix}` : ""}`, { headers: authHeaders() });
   if (!res.ok) throw new Error(`GET /samples/export → ${res.status}`);
   return res.blob();
 }
@@ -581,6 +637,7 @@ export async function exportEventsCsv(params: EventFeedParams = {}): Promise<Blo
   if (params.q) qs.set("q", params.q);
   if (params.pid) qs.set("pid", params.pid);
   if (params.source) qs.set("source", params.source);
+  if (params.include_synthetic !== undefined) qs.set("include_synthetic", String(params.include_synthetic));
   const suffix = qs.toString();
   const res = await fetch(`${BASE_URL}/events/export${suffix ? `?${suffix}` : ""}`, { headers: authHeaders() });
   if (!res.ok) throw new Error(`GET /events/export → ${res.status}`);
@@ -699,6 +756,7 @@ export async function getEvents(params: EventFeedParams = {}): Promise<EventFeed
   if (params.q) qs.set("q", params.q);
   if (params.pid) qs.set("pid", params.pid);
   if (params.source) qs.set("source", params.source);
+  if (params.include_synthetic !== undefined) qs.set("include_synthetic", String(params.include_synthetic));
   if (params.limit !== undefined) qs.set("limit", String(params.limit));
   if (params.offset !== undefined) qs.set("offset", String(params.offset));
   const suffix = qs.toString();

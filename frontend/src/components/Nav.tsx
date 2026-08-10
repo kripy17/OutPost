@@ -17,7 +17,7 @@ import {
 } from "react";
 import { NavLink } from "react-router-dom";
 import CommandPalette from "./CommandPalette";
-import { getHealth, getPlatform, getRecentAlerts, getRuns } from "../lib/api";
+import { getHealth, getMeta, getPlatform, getRecentAlerts, getRuns } from "../lib/api";
 import { useEventStream } from "../lib/useEventStream";
 import { Icon, IconMenu, IconMoon, IconSun, platformIconName, type IconName } from "./Icon";
 
@@ -109,6 +109,7 @@ const GROUPS: { label: string; links: NavItem[] }[] = [
   {
     label: "Operations",
     links: [
+      { to: "/findings", label: "Open Findings", iconName: "alert" },
       { to: "/watchlist", label: "Watchlist", iconName: "star" },
       { to: "/agents", label: "Agents", iconName: "terminal" },
       { to: "/rules", label: "Rules", iconName: "shield" },
@@ -118,7 +119,6 @@ const GROUPS: { label: string; links: NavItem[] }[] = [
   {
     label: "Tools",
     links: [
-      { to: "/triage", label: "Triage", iconName: "alert" },
       { to: "/samples", label: "Samples", iconName: "box" },
       { to: "/coverage", label: "ATT&CK Coverage", iconName: "target" },
       { to: "/audit", label: "Audit Log", iconName: "notes" },
@@ -146,18 +146,27 @@ function StatusCluster({
 
   const health = useQuery({ queryKey: ["health"], queryFn: getHealth, refetchInterval: 5_000 });
   const latest = useQuery({ queryKey: ["statusbar", "latest-finding"], queryFn: () => getRecentAlerts(1), refetchInterval: 10_000 });
-  const runs = useQuery({ queryKey: ["statusbar", "runs"], queryFn: () => getRuns(), refetchInterval: 10_000 });
+  // The session count mirrors the History page's synthetic toggle: the
+  // status bar reads as real telemetry first, matching the archive default.
+  // The 10 s poll picks up toggle changes within a few seconds.
+  const runs = useQuery({
+    queryKey: ["statusbar", "runs"],
+    queryFn: () => getRuns({ include_synthetic: localStorage.getItem("outpost-history-synthetic") === "1" ? undefined : false }),
+    refetchInterval: 10_000,
+  });
+  const meta = useQuery({ queryKey: ["meta"], queryFn: getMeta, staleTime: 60_000 });
 
   const online = health.data === true;
   const offline = health.data === false || health.isError;
   const latestTime = latest.data?.[0] ? `${latest.data[0].triggered_at.slice(11, 19)} UTC` : null;
   const count = runs.isLoading ? "…" : runs.data?.length ?? "—";
+  const demo = meta.data?.demo_mode === true;
 
   // Icon-only rail: a single live pulse dot, summary in the tooltip.
   if (collapsed) {
     const summary = `${online ? "Online" : offline ? "Offline" : "Connecting"} · ${count} sessions${
-      latestTime ? ` · latest finding ${latestTime}` : ""
-    }`;
+      demo ? " · demo data" : ""
+    }${latestTime ? ` · latest finding ${latestTime}` : ""}`;
     return (
       <span
         {...(makeTip ? makeTip(summary) : {})}
@@ -191,6 +200,14 @@ function StatusCluster({
           <span className="font-semibold tabular-nums text-text-primary">{count}</span> sessions
         </span>
       </span>
+      {demo && (
+        <span
+          className="inline-flex items-center gap-1 rounded border border-accent/40 bg-accent/10 px-1.5 py-px font-mono text-[9px] uppercase tracking-wide text-accent"
+          title="The store contains seeded demo data — see Settings → Start fresh to clear it"
+        >
+          demo data
+        </span>
+      )}
       {latestTime && (
         <span className="flex items-center gap-1.5 text-text-faint">
           <Icon name="zap" size={11} className="text-risk-suspicious" />

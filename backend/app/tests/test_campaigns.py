@@ -44,6 +44,38 @@ def test_campaign_groups_runs_sharing_ip(client):
     assert all(c["key"] != "203.0.113.202" for c in camps)
 
 
+def test_campaigns_hide_synthetic_members_by_default(client):
+    """Archive parity on the campaigns view: seed / webapp-demo members are
+    excluded by default, a campaign reduced below two real members is dropped,
+    and the timeline is recomputed from the real members only.
+    include_synthetic=true restores the full cluster."""
+    a = make_run(client, sample_name="campmix-real-a.bin", source="cli")
+    b = make_run(client, sample_name="campmix-real-b.bin", source="cli")
+    s = make_run(client, sample_name="campmix-seed.bin", source="webapp-demo")
+    for rid in (a, b, s):
+        _ingest(client, rid, [_net(rid, "203.0.113.230", ts=1)])
+
+    # A seed-only pair: both members synthetic — dropped entirely by default.
+    s1 = make_run(client, sample_name="camponly-s1.bin", source="seed")
+    s2 = make_run(client, sample_name="camponly-s2.bin", source="seed")
+    for rid in (s1, s2):
+        _ingest(client, rid, [_net(rid, "203.0.113.231", ts=1)])
+
+    bare = client.get("/campaigns").json()
+    mix = [c for c in bare if c["key"] == "203.0.113.230"]
+    assert len(mix) == 1
+    assert {r["run_id"] for r in mix[0]["runs"]} == {a, b}
+    # Timeline/evidence recomputed from the real members only.
+    assert all(t["sample_name"] != "campmix-seed.bin" for t in mix[0]["timeline"])
+    # The seed-only cluster is not a campaign once synthetic members are out.
+    assert all(c["key"] != "203.0.113.231" for c in bare)
+
+    full = client.get("/campaigns", params={"include_synthetic": "true"}).json()
+    mix_full = [c for c in full if c["key"] == "203.0.113.230"][0]
+    assert {r["run_id"] for r in mix_full["runs"]} == {a, b, s}
+    assert any(c["key"] == "203.0.113.231" for c in full)
+
+
 def test_clean_shared_ip_not_a_campaign(client, conn):
     from ..models.event import upsert_cache
 

@@ -71,6 +71,10 @@ def parse_sysmon_event(record) -> dict | None:
         "protocol": data.get("Protocol"),
         "file_path": data.get("TargetFilename"),
         "registry_key": data.get("TargetObject"),
+        # TLS Server Name Indication — Sysmon Event ID 3's DestinationHostname
+        # (present when the connection carried a TLS handshake). Feeds the
+        # TLS-SNI and DNS-over-HTTPS detection rules.
+        "tls_sni": data.get("DestinationHostname"),
     }
     return ev
 

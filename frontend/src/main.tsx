@@ -19,6 +19,7 @@ const AuditPage = lazy(() => import("./routes/audit"));
 const CampaignsPage = lazy(() => import("./routes/campaigns"));
 const CoveragePage = lazy(() => import("./routes/coverage"));
 const EventsPage = lazy(() => import("./routes/events"));
+const FindingsPage = lazy(() => import("./routes/findings"));
 const FootprintPage = lazy(() => import("./routes/footprint"));
 const MonitorPage = lazy(() => import("./routes/monitor"));
 const RunDetailPage = lazy(() => import("./routes/runDetail"));
@@ -29,7 +30,6 @@ const SampleDetailPage = lazy(() => import("./routes/sampleDetail"));
 const SamplesPage = lazy(() => import("./routes/samples"));
 const SearchPage = lazy(() => import("./routes/search"));
 const SettingsPage = lazy(() => import("./routes/settings"));
-const TriagePage = lazy(() => import("./routes/triage"));
 const WatchlistPage = lazy(() => import("./routes/watchlist"));
 const WelcomePage = lazy(() => import("./routes/welcome"));
 
@@ -79,6 +79,11 @@ function Layout() {
 
   return (
     <div className="min-h-screen">
+      {/* Narrow-window notice — this is a desk tool, not a phone app (spec).
+          CSS-only: hidden on lg+ screens, so it never touches a real desk. */}
+      <div className="narrow-notice" role="note">
+        Best viewed at 1024px+ — this is a desk tool, not a phone app.
+      </div>
       <Nav />
       {/* Global watchlist toaster — alive on every page, top-right. */}
       <WatchlistToaster />
@@ -112,7 +117,8 @@ const router = createBrowserRouter([
       { path: "/watchlist", element: <WatchlistPage /> },
       { path: "/agents", element: <AgentsPage /> },
       { path: "/audit", element: <AuditPage /> },
-      { path: "/triage", element: <TriagePage /> },
+      { path: "/findings", element: <FindingsPage /> },
+      { path: "/triage", element: <Navigate to="/findings" replace /> }, // the queue moved to its own page
       { path: "/campaigns", element: <CampaignsPage /> },
       { path: "/coverage", element: <CoveragePage /> },
       { path: "/rules", element: <RulesPage /> },

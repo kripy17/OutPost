@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import DetectionVolume from "../components/DetectionVolume/DetectionVolume";
 import RiskTimeline from "../components/RiskTimeline/RiskTimeline";
@@ -13,9 +13,9 @@ import type { RunSummary } from "../types";
 /** Compare two sessions — the former /compare page folded into the archive.
  *  Pick any two runs and see what processes/IPs each has that the other
  *  doesn't (variant A vs variant B, before vs after a patch, …). */
-function ComparePanel({ runs }: { runs: RunSummary[] }) {
-  const [a, setA] = useState("");
-  const [b, setB] = useState("");
+function ComparePanel({ runs, initialA = "", initialB = "" }: { runs: RunSummary[]; initialA?: string; initialB?: string }) {
+  const [a, setA] = useState(initialA);
+  const [b, setB] = useState(initialB);
   const { data, isFetching } = useQuery({
     queryKey: ["compare", a, b],
     queryFn: () => compareRuns(a, b),
@@ -107,14 +107,25 @@ export default function RunHistoryPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const q = (searchParams.get("q") ?? "").trim();
   const host = (searchParams.get("host") ?? "").trim();
+  // The archive reads as real telemetry first — synthetic provenance (seeds /
+  // webapp detonations / the sandbox demo) is hidden unless the operator asks.
+  const [includeSynthetic, setIncludeSynthetic] = useState(() => localStorage.getItem("outpost-history-synthetic") === "1");
+  useEffect(() => {
+    try {
+      localStorage.setItem("outpost-history-synthetic", includeSynthetic ? "1" : "0");
+    } catch {
+      /* storage unavailable */
+    }
+  }, [includeSynthetic]);
   const { data, isLoading, isError } = useQuery({
-    queryKey: ["runs", "q", q, "host", host],
-    queryFn: () => getRuns({ q, host }),
+    queryKey: ["runs", "q", q, "host", host, "syn", includeSynthetic],
+    queryFn: () => getRuns({ q, host, include_synthetic: includeSynthetic }),
   });
   const [windowKey, setWindowKey] = useState<TrendWindow>(() => {
     const saved = localStorage.getItem("outpost-history-window");
     return (TREND_WINDOWS.some((w) => w.key === saved) ? saved : "24h") as TrendWindow;
   });
+
   useEffect(() => {
     try {
       localStorage.setItem("outpost-history-window", windowKey);
@@ -123,7 +134,40 @@ export default function RunHistoryPage() {
     }
   }, [windowKey]);
 
+  // Keyboard parity with the Event Log: ↑/↓ move the selection through the
+  // run list, Enter opens the highlighted session. Never fires while typing
+  // in a field.
+  const navigate = useNavigate();
   const runs = data ?? [];
+  const [selectedIdx, setSelectedIdx] = useState(-1);
+  useEffect(() => {
+    if (runs.length === 0) return;
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setSelectedIdx((i) => Math.min(i + 1, runs.length - 1));
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setSelectedIdx((i) => Math.max(i - 1, 0));
+      } else if (e.key === "Enter" && selectedIdx >= 0) {
+        e.preventDefault();
+        const run = runs[selectedIdx];
+        if (run) navigate(`/runs/${run.run_id}`);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [runs, selectedIdx, navigate]);
+
+  // Keep the highlighted row in view as the selection moves.
+  useEffect(() => {
+    if (selectedIdx < 0) return;
+    const row = document.querySelector(`[aria-current="true"]`);
+    row?.scrollIntoView({ block: "nearest" });
+  }, [selectedIdx]);
+
   const totalAlerts = runs.reduce((n, r) => n + r.alert_count, 0);
   const malicious = runs.filter((r) => r.highest_severity === "malicious").length;
   const totalRisk = runs.reduce((n, r) => n + (r.risk_score ?? 0), 0);
@@ -198,33 +242,58 @@ export default function RunHistoryPage() {
               on the lean Overview dashboard. */}
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
             <p className="kicker">Trend</p>
-            <div
-              role="group"
-              aria-label="Trend time window"
-              className="flex items-center gap-0.5 rounded-lg border border-border-subtle bg-bg-elevated/40 p-0.5"
-            >
-              {TREND_WINDOWS.map((w) => (
-                <button
-                  key={w.key}
-                  onClick={() => setWindowKey(w.key)}
-                  aria-pressed={windowKey === w.key}
-                  className={`press rounded-md px-2.5 py-1 font-mono text-[11px] transition-colors duration-150 ${
-                    windowKey === w.key
-                      ? "bg-accent/15 font-semibold text-accent"
-                      : "text-text-muted hover:text-text-primary"
-                  }`}
-                >
-                  {w.label}
-                </button>
-              ))}
+            <div className="flex flex-wrap items-center gap-2">
+              <div
+                role="group"
+                aria-label="Trend time window"
+                className="flex items-center gap-0.5 rounded-lg border border-border-subtle bg-bg-elevated/40 p-0.5"
+              >
+                {TREND_WINDOWS.map((w) => (
+                  <button
+                    key={w.key}
+                    onClick={() => setWindowKey(w.key)}
+                    aria-pressed={windowKey === w.key}
+                    className={`press rounded-md px-2.5 py-1 font-mono text-[11px] transition-colors duration-150 ${
+                      windowKey === w.key
+                        ? "bg-accent/15 font-semibold text-accent"
+                        : "text-text-muted hover:text-text-primary"
+                    }`}
+                  >
+                    {w.label}
+                  </button>
+                ))}
+              </div>
+              <button
+                onClick={() => setIncludeSynthetic((v) => !v)}
+                aria-pressed={includeSynthetic}
+                title={includeSynthetic ? "Hide demo/synthetic runs again" : "Include seeded demo runs and webapp-synthetic detonations"}
+                className={`press rounded-md px-2.5 py-1 font-mono text-[11px] transition-colors duration-150 ${
+                  includeSynthetic ? "border border-accent/50 bg-accent/10 text-accent" : "border border-border-subtle text-text-faint hover:text-text-primary"
+                }`}
+              >
+                {includeSynthetic ? "●" : "○"} show synthetic
+              </button>
             </div>
           </div>
           <div className="mb-6 grid grid-cols-1 gap-6 xl:grid-cols-[1.7fr_1fr]">
             <RiskTimeline runs={runs} windowKey={windowKey} />
             <DetectionVolume windowKey={windowKey} />
           </div>
-          <RunList runs={data} />
-          <ComparePanel runs={data} />
+          {/* Keyboard parity hints — same interaction as the Event Log. */}
+          <p className="mb-3 font-mono text-[10px] text-text-faint">
+            <kbd className="rounded border border-border-subtle bg-bg-surface px-1.5 py-px">↑</kbd>{" "}
+            <kbd className="rounded border border-border-subtle bg-bg-surface px-1.5 py-px">↓</kbd> select session ·{" "}
+            <kbd className="rounded border border-border-subtle bg-bg-surface px-1.5 py-px">Enter</kbd> open
+          </p>
+          <RunList runs={data} highlightId={selectedIdx >= 0 ? (runs[selectedIdx]?.run_id ?? null) : null} />
+          {/* Keyed by the ?a=&b= preset so a campaign compare jump remounts with
+              its pair pre-selected. */}
+          <ComparePanel
+            key={`${searchParams.get("a") ?? ""}-${searchParams.get("b") ?? ""}`}
+            runs={data}
+            initialA={searchParams.get("a") ?? ""}
+            initialB={searchParams.get("b") ?? ""}
+          />
         </>
       )}
     </div>

@@ -43,7 +43,10 @@ def complete_run(run_id: str) -> dict:
 
 
 def list_runs() -> list[dict]:
-    return _get("/runs")
+    # Opt back in to synthetic provenance (seeds / webapp detonations / the
+    # sandbox demo) — the API hides it by default now, but the CLI is the
+    # parity mirror and should keep showing everything.
+    return _get("/runs?include_synthetic=true")
 
 
 def get_run(run_id: str) -> dict:
@@ -98,7 +101,9 @@ def watchlist_remove(value: str) -> None:
 
 
 def get_campaigns() -> list[dict]:
-    return _get("/campaigns")
+    # Opt into synthetic-provenance members explicitly — the terminal mirror
+    # shows the full story (same parity rule as list_runs).
+    return _get("/campaigns?include_synthetic=true")
 
 
 def list_samples(q: str = "") -> dict:
@@ -151,6 +156,17 @@ def get_rules_meta() -> list[dict]:
     return _get("/rules/meta")
 
 
+def get_tuning() -> dict:
+    """Every tunable knob with default/current/tuned — `outpost rules knobs`."""
+    return _get("/rules/tuning")
+
+
+def get_log_patterns() -> dict:
+    """The anti-forensics pattern tables (service_stop / log_clear) per
+    platform — `outpost rules log-patterns`."""
+    return _get("/rules/log-patterns")
+
+
 def refresh_ip(run_id: str, ip: str) -> dict:
     """Bypass the enrichment TTL ONCE for one destination IP of a run — the
     terminal mirror of the run-detail force-refresh button."""
@@ -163,3 +179,34 @@ def refresh_stale(limit: int = 50) -> dict:
     """The stale-only maintenance sweep — re-query just the cached verdicts
     past the TTL (oldest first), the Settings sweep's terminal mirror."""
     return _post(f"/intel/refresh-stale?max={limit}", {})
+
+
+def intel_import(source: str, content: str = "", url: str = "") -> dict:
+    """Pull a threat-intel feed (STIX bundle or IOC list) into the watchlist
+    + IOC layer; the response lists which existing runs already touch it."""
+    body: dict = {"source": source}
+    if url:
+        body["url"] = url
+    if content:
+        body["content"] = content
+    return _post("/intel/import", body)
+
+
+def yara_list() -> dict:
+    """Persisted custom YARA rules (parsed: name/family/strings/source)."""
+    return _get("/yara/rules")
+
+
+def yara_test(rule: str, sample_ids: list[str] | None = None) -> dict:
+    """Compile + scan a rule against the vault (or a sample subset) without
+    persisting — the signature lab's terminal mirror."""
+    body: dict = {"rule": rule}
+    if sample_ids:
+        body["sample_ids"] = sample_ids
+    return _post("/yara/test", body)
+
+
+def footprint(sample_id: str, mock: bool = False) -> dict:
+    """Passive digital footprint for one uploaded sample (reverse-DNS, CT
+    certs, RDAP org, ASN) with an honest synthetic fallback flag."""
+    return _get(f"/footprint/{sample_id}?mock={1 if mock else 0}")

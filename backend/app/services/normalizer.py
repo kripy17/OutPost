@@ -12,7 +12,7 @@ from typing import Any
 _PASSTHROUGH = (
     "run_id", "platform", "event_type", "timestamp", "pid", "ppid",
     "process_name", "command_line", "dest_ip", "dest_port", "protocol",
-    "file_path", "registry_key", "host_id", "log_source",
+    "file_path", "registry_key", "host_id", "log_source", "query", "tls_sni",
 )
 
 

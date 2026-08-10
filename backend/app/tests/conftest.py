@@ -51,7 +51,7 @@ def conn():
     c.close()
 
 
-def make_run(client, sample_name="synthetic-test.bin", platform="windows", session_type="analysis", source="monitor") -> str:
+def make_run(client, sample_name="synthetic-test.bin", platform="windows", session_type="analysis", source="cli") -> str:
     resp = client.post(
         "/runs",
         json={

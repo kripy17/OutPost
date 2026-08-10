@@ -290,6 +290,25 @@ def render_report(report: dict, run_id: str | None = None, rules_meta: list[dict
         console.print()
         console.print(render_kill_chain(report["kill_chain"]))
 
+    # Explainability — tuned thresholds this run was scored under (webapp
+    # parity): "scored under DNS_TUNNEL_MIN_DISTINCT=3" so a tuned finding
+    # explains itself; stock runs print a single quiet line.
+    tuning = report.get("effective_tuning") or {}
+    console.print()
+    if tuning:
+        parts = ", ".join(f"{k}={v}" for k, v in sorted(tuning.items()))
+        console.print(f"[bold #D9A441]scored under[/bold #D9A441] [dim]{parts}[/dim]")
+    else:
+        console.print("[dim]scored under stock thresholds (no tuning overrides in effect)[/dim]")
+
+    # Storm guard — per-rule alert-cap suppressed counts (webapp parity): a
+    # long live session caps first-seen / enumeration / network-scan and
+    # records what was held back so the cap is visible, not silent.
+    suppressed = report.get("suppressed_alerts") or {}
+    if suppressed:
+        parts = ", ".join(f"{rule} −{count}" for rule, count in sorted(suppressed.items()))
+        console.print(f"[bold #D9A441]alert cap held back[/bold #D9A441] [dim]{parts}[/dim]")
+
     alerts = report.get("alerts", [])
     if alerts:
         console.print(f"\n[bold #C4453B]{len(alerts)} alert(s):[/bold #C4453B]")

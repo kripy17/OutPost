@@ -102,7 +102,7 @@ def test_retention_set_and_prune(client, conn):
     out = client.post("/admin/prune", json={}).json()
     assert out["deleted_runs"] >= 1  # the 10-day-old run (others may age out too)
 
-    remaining = [r["run_id"] for r in client.get("/runs").json()]
+    remaining = [r["run_id"] for r in client.get("/runs", params={"include_synthetic": "true"}).json()]
     assert old not in remaining and fresh in remaining
     # Cascading: the old run's events are gone too (unique IP, no cross-test noise).
     assert client.get("/events", params={"q": "203.0.113.250"}).json()["total"] == 0
@@ -126,14 +126,14 @@ def test_backup_and_restore_roundtrip(client):
 
     # Mutate the live store, then restore the backup over it.
     make_run(client, sample_name="after-backup.bin")
-    assert any(r["sample_name"] == "after-backup.bin" for r in client.get("/runs").json())
+    assert any(r["sample_name"] == "after-backup.bin" for r in client.get("/runs", params={"include_synthetic": "true"}).json())
 
     resp = client.post("/admin/restore", content=backup.content, headers={"Content-Type": "application/octet-stream"})
     assert resp.status_code == 200
     body = resp.json()
     assert body["restored"] is True and body["safety_copy"]
 
-    names = [r["sample_name"] for r in client.get("/runs").json()]
+    names = [r["sample_name"] for r in client.get("/runs", params={"include_synthetic": "true"}).json()]
     assert "backup.bin" in names and "after-backup.bin" not in names
     assert any(e["action"] == "restore.apply" for e in client.get("/audit").json()["events"])
 
@@ -263,7 +263,7 @@ def test_auto_prune_runs_on_schedule(client, conn):
 
     result = _maybe_auto_prune()
     assert result is not None and result["deleted_runs"] >= 1
-    remaining = [r["run_id"] for r in client.get("/runs").json()]
+    remaining = [r["run_id"] for r in client.get("/runs", params={"include_synthetic": "true"}).json()]
     assert old not in remaining and fresh in remaining
 
     # Audited with the system actor; last-run + next-run bookkeeping updated.
@@ -286,7 +286,7 @@ def test_auto_prune_off_never_prunes(client, conn):
     old = _backdate_run(client, conn, "auto-off.bin")
     client.post("/admin/retention", json={"retention_days": 7, "auto_prune": "off"})
     assert _maybe_auto_prune() is None
-    remaining = [r["run_id"] for r in client.get("/runs").json()]
+    remaining = [r["run_id"] for r in client.get("/runs", params={"include_synthetic": "true"}).json()]
     assert old in remaining
 
 

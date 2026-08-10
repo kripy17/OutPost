@@ -42,6 +42,13 @@ class EventIn(BaseModel):
     # event — the Event Log's source tabs split collectors by this. NULL for
     # webapp/sandbox/seed events.
     log_source: Optional[str] = None
+    # DNS query string (resolved name) — populated by Sysmon DNS events and
+    # DNS-capable collectors. Feeds the DNS-channel rules (tunneling,
+    # high-entropy labels, covert DNS ports).
+    query: Optional[str] = None
+    # TLS Server Name Indication from the handshake (Sysmon Event ID 3
+    # DestinationHostname). Feeds the TLS-SNI / DNS-over-HTTPS rules.
+    tls_sni: Optional[str] = None
 
 
 class EventOut(EventIn):
@@ -188,15 +195,21 @@ class RunDetail(BaseModel):
     # Roadmap 2.2 — uploaded-sample reputation evidence, when the run's
     # sample_name matches an uploaded binary (YARA + VirusTotal).
     sample_reputation: Optional[dict] = None
+    # Explainability: the tuning knobs that deviated from stock while this
+    # run was evaluated (captured once, immutable) — "scored under" context.
+    effective_tuning: dict[str, object] = {}
+    suppressed_alerts: dict[str, int] = {}
 
 
 class RunCreate(BaseModel):
     sample_name: str
     platform: Platform
     session_type: SessionType = "analysis"
-    # Provenance marker — the webapp sends "monitor" by default; the host
-    # collector path is forced to "live" server-side when session_type=live.
-    source: str = Field(default="monitor", max_length=32)
+    # Provenance marker — webapp-synthetic detonations default to
+    # "webapp-demo" (honest: generated, not host telemetry); the CLI sends
+    # "cli"; the host collector path is forced to "live" server-side when
+    # session_type=live.
+    source: str = Field(default="webapp-demo", max_length=32)
 
 
 class SandboxDetonateIn(BaseModel):

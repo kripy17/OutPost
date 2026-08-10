@@ -2,6 +2,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import AlertBanner from "../components/AlertBanner/AlertBanner";
+import PersistencePanel from "../components/PersistencePanel/PersistencePanel";
+import AlertRate from "../components/AlertRate/AlertRate";
+import PlantStrip from "../components/PlantStrip/PlantStrip";
 import ExportButton from "../components/ExportButton/ExportButton";
 import { Icon, platformIconName } from "../components/Icon";
 import KillChainStepper, { killChainStats } from "../components/KillChain/KillChainStepper";
@@ -353,7 +356,7 @@ export default function RunDetailPage() {
     },
   });
 
-  const { data: campaigns = [] } = useQuery({ queryKey: ["campaigns"], queryFn: getCampaigns });
+  const { data: campaigns = [] } = useQuery({ queryKey: ["campaigns"], queryFn: () => getCampaigns() });
 
   // Re-enrich: clears the run's cached intel on the backend, then refetches
   // this page so the network table shows the freshly-queried badges.
@@ -399,31 +402,43 @@ export default function RunDetailPage() {
   }, [selectedPid, treeData]);
   const selectedIps = useMemo(() => new Set(selectedNode?.network_ips ?? []), [selectedNode]);
   const filteredTimeline = selectedPid === null ? timelineEvents : timelineEvents.filter((e) => e.pid === selectedPid);
+  // Plant focus (recurring fan-out): clicking a plant IP in the strip pins
+  // the network table to just that destination — takes priority over the
+  // process filter since the plant IP is the finding.
+  const [focusIp, setFocusIp] = useState<string | null>(null);
   const filteredConnections =
-    selectedPid === null || selectedIps.size === 0
-      ? netData
-      : netData.filter((c) => selectedIps.has(c.dest_ip));
+    focusIp !== null
+      ? netData.filter((c) => c.dest_ip === focusIp)
+      : selectedPid === null || selectedIps.size === 0
+        ? netData
+        : netData.filter((c) => selectedIps.has(c.dest_ip));
 
   // Small "focusing on …" bar above the filtered panels (a JSX value, not a
   // render-time component — creating components in render remounts them).
   const focusBar =
-    selectedPid !== null ? (
+    selectedPid !== null || focusIp !== null ? (
       <p className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-accent/40 bg-accent/5 px-3 py-1.5 font-mono text-[11px] text-accent">
-        <Icon name="process" size={12} />
-        <span>
-          focusing on {selectedNode?.process_name ?? `pid ${selectedPid}`}
-          <span className="text-text-faint"> [{selectedPid}]</span>
-        </span>
+        {focusIp !== null ? (
+          <span>
+            <Icon name="network" size={12} className="mr-1.5" />
+            focusing on plant IP <span className="text-text-primary">{focusIp}</span>
+          </span>
+        ) : (
+          <span>
+            <Icon name="process" size={12} />
+            focusing on {selectedNode?.process_name ?? `pid ${selectedPid}`}
+            <span className="text-text-faint"> [{selectedPid}]</span>
+          </span>
+        )}
         <span className="text-text-faint">
           · {filteredTimeline.length} timeline event{filteredTimeline.length === 1 ? "" : "s"}
-          {selectedIps.size > 0 && (
-            <>
-              {" "}· {filteredConnections.length} connection{filteredConnections.length === 1 ? "" : "s"}
-            </>
-          )}
+          · {filteredConnections.length} connection{filteredConnections.length === 1 ? "" : "s"}
         </span>
         <button
-          onClick={() => setSelectedPid(null)}
+          onClick={() => {
+            setSelectedPid(null);
+            setFocusIp(null);
+          }}
           className="press ml-auto inline-flex items-center gap-1 rounded border border-border-subtle px-2 py-0.5 text-[10px] text-text-muted transition-colors hover:border-accent/60 hover:text-accent"
         >
           <Icon name="x" size={10} />
@@ -483,7 +498,7 @@ export default function RunDetailPage() {
     );
   }
 
-  const { run, process_tree, network_connections, alerts, kill_chain, sample_reputation } = data;
+  const { run, process_tree, network_connections, alerts, kill_chain, sample_reputation, effective_tuning = {}, suppressed_alerts = {} } = data;
   const inProgress = run.completed_at === null;
   const chain = killChainStats(alerts);
   const campaign = campaigns.find((c) => c.runs.some((r) => r.run_id === runId));
@@ -580,7 +595,62 @@ export default function RunDetailPage() {
         </div>
       </header>
 
+      {/* Rule context — the tuned thresholds this run was scored under, so a
+          tuned finding explains itself (webapp + CLI + export parity). */}
+      <div
+        className="mb-6 flex flex-wrap items-center gap-2 rounded-lg border border-border-subtle bg-bg-surface px-3 py-2"
+        title="Effective rule tuning captured at this run's evaluation — the exact thresholds its findings were scored under"
+      >
+        {Object.keys(effective_tuning).length > 0 ? (
+          <>
+            <span className="font-mono text-[10px] uppercase tracking-wide text-accent">scored under</span>
+            {Object.entries(effective_tuning).map(([param, value]) => (
+              <span
+                key={param}
+                className="rounded border border-accent/40 bg-accent/10 px-1.5 py-0.5 font-mono text-[10px] text-accent"
+                title={`Tuning override in effect for this run`}
+              >
+                {param}={String(value)}
+              </span>
+            ))}
+          </>
+        ) : (
+          <span className="font-mono text-[10px] text-text-faint">
+            scored under stock thresholds — no tuning overrides in effect
+          </span>
+        )}
+        {Object.keys(suppressed_alerts).length > 0 && (
+          <span className="ml-1 flex items-center gap-1.5 border-l border-border-subtle pl-3">
+            <span className="font-mono text-[10px] uppercase tracking-wide text-risk-suspicious">
+              cap held back
+            </span>
+            {Object.entries(suppressed_alerts).map(([rule, count]) => (
+              <span
+                key={rule}
+                className="rounded border border-risk-suspicious/40 bg-risk-suspicious/10 px-1.5 py-0.5 font-mono text-[10px] text-risk-suspicious"
+                title={`${count} additional ${rule} alert(s) suppressed by the per-run storm cap`}
+              >
+                {rule} −{String(count)}
+              </span>
+            ))}
+          </span>
+        )}
+      </div>
+
       <div className="mb-6 space-y-6">
+        <AlertRate alerts={alerts} />
+        <PlantStrip
+          alerts={alerts}
+          onFocus={(ip) => {
+            setSelectedPid(null);
+            setFocusIp(ip);
+            // Instant jump (no smooth/rAF — both depend on the compositor,
+            // which some environments don't run). The panel's position is
+            // stable regardless of the filter state, so a synchronous jump is
+            // safe and reliable everywhere.
+            document.getElementById("network-panel")?.scrollIntoView({ block: "start" });
+          }}
+        />
         <Panel
           kicker="Tactics"
           title="Kill chain"
@@ -641,9 +711,11 @@ export default function RunDetailPage() {
 
         <div className="space-y-6">
           <ReconActorsPanel alerts={alerts} tree={process_tree} onLocate={onLocate} />
+          <PersistencePanel alerts={alerts} events={timelineEvents} />
           <AllowlistPanel runId={runId} />
           <SuppressionPanel runId={runId} alerts={alerts} />
           <Panel
+            id="network-panel"
             kicker="Network"
             title="Connections"
             right={
