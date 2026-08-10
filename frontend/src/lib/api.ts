@@ -228,10 +228,6 @@ export async function getRunDetail(runId: string): Promise<RunDetail> {
   return get<RunDetail>(`/runs/${runId}`);
 }
 
-export async function getAlerts(runId: string): Promise<Alert[]> {
-  return get<Alert[]>(`/runs/${runId}/alerts`);
-}
-
 export async function createRun(sampleName: string, platform: Platform, sessionType: SessionType): Promise<{ run_id: string }> {
   return post<{ run_id: string }>("/runs", { sample_name: sampleName, platform, session_type: sessionType });
 }
@@ -242,11 +238,6 @@ export async function completeRun(runId: string): Promise<void> {
 
 export async function ingestBatch(events: EventIn[]): Promise<{ accepted: number; alerts: number }> {
   return post<{ accepted: number; alerts: number }>("/ingest/batch", events);
-}
-
-// -- Roadmap 3.3 — STIX 2.1 export -------------------------------------------
-export async function getRunStix(runId: string): Promise<unknown> {
-  return get<unknown>(`/runs/${runId}/export?format=stix`);
 }
 
 // Campaign STIX bundle (cluster → MISP/OpenCTI) + MITRE Navigator layer, both
@@ -644,12 +635,6 @@ export async function exportEventsCsv(params: EventFeedParams = {}): Promise<Blo
   return res.blob();
 }
 
-export async function exportAlertsCsv(): Promise<Blob> {
-  const res = await fetch(`${BASE_URL}/alerts/export`, { headers: authHeaders() });
-  if (!res.ok) throw new Error(`GET /alerts/export → ${res.status}`);
-  return res.blob();
-}
-
 export async function bulkUpdateAlertStatus(ids: number[], status: AlertStatus, comment?: string): Promise<{ updated: number }> {
   return post<{ updated: number }>("/alerts/bulk", { ids, status, comment: comment ?? "" });
 }
@@ -673,10 +658,6 @@ export async function getAlertQueue(params: AlertQueueParams): Promise<QueueResp
     if (v !== undefined && v !== "") qs.set(k, String(v));
   }
   return get<QueueResponse>(`/alerts/queue?${qs.toString()}`);
-}
-
-export async function assignAlert(alertId: number, assignee: string): Promise<{ alert_id: number; assignee: string | null }> {
-  return post(`/alerts/${alertId}/assign`, { assignee });
 }
 
 export async function getHostBaseline(hostId: string): Promise<HostBaseline> {

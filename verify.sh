@@ -3,6 +3,7 @@
 #
 #   backend pytest  →  coverage gate (14/14 ATT&CK)  →  collector pytest
 #   →  CLI pytest  →  frontend lint/tests/build  →  collector soak gates
+#   →  doc-count gate (stale numeric references in shipped docs)
 #
 # Prints a colored pass/fail summary per step and exits non-zero if any step
 # fails. Environment overrides:
@@ -137,6 +138,73 @@ step "Linux soak     (auditd FP baseline gate)" \
     cd "$ROOT"
     "$PYTHON" scripts/soak_linux_collector.py \
       --backend "http://127.0.0.1:$SOAK_PORT" --host "$(hostname)" --gate
+  '
+
+# Doc-count gate — the shipped READMEs must not drift from the code they
+# describe. Two checks: (1) known-stale numeric patterns (old test counts,
+# the pre-trim "2-minute/4 acts" demo copy) never reappear; (2) every claimed
+# count — the README badge total and the per-suite numbers in the Testing
+# table — matches what pytest / vitest actually collect, so a count change
+# can't silently go stale again.
+step "Doc counts     (stale-reference gate)" \
+  env ROOT="$ROOT" PYTEST="$PYTEST" NPM="$NPM" bash -c '
+    set -e
+    DOCS=()
+    for f in README.md demo/README.md collectors/README.md cli/README.md; do
+      [ -f "$ROOT/$f" ] && DOCS+=("$ROOT/$f")
+    done
+
+    # 1) Known-stale patterns must not reappear in shipped docs — including
+    #    any hardcoded shields tests badge (the count is dynamic now, served
+    #    from badges/tests.json).
+    stale=$(grep -nE "\b(tests-478|2-minute|2 min|4 acts|12 tests|13 commands|~2\.5 min|shields\.io/badge/tests-[0-9]+)\b" "${DOCS[@]}" 2>/dev/null || true)
+    if [ -n "$stale" ]; then
+      echo "Stale numeric references in shipped docs:" >&2
+      echo "$stale" >&2
+      exit 1
+    fi
+
+    # 2) Actual counts: pytest collect-only (fast) + vitest list (collect-only).
+    cd "$ROOT/backend"
+    BE=$( "$PYTEST" --collect-only -q 2>/dev/null | grep -oE "[0-9]+ tests collected" | grep -oE "^[0-9]+" )
+    cd "$ROOT/collectors"
+    COL=$( "$PYTEST" --collect-only -q 2>/dev/null | grep -oE "[0-9]+ tests collected" | grep -oE "^[0-9]+" )
+    cd "$ROOT/cli"
+    CLI=$( "$PYTEST" --collect-only -q 2>/dev/null | grep -oE "[0-9]+ tests collected" | grep -oE "^[0-9]+" )
+    cd "$ROOT/frontend"
+    FE=$( "$NPM" exec -- vitest list 2>/dev/null | wc -l | tr -d " " )
+
+    # Claims: the dynamic badge payload (badges/tests.json) + the per-suite
+    # numbers in the README Testing table.
+    BADGE=$(grep -oE "\"message\": *\"[0-9]+ passing\"" "$ROOT/badges/tests.json" | grep -oE "[0-9]+")
+    BE_CLAIM=$(grep -oE "Backend pytest \| \*\*[0-9]+\*\*" "$ROOT/README.md" | grep -oE "[0-9]+")
+    COL_CLAIM=$(grep -oE "Collector pytest \| \*\*[0-9]+\*\*" "$ROOT/README.md" | grep -oE "[0-9]+")
+    CLI_CLAIM=$(grep -oE "CLI pytest \| \*\*[0-9]+\*\*" "$ROOT/README.md" | grep -oE "[0-9]+")
+
+    sum=$((BE + COL + CLI + FE))
+    ok=1
+    [ "$BADGE" = "$sum" ] || { echo "  badges/tests.json claims $BADGE, actual $sum (be=$BE col=$COL cli=$CLI fe=$FE)" >&2; ok=0; }
+    [ "$BE_CLAIM" = "$BE" ] || { echo "  README backend claim $BE_CLAIM, actual $BE" >&2; ok=0; }
+    [ "$COL_CLAIM" = "$COL" ] || { echo "  README collector claim $COL_CLAIM, actual $COL" >&2; ok=0; }
+    [ "$CLI_CLAIM" = "$CLI" ] || { echo "  README CLI claim $CLI_CLAIM, actual $CLI" >&2; ok=0; }
+
+    # Rules + commands — the other two dynamic badges: RULE_META and the Typer
+    # registry, validated against badges/*.json and the README Highlights table.
+    cd "$ROOT/backend"
+    RULES_ACT=$( "$ROOT/.venv/bin/python" -c "from app.services.risk import RULE_META; print(len(RULE_META))" )
+    cd "$ROOT"
+    CMDS_ACT=$( "$ROOT/.venv/bin/python" -c "from outpost.main import app; print(len(app.registered_commands) + len(app.registered_groups))" )
+    RULES_BADGE=$(grep -oE "\"message\": *\"[0-9]+\"" "$ROOT/badges/rules.json" | grep -oE "[0-9]+")
+    CMDS_BADGE=$(grep -oE "\"message\": *\"[0-9]+\"" "$ROOT/badges/commands.json" | grep -oE "[0-9]+")
+    RULES_CLAIM=$(grep -oE "\*\*[0-9]+ rules\*\*" "$ROOT/README.md" | grep -oE "[0-9]+")
+    CMDS_CLAIM=$(grep -oE "\*\*[0-9]+ commands\*\*" "$ROOT/README.md" | grep -oE "[0-9]+")
+
+    [ "$RULES_BADGE" = "$RULES_ACT" ] || { echo "  badges/rules.json claims $RULES_BADGE, actual $RULES_ACT" >&2; ok=0; }
+    [ "$CMDS_BADGE" = "$CMDS_ACT" ] || { echo "  badges/commands.json claims $CMDS_BADGE, actual $CMDS_ACT" >&2; ok=0; }
+    [ "$RULES_CLAIM" = "$RULES_ACT" ] || { echo "  README claims $RULES_CLAIM rules, actual $RULES_ACT" >&2; ok=0; }
+    [ "$CMDS_CLAIM" = "$CMDS_ACT" ] || { echo "  README claims $CMDS_CLAIM commands, actual $CMDS_ACT" >&2; ok=0; }
+    [ "$ok" = 1 ] || exit 1
+    echo "  badge=$sum (be=$BE + col=$COL + cli=$CLI + fe=$FE), rules=$RULES_ACT, commands=$CMDS_ACT — badge payloads + README claims match"
   '
 
 echo
