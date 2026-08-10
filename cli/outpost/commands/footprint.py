@@ -5,7 +5,12 @@ seed IPs, the passive expansion (reverse-DNS resolutions, Certificate
 Transparency certs, sibling IPs, RDAP org/ASN), and the runs that touched it.
 Live lookups are the default; `--mock` forces the clearly-labeled synthetic
 demo. Offline providers render an honest empty state, never fake data.
+
+`outpost footprint export <sample_id> --format json|csv` writes the same
+threat-intel handoff artifact the webapp's Export buttons download.
 """
+
+from pathlib import Path
 
 import typer
 from rich.table import Table
@@ -135,3 +140,33 @@ def show(
 
     if not seed_ips and not resolutions and not certificates and not runs:
         console.print("[dim]No footprint data for this sample yet — run it through a session first.[/dim]")
+
+
+@app.command("export")
+def export(
+    sample_id: str = typer.Argument(..., help="Sample id from the vault"),
+    format: str = typer.Option("json", "--format", help="json (structured) or csv (flat IOC sheet)"),
+    mock: bool = typer.Option(False, "--mock", help="Export the labeled synthetic demo layer instead of live lookups"),
+    output: Path = typer.Option(None, "--output", "-o", help="Output file path"),
+) -> None:
+    """Write the footprint's threat-intel handoff artifact to a file.
+
+    Mirrors the webapp's Export JSON / Export CSV buttons: JSON keeps the
+    full structured payload (sample identity, seed IPs, passive layer); CSV
+    is the flat IOC sheet with a `collection` discriminator and source_ip.
+    """
+    show_banner(primary=False)
+
+    if format not in ("json", "csv"):
+        console.print(f"[bold #C4453B]Unknown format: {format}[/bold #C4453B] (use json or csv)")
+        raise typer.Exit(2)
+
+    try:
+        content = api_client.export_footprint(sample_id, format=format, mock=mock)
+    except Exception as exc:
+        console.print(f"[red]footprint export failed:[/red] {exc}")
+        raise typer.Exit(1)
+
+    dest = output or Path(f"outpost-footprint-{sample_id[:12]}.{format}")
+    dest.write_bytes(content)
+    console.print(f"[#3FA796]Exported footprint ({format}) → {dest}[/#3FA796]")

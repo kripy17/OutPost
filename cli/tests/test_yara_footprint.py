@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from outpost.commands import footprint as footprint_cmd
 from outpost.commands import yara as yara_cmd
+from outpost.lib import api_client
 from outpost.rendering.terminal_views import console
 
 
@@ -113,3 +114,88 @@ def test_footprint_synthetic_flag_rendered():
     with patch("outpost.commands.footprint.api_client.footprint", return_value=payload):
         out = _capture(lambda: footprint_cmd.show("s1"))
     assert "synthetic demo" in out
+
+
+# -- `outpost footprint export` — the webapp Export buttons' terminal mirror --
+
+
+def test_footprint_export_writes_json(monkeypatch, tmp_path):
+    payload = {
+        "exported_at": "2026-08-10T00:00:00+00:00",
+        "sample": {"sample_id": "s1", "name": "detonate-demo.exe", "sha256": "ab" * 32, "platform": "windows"},
+        "status": {"roadmap": True, "generated": None},
+        "seed_ips": [{"ip": "203.0.113.88", "hits": 5, "run_count": 2, "first_seen": "2026-08-01T10:00:01Z", "last_seen": "2026-08-01T10:00:30Z"}],
+        "passive": {
+            "source": "live",
+            "resolutions": [],
+            "passive_dns": [{"domain": "panel.shelf.example", "first_seen": "2026-01-01", "last_seen": "2026-08-01", "source_ip": "203.0.113.88", "synthetic": False}],
+            "certificates": [],
+            "sibling_ips": [],
+            "networks": [],
+            "asn": [],
+        },
+    }
+    import json
+
+    monkeypatch.setattr(
+        "outpost.commands.footprint.api_client.export_footprint",
+        lambda *a, **k: json.dumps(payload, indent=2).encode(),
+    )
+    dest = tmp_path / "footprint.json"
+    with console.capture() as capture:
+        footprint_cmd.export("s1", format="json", output=dest)
+
+    written = json.loads(dest.read_text())
+    assert written["sample"]["name"] == "detonate-demo.exe"
+    assert written["passive"]["passive_dns"][0]["source_ip"] == "203.0.113.88"
+    assert "Exported footprint (json)" in capture.get()
+
+
+def test_footprint_export_writes_csv_and_passes_mock(monkeypatch, tmp_path):
+    csv_body = (
+        "collection,indicator,source_ip,detail,first_seen,last_seen,synthetic\r\n"
+        "seed,203.0.113.88,,malicious · 5 hit(s) · 2 run(s),2026-08-01,2026-08-01,false\r\n"
+        "passive_dns,panel.shelf.example,203.0.113.88,,2026-01-01,2026-08-01,true\r\n"
+    ).encode()
+    calls = {}
+
+    def fake(sample_id, format="json", mock=False):
+        calls.update(sample_id=sample_id, format=format, mock=mock)
+        return csv_body
+
+    monkeypatch.setattr("outpost.commands.footprint.api_client.export_footprint", fake)
+    dest = tmp_path / "footprint.csv"
+    with console.capture() as capture:
+        footprint_cmd.export("s1", format="csv", mock=True, output=dest)
+
+    text = dest.read_text()
+    assert "collection,indicator,source_ip" in text
+    assert "panel.shelf.example" in text
+    assert calls == {"sample_id": "s1", "format": "csv", "mock": True}
+    assert "Exported footprint (csv)" in capture.get()
+
+
+def test_footprint_export_bad_format_exits(tmp_path):
+    import typer
+
+    with console.capture() as capture:
+        try:
+            footprint_cmd.export("s1", format="xml", output=tmp_path / "x.xml")
+        except typer.Exit as exc:
+            assert exc.exit_code == 2
+    assert "Unknown format: xml" in capture.get()
+
+
+def test_footprint_export_api_error_exits(monkeypatch, tmp_path):
+    import typer
+
+    def boom(*a, **k):
+        raise api_client.APIError("GET /footprint/s1/export → 404")
+
+    monkeypatch.setattr("outpost.commands.footprint.api_client.export_footprint", boom)
+    with console.capture() as capture:
+        try:
+            footprint_cmd.export("s1", format="json", output=tmp_path / "x.json")
+        except typer.Exit as exc:
+            assert exc.exit_code == 1
+    assert "footprint export failed" in capture.get()

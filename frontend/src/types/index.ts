@@ -906,7 +906,9 @@ export interface FootprintPassive {
   resolutions: { domain: string; first_seen: string; last_seen: string; synthetic?: boolean }[];
   // crt.sh passive-DNS history — every hostname the CT logs have seen for the
   // seed infrastructure, aggregated into a first→last seen range per domain.
-  passive_dns: { domain: string; first_seen: string; last_seen: string; synthetic?: boolean }[];
+  // `source_ip` is the seed (or sibling) IP the name was observed from, so
+  // infra beyond the apex domain is traceable back to its cohosted host.
+  passive_dns: { domain: string; first_seen: string; last_seen: string; synthetic?: boolean; source_ip?: string }[];
   certificates: { cn: string; issuer: string; not_before: string; not_after: string; synthetic?: boolean }[];
   sibling_ips: { ip: string; relation: string; synthetic?: boolean }[];
   // RDAP registration info per seed IP (live only): network name, CIDR,

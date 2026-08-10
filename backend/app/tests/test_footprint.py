@@ -5,8 +5,11 @@ expansion is real too (reverse-DNS PTR → crt.sh CT logs + RDAP), so every
 test patches the network boundary: offline → honest `not_configured` empty
 state; live → real-looking rows clearly marked non-synthetic; mock →
 labeled synthetic. The RDAP/crt.sh parsers are pure functions and get their
-own unit tests against canned payloads.
+own unit tests against canned payloads; `_fetch_ip_passive` gets a direct
+async test for the sibling-host passive-DNS expansion.
 """
+
+import asyncio
 
 import pytest
 
@@ -48,11 +51,17 @@ def _ingest(client, run_id, dest_ip, ts):
     )
 
 
-def _sample_with_ips(client) -> str:
-    """Upload a sample, detonate it twice against shared + unique IPs."""
-    sample_id = _upload(client, _PE, "footprint.exe").json()["sample_id"]
-    run_a = make_run(client, sample_name="footprint.exe")
-    run_b = make_run(client, sample_name="footprint.exe")
+def _sample_with_ips(client, name: str = "footprint.exe", pe: bytes = _PE) -> str:
+    """Upload a sample, detonate it twice against shared + unique IPs.
+
+    `name` defaults to the shared fixture name used by the earlier tests;
+    export tests pass unique names AND unique bytes so their run aggregation
+    is deterministic (uploads are idempotent by hash, and the seed layer
+    aggregates per sample name across ALL matching runs).
+    """
+    sample_id = _upload(client, pe, name).json()["sample_id"]
+    run_a = make_run(client, sample_name=name)
+    run_b = make_run(client, sample_name=name)
     _ingest(client, run_a, _C2, "2026-08-01T10:00:00Z")
     _ingest(client, run_a, _NET, "2026-08-01T10:00:05Z")
     _ingest(client, run_b, _C2, "2026-08-02T10:00:00Z")
@@ -173,6 +182,67 @@ def test_parse_rdap_tight_network_uses_that_net_for_siblings():
     assert all(s["relation"] == "same 203.0.113.4/30" for s in out["siblings"])
 
 
+def test_fetch_ip_passive_expands_sibling_passive_dns(monkeypatch):
+    """The sibling expansion — crt.sh by IP for cohosted hosts — surfaces
+    infra beyond the apex domain, tagged with the sibling IP each name came
+    from, deduped against the apex names."""
+    seed = {"ip": _C2, "first_seen": "2026-08-01T10:00:00Z", "last_seen": "2026-08-02T10:00:00Z"}
+
+    async def _fake_rdap(ip):
+        return {
+            "cidr": "203.0.113.0/24",
+            "netname": "TEST-NET-3",
+            "org": "Example Org",
+            "country": "US",
+            "siblings": [{"ip": "203.0.113.89", "relation": "same 203.0.113.0/24", "synthetic": False}],
+        }
+
+    async def _fake_crtsh(q):
+        if q == "c2.example.com":  # the apex PTR domain
+            return {
+                "certificates": [{"cn": "*.example.com", "issuer": "Example CA", "not_before": "2026-01-01", "not_after": "2027-01-01", "synthetic": False}],
+                "domains": [
+                    {"domain": "c2.example.com", "first_seen": "2026-01-01", "last_seen": "2026-08-01", "synthetic": False},
+                    {"domain": "panel.example.com", "first_seen": "2026-02-01", "last_seen": "2026-07-01", "synthetic": False},
+                ],
+            }
+        if q == "203.0.113.89":  # crt.sh by sibling IP
+            return {
+                "certificates": [],
+                "domains": [
+                    {"domain": "sibling-panel.example.net", "first_seen": "2026-03-01", "last_seen": "2026-08-01", "synthetic": False},
+                    {"domain": "panel.example.com", "first_seen": "2026-01-01", "last_seen": "2026-08-01", "synthetic": False},  # dup of apex
+                ],
+            }
+        raise AssertionError(f"unexpected crt.sh query: {q}")
+
+    async def _fake_asn(ip):
+        return {"asn": "AS123", "as_name": "Example AS", "org": "Example Org", "country": "US", "country_code": "US"}
+
+    monkeypatch.setattr(footprint_service, "_ptr_for_ip", lambda ip: "c2.example.com")
+    monkeypatch.setattr(footprint_service, "_rdap_lookup", _fake_rdap)
+    monkeypatch.setattr(footprint_service, "_crtsh_lookup", _fake_crtsh)
+    monkeypatch.setattr(footprint_service, "_asn_lookup", _fake_asn)
+
+    out = asyncio.run(footprint_service._fetch_ip_passive(seed))
+    dns = out["passive_dns"]
+    by_name = {d["domain"]: d for d in dns}
+
+    # Apex-derived rows are tagged with the seed IP; the apex PTR name itself
+    # stays out (it lives in resolutions).
+    assert "panel.example.com" in by_name
+    assert by_name["panel.example.com"]["source_ip"] == _C2
+    assert "c2.example.com" not in by_name
+    # The sibling expansion surfaces the cohosted name, tagged with the
+    # sibling IP — and the duplicate apex name is dropped exactly once.
+    assert "sibling-panel.example.net" in by_name
+    assert by_name["sibling-panel.example.net"]["source_ip"] == "203.0.113.89"
+    assert len(dns) == 2, "apex name + shared name deduped to exactly two rows"
+    # Certificates stay apex-only; the sibling IP still reaches siblings list.
+    assert out["certificates"][0]["cn"] == "*.example.com"
+    assert out["sibling_ips"][0]["ip"] == "203.0.113.89"
+
+
 def test_parse_crtsh_rows_to_certs_and_domains():
     rows = [
         {
@@ -193,6 +263,62 @@ def test_parse_crtsh_rows_to_certs_and_domains():
 
 def test_footprint_unknown_sample_404(client):
     assert client.get("/footprint/nope00000000").status_code == 404
+
+
+def test_footprint_export_json_structured_payload(client):
+    """JSON export — the full structured handoff payload: sample identity,
+    seed IPs, and every passive collection (incl. passive DNS)."""
+    sample_id = _sample_with_ips(client, name="footprint-export-json.exe", pe=_PE + b"-export-json")
+    resp = client.get(f"/footprint/{sample_id}/export?format=json&mock=1")
+
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("application/json")
+    assert resp.headers["content-disposition"].startswith("attachment; filename=\"outpost-footprint-")
+    assert resp.headers["content-disposition"].endswith('.json"')
+
+    payload = resp.json()
+    assert payload["sample"]["name"] == "footprint-export-json.exe"
+    assert payload["status"]["generated"] == "mock"
+    by_ip = {s["ip"]: s for s in payload["seed_ips"]}
+    assert by_ip[_C2]["run_count"] == 2
+    assert payload["passive"]["source"] == "synthetic_demo"
+    assert payload["passive"]["passive_dns"], "passive DNS rows ride in the export"
+    assert all(d["synthetic"] is True for d in payload["passive"]["passive_dns"])
+    assert payload["passive"]["certificates"]
+
+
+def test_footprint_export_csv_flat_ioc_sheet(client):
+    """CSV export — one filterable sheet with a `collection` discriminator:
+    seeds lead, then resolutions / passive_dns / certs / siblings / networks."""
+    sample_id = _sample_with_ips(client, name="footprint-export-csv.exe", pe=_PE + b"-export-csv")
+    resp = client.get(f"/footprint/{sample_id}/export?format=csv&mock=1")
+
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/csv")
+    assert resp.headers["content-disposition"].endswith('.csv"')
+
+    text = resp.text
+    lines = text.strip().splitlines()
+    header = lines[0]
+    assert header.split(",") == ["collection", "indicator", "source_ip", "detail", "first_seen", "last_seen", "synthetic"]
+    assert lines[1].startswith("seed,"), "observed infrastructure leads the sheet"
+
+    body = lines[1:]
+    assert any(l.startswith("passive_dns,") for l in body), "passive DNS rows flatten to CSV"
+    assert any(l.startswith("certificate,") for l in body)
+    # The synthetic flag survives the flatten as a boolean column — mock rows
+    # are marked true so a handoff artifact never loses the labeling.
+    assert all(l.split(",")[-1] in ("true", "false") for l in body)
+    assert any(l.startswith("passive_dns,") and l.endswith(",true") for l in body)
+    assert all(not l.startswith("seed,") or l.endswith(",false") for l in body if l.startswith("seed,"))
+    # Mock passive-DNS rows carry the seed IP they were observed from.
+    assert any(l.startswith("passive_dns,") and l.split(",")[2] == _C2 for l in body)
+
+
+def test_footprint_export_rejects_bad_format_and_unknown_sample(client):
+    sample_id = _sample_with_ips(client)
+    assert client.get(f"/footprint/{sample_id}/export?format=xml").status_code == 422
+    assert client.get("/footprint/nope00000000/export?format=json").status_code == 404
 
 
 def test_footprint_mock_fills_passive_layer_clearly_labeled(client):

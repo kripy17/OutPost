@@ -260,6 +260,17 @@ export async function getRunExport(runId: string): Promise<Blob> {
   return res.blob();
 }
 
+// Footprint threat-intel handoff — the passive layer (passive DNS, certs,
+// registration/ASN) as a structured JSON payload or a flat CSV IOC sheet.
+export async function exportFootprint(sampleId: string, format: "json" | "csv", mock: boolean): Promise<Blob> {
+  const res = await fetch(
+    `${BASE_URL}/footprint/${encodeURIComponent(sampleId)}/export?format=${format}&mock=${mock ? 1 : 0}`,
+    { headers: authHeaders() }
+  );
+  if (!res.ok) throw new Error(`GET /footprint/${sampleId}/export → ${res.status}`);
+  return res.blob();
+}
+
 export async function getRunIocsCsv(runId: string): Promise<Blob> {
   const res = await fetch(`${BASE_URL}/runs/${runId}/iocs?format=csv`, { headers: authHeaders() });
   if (!res.ok) throw new Error(`GET /runs/${runId}/iocs → ${res.status}`);
