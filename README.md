@@ -17,6 +17,7 @@ dark/light web deck with a full terminal mirror.
 ![Tests](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fkripy17%2FOutPost%2Fmain%2Fbadges%2Ftests.json&style=flat-square)
 ![Rules](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fkripy17%2FOutPost%2Fmain%2Fbadges%2Frules.json&style=flat-square)
 ![Commands](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fkripy17%2FOutPost%2Fmain%2Fbadges%2Fcommands.json&style=flat-square)
+![Tactics](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fkripy17%2FOutPost%2Fmain%2Fbadges%2Fcoverage.json&style=flat-square)
 ![CI](https://github.com/kripy17/OutPost/actions/workflows/ci.yml/badge.svg)
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 
