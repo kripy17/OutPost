@@ -13,6 +13,11 @@ All detection, risk scoring, and alerting happens in the backend.
 | `linux/collector_linux.py` | auditd log tail (`/var/log/audit/audit.log`) | `type=EXECVE`/`syscall=59` → `process_create`; `connect`/`saddr=` → `network_connection` |
 | `windows/collector_win.py` | Sysmon channel (`Microsoft-Windows-Sysmon/Operational`) | EventID 1 → process_create, 3 → network_connection, 11 → file_write, 12/13/14 → registry_write |
 
+The Windows collector has been simulated-tested and CI-gated but never run on
+a real Windows host — if you have one, work through
+[`windows/README.md`](windows/README.md), the step-by-step real-host
+validation checklist (Sysmon install → smoke test → first soak → service).
+
 Shared pieces live in `common/`: `schema.py` (the unified event shape — mirrors
 the backend schema) and `shipper.py` (buffered batch POST with retry +
 fallback spooling, plus `claim_active_live_run()` for the webapp flow below).
@@ -122,7 +127,7 @@ The parsing + shipping logic is fully unit-tested so a fresh checkout can
 trust the agents without a live auditd/Sysmon host:
 
 ```bash
-cd collectors && ../.venv/bin/pytest -q      # 12 tests
+cd collectors && ../.venv/bin/pytest -q      # 23 tests
 ```
 
 Covers: auditd EXECVE/connect parsing (incl. the `saddr` hex decoder), Sysmon

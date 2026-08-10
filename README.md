@@ -14,7 +14,9 @@ dark/light web deck with a full terminal mirror.
 ![FastAPI](https://img.shields.io/badge/FastAPI-backend-009688?style=flat-square)
 ![React](https://img.shields.io/badge/React-19-61DAFB?style=flat-square)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-478%20passing-2ea44f?style=flat-square)
+![Tests](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fkripy17%2FOutPost%2Fmain%2Fbadges%2Ftests.json&style=flat-square)
+![Rules](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fkripy17%2FOutPost%2Fmain%2Fbadges%2Frules.json&style=flat-square)
+![Commands](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fkripy17%2FOutPost%2Fmain%2Fbadges%2Fcommands.json&style=flat-square)
 ![CI](https://github.com/kripy17/OutPost/actions/workflows/ci.yml/badge.svg)
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 
@@ -89,9 +91,12 @@ host-status panel answers "is THIS host monitored?" against the live fleet.
   <img src="demo/screenshots/deck/18-detail-notes.png" width="49%" alt="Run detail — analyst notes" />
 </p>
 
-A full **2-minute video walkthrough** (`demo/deck-demo.webm`, 4 acts: Overview →
-Sample vault → Monitor detonation → Run detail) is recorded automatically by
-[`demo/deck-demo.mjs`](demo/deck-demo.mjs).
+A **~97-second tightened walkthrough** (`demo/deck-demo-trimmed.webm`, 5 acts:
+Overview → Sample vault → Monitor detonation → Run detail → Findings triage)
+plus looping **GIF previews** (`demo/deck-demo-preview.gif`, and the two hero
+GIFs above) are recorded automatically by
+[`demo/deck-demo.mjs`](demo/deck-demo.mjs) and edited with
+[`demo/trim-demo.py`](demo/trim-demo.py) / [`demo/make-gif-preview.py`](demo/make-gif-preview.py).
 
 ## 🏗️ Architecture
 
@@ -232,7 +237,7 @@ One command runs the whole sweep:
 
 | Suite | Count | Covers |
 |---|---|---|
-| Backend pytest | **411** | ingestion, OS-aware rules (win/linux/macOS), risk + ATT&CK, campaigns, events search, samples vault, SSE broadcast, notes, storm caps, triage, footprint, YARA, auth, roadmap tiers |
+| Backend pytest | **412** | ingestion, OS-aware rules (win/linux/macOS), risk + ATT&CK, campaigns, events search, samples vault, SSE broadcast, notes, storm caps, triage, footprint, YARA, auth, roadmap tiers |
 | Collector pytest | **23** | Sysmon + auditd shipping, normalization |
 | CLI pytest | **49** | rendering regressions, campaigns output, risk columns, YARA + footprint mirrors, rules knobs |
 | Frontend | clean `tsc --noEmit` + Vite build + unit tests | — |

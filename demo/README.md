@@ -34,7 +34,7 @@ HEADLESS=1 node shelf-stack-demo.mjs          # no visible browser (CI-friendly)
 
 The detonation step streams a fresh sample through the Monitor page and waits
 for it to complete (~25 s); the whole run takes ~1 minute. Screenshots land in
-`demo/screenshots/`:
+`demo/screenshots/` (generated per run — not checked in):
 
 | File | Step |
 |---|---|

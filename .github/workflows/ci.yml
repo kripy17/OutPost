@@ -11,6 +11,8 @@ jobs:
     name: verify.sh — backend · collectors · CLI · frontend
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: write  # the badge-refresh step commits badges/tests.json on main
     steps:
       - uses: actions/checkout@v7
 
@@ -42,3 +44,29 @@ jobs:
 
       - name: Run the full verification sweep
         run: bash verify.sh
+
+      - name: Publish dynamic badges (main only)
+        if: github.ref == 'refs/heads/main' && success()
+        run: |
+          set -e
+          # Tests — the four suites the sweep gates.
+          BE=$( cd backend && ../.venv/bin/pytest --collect-only -q 2>/dev/null | grep -oE '[0-9]+ tests collected' | grep -oE '^[0-9]+' )
+          COL=$( cd collectors && ../.venv/bin/pytest --collect-only -q 2>/dev/null | grep -oE '[0-9]+ tests collected' | grep -oE '^[0-9]+' )
+          CLI=$( cd cli && ../.venv/bin/pytest --collect-only -q 2>/dev/null | grep -oE '[0-9]+ tests collected' | grep -oE '^[0-9]+' )
+          FE=$( cd frontend && npm exec -- vitest list 2>/dev/null | wc -l | tr -d ' ' )
+          SUM=$((BE + COL + CLI + FE))
+          # Rules (RULE_META) and CLI commands (the Typer registry).
+          RULES=$( cd backend && ../.venv/bin/python -c 'from app.services.risk import RULE_META; print(len(RULE_META))' )
+          CMDS=$( ../.venv/bin/python -c 'from outpost.main import app; print(len(app.registered_commands) + len(app.registered_groups))' )
+          printf '{"schemaVersion":1,"label":"tests","message":"%s passing","color":"2ea44f"}\n' "$SUM" > badges/tests.json
+          printf '{"schemaVersion":1,"label":"rules","message":"%s","color":"D9A441"}\n' "$RULES" > badges/rules.json
+          printf '{"schemaVersion":1,"label":"commands","message":"%s","color":"3FA796"}\n' "$CMDS" > badges/commands.json
+          if git diff --quiet badges/; then
+            echo "badges unchanged (tests $SUM, rules $RULES, commands $CMDS) — nothing to commit"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add badges/
+            git commit -m "chore: refresh badges (tests $SUM, rules $RULES, commands $CMDS)"
+            git push
+          fi
