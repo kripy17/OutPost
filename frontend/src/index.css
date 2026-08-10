@@ -588,3 +588,21 @@ html[data-theme="dark"][data-palette="teal"] {
   --glow-accent: 0 0 0 1px rgba(45, 212, 191, 0.32), 0 0 16px rgba(45, 212, 191, 0.24);
   --glow-signal: 0 0 0 1px rgba(103, 232, 249, 0.32), 0 0 14px rgba(103, 232, 249, 0.22);
 }
+
+/* Narrow-window notice — desk tool, best viewed wide (spec). Shown only
+   below the lg breakpoint; a real desk never sees it. */
+.narrow-notice {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--accent);
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border-subtle);
+}
+@media (min-width: 1024px) {
+  .narrow-notice { display: none; }
+}

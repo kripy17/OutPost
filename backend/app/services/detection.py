@@ -21,6 +21,128 @@ from typing import Optional
 from ..core.schema import Alert
 
 # ---------------------------------------------------------------------------
+# Process-map cache (bounded per-batch reads on long sessions)
+# ---------------------------------------------------------------------------
+# The parent-child rule needs every process_create of a run, so the map is
+# cached in memory per (db path, run) and extended incrementally per batch
+# (only rows with id > last-seen are read). A lookback would break resolving
+# an hours-old parent; incremental + LRU-capped keeps O(batch) per ingest
+# with no semantic change. Evicted on run completion.
+from collections import OrderedDict
+
+_PROCESS_MAP_CACHE: OrderedDict[tuple[str, str], tuple[int, dict[int, dict]]] = OrderedDict()
+_PROCESS_MAP_CACHE_MAX = 64
+
+
+def _load_process_map(conn: sqlite3.Connection, run_id: str) -> tuple[dict[int, dict], int]:
+    """The run's process map, incremental — returns (map, last_event_id)."""
+    key = (_db_path(conn), run_id)
+    cached = _PROCESS_MAP_CACHE.get(key)
+    if cached is not None:
+        _PROCESS_MAP_CACHE.move_to_end(key)
+        last_id, process_map = cached
+        new_rows = conn.execute(
+            "SELECT id, pid, ppid, process_name FROM events "
+            "WHERE run_id = ? AND event_type = 'process_create' AND id > ?",
+            (run_id, last_id),
+        ).fetchall()
+        max_id = last_id
+        for r in new_rows:
+            pid = r["pid"]
+            if pid is not None and pid not in process_map:
+                process_map[pid] = {"pid": pid, "ppid": r["ppid"], "process_name": r["process_name"] or "unknown"}
+            if r["id"] > max_id:
+                max_id = r["id"]
+        _PROCESS_MAP_CACHE[key] = (max_id, process_map)
+        return process_map, max_id
+
+    # Warm start: a completed run's map was persisted (write-through at
+    # completion) — restore it instead of re-scanning the whole run, then
+    # catch up any rows added since (late collector batches).
+    saved = conn.execute(
+        "SELECT last_event_id, pids_json FROM run_process_maps WHERE run_id = ?", (run_id,)
+    ).fetchone()
+    if saved is not None:
+        process_map: dict[int, dict] = {}
+        max_id = 0
+        try:
+            saved_map = json.loads(saved["pids_json"])
+            for pid_str, row in saved_map.items():
+                process_map[int(pid_str)] = row
+            max_id = int(saved["last_event_id"])
+        except (ValueError, TypeError, KeyError):
+            process_map = {}
+            max_id = 0
+        new_rows = conn.execute(
+            "SELECT id, pid, ppid, process_name FROM events "
+            "WHERE run_id = ? AND event_type = 'process_create' AND id > ?",
+            (run_id, max_id),
+        ).fetchall()
+        for r in new_rows:
+            pid = r["pid"]
+            if pid is not None and pid not in process_map:
+                process_map[pid] = {"pid": pid, "ppid": r["ppid"], "process_name": r["process_name"] or "unknown"}
+            if r["id"] > max_id:
+                max_id = r["id"]
+        _PROCESS_MAP_CACHE[key] = (max_id, process_map)
+        return process_map, max_id
+
+    process_rows = conn.execute(
+        "SELECT id, pid, ppid, process_name FROM events "
+        "WHERE run_id = ? AND event_type = 'process_create'",
+        (run_id,),
+    ).fetchall()
+    process_map: dict[int, dict] = {}
+    max_id = 0
+    for r in process_rows:
+        pid = r["pid"]
+        if pid is not None and pid not in process_map:
+            process_map[pid] = {"pid": pid, "ppid": r["ppid"], "process_name": r["process_name"] or "unknown"}
+        if r["id"] > max_id:
+            max_id = r["id"]
+    _PROCESS_MAP_CACHE[key] = (max_id, process_map)
+    while len(_PROCESS_MAP_CACHE) > _PROCESS_MAP_CACHE_MAX:
+        _PROCESS_MAP_CACHE.popitem(last=False)
+    return process_map, max_id
+
+
+def persist_run_process_map(conn: sqlite3.Connection, run_id: str) -> bool:
+    """Write-through: persist the run's cached process map to the DB so a
+    restarted backend restores it warm instead of re-scanning the whole run.
+    Called on completion (before the in-memory eviction). Maps over a size
+    cap are skipped — the full-scan fallback is still correct, just colder."""
+    from datetime import datetime as _dt
+
+    key = (_db_path(conn), run_id)
+    cached = _PROCESS_MAP_CACHE.get(key)
+    if cached is None or len(cached[1]) > 100_000:
+        return False
+    last_id, process_map = cached
+    conn.execute(
+        "INSERT INTO run_process_maps (run_id, last_event_id, pids_json, updated_at) VALUES (?, ?, ?, ?) "
+        "ON CONFLICT(run_id) DO UPDATE SET last_event_id = excluded.last_event_id, "
+        "pids_json = excluded.pids_json, updated_at = excluded.updated_at",
+        (run_id, last_id, json.dumps({str(k): v for k, v in process_map.items()}),
+         _dt.now(timezone.utc).isoformat()),
+    )
+    return True
+
+
+def _db_path(conn: sqlite3.Connection) -> str:
+    """The main database file path (cache key namespace per DB)."""
+    row = conn.execute("PRAGMA database_list").fetchone()
+    return row[2] if row else ""
+
+
+def evict_run_process_map(run_id: str) -> None:
+    """Drop a run's cached map — called on completion so finished sessions
+    free their memory promptly (the LRU cap is the backstop)."""
+    stale = [k for k in _PROCESS_MAP_CACHE if k[1] == run_id]
+    for k in stale:
+        del _PROCESS_MAP_CACHE[k]
+
+
+# ---------------------------------------------------------------------------
 # Tunables
 # ---------------------------------------------------------------------------
 # Per-OS legitimate system process → expected absolute path (roadmap 1.2).
@@ -295,6 +417,19 @@ _KILL_CHAIN_STAGE = {
     "enumeration-burst": "Discovery",
     "data-staging": "Exfiltration",
     "rename-burst": "Impact",
+    "lateral-psexec-smb": "Lateral Movement",
+    "lateral-winrm-wmi": "Lateral Movement",
+    "lateral-smb-share": "Lateral Movement",
+    "rdp-brute-force": "Lateral Movement",
+    "log-service-stop": "Defense Evasion",
+    "log-clearing": "Defense Evasion",
+    "dns-tunneling": "Command and Control",
+    "dns-long-label": "Command and Control",
+    "dns-unusual-port": "Command and Control",
+    "tls-sni-suspicious": "Command and Control",
+    "doh-resolver-use": "Command and Control",
+    "fanout-contact": "Command and Control",
+    "fanout-recurring": "Command and Control",
 }
 
 
@@ -1125,8 +1260,10 @@ def check_network_scan(
     inside the window is active scanning. Counting is per (pid, port) — a
     sweep across *multiple* ports stays under each port's threshold, a
     deliberate conservative FP gate (single-port sweeps are the loudest
-    signal). related_ip/related_pid are left None so the whole sweep dedupes
-    to a single alert per run (the details carry the pid + port)."""
+    signal). related_pid carries the scanning process so EACH distinct
+    scanning (pid, port) surfaces its own alert (deduped per pid, storm-capped
+    at NETWORK_SCAN_MAX_ALERTS per run) — two pids sweeping at once are both
+    seen, not collapsed into the first."""
     if event.get("event_type") != "network_connection":
         return None
     pid = event.get("pid")
@@ -1148,7 +1285,7 @@ def check_network_scan(
         severity="suspicious",
         triggered_at=datetime.now(timezone.utc),
         related_ip=None,
-        related_pid=None,
+        related_pid=pid,
         details=(
             f"{len(targets)} distinct hosts contacted on port {port} from pid {pid} "
             f"within {SCAN_WINDOW_SECONDS}s — active scanning"
@@ -1284,6 +1421,609 @@ def check_screen_capture(event: dict) -> Optional[Alert]:
 
 
 # ---------------------------------------------------------------------------
+# Lateral Movement depth (T1021) — remote-admin tooling and SMB share access,
+# complementing the port-level lateral-rdp-smb rule. These key on the remote-
+# admin *commands* (PsExec, WinRM/WMI, share enumeration) rather than the
+# transport ports, so they fire even when traffic is localhost-proxied.
+# ---------------------------------------------------------------------------
+# PsExec / SMB-admin: mounting admin$ is the classic PsExec precondition;
+# sc.exe / reg / wmic against a remote host are remote-admin in their own
+# right (T1021.002).
+PSEXEC_SMB_PATTERNS = {
+    "windows": [
+        (r"\bpsexec\b", "PsExec remote execution"),
+        (r"net\s+use\b[^\n]*?\\[^\s]+?\\admin\$", "SMB admin$ share mounted (PsExec precondition)"),
+        (r"sc\s+\\[^\s]+\s+create", "Remote service creation (sc \\\\host create)"),
+        (r"reg\s+add\s+\\[^\s]+", "Remote registry write (reg add \\\\host)"),
+    ],
+    "linux": [],
+    "macos": [],
+}
+# WinRM / WMI remote execution (T1021.006).
+WINRM_WMI_PATTERNS = {
+    "windows": [
+        (r"\bwinrs\b", "WinRS remote shell"),
+        (r"Invoke-Command\s+-ComputerName", "PowerShell remoting (Invoke-Command -ComputerName)"),
+        (r"Enter-PSSession\b", "Interactive PowerShell remoting session"),
+        (r"Invoke-WmiMethod\b|Invoke-CimMethod\b", "WMI/CIM remote method invocation"),
+        (r"wmic\s+/node:", "WMI remote execution (wmic /node:)"),
+    ],
+    "linux": [],
+    "macos": [],
+}
+# SMB share enumeration — scanning what a remote host exposes before mounting.
+SMB_SHARE_PATTERNS = {
+    "windows": [
+        (r"net\s+view\b", "SMB share enumeration (net view)"),
+        (r"dir\s+\\[^\s]+\\", "Directory listing of a remote SMB share"),
+    ],
+    "linux": [],
+    "macos": [],
+}
+RDP_BRUTE_WINDOW_SECONDS = 60
+RDP_BRUTE_MIN_CONNECTIONS = 4
+
+
+def _command_match(patterns: dict[str, list[tuple[str, str]]], event: dict):
+    """Return the first (rule_id, description) matching a command line."""
+    if event.get("event_type") != "process_create":
+        return None
+    cmdline = event.get("command_line") or ""
+    if not cmdline:
+        return None
+    for pattern, description in patterns.get(_platform(event), []):
+        if re.search(pattern, cmdline, re.IGNORECASE):
+            return description
+    return None
+
+
+def check_lateral_psexec_smb(event: dict) -> Optional[Alert]:
+    """Lateral Movement (T1021.002) — PsExec / SMB-admin remote tooling."""
+    desc = _command_match(PSEXEC_SMB_PATTERNS, event)
+    if desc is None:
+        return None
+    return _make_alert(
+        event["run_id"], "lateral-psexec-smb",
+        "PsExec / SMB-admin remote execution",
+        "suspicious", event, desc,
+    )
+
+
+def check_lateral_winrm_wmi(event: dict) -> Optional[Alert]:
+    """Lateral Movement (T1021.006) — WinRM / WMI remote execution."""
+    desc = _command_match(WINRM_WMI_PATTERNS, event)
+    if desc is None:
+        return None
+    return _make_alert(
+        event["run_id"], "lateral-winrm-wmi",
+        "WinRM / WMI remote execution",
+        "suspicious", event, desc,
+    )
+
+
+def check_lateral_smb_share(event: dict) -> Optional[Alert]:
+    """Lateral Movement (T1021.001) — remote SMB share enumeration."""
+    desc = _command_match(SMB_SHARE_PATTERNS, event)
+    if desc is None:
+        return None
+    return _make_alert(
+        event["run_id"], "lateral-smb-share",
+        "SMB share enumeration (lateral movement)",
+        "suspicious", event, desc,
+    )
+
+
+def check_rdp_brute_force(
+    conn: sqlite3.Connection,
+    run_id: str,
+    event: dict,
+    cutoff: datetime,
+    min_connections: int = RDP_BRUTE_MIN_CONNECTIONS,
+) -> Optional[Alert]:
+    """Lateral Movement (T1021.001) — RDP connection burst (spray/brute).
+
+    A single process slamming port 3389 repeatedly inside the window is the
+    client-side signature of an RDP spray (credential brute-force or
+    pass-the-hash against a fleet). Once per run via the related-ip dedup.
+    The burst threshold is tunable from the Rules page.
+    """
+    if event.get("event_type") != "network_connection":
+        return None
+    try:
+        port = int(event.get("dest_port") or 0)
+    except (TypeError, ValueError):
+        return None
+    if port != 3389:
+        return None
+    pid = event.get("pid") or event.get("ppid")
+    if pid is None:
+        return None
+    rows = conn.execute(
+        "SELECT 1 FROM events WHERE run_id = ? AND event_type = 'network_connection' "
+        "AND dest_port = 3389 AND pid = ? AND timestamp >= ?",
+        (run_id, pid, cutoff.isoformat()),
+    ).fetchall()
+    if len(rows) >= min_connections:
+        return _make_alert(
+            run_id, "rdp-brute-force",
+            "RDP connection burst (brute-force / spray)",
+            "suspicious", event,
+            f"Process {pid} made {len(rows)}+ RDP (3389) connections inside {RDP_BRUTE_WINDOW_SECONDS}s",
+        )
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Defense Evasion depth (T1070) — anti-forensics beyond shell-history-wipe:
+# the collector/logging service being stopped, or log stores being purged.
+# A live monitor that gets silenced is the quietest attack of all.
+# ---------------------------------------------------------------------------
+LOG_SERVICE_STOP_PATTERNS = {
+    "linux": [
+        (r"systemctl\s+(stop|disable)\s+(auditd|rsyslog|syslog)", "auditd/rsyslog service stopped/disabled"),
+        (r"auditctl\s+-e\s*0", "auditd disabled (auditctl -e 0)"),
+        (r"service\s+(auditd|rsyslog)\s+stop", "auditd/rsyslog service stopped (sysvinit)"),
+    ],
+    "windows": [
+        (r"sc\s+stop\s+(WinEventLog|EventLog)|sc\s+config\s+(WinEventLog|EventLog)\s+start=\s*disabled", "Windows Event Log service stopped/disabled"),
+    ],
+    "macos": [],
+}
+LOG_CLEAR_PATTERNS = {
+    "windows": [
+        (r"wevtutil\s+(cl|clear-log)\b", "Windows event log cleared (wevtutil)"),
+        (r"Clear-EventLog\b|Remove-EventLog\b", "PowerShell event-log purge"),
+    ],
+    "linux": [
+        (r"journalctl\s+--vacuum", "journal vacuumed (journalctl --vacuum)"),
+        (r"rm\s+(-rf\s+)?/var/log/journal", "journal store deleted"),
+        (r"find\s+/var/log\b[^\n]*-delete", "log files mass-deleted (find -delete)"),
+    ],
+    "macos": [],
+}
+
+
+def load_log_patterns(conn: sqlite3.Connection) -> dict[str, dict[str, list[tuple[str, str]]]]:
+    """Effective log anti-forensics pattern tables (DB override or defaults).
+
+    Mirrors load_enum_patterns: the Rules page (GET/PUT /rules/log-patterns)
+    lets operators add or remove the per-platform signatures behind
+    log-service-stop and log-clearing without touching code, and this is the
+    single read path so the live engine always sees the latest edit. Returns
+    {"service_stop": {platform: [(regex, label), …]}, "log_clear": {…}};
+    a missing/invalid stored value falls back to the module defaults.
+    """
+    defaults = {"service_stop": LOG_SERVICE_STOP_PATTERNS, "log_clear": LOG_CLEAR_PATTERNS}
+    try:
+        row = conn.execute(
+            "SELECT value FROM settings WHERE key = 'log_patterns'"
+        ).fetchone()
+        if row is None:
+            return defaults
+        stored = json.loads(row["value"])
+        if not isinstance(stored, dict):
+            return defaults
+        out: dict[str, dict[str, list[tuple[str, str]]]] = {}
+        for kind, base in defaults.items():
+            kind_rows = stored.get(kind)
+            if not isinstance(kind_rows, dict):
+                out[kind] = base
+                continue
+            per = {}
+            for platform, plat_rows in base.items():
+                rows = kind_rows.get(platform)
+                if not isinstance(rows, list):
+                    per[platform] = plat_rows
+                    continue
+                cleaned = []
+                for item in rows:
+                    if not isinstance(item, dict):
+                        continue
+                    pattern = (item.get("pattern") or "").strip()
+                    label = (item.get("label") or "").strip()
+                    if pattern and label:
+                        cleaned.append((pattern, label))
+                per[platform] = cleaned if cleaned else plat_rows
+            out[kind] = per
+        return out
+    except (ValueError, TypeError):
+        return defaults
+
+
+def check_log_service_stop(
+    event: dict, patterns: Optional[dict[str, list[tuple[str, str]]]] = None
+) -> Optional[Alert]:
+    """Defense Evasion (T1070.001) — the logging stack itself being silenced."""
+    if patterns is None:
+        patterns = LOG_SERVICE_STOP_PATTERNS
+    desc = _command_match(patterns, event)
+    if desc is None:
+        return None
+    return _make_alert(
+        event["run_id"], "log-service-stop",
+        "Logging service stopped/disabled (anti-forensics)",
+        "malicious", event, desc,
+    )
+
+
+def check_log_clearing(
+    event: dict, patterns: Optional[dict[str, list[tuple[str, str]]]] = None
+) -> Optional[Alert]:
+    """Defense Evasion (T1070.001) — log stores being purged."""
+    if patterns is None:
+        patterns = LOG_CLEAR_PATTERNS
+    desc = _command_match(patterns, event)
+    if desc is None:
+        return None
+    return _make_alert(
+        event["run_id"], "log-clearing",
+        "Event/journal logs purged (anti-forensics)",
+        "malicious", event, desc,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Command and Control depth (T1071.004 / T1568) — DNS as a covert channel.
+# Sysmon (Event ID 22) and DNS-aware collectors stamp the resolved `query` on
+# network_connection events; these rules read that field. Tunneling uses a
+# high-entropy/long-label *burst* under one base name; a single absurd label
+# is the DGA/tunnel tell; a query to a non-53 port is a covert DNS channel.
+# ---------------------------------------------------------------------------
+DNS_PORT = 53
+DNS_TUNNEL_WINDOW_SECONDS = 300
+DNS_TUNNEL_MIN_DISTINCT = 6
+DNS_LONG_LABEL_LEN = 24
+DNS_LONG_LABEL_ENTROPY = 4.0
+DNS_LABEL_ENTROPY = 3.0
+DNS_LABEL_LEN = 16
+
+
+def _label_entropy(label: str) -> float:
+    """Shannon entropy per char of a DNS label (lowercase, alnum+hyphen)."""
+    if not label:
+        return 0.0
+    counts: dict[str, int] = {}
+    for ch in label.lower():
+        counts[ch] = counts.get(ch, 0) + 1
+    n = len(label)
+    import math
+    return -sum((c / n) * math.log2(c / n) for c in counts.values())
+
+
+def _dns_label_suspicious(label: str, entropy_min: float, length_min: int) -> bool:
+    return len(label) >= length_min or _label_entropy(label) >= entropy_min
+
+
+def check_dns_tunneling(
+    conn: sqlite3.Connection,
+    run_id: str,
+    cutoff: datetime,
+    min_distinct: int = DNS_TUNNEL_MIN_DISTINCT,
+    label_entropy: float = DNS_LABEL_ENTROPY,
+    label_len: int = DNS_LABEL_LEN,
+) -> Optional[Alert]:
+    """C2 (T1071.004) — a burst of distinct suspicious DNS labels.
+
+    Run-wide over the window: distinct query labels that are long or
+    high-entropy (the classic `xxxxxxxx...base.example.com` tunnel shape).
+    Fires once per run when the count clears the threshold. Thresholds come
+    from the rule-tuning table (Rules page) — the defaults here are the
+    stock values, so an unedited store behaves identically.
+    """
+    rows = conn.execute(
+        "SELECT query FROM events WHERE run_id = ? AND event_type = 'network_connection' "
+        "AND query IS NOT NULL AND query != '' AND timestamp >= ?",
+        (run_id, cutoff.isoformat()),
+    ).fetchall()
+    labels: set[str] = set()
+    for r in rows:
+        q = (r["query"] or "").strip().lower().rstrip(".")
+        if not q:
+            continue
+        parts = [p for p in q.split(".") if p]
+        if len(parts) < 2:
+            continue
+        for label in parts[:-1]:  # skip the base domain label
+            if _dns_label_suspicious(label, label_entropy, label_len):
+                labels.add(label)
+                break
+    if len(labels) >= min_distinct:
+        return Alert(
+            run_id=run_id,
+            rule_id="dns-tunneling",
+            rule_name="DNS tunneling (suspicious label burst)",
+            severity="suspicious",
+            triggered_at=datetime.now(timezone.utc),
+            related_ip=None,
+            related_pid=None,
+            details=(
+                f"{len(labels)} distinct long/high-entropy DNS labels inside "
+                f"{DNS_TUNNEL_WINDOW_SECONDS}s — classic DNS-tunnel shape"
+            ),
+        )
+    return None
+
+
+def check_dns_long_label(
+    event: dict,
+    long_len: int = DNS_LONG_LABEL_LEN,
+    long_entropy: float = DNS_LONG_LABEL_ENTROPY,
+) -> Optional[Alert]:
+    """C2 (T1568.002) — a single absurd DNS label (DGA / one-shot tunnel).
+
+    Length/entropy thresholds are tunable from the Rules page; the defaults
+    here are the stock values.
+    """
+    if event.get("event_type") != "network_connection":
+        return None
+    q = (event.get("query") or "").strip().lower().rstrip(".")
+    if not q:
+        return None
+    parts = [p for p in q.split(".") if p]
+    if len(parts) < 2:
+        return None
+    for label in parts[:-1]:
+        if _dns_label_suspicious(label, long_entropy, long_len):
+            return _make_alert(
+                event["run_id"], "dns-long-label",
+                "Long / high-entropy DNS query (DGA or tunneling)",
+                "suspicious", event,
+                f"DNS query with suspicious label: {q}",
+            )
+    return None
+
+
+def check_dns_unusual_port(event: dict) -> Optional[Alert]:
+    """C2 (T1071.004) — DNS on a non-standard port (covert channel)."""
+    if event.get("event_type") != "network_connection":
+        return None
+    q = event.get("query")
+    if not q:
+        return None
+    try:
+        port = int(event.get("dest_port") or 0)
+    except (TypeError, ValueError):
+        return None
+    if port != DNS_PORT and _is_routable_dest(event.get("dest_ip") or ""):
+        return _make_alert(
+            event["run_id"], "dns-unusual-port",
+            "DNS query on a non-standard port",
+            "suspicious", event,
+            f"DNS query {q} to {event.get('dest_ip')}:{port} — covert DNS channel",
+        )
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Network behavior depth (T1071) — TLS-SNI tracking, DNS-over-HTTPS, and
+# same-destination fan-out. These read the `tls_sni` field Sysmon stamps on
+# Event ID 3 (DestinationHostname) plus the connection tuple itself.
+# ---------------------------------------------------------------------------
+# Known public DoH resolvers (IP → provider) — the doh-resolver-use gate.
+DOH_RESOLVERS = {
+    "1.1.1.1": "Cloudflare",
+    "1.0.0.1": "Cloudflare",
+    "8.8.8.8": "Google",
+    "8.8.4.4": "Google",
+    "9.9.9.9": "Quad9",
+    "149.112.112.112": "Quad9",
+    "76.76.2.2": "NextDNS",
+    "76.76.10.2": "NextDNS",
+}
+# Script hosts / LOLBins malware uses to exfil over HTTPS (and that a normal
+# host rarely points at a DoH resolver) — the low-FP gate for doh-resolver-use.
+DOH_SCRIPT_HOSTS = {
+    "powershell.exe", "pwsh", "curl", "wget", "python", "python3", "perl",
+    "ruby", "node", "certutil.exe", "mshta.exe", "bitsadmin.exe",
+}
+FANOUT_WINDOW_SECONDS = 300
+FANOUT_MIN_PROCESSES = 5
+# Recurring fan-out — the same destination crossing the fan-out threshold in
+# >= this many distinct FANOUT_WINDOW_SECONDS buckets over the run's life is a
+# long-running coordinated plant (it keeps re-fanning out as new processes
+# spawn), not a one-off burst. Tunable from the Rules page.
+FANOUT_RECUR_MIN_WINDOWS = 3
+# The recurrence scan only looks back this far (2h by default) — bounded so a
+# very long live session doesn't re-scan its whole event history on every
+# ingest batch. 2h of 300s windows is 24 buckets; the 3-window threshold is
+# comfortably inside it.
+FANOUT_RECUR_LOOKBACK_SECONDS = 7200
+
+# Storm guard — per-rule per-run alert caps. A long live session on a
+# busy host legitimately produces a novel process per minute; without a
+# cap, first-seen/enumeration/network-scan/beaconing/fan-out would bury
+# the triage queue in near-duplicates. EVERY rule gets ALERT_CAP_DEFAULT;
+# the burst-prone ones override it lower. The cap holds the most
+# representative findings and records what was suppressed on the run
+# (suppressed_alerts).
+ALERT_CAP_DEFAULT = 25
+FIRST_SEEN_MAX_ALERTS = 20
+ENUM_BURST_MAX_ALERTS = 10
+NETWORK_SCAN_MAX_ALERTS = 10
+BEACONING_MAX_ALERTS = 15
+FANOUT_MAX_ALERTS = 10
+_IP_LITERAL_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
+
+
+def check_tls_sni_suspicious(event: dict) -> Optional[Alert]:
+    """C2 (T1071.001) — TLS SNI that no legitimate client sends.
+
+    RFC 6066 forbids IP-literal SNIs, so an SNI that IS an IP is a covert
+    channel / raw-tunnel tell; a long or high-entropy SNI label is the TLS
+    cousin of the DNS DGA smell. Reads Sysmon's DestinationHostname.
+    """
+    if event.get("event_type") != "network_connection":
+        return None
+    sni = (event.get("tls_sni") or "").strip().lower()
+    if not sni:
+        return None
+    if _IP_LITERAL_RE.fullmatch(sni):
+        return _make_alert(
+            event["run_id"], "tls-sni-suspicious",
+            "TLS handshake with IP-literal SNI",
+            "suspicious", event,
+            f"TLS SNI is a raw IP ({sni}) — RFC 6066 forbids IP-literal SNIs (tunnel/C2 tell)",
+        )
+    parts = [p for p in sni.split(".") if p]
+    for label in parts[:-1]:
+        if _dns_label_suspicious(label, DNS_LONG_LABEL_ENTROPY, DNS_LONG_LABEL_LEN):
+            return _make_alert(
+                event["run_id"], "tls-sni-suspicious",
+                "Long / high-entropy TLS SNI (DGA or tunneling)",
+                "suspicious", event,
+                f"TLS SNI with suspicious label: {sni}",
+            )
+    return None
+
+
+def check_doh_resolver_use(event: dict) -> Optional[Alert]:
+    """C2 (T1071.004) — a script host / LOLBin talking to a known DoH resolver.
+
+    DoH itself is normal (browsers use it); a *script host* pointed at a
+    public DoH resolver is malware's way of dodging DNS inspection while
+    exfiltrating or resolving C2. The script-host gate keeps it low-FP.
+    """
+    if event.get("event_type") != "network_connection":
+        return None
+    ip = event.get("dest_ip") or ""
+    try:
+        port = int(event.get("dest_port") or 0)
+    except (TypeError, ValueError):
+        return None
+    if port != 443 or ip not in DOH_RESOLVERS:
+        return None
+    name = (event.get("process_name") or "").lower()
+    if name in DOH_SCRIPT_HOSTS:
+        return _make_alert(
+            event["run_id"], "doh-resolver-use",
+            "DNS-over-HTTPS from a script host",
+            "suspicious", event,
+            f"{name} connected to {DOH_RESOLVERS[ip]} DoH resolver {ip}:443 — DoH used to dodge DNS inspection",
+        )
+    return None
+
+
+def check_fanout_contact(
+    conn: sqlite3.Connection,
+    run_id: str,
+    cutoff: datetime,
+    min_processes: int = FANOUT_MIN_PROCESSES,
+) -> list[Alert]:
+    """C2 (T1071.001) — many distinct processes contacting ONE destination.
+
+    A coordinated plant fans out: several independent processes all reaching
+    the same routable IP inside the window. Returns an alert for EVERY
+    qualifying destination IP in the batch (not just the first), so a
+    multi-IP fan-out is fully surfaced; per-run dedup via related_ip + the
+    storm cap keep a long session from flooding. Known DoH resolvers are
+    excluded — they already have their own rule and legitimately see
+    multi-process traffic. The fan-out threshold is tunable from the Rules
+    page.
+    """
+    rows = conn.execute(
+        "SELECT dest_ip, COUNT(DISTINCT pid) AS pids FROM events "
+        "WHERE run_id = ? AND event_type = 'network_connection' "
+        "AND pid IS NOT NULL AND dest_ip IS NOT NULL AND timestamp >= ? "
+        "GROUP BY dest_ip HAVING pids >= ?",
+        (run_id, cutoff.isoformat(), min_processes),
+    ).fetchall()
+    alerts: list[Alert] = []
+    for row in rows:
+        ip = row["dest_ip"]
+        if not _is_routable_dest(ip) or ip in DOH_RESOLVERS:
+            continue
+        alerts.append(
+            Alert(
+                run_id=run_id,
+                rule_id="fanout-contact",
+                rule_name="Coordinated contact with one destination",
+                severity="suspicious",
+                triggered_at=datetime.now(timezone.utc),
+                related_ip=ip,
+                related_pid=None,
+                details=(
+                    f"{row['pids']} distinct processes contacted {ip} inside "
+                    f"{FANOUT_WINDOW_SECONDS}s — coordinated fan-out to one destination"
+                ),
+            )
+        )
+    return alerts
+
+
+def check_fanout_recurring(
+    conn: sqlite3.Connection,
+    run_id: str,
+    min_processes: int = FANOUT_MIN_PROCESSES,
+    min_windows: int = FANOUT_RECUR_MIN_WINDOWS,
+    cutoff: Optional[datetime] = None,
+) -> list[Alert]:
+    """C2 (T1071.001) — the SAME destination fanning out across MANY windows.
+
+    fanout-contact flags a destination that crossed the threshold inside one
+    FANOUT_WINDOW_SECONDS window — a one-off burst. A long-running coordinated
+    plant keeps re-fanning out: as the session goes on, new processes keep
+    contacting the same C2, so the destination crosses the fan-out threshold
+    in multiple DISTINCT windows over the run's life. This returns an alert
+    per destination that qualifies in >= `min_windows` separate windows (a
+    persistence signal, not a burst). Deduped per IP per run; DoH resolvers
+    excluded. The window size matches fanout-contact so the two read as one
+    story: burst first, then "and it kept doing it".
+
+    `cutoff` bounds the scan to recent windows (the caller anchors it to the
+    batch's newest event minus FANOUT_RECUR_LOOKBACK_SECONDS) so a very long
+    live session doesn't re-read its whole event history on every ingest
+    batch — the (run_id, event_type) index narrows the read, the timestamp
+    filter bounds it. None scans the full run.
+    """
+    if cutoff is None:
+        rows = conn.execute(
+            "SELECT dest_ip, timestamp, pid FROM events "
+            "WHERE run_id = ? AND event_type = 'network_connection' "
+            "AND pid IS NOT NULL AND dest_ip IS NOT NULL",
+            (run_id,),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT dest_ip, timestamp, pid FROM events "
+            "WHERE run_id = ? AND event_type = 'network_connection' "
+            "AND pid IS NOT NULL AND dest_ip IS NOT NULL AND timestamp >= ?",
+            (run_id, cutoff.isoformat()),
+        ).fetchall()
+    # ip -> {window bucket -> set of distinct pids}
+    per_ip: dict[str, dict[int, set[int]]] = {}
+    for r in rows:
+        ts = _parse_ts(r["timestamp"])
+        if ts is None:
+            continue
+        bucket = int(ts.timestamp() // FANOUT_WINDOW_SECONDS)
+        per_ip.setdefault(r["dest_ip"], {}).setdefault(bucket, set()).add(r["pid"])
+    alerts: list[Alert] = []
+    for ip, buckets in per_ip.items():
+        if not _is_routable_dest(ip) or ip in DOH_RESOLVERS:
+            continue
+        qualifying = sum(1 for pids in buckets.values() if len(pids) >= min_processes)
+        if qualifying < min_windows:
+            continue
+        alerts.append(
+            Alert(
+                run_id=run_id,
+                rule_id="fanout-recurring",
+                rule_name="Recurring coordinated fan-out",
+                severity="suspicious",
+                triggered_at=datetime.now(timezone.utc),
+                related_ip=ip,
+                related_pid=None,
+                details=(
+                    f"{ip} crossed the fan-out threshold in {qualifying} distinct "
+                    f"{FANOUT_WINDOW_SECONDS}s windows — a long-running coordinated plant "
+                    f"(>= {min_processes} processes per window, repeated)"
+                ),
+            )
+        )
+    return alerts
+
+
+# ---------------------------------------------------------------------------
 # Rule tuning (roadmap 2.3) — DB overrides on top of the module defaults.
 # ---------------------------------------------------------------------------
 # Tunable knobs: param name → (rule_id, parse fn, default). The rule editor
@@ -1300,6 +2040,30 @@ _DEFAULT_TUNABLES = {
     "ENUM_WINDOW_SECONDS": ("enumeration-burst", int, ENUM_WINDOW_SECONDS),
     "STAGING_WINDOW_SECONDS": ("data-staging", int, STAGING_WINDOW_SECONDS),
     "BASELINE_MIN_EVENTS": ("baseline-anomaly", int, BASELINE_MIN_EVENTS),
+    "DNS_TUNNEL_WINDOW_SECONDS": ("dns-tunneling", int, DNS_TUNNEL_WINDOW_SECONDS),
+    "DNS_TUNNEL_MIN_DISTINCT": ("dns-tunneling", int, DNS_TUNNEL_MIN_DISTINCT),
+    "DNS_LABEL_LEN": ("dns-tunneling", int, DNS_LABEL_LEN),
+    "DNS_LABEL_ENTROPY": ("dns-tunneling", float, DNS_LABEL_ENTROPY),
+    "DNS_LONG_LABEL_LEN": ("dns-long-label", int, DNS_LONG_LABEL_LEN),
+    "DNS_LONG_LABEL_ENTROPY": ("dns-long-label", float, DNS_LONG_LABEL_ENTROPY),
+    "RDP_BRUTE_WINDOW_SECONDS": ("rdp-brute-force", int, RDP_BRUTE_WINDOW_SECONDS),
+    "RDP_BRUTE_MIN_CONNECTIONS": ("rdp-brute-force", int, RDP_BRUTE_MIN_CONNECTIONS),
+    "FANOUT_WINDOW_SECONDS": ("fanout-contact", int, FANOUT_WINDOW_SECONDS),
+    "FANOUT_MIN_PROCESSES": ("fanout-contact", int, FANOUT_MIN_PROCESSES),
+    "FANOUT_RECUR_MIN_WINDOWS": ("fanout-recurring", int, FANOUT_RECUR_MIN_WINDOWS),
+    "FANOUT_RECUR_LOOKBACK_SECONDS": ("fanout-recurring", int, FANOUT_RECUR_LOOKBACK_SECONDS),
+    # Storm guard: burst-prone rules cap their alerts per run so a long live
+    # session stays readable (alert-fatigue management — a novel process per
+    # minute on a busy host is real but shouldn't bury the queue). The
+    # suppressed counts land on the run as `suppressed_alerts`.
+    "FIRST_SEEN_MAX_ALERTS": ("first-seen-process", int, FIRST_SEEN_MAX_ALERTS),
+    "ENUM_BURST_MAX_ALERTS": ("enumeration-burst", int, ENUM_BURST_MAX_ALERTS),
+    "NETWORK_SCAN_MAX_ALERTS": ("network-scan", int, NETWORK_SCAN_MAX_ALERTS),
+    "BEACONING_MAX_ALERTS": ("beaconing", int, BEACONING_MAX_ALERTS),
+    "FANOUT_MAX_ALERTS": ("fanout-contact", int, FANOUT_MAX_ALERTS),
+    # Every other rule defaults to this ceiling so nothing floods a long live
+    # session; the named *_MAX_ALERTS knobs override it lower.
+    "ALERT_CAP_DEFAULT": ("__default__", int, ALERT_CAP_DEFAULT),
 }
 
 # Defaults registry for the editor UI (kept separate from the lookup so the
@@ -1425,17 +2189,18 @@ def evaluate_batch(conn: sqlite3.Connection, run_id: str, events: list[dict]) ->
     suppressions = load_suppressions(conn)
     allowlist = load_run_allowlist(conn, run_id)
     sample_sha256 = load_run_sample_sha256(conn, run_id)
+    # Anti-forensics pattern tables (operator-editable via /rules/log-patterns)
+    # loaded once per batch so a Rules-page edit applies to the next ingest.
+    log_patterns = load_log_patterns(conn)
 
-    # Process map for parent-child rule: all process_create events in this run.
-    process_rows = conn.execute(
-        "SELECT pid, ppid, process_name FROM events WHERE run_id = ? AND event_type = 'process_create'",
-        (run_id,),
-    ).fetchall()
-    process_map = {}
-    for r in process_rows:
-        pid = r["pid"]
-        if pid is not None and pid not in process_map:
-            process_map[pid] = {"pid": pid, "ppid": r["ppid"], "process_name": r["process_name"] or "unknown"}
+    # Process map for parent-child rule: every process_create event in this
+    # run. Incremental — the run's map is cached in memory keyed by (db, run)
+    # and each batch adds only the NEW process rows (id > last seen), so a
+    # very long live session costs O(batch) per ingest, not O(run). The full
+    # map is kept (not time-bounded) because parent-child semantics need an
+    # hours-old parent to still resolve — a lookback would miss that. Evicted
+    # on run completion and LRU-capped, so memory stays bounded.
+    process_map, last_proc_id = _load_process_map(conn, run_id)
 
     new_alerts: list[Alert] = []
     seen_related: set[tuple] = set()
@@ -1446,7 +2211,10 @@ def evaluate_batch(conn: sqlite3.Connection, run_id: str, events: list[dict]) ->
 
         Every insert in the engine flows through here, so analyst triage
         (rule suppression, IOC allowlist) gates every rule uniformly — new
-        alerts, run-wide composites, everything.
+        alerts, run-wide composites, everything. The per-rule storm cap is
+        applied last, only to alerts that would otherwise be new, so capped
+        runs keep their most representative findings and record what was
+        held back.
         """
         if _rule_suppressed(suppressions, alert.rule_id, run_id):
             return False
@@ -1456,6 +2224,20 @@ def evaluate_batch(conn: sqlite3.Connection, run_id: str, events: list[dict]) ->
         related = alert.related_ip or (str(alert.related_pid) if alert.related_pid else None)
         if key in seen_related or _alert_exists(conn, run_id, alert.rule_id, related):
             return False
+        cap = alert_caps.get(alert.rule_id)
+        if cap is None and default_cap > 0:
+            cap = default_cap
+        if cap is not None:
+            fired = fired_counts.get(alert.rule_id, 0)
+            if fired >= cap:
+                # Count the *distinct* alert once — remember it in the dedup
+                # set so the next observation of the same (rule, pid, ip)
+                # from this batch is a silent repeat, not another suppress.
+                if key not in seen_related:
+                    suppressed_counts[alert.rule_id] = suppressed_counts.get(alert.rule_id, 0) + 1
+                    seen_related.add(key)
+                return False
+            fired_counts[alert.rule_id] = fired + 1
         seen_related.add(key)
         insert_alert(conn, alert)
         new_alerts.append(alert)
@@ -1464,10 +2246,49 @@ def evaluate_batch(conn: sqlite3.Connection, run_id: str, events: list[dict]) ->
     # Separate windows: beaconing looks back 30 min, rename-burst 10 s
     # (docs/11). Thresholds are tunable via the rule editor (roadmap 2.3).
     t = _load_tunables(conn)
+
+    # Storm guard caps: per-rule per-run alert ceilings (tunable via the
+    # Rules page; defaults below). Every rule gets the DEFAULT cap so nothing
+    # can flood a long live session; the burst-prone ones override it lower.
+    default_cap = max(0, int(t.get("ALERT_CAP_DEFAULT", ALERT_CAP_DEFAULT)))
+    alert_caps: dict[str, int] = {}
+    for name, (rule_id, _parse, _default) in _DEFAULT_TUNABLES.items():
+        if name.endswith("_MAX_ALERTS"):
+            alert_caps[rule_id] = max(0, int(t.get(name, _default)))
+    # Seeded from what's already persisted, so the cap holds *across* ingest
+    # batches (a run's events usually arrive in several) — without this the
+    # counter would reset every batch and the cap would never trip on a
+    # long live session.
+    fired_counts: dict[str, int] = {
+        row["rule_id"]: row["n"]
+        for row in conn.execute(
+            "SELECT rule_id, COUNT(*) AS n FROM alerts WHERE run_id = ? GROUP BY rule_id",
+            (run_id,),
+        ).fetchall()
+    }
+    suppressed_counts: dict[str, int] = {}
+
+    # Explainability: snapshot the *tuned* thresholds in effect for this run,
+    # captured once (INSERT OR IGNORE) at first evaluation — the immutable
+    # "scored under" context the run-detail page shows, so a tuned finding
+    # explains itself (e.g. DNS_TUNNEL_MIN_DISTINCT=3 because the operator
+    # tightened it). Stock runs store an empty object.
+    tuned_params = {
+        name: t[name]
+        for name, (rule_id, _parse, default) in _DEFAULT_TUNABLES.items()
+        if t[name] != default
+    }
+    conn.execute(
+        "INSERT OR IGNORE INTO run_tuning_snapshot (run_id, params) VALUES (?, ?)",
+        (run_id, json.dumps(tuned_params)),
+    )
     beacon_cutoff = _window_cutoff(events, int(t["BEACON_WINDOW_MINUTES"]) * 60)
     burst_cutoff = _window_cutoff(events, int(t["RENAME_BURST_WINDOW_SECONDS"]))
     staging_cutoff = _window_cutoff(events, int(t["STAGING_WINDOW_SECONDS"]))
     scan_cutoff = _window_cutoff(events, SCAN_WINDOW_SECONDS)
+    rdp_cutoff = _window_cutoff(events, int(t["RDP_BRUTE_WINDOW_SECONDS"]))
+    dns_cutoff = _window_cutoff(events, int(t["DNS_TUNNEL_WINDOW_SECONDS"]))
+    fanout_cutoff = _window_cutoff(events, int(t["FANOUT_WINDOW_SECONDS"]))
 
     for event in events:
         candidates: list[Optional[Alert]] = [
@@ -1488,6 +2309,19 @@ def evaluate_batch(conn: sqlite3.Connection, run_id: str, events: list[dict]) ->
             check_toolchain_build(event),
             check_document_dropper(event, process_map),
             check_lateral_rdp_smb(event),
+            check_lateral_psexec_smb(event),
+            check_lateral_winrm_wmi(event),
+            check_lateral_smb_share(event),
+            check_log_service_stop(event, log_patterns["service_stop"]),
+            check_log_clearing(event, log_patterns["log_clear"]),
+            check_dns_long_label(
+                event,
+                long_len=int(t["DNS_LONG_LABEL_LEN"]),
+                long_entropy=float(t["DNS_LONG_LABEL_ENTROPY"]),
+            ),
+            check_dns_unusual_port(event),
+            check_tls_sni_suspicious(event),
+            check_doh_resolver_use(event),
             check_screen_capture(event),
         ]
         for alert in candidates:
@@ -1524,6 +2358,47 @@ def evaluate_batch(conn: sqlite3.Connection, run_id: str, events: list[dict]) ->
             alert = check_network_scan(conn, run_id, event, scan_cutoff)
             if alert:
                 fire(alert)
+        if event.get("event_type") == "network_connection":
+            alert = check_rdp_brute_force(
+                conn, run_id, event, rdp_cutoff,
+                min_connections=int(t["RDP_BRUTE_MIN_CONNECTIONS"]),
+            )
+            if alert:
+                fire(alert)
+
+    # DNS channel — tunneling burst over the whole window (once per run;
+    # deduped via _alert_exists). Reads the `query` field Sysmon/DNS-aware
+    # collectors stamp on network_connection events.
+    dns_alert = check_dns_tunneling(
+        conn, run_id, dns_cutoff,
+        min_distinct=int(t["DNS_TUNNEL_MIN_DISTINCT"]),
+        label_entropy=float(t["DNS_LABEL_ENTROPY"]),
+        label_len=int(t["DNS_LABEL_LEN"]),
+    )
+    if dns_alert:
+        fire(dns_alert)
+
+    # Network fan-out — many distinct processes contacting one destination
+    # over the whole window (once per IP per run; deduped via related_ip).
+    for fanout_alert in check_fanout_contact(
+        conn, run_id, fanout_cutoff,
+        min_processes=int(t["FANOUT_MIN_PROCESSES"]),
+    ):
+        fire(fanout_alert)
+    # Recurring fan-out — the same destination crossing the threshold in
+    # multiple distinct windows (a long-running plant, not a one-off burst).
+    # Run-wide over the run's whole history; deduped per IP per run.
+    # Lookback-bounded: anchored to the batch's newest event minus
+    # FANOUT_RECUR_LOOKBACK_SECONDS, so a very long live session re-scans only
+    # recent history per ingest instead of the whole run.
+    recur_cutoff = _window_cutoff(events, int(t["FANOUT_RECUR_LOOKBACK_SECONDS"]))
+    for recurring in check_fanout_recurring(
+        conn, run_id,
+        min_processes=int(t["FANOUT_MIN_PROCESSES"]),
+        min_windows=int(t["FANOUT_RECUR_MIN_WINDOWS"]),
+        cutoff=recur_cutoff,
+    ):
+        fire(recurring)
 
     # Discovery — enumeration burst over the whole window (once per batch;
     # deduped so it fires once per run). Patterns come from the operator-
@@ -1545,6 +2420,27 @@ def evaluate_batch(conn: sqlite3.Connection, run_id: str, events: list[dict]) ->
     fired = conn.execute(
         "SELECT DISTINCT rule_id FROM alerts WHERE run_id = ?", (run_id,)
     ).fetchall()
+    # Storm guard: persist the suppressed counts (merged across batches) so
+    # the cap is visible on the run — a capped finding explains itself.
+    if suppressed_counts:
+        import json as _json
+
+        existing = conn.execute(
+            "SELECT suppressed_alerts FROM runs WHERE run_id = ?", (run_id,)
+        ).fetchone()
+        merged: dict[str, int] = {}
+        if existing and existing["suppressed_alerts"]:
+            try:
+                merged = _json.loads(existing["suppressed_alerts"])
+            except (ValueError, TypeError):
+                merged = {}
+        for rule, count in suppressed_counts.items():
+            merged[rule] = merged.get(rule, 0) + count
+        conn.execute(
+            "UPDATE runs SET suppressed_alerts = ? WHERE run_id = ?",
+            (_json.dumps(merged), run_id),
+        )
+
     stages = {_KILL_CHAIN_STAGE[r["rule_id"]] for r in fired if r["rule_id"] in _KILL_CHAIN_STAGE}
     if len(stages) >= 3 and not _alert_exists(conn, run_id, "attack-chain", None):
         chain_alert = Alert(

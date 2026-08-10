@@ -14,6 +14,7 @@ import {
   getRetention,
   pruneRuns,
   refreshStaleIntel,
+  resetStore,
   restoreBackup,
   saveBlob,
   setAuthToken,
@@ -24,6 +25,7 @@ import {
   testIntelKey,
 } from "../lib/api";
 import type { NotificationSettings, NotificationSettingsIn } from "../types";
+import type { ResetResult } from "../lib/api";
 
 const inputCls =
   "w-full rounded border border-border-subtle bg-bg-base px-3 py-2 font-mono text-sm text-text-primary placeholder:text-text-faint focus:border-accent/60 focus:outline-none";
@@ -140,6 +142,41 @@ function ThemePalettePanel() {
  *  (AUTH_MAX_ATTEMPTS / AUTH_WINDOW_SECONDS / AUTH_LOCKOUT_SECONDS) plus the
  *  live state: how many IPs are tracked and currently locked out. Polls so
  *  an admin watching a live attack sees the lockout counter move. */
+/** The Settings "Clear demo data" flow, extracted for deterministic tests.
+ *  Branches: cancel → no-op; success → busy then a confirmation message plus a
+ *  deferred reload; failure → error message and busy cleared. */
+export async function runResetFlow(deps: {
+  confirm: () => boolean;
+  resetStore: () => Promise<ResetResult>;
+  setBusy: (b: "reset" | null) => void;
+  setMsg: (m: { ok: boolean; text: string } | null) => void;
+  reload: () => void;
+}): Promise<void> {
+  if (!deps.confirm()) return;
+  deps.setBusy("reset");
+  try {
+    const out = await deps.resetStore();
+    deps.setMsg({
+      ok: true,
+      text: `Cleared ${out.deleted_runs} demo/synthetic run${out.deleted_runs === 1 ? "" : "s"} (${out.deleted_events} events) — kept ${out.kept_runs} local-host session${out.kept_runs === 1 ? "" : "s"}. Reloading…`,
+    });
+    window.setTimeout(() => deps.reload(), 900);
+  } catch (e) {
+    deps.setMsg({ ok: false, text: e instanceof Error ? e.message : "Reset failed." });
+    deps.setBusy(null);
+  }
+}
+
+/** Pure label helpers for the login-guard panel — exported for tests. */
+export function rateLimitBadge(enabled: boolean): string {
+  return enabled ? "active" : "auth off · inactive";
+}
+
+export function lockedIpsText(n: number): string {
+  if (n === 0) return "No IPs currently locked out.";
+  return `${n} IP${n === 1 ? " is" : "s are"} locked out — even valid passwords are refused until the cooldown expires.`;
+}
+
 function LoginRateLimitPanel() {
   const { data, isLoading, isError } = useQuery({
     queryKey: ["auth", "ratelimit"],
@@ -169,7 +206,7 @@ function LoginRateLimitPanel() {
               data.enabled ? "border-accent/50 text-accent" : "border-border-subtle text-text-faint"
             }`}
           >
-            {data.enabled ? "active" : "auth off · inactive"}
+            {rateLimitBadge(data.enabled)}
           </span>
         ) : null
       }
@@ -193,11 +230,7 @@ function LoginRateLimitPanel() {
           </div>
           <div className="flex items-center gap-2 rounded-lg border border-border-subtle bg-bg-elevated/40 px-3 py-2.5">
             <Icon name="shield" size={13} className={data.locked_ips > 0 ? "text-risk-malicious" : "text-risk-clean"} />
-            <span className="text-xs text-text-muted">
-              {data.locked_ips === 0
-                ? "No IPs currently locked out."
-                : `${data.locked_ips} IP${data.locked_ips === 1 ? " is" : "s are"} locked out — even valid passwords are refused until the cooldown expires.`}
-            </span>
+            <span className="text-xs text-text-muted">{lockedIpsText(data.locked_ips)}</span>
           </div>
           {data.locked.length > 0 && (
             <ul className="divide-y divide-border-subtle/60 rounded-lg border border-border-subtle">
@@ -283,6 +316,22 @@ function RetentionPanel() {
     } finally {
       setBusy(null);
     }
+  };
+
+  // Start fresh — the honest reset. Wipes every run that isn't THIS machine's
+  // collector telemetry (seeds, webapp-synthetic detonations, sandbox demos,
+  // CLI test runs) and flips demo_mode off. The store is small; a full reload
+  // shows the surviving local-host data cleanly. The flow lives in
+  // runResetFlow (exported) so the confirm/cancel/error branches are tested.
+  const reset = () => {
+    void runResetFlow({
+      confirm: () =>
+        window.confirm("Clear ALL demo/synthetic data? This keeps only THIS machine's real collector sessions and deletes everything else (seeds, webapp detonations, sandbox demos, test runs). Continue?"),
+      resetStore,
+      setBusy,
+      setMsg,
+      reload: () => window.location.reload(),
+    });
   };
 
   const onRestoreFile = async (file: File | undefined) => {
@@ -397,6 +446,27 @@ function RetentionPanel() {
               />
             </label>
           </div>
+        </div>
+      </div>
+      <div className="mt-5 rounded-lg border border-dashed border-risk-malicious/30 bg-risk-malicious/5 px-4 py-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="min-w-0 flex-1">
+            <p className="kicker">Start fresh</p>
+            <p className="text-xs leading-relaxed text-text-muted">
+              Wipe every run that isn't this machine's collector telemetry — seeds, webapp-synthetic
+              detonations, sandbox demos, and test runs — and flip the demo banner off. Keeps only
+              real host sessions from this machine.
+            </p>
+          </div>
+          <button
+            onClick={() => void reset()}
+            disabled={busy !== null}
+            className="press inline-flex items-center gap-1.5 rounded-lg border border-risk-malicious/50 px-3 py-2 font-mono text-xs text-risk-malicious transition-colors hover:bg-risk-malicious/10 disabled:opacity-50"
+            title="Delete all demo/synthetic data (real local-host telemetry survives)"
+          >
+            <Icon name="x" size={12} />
+            {busy === "reset" ? "Clearing…" : "Clear demo data"}
+          </button>
         </div>
       </div>
       {msg && <p className={`mt-3 text-xs ${msg.ok ? "text-accent" : "text-risk-malicious"}`}>{msg.text}</p>}

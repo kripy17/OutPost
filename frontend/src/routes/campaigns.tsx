@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import ExportButton from "../components/ExportButton/ExportButton";
 import { EVENT_ICON, Icon, platformIconName } from "../components/Icon";
@@ -9,6 +10,29 @@ import type { Campaign, CampaignIoc, Severity } from "../types";
 
 const MAX_TIMELINE = 40;
 const MAX_CHIPS = 10;
+
+/** Campaign list ordering — persisted (`outpost-campaigns-sort`) so the deck
+ *  resumes the analyst's preferred view. reputation = externally-flagged or
+ *  watchlisted infrastructure first; size = most member runs first; newest =
+ *  most recent span start first. */
+export type CampaignSort = "reputation" | "size" | "newest";
+
+export const CAMPAIGN_SORTS: { key: CampaignSort; label: string; title: string }[] = [
+  { key: "reputation", label: "Reputation", title: "Watchlisted / externally-flagged infrastructure first" },
+  { key: "size", label: "Size", title: "Most member runs first" },
+  { key: "newest", label: "Newest", title: "Most recent activity first" },
+];
+
+/** Pure sorter — exported for tests. Stable: equal keys keep API order. */
+export function sortCampaigns(campaigns: Campaign[], sort: CampaignSort): Campaign[] {
+  const repRank: Record<string, number> = { malicious: 0, suspicious: 1, unknown: 2 };
+  const cmp: Record<CampaignSort, (a: Campaign, b: Campaign) => number> = {
+    reputation: (a, b) => (repRank[a.reputation ?? "unknown"] ?? 2) - (repRank[b.reputation ?? "unknown"] ?? 2),
+    size: (a, b) => b.runs.length - a.runs.length,
+    newest: (a, b) => (b.span_start ?? "").localeCompare(a.span_start ?? ""),
+  };
+  return [...campaigns].sort(cmp[sort]);
+}
 
 const SEV_DOT: Record<Severity, string> = {
   malicious: "text-risk-malicious",
@@ -48,14 +72,17 @@ function IocChip({ ioc, tone }: { ioc: CampaignIoc; tone: "accent" | "suspicious
     clean: "border-risk-clean/40 text-risk-clean",
     muted: "border-border-subtle text-text-muted",
   }[tone];
+  // One-click hunt pivot: every chip is an IOC, so it jumps straight to the
+  // IOC search pre-filled with that value.
   return (
-    <span
-      className={`truncate rounded-md border bg-bg-elevated/40 px-2 py-0.5 font-mono text-[11px] ${cls}`}
-      title={`${ioc.value} — seen in ${ioc.runs} run(s)`}
+    <Link
+      to={`/search?q=${encodeURIComponent(ioc.value)}`}
+      className={`truncate rounded-md border bg-bg-elevated/40 px-2 py-0.5 font-mono text-[11px] transition-colors duration-150 hover:border-accent/60 hover:text-accent ${cls}`}
+      title={`${ioc.value} — seen in ${ioc.runs} run(s). Click to search it.`}
     >
       {ioc.value}
       <span className="ml-1.5 text-[10px] opacity-70">×{ioc.runs}</span>
-    </span>
+    </Link>
   );
 }
 
@@ -82,6 +109,16 @@ function CampaignCard({ campaign }: { campaign: Campaign }) {
         </span>
         <ReputationBadge campaign={campaign} />
         <span className="ml-auto flex items-center gap-3">
+          {campaign.runs.length >= 2 && (
+            <Link
+              to={`/history?a=${campaign.runs[0].run_id}&b=${campaign.runs[1].run_id}`}
+              className="press inline-flex items-center gap-1.5 rounded border border-border-subtle px-2.5 py-1 font-mono text-[11px] text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
+              title="Diff the two newest samples in this campaign (processes/IPs each has that the other doesn't)"
+            >
+              <Icon name="compare" size={11} />
+              Compare 2 newest
+            </Link>
+          )}
           <ExportButton
             runId={campaign.key}
             label="Export STIX"
@@ -176,10 +213,40 @@ function CampaignCard({ campaign }: { campaign: Campaign }) {
 }
 
 export default function CampaignsPage() {
-  const { data: campaigns = [], isLoading, isError } = useQuery({
-    queryKey: ["campaigns"],
-    queryFn: getCampaigns,
+  // Campaigns read as real telemetry first: clusters built from synthetic
+  // members (seeds / webapp detonations / the sandbox demo) are hidden unless
+  // the analyst asks — archive parity with History / the Event Log.
+  const [showSynthetic, setShowSynthetic] = useState(() => {
+    try {
+      return localStorage.getItem("outpost-campaigns-synthetic") === "1";
+    } catch {
+      return false;
+    }
   });
+  useEffect(() => {
+    try {
+      localStorage.setItem("outpost-campaigns-synthetic", showSynthetic ? "1" : "0");
+    } catch {
+      /* storage unavailable — the toggle still applies for this visit */
+    }
+  }, [showSynthetic]);
+  const { data: campaigns = [], isLoading, isError } = useQuery({
+    queryKey: ["campaigns", showSynthetic],
+    queryFn: () => getCampaigns({ include_synthetic: showSynthetic || undefined }),
+  });
+  // Sort mode persists so the analyst's preferred ordering survives reloads.
+  const [sort, setSort] = useState<CampaignSort>(() => {
+    const saved = localStorage.getItem("outpost-campaigns-sort");
+    return (CAMPAIGN_SORTS.some((s) => s.key === saved) ? saved : "reputation") as CampaignSort;
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem("outpost-campaigns-sort", sort);
+    } catch {
+      /* storage unavailable — ordering still applies for this visit */
+    }
+  }, [sort]);
+  const sorted = useMemo(() => sortCampaigns(campaigns, sort), [campaigns, sort]);
 
   return (
     <div className="mx-auto max-w-6xl px-5 py-8 lg:px-8">
@@ -209,8 +276,43 @@ export default function CampaignsPage() {
         </div>
       )}
 
-      <div className="mt-8 space-y-6">
-        {campaigns.map((c) => (
+      {!isLoading && !isError && campaigns.length > 0 && (
+        <div className="mt-6 flex flex-wrap items-center gap-x-4 gap-y-2">
+          <span className="font-mono text-[10px] uppercase tracking-wide text-text-faint">Sort</span>
+          <div className="flex items-center overflow-hidden rounded-lg border border-border-subtle" role="group" aria-label="Sort campaigns">
+            {CAMPAIGN_SORTS.map((s) => (
+              <button
+                key={s.key}
+                onClick={() => setSort(s.key)}
+                aria-pressed={sort === s.key}
+                title={s.title}
+                className={`px-3 py-1.5 font-mono text-[11px] transition-colors duration-150 ${
+                  sort === s.key ? "bg-accent/10 font-medium text-accent" : "text-text-muted hover:bg-bg-elevated hover:text-text-primary"
+                }`}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={() => setShowSynthetic((v) => !v)}
+            aria-pressed={showSynthetic}
+            title={
+              showSynthetic
+                ? "Hide demo/synthetic campaign members again"
+                : "Include campaigns built from seeded demo runs and webapp-synthetic detonations"
+            }
+            className={`press rounded-lg border px-3 py-1.5 font-mono text-[11px] transition-colors duration-150 ${
+              showSynthetic ? "border-accent/50 bg-accent/10 text-accent" : "border-border-subtle text-text-faint hover:text-text-primary"
+            }`}
+          >
+            {showSynthetic ? "Show synthetic · on" : "Show synthetic"}
+          </button>
+        </div>
+      )}
+
+      <div className="mt-6 space-y-6">
+        {sorted.map((c) => (
           <CampaignCard key={c.key} campaign={c} />
         ))}
       </div>

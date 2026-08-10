@@ -79,6 +79,34 @@ def test_network_scan_few_hosts_never_fires(client):
     assert all(a["rule_id"] != "network-scan" for a in _alerts(client, run_id))
 
 
+def test_network_scan_flags_every_scanning_pid(client):
+    """Two pids sweeping at once → an alert per scanner (the old (None, None)
+    dedup key collapsed every pid into the first alert of the run)."""
+    run_id = make_run(client, sample_name="two-scanners.sh", platform="linux")
+    events = []
+    for pid, base in ((100, 21), (200, 31)):
+        for i in range(5):
+            events.append(_conn(run_id, pid, f"198.51.100.{base + i}", 22, ts=1 + i))
+    _ingest(client, run_id, events)
+    fired = [a for a in _alerts(client, run_id) if a["rule_id"] == "network-scan"]
+    assert len(fired) == 2
+    assert {a["related_pid"] for a in fired} == {100, 200}
+
+
+def test_network_scan_storm_cap_binds(client):
+    """11 scanning pids → NETWORK_SCAN_MAX_ALERTS (10) fire, 1 held back —
+    the storm cap is meaningful now that scans dedupe per pid."""
+    run_id = make_run(client, sample_name="scan-flood.sh", platform="linux")
+    events = []
+    for pid in range(100, 111):
+        for i in range(5):
+            events.append(_conn(run_id, pid, f"198.51.100.{pid + i}", 22, ts=1 + i))
+    _ingest(client, run_id, events)
+    fired = [a for a in _alerts(client, run_id) if a["rule_id"] == "network-scan"]
+    assert len(fired) == 10
+    assert client.get(f"/runs/{run_id}").json()["suppressed_alerts"] == {"network-scan": 1}
+
+
 # -- Rule 18 — toolchain-build (Resource Development, T1587.001) -------------
 
 

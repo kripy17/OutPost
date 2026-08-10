@@ -270,6 +270,63 @@ def test_samples_list_filters_by_query(client):
     assert miss["total"] == 0 and miss["samples"] == []
 
 
+def test_samples_hide_synthetic_by_default(client):
+    """The vault reads real-first like the archive: a binary whose ENTIRE
+    detonation history is synthetic (seed / webapp-demo / sandbox:demo) is
+    hidden by default and flagged when shown; a run-less upload and one with a
+    real run stay visible. include_synthetic=true reveals everything, and the
+    CSV export honors the same default."""
+    import datetime
+
+    from .conftest import make_run
+
+    def _ts(offset: int = 0) -> str:
+        return (
+            datetime.datetime(2026, 8, 1, 12, 0, 0, tzinfo=datetime.timezone.utc)
+            + datetime.timedelta(seconds=offset)
+        ).isoformat()
+
+    real = _upload(client, MZ + b"synth-real-marker", "synth-real.exe").json()
+    demo = _upload(client, ELF + b"synth-demo-marker", "synth-demo.sh").json()
+    never = _upload(client, MZ + b"synth-never-marker", "synth-never.exe").json()  # no runs at all
+
+    demo_run = make_run(client, sample_name="synth-demo.sh", source="seed")
+    client.post("/ingest/batch", json=[{
+        "run_id": demo_run, "platform": "linux", "event_type": "process_create",
+        "timestamp": _ts(1), "pid": 1, "ppid": 0, "process_name": "synth-demo.sh",
+    }])
+    real_run = make_run(client, sample_name="synth-real.exe", source="cli")
+    client.post("/ingest/batch", json=[{
+        "run_id": real_run, "platform": "windows", "event_type": "process_create",
+        "timestamp": _ts(2), "pid": 1, "ppid": 0, "process_name": "synth-real.exe",
+    }])
+
+    data = client.get("/samples").json()
+    names = {s["original_name"] for s in data["samples"]}
+    assert "synth-real.exe" in names and "synth-never.exe" in names
+    assert "synth-demo.sh" not in names  # entire detonation history is seed
+
+    full = client.get("/samples", params={"include_synthetic": "true"}).json()
+    by_name = {s["original_name"]: s for s in full["samples"]}
+    assert by_name["synth-demo.sh"]["synthetic"] is True
+    assert by_name["synth-real.exe"]["synthetic"] is False
+    assert by_name["synth-never.exe"]["synthetic"] is False  # run-less = can't prove demo
+
+    # CSV export mirrors the feed's default hiding.
+    csv = client.get("/samples/export").text
+    assert "synth-real.exe" in csv and "synth-demo.sh" not in csv
+    csv_full = client.get("/samples/export", params={"include_synthetic": "true"}).text
+    assert "synth-demo.sh" in csv_full
+
+    # Clean up the sample rows so other tests' vault scans stay scoped.
+    from ..core.db import db_session
+
+    with db_session() as conn:
+        for sid in (real["sample_id"], demo["sample_id"], never["sample_id"]):
+            conn.execute("DELETE FROM samples WHERE sample_id = ?", (sid,))
+        conn.commit()
+
+
 # -- Static analysis (strings / IOCs / PE / ELF) ------------------------------
 
 # Minimal but structurally valid PE32+ (x86-64) — DOS stub, COFF header, PE32+
@@ -416,9 +473,11 @@ def test_samples_csv_export_route_does_not_shadow_detail(client):
 def test_samples_list_counts_runs_using_same_name(client):
     meta = _upload(client, MZ + b"used-twice-unique-marker", "used-twice.exe").json()
     for _ in range(2):
+        # Explicit cli provenance — the vault hides binaries whose entire
+        # history is synthetic, and this test only cares about the count.
         run = client.post(
             "/runs",
-            json={"sample_name": "used-twice.exe", "platform": "windows", "session_type": "analysis"},
+            json={"sample_name": "used-twice.exe", "platform": "windows", "session_type": "analysis", "source": "cli"},
         ).json()
         client.post(f"/runs/{run['run_id']}/complete")
     row = next(

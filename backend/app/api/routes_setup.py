@@ -54,3 +54,50 @@ def onboard(body: OnboardIn) -> dict:
         )
 
     return {"status": "ok", "choice": body.choice, "demo_mode": body.choice == "demo"}
+
+
+@router.post("/setup/reset", response_model=None)
+def reset_store() -> dict:
+    """Start fresh — wipe every run that isn't local-host telemetry.
+
+    Keeps only runs whose events were shipped by THIS machine's collector
+    (events tagged `host_id` == the local host id: lowercased hostname, or
+    OUTPOST_HOST_ID when set). Seeds, webapp-synthetic detonations, sandbox
+    demos, CLI test runs, and simulated host-watch sessions are deleted along
+    with their events, alerts, notes, allowlists, and watchlist hits. Flips
+    `demo_mode` off so the banner stops labeling the store as seeded.
+
+    Auth-gated like every non-public path: with role passwords configured this
+    needs a token; zero-config default has no barrier.
+    """
+    import os
+    import socket
+
+    host_id = os.getenv("OUTPOST_HOST_ID", "").strip() or socket.gethostname().lower()
+    with db_session() as conn:
+        kept = {
+            r[0]
+            for r in conn.execute(
+                "SELECT DISTINCT r.run_id FROM runs r JOIN events e ON e.run_id = r.run_id WHERE e.host_id = ?",
+                (host_id,),
+            )
+        }
+        all_runs = [r[0] for r in conn.execute("SELECT run_id FROM runs")]
+        doomed = [rid for rid in all_runs if rid not in kept]
+        counts: dict[str, int] = {"deleted_runs": len(doomed)}
+        if doomed:
+            marks = ",".join("?" * len(doomed))
+            for table in ("alerts", "run_notes", "run_allowlist", "watchlist_hits"):
+                counts[f"deleted_{table}"] = conn.execute(f"DELETE FROM {table} WHERE run_id IN ({marks})", doomed).rowcount
+            counts["deleted_events"] = conn.execute(f"DELETE FROM events WHERE run_id IN ({marks})", doomed).rowcount
+            counts["deleted_runs"] = conn.execute(f"DELETE FROM runs WHERE run_id IN ({marks})", doomed).rowcount
+        # Seeded data is gone — the store is no longer demo-labeled.
+        conn.execute("DELETE FROM settings WHERE key = 'demo_mode'")
+
+    return {
+        "status": "ok",
+        "host_id": host_id,
+        "kept_runs": len(kept),
+        "demo_mode": False,
+        **counts,
+    }

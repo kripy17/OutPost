@@ -23,6 +23,7 @@ import {
 } from "../lib/api";
 import { enumKindsFromDetails } from "../lib/constants";
 import { useEventStream } from "../lib/useEventStream";
+import AlertRate from "../components/AlertRate/AlertRate";
 import { buildDetonationScenario, detonationSampleName } from "../lib/synthetic";
 import type { Platform, SampleMeta, Severity } from "../types";
 
@@ -40,8 +41,24 @@ export default function MonitorPage() {
   const [runId, setRunId] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>("idle");
   // 'Watch a host' mode — the host whose newest session is on screen, plus
-  // its behavioral baseline line (observations / anomaly count).
-  const [hostId, setHostId] = useState<string | null>(null);
+  // its behavioral baseline line (observations / anomaly count). The chosen
+  // host persists (`outpost-monitor-host`) so returning to Monitor resumes
+  // watching the same fleet machine.
+  const [hostId, setHostId] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem("outpost-monitor-host");
+    } catch {
+      return null;
+    }
+  });
+  useEffect(() => {
+    try {
+      if (hostId) localStorage.setItem("outpost-monitor-host", hostId);
+      else localStorage.removeItem("outpost-monitor-host");
+    } catch {
+      /* storage unavailable — host watch still works for this visit */
+    }
+  }, [hostId]);
   const [watchError, setWatchError] = useState<string | null>(null);
   const [streaming, setStreaming] = useState(false);
   const [phase, setPhase] = useState("");
@@ -628,6 +645,15 @@ export default function MonitorPage() {
 
       <div className="mb-6">
         <AlertBanner alerts={data?.alerts ?? []} />
+        {/* Live flood gauge — appears the moment the first alert lands and
+            grows in real time as the SSE push / poll refetches. On run detail
+            this is "how bad was it"; here it's "how fast is it coming" — the
+            spike you watch build before the storm cap even trips. */}
+        {data && data.alerts.length > 0 && (
+          <div className="mt-6">
+            <AlertRate alerts={data.alerts} />
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[3fr_2fr]">

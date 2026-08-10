@@ -208,7 +208,7 @@ async def ingest_batch(events: list[EventIn]) -> dict:
 def create_run(body: RunCreate) -> dict:
     run_id = uuid.uuid4().hex[:12]
     # A live session is always host-telemetry provenance, whatever the client
-    # sent; analysis sessions carry the client's marker (monitor / cli / …).
+    # sent; analysis sessions carry the client's marker (webapp-demo / cli / …).
     source = "live" if body.session_type == "live" else body.source
     with db_session() as conn:
         run_store.create_run(
@@ -224,11 +224,18 @@ def create_run(body: RunCreate) -> dict:
 
 @router.post("/runs/{run_id}/complete")
 def complete_run(run_id: str) -> dict:
+    # Write-through: persist the run's process map inside the same session,
+    # then free the in-memory copy — a restarted backend restores the map
+    # warm for any late batch.
+    from ..services.detection import evict_run_process_map, persist_run_process_map
+
     with db_session() as conn:
         if not run_store.get_run(conn, run_id):
             raise HTTPException(status_code=404, detail=f"Unknown run_id: {run_id}")
         run_store.complete_run(conn, run_id)
+        persist_run_process_map(conn, run_id)
         summary = run_store.to_summary(conn, run_store.get_run(conn, run_id))
+    evict_run_process_map(run_id)
 
     # Push the completion so open live views stop streaming immediately
     # (the Monitor's poll stops once completed_at is set — push covers the

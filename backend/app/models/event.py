@@ -13,8 +13,8 @@ def insert_event(conn: sqlite3.Connection, event: dict) -> None:
         INSERT INTO events (
             run_id, platform, event_type, timestamp, pid, ppid, process_name,
             command_line, dest_ip, dest_port, protocol, file_path, registry_key,
-            host_id, raw_record, log_source
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            host_id, raw_record, log_source, query, tls_sni
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             event["run_id"],
@@ -33,6 +33,8 @@ def insert_event(conn: sqlite3.Connection, event: dict) -> None:
             event.get("host_id", "local"),
             event.get("raw_record"),
             event.get("log_source"),
+            event.get("query"),
+            event.get("tls_sni"),
         ),
     )
 

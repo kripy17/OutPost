@@ -148,15 +148,65 @@ function EventFields({ event }: { event: EventFeedEvent }) {
   );
 }
 
-function CategoryCount({ type, live }: { type: EventType | ""; live: boolean }) {
+/* A channel rail count. Unlike the main feed query, each rail row fixes its
+   own event_type (or none for "All events") but shares the live non-type
+   filters — severity, platform, source, search, pid, synthetic — so the rail
+   is a noise-meter that moves as you filter, not a static per-type total.
+   React Query dedupes on the key, so parallel rail rows only refetch when a
+   shared filter actually changes. */
+function CategoryCount({
+  type,
+  live,
+  severity,
+  platform,
+  source,
+  q,
+  pids,
+  includeSynthetic,
+}: {
+  type: EventType | "";
+  live: boolean;
+  severity: Severity | "";
+  platform: Platform | "";
+  source: EventSource | "";
+  q: string;
+  pids: number[];
+  includeSynthetic: boolean;
+}) {
   const { data } = useQuery({
-    queryKey: ["events", "count", type],
-    queryFn: () => getEvents({ event_type: type, limit: 1 }),
+    queryKey: ["events", "count", type, severity, platform, source, q, pids.join(","), includeSynthetic],
+    queryFn: () =>
+      getEvents({
+        event_type: type,
+        severity,
+        platform,
+        source,
+        q,
+        pid: pids.length ? pids.join(",") : undefined,
+        include_synthetic: includeSynthetic || undefined,
+        limit: 1,
+      }),
     staleTime: live ? 0 : 15_000,
     refetchInterval: live ? 5_000 : false,
   });
+
+  // Build a concise summary of active filters — the badge already shows the
+  // count, so the tooltip explains *why* the count is what it is.
+  const desc = [
+    severity ? `level: ${severity}` : null,
+    platform ? `platform: ${platform}` : null,
+    source ? `source: ${source}` : null,
+    q ? `search: “${q}”` : null,
+    pids.length ? `pid: ${pids.join(",")}` : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
+
   return (
-    <span className="rounded-full border border-border-subtle bg-bg-elevated/60 px-1.5 py-px font-mono text-[10px] tabular-nums text-text-faint">
+    <span
+      className="rounded-full border border-border-subtle bg-bg-elevated/60 px-1.5 py-px font-mono text-[10px] tabular-nums text-text-faint"
+      title={desc || "no active filters"}
+    >
       {data?.total ?? "…"}
     </span>
   );
@@ -378,6 +428,24 @@ export default function EventsPage() {
   const [selected, setSelected] = useState<EventFeedEvent | null>(null);
   const [live, setLive] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+  // The Event Log reads as real telemetry first (History-archive parity):
+  // synthetic provenance (seeds / webapp detonations / the sandbox demo) is
+  // hidden by default. The toggle reveals it; explicit source tabs and pid
+  // drill-downs are deliberate asks and always show their full content.
+  const [showSynthetic, setShowSynthetic] = useState(() => {
+    try {
+      return localStorage.getItem("outpost-events-synthetic") === "1";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem("outpost-events-synthetic", showSynthetic ? "1" : "0");
+    } catch {
+      /* storage unavailable */
+    }
+  }, [showSynthetic]);
   // View mode — flat minute-grouped timeline, or Event-Viewer-style process
   // chains (collapsible per-process nodes, Sysmon View's grouping trick).
   const [view, setView] = useState<"timeline" | "process">("timeline");
@@ -389,8 +457,13 @@ export default function EventsPage() {
   const [newCount, setNewCount] = useState(0);
   const lastTotalRef = useRef(0);
 
+  // Effective synthetic visibility: the toggle in the "All sources" view, or
+  // any explicit provenance tab / pid drill-down (both deliberate asks that
+  // always show their full content — a seed run's process jump must not land
+  // on an empty feed).
+  const includeSynthetic = showSynthetic || source !== "" || submittedPids.length > 0;
   const { data, isLoading, isError, isFetching } = useQuery({
-    queryKey: ["events", category, severity, platform, source, submittedQ, submittedPids.join(","), offset],
+    queryKey: ["events", category, severity, platform, source, submittedQ, submittedPids.join(","), offset, includeSynthetic],
     queryFn: () =>
       getEvents({
         event_type: category,
@@ -399,6 +472,7 @@ export default function EventsPage() {
         source,
         q: submittedQ,
         pid: submittedPids.length ? submittedPids.join(",") : undefined,
+        include_synthetic: includeSynthetic || undefined,
         limit: PAGE,
         offset,
       }),
@@ -423,6 +497,22 @@ export default function EventsPage() {
   useEffect(() => {
     setOffset(0);
   }, [category, severity, platform, source, submittedQ, submittedPids]);
+
+  // One-click escape hatch for the whole filter set — the over-filtered
+  // "no events match" view must offer it (spec), not just per-dimension
+  // unpicking.
+  const hasFilters = !!(category || severity || platform || source || submittedQ || submittedPids.length);
+  const clearAllFilters = () => {
+    setCategory("");
+    setSeverity("");
+    setPlatform("");
+    setSource("");
+    setQ("");
+    setSubmittedQ("");
+    setPidInput("");
+    setSubmittedPids([]);
+    setSelected(null);
+  };
 
   // Mirror the filter state into the URL (replace: true — bookmarkable and
   // shareable, without spamming history on every tab click) AND into
@@ -603,6 +693,7 @@ export default function EventsPage() {
                   source,
                   q: submittedQ,
                   pid: submittedPids.length ? submittedPids.join(",") : undefined,
+                  include_synthetic: includeSynthetic || undefined,
                 })
                   .then((blob) => saveBlob(blob, "outpost-events.csv"))
                   .catch(() => setExportError("CSV export failed — is the backend running?"))
@@ -721,7 +812,16 @@ export default function EventsPage() {
                 >
                   <Icon name={c.icon} size={15} />
                   <span className="flex-1 truncate">{c.label}</span>
-                  <CategoryCount type={c.type} live={live} />
+                  <CategoryCount
+                    type={c.type}
+                    live={live}
+                    severity={severity}
+                    platform={platform}
+                    source={source}
+                    q={submittedQ}
+                    pids={submittedPids}
+                    includeSynthetic={includeSynthetic}
+                  />
                 </button>
               </li>
             ))}
@@ -872,6 +972,27 @@ export default function EventsPage() {
               ))}
             </div>
 
+            {/* Synthetic-provenance toggle — the Event Log reads as real
+                telemetry first (archive parity). Hidden while a source tab is
+                active: choosing a tab is a deliberate provenance ask and
+                already shows it all. */}
+            {source === "" && (
+              <button
+                onClick={() => setShowSynthetic((v) => !v)}
+                aria-pressed={showSynthetic}
+                title={
+                  showSynthetic
+                    ? "Hide demo/synthetic events again (seeds, webapp detonations, sandbox demo)"
+                    : "Include events from seeded demo runs and webapp-synthetic detonations"
+                }
+                className={`press rounded-lg border px-2.5 py-1.5 font-mono text-[11px] transition-colors duration-150 ${
+                  showSynthetic ? "border-accent/50 bg-accent/10 text-accent" : "border-border-subtle text-text-faint hover:text-text-primary"
+                }`}
+              >
+                {showSynthetic ? "Show synthetic · on" : "Show synthetic"}
+              </button>
+            )}
+
             <form
               className="ml-auto flex items-center gap-2"
               onSubmit={(e) => {
@@ -903,6 +1024,17 @@ export default function EventsPage() {
                 <Icon name="search" size={12} />
                 Search
               </button>
+              {hasFilters && (
+                <button
+                  type="button"
+                  onClick={clearAllFilters}
+                  className="press inline-flex items-center gap-1 rounded-lg border border-border-subtle px-2.5 py-1.5 font-mono text-[11px] text-text-faint transition-colors duration-150 hover:border-risk-malicious/50 hover:text-risk-malicious"
+                  title="Clear every filter (type, level, platform, source, search, pid)"
+                >
+                  <Icon name="x" size={11} />
+                  Clear filters
+                </button>
+              )}
             </form>
           </div>
 
@@ -923,18 +1055,29 @@ export default function EventsPage() {
             <div className="rounded-xl border border-dashed border-border-strong bg-bg-surface/50 p-14 text-center">
               <Icon name="list" size={28} className="mx-auto text-text-faint" />
               <p className="mt-3 text-sm text-text-muted">No events match these filters.</p>
-              {submittedPids.length > 0 && (
-                <button
-                  onClick={() => {
-                    setSubmittedPids([]);
-                    setPidInput("");
-                  }}
-                  className="press mt-3 inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-1.5 font-mono text-xs text-text-muted transition-colors hover:border-accent/50 hover:text-accent"
-                >
-                  <Icon name="x" size={11} />
-                  Clear pid {submittedPids.join(", ")} filter
-                </button>
-              )}
+              <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+                {hasFilters && (
+                  <button
+                    onClick={clearAllFilters}
+                    className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/50 px-3 py-1.5 font-mono text-xs text-accent transition-colors duration-150 hover:bg-accent/10"
+                  >
+                    <Icon name="x" size={11} />
+                    Clear all filters
+                  </button>
+                )}
+                {submittedPids.length > 0 && (
+                  <button
+                    onClick={() => {
+                      setSubmittedPids([]);
+                      setPidInput("");
+                    }}
+                    className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-1.5 font-mono text-xs text-text-muted transition-colors hover:border-accent/50 hover:text-accent"
+                  >
+                    <Icon name="x" size={11} />
+                    Clear pid {submittedPids.join(", ")} filter
+                  </button>
+                )}
+              </div>
             </div>
           )}
 

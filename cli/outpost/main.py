@@ -27,13 +27,16 @@ def _register_commands() -> None:
     from .commands.list_runs import list_runs
     from .commands.notes import app as notes_app
     from .commands.refresh import refresh
-    from .commands.rules import rules
+    from .commands.rules import app as rules_app
     from .commands.run import run
     from .commands.samples import samples
     from .commands.search import search
     from .commands.show import show
     from .commands.watch import watch
+    from .commands.intel import app as intel_app
     from .commands.watchlist import app as watchlist_app
+    from .commands.yara import app as yara_app
+    from .commands.footprint import app as footprint_app
 
     app.command("list")(list_runs)
     app.command()(show)
@@ -44,10 +47,13 @@ def _register_commands() -> None:
     app.command("compare")(compare)
     app.command("campaigns")(campaigns)
     app.command("coverage")(coverage)
-    app.command("rules")(rules)
+    app.add_typer(rules_app, name="rules")
     app.command("samples")(samples)
     app.command("refresh")(refresh)
     app.add_typer(watchlist_app, name="watchlist")
+    app.add_typer(intel_app, name="intel")
+    app.add_typer(yara_app, name="yara")
+    app.add_typer(footprint_app, name="footprint")
     app.add_typer(notes_app, name="notes")
     app.add_typer(agent_app, name="agent")
     app.add_typer(auth_app, name="auth")

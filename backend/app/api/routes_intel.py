@@ -16,17 +16,175 @@ The intel lifecycle's operations surface:
 All writes are audited.
 """
 
+import json
+import re
 from datetime import datetime, timedelta, timezone
+from typing import Literal, Optional
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query, Request
+from pydantic import BaseModel
 
 from ..core import auth, config
 from ..core.db import db_session
-from ..models import audit
+from ..models import audit, watchlist as watchlist_store
 from ..services import enrichment
 
 router = APIRouter(tags=["intel"])
+
+
+class IntelImportIn(BaseModel):
+    """A threat-intel feed to pull into the watchlist + IOC layer.
+
+    `content` is either a raw STIX 2.1 bundle (source=stix / auto-detect) or
+    a plain one-IOC-per-line text list; `url` fetches a STIX feed instead of
+    pasting it. Imported values are upserted into the watchlist labeled
+    `intel:<source>` so they read honestly as feed-derived, and every
+    existing run that touches an imported value is reported back so the UI
+    can flag it immediately.
+    """
+
+    source: Literal["stix", "text", "auto"] = "auto"
+    content: Optional[str] = None
+    url: Optional[str] = None
+
+
+# -- Feed parsing ------------------------------------------------------------
+
+_IP_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
+_SHA_RE = re.compile(r"^[0-9a-fA-F]{64}$")
+_URL_RE = re.compile(r"^https?://[^\s]+$")
+_DOMAIN_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$", re.IGNORECASE)
+
+
+def _classify(value: str) -> str:
+    """Best-guess IOC kind for a plain-text line."""
+    v = value.strip().lower()
+    if _IP_RE.match(v):
+        return "ip"
+    if _SHA_RE.match(v):
+        return "hash"
+    if _URL_RE.match(v):
+        return "url"
+    if _DOMAIN_RE.match(v):
+        return "domain"
+    return "other"
+
+
+_STIX_PATTERN_RE = re.compile(r"\[([a-z0-9-]+):(?:value|hashes\.['\"][^'\"]+['\"])\s*=\s*['\"]([^'\"]+)['\"]")
+
+
+def _extract_from_stix(obj: dict, out: dict) -> None:
+    """Pull indicator values from one STIX object into `out` (kind → value)."""
+    otype = obj.get("type", "")
+    if otype == "indicator":
+        pattern = obj.get("pattern") or ""
+        for match in _STIX_PATTERN_RE.finditer(pattern):
+            stix_type, value = match.group(1), match.group(2)
+            kind = {"ipv4-addr": "ip", "ipv6-addr": "ip", "domain-name": "domain", "url": "url", "file": "hash"}.get(stix_type, "other")
+            out.setdefault(kind, set()).add(value.lower())
+    elif otype in ("domain-name", "url"):
+        value = (obj.get("value") or "").strip().lower()
+        if value:
+            out.setdefault("domain" if otype == "domain-name" else "url", set()).add(value)
+    elif otype in ("ipv4-addr", "ipv6-addr"):
+        value = (obj.get("value") or "").strip().lower()
+        if value:
+            out.setdefault("ip", set()).add(value)
+    elif otype == "file":
+        hashes = obj.get("hashes") or {}
+        sha = hashes.get("SHA-256") or hashes.get("sha256")
+        if sha:
+            out.setdefault("hash", set()).add(sha.lower())
+
+
+def _parse_feed(source: str, content: str) -> dict[str, set[str]]:
+    """Return {kind: {value}} from a STIX bundle or text list."""
+    stripped = content.strip()
+    kind = source if source != "auto" else ("stix" if stripped.startswith("{") else "text")
+    if kind == "stix":
+        try:
+            bundle = json.loads(stripped)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=422, detail=f"Invalid STIX bundle JSON: {exc}")
+        objects = bundle.get("objects", []) if isinstance(bundle, dict) else []
+        out: dict[str, set[str]] = {}
+        for obj in objects:
+            if isinstance(obj, dict):
+                _extract_from_stix(obj, out)
+        return out
+    out = {}
+    for line in stripped.splitlines():
+        value = line.strip().strip("'").strip('"')
+        if not value or value.startswith("#") or value.startswith("//"):
+            continue
+        out.setdefault(_classify(value), set()).add(value.lower())
+    return out
+
+
+def _matching_runs(conn, value: str, kind: str) -> list[str]:
+    """Runs whose events touch this value (exact IP/name/hash, LIKE elsewhere)."""
+    like = f"%{value}%"
+    if kind in ("ip", "domain", "url"):
+        rows = conn.execute(
+            "SELECT DISTINCT run_id FROM events WHERE dest_ip = ? OR command_line LIKE ? ESCAPE '\\' OR query = ?",
+            (value, like, value),
+        ).fetchall()
+    elif kind == "hash":
+        rows = conn.execute(
+            "SELECT DISTINCT run_id FROM events WHERE command_line LIKE ? ESCAPE '\\' OR file_path LIKE ? ESCAPE '\\' OR process_name = ?",
+            (f"%{value}%", f"%{value}%", value),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT DISTINCT run_id FROM events WHERE command_line LIKE ? ESCAPE '\\' OR process_name = ? OR file_path LIKE ? ESCAPE '\\' OR registry_key LIKE ? ESCAPE '\\'",
+            (like, value, like, like),
+        ).fetchall()
+    return [r["run_id"] for r in rows]
+
+
+@router.post("/intel/import", response_model=None)
+async def import_intel_feed(body: IntelImportIn, request: Request):
+    """Pull a threat-intel feed into the watchlist + IOC layer and flag the
+    runs that already touch it. Audited (writes the store)."""
+    actor = auth.role_from_request(request)
+    content = body.content
+    if body.url:
+        if not body.url.startswith(("https://", "http://")):
+            raise HTTPException(status_code=422, detail="url must be http(s)")
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+            resp = await client.get(body.url)
+            if resp.status_code != 200:
+                raise HTTPException(status_code=502, detail=f"feed fetch failed: HTTP {resp.status_code}")
+            content = resp.text
+    if not content or not content.strip():
+        raise HTTPException(status_code=422, detail="content or url required")
+
+    parsed = _parse_feed(body.source, content)
+    total_values = sum(len(v) for v in parsed.values())
+    if total_values == 0:
+        raise HTTPException(status_code=422, detail="no indicators found in feed")
+
+    source_label = f"intel:{body.source}" if body.source != "auto" else "intel:feed"
+    imported = 0
+    matched_runs: dict[str, list[str]] = {}
+    with db_session() as conn:
+        for kind, values in parsed.items():
+            for value in sorted(values):
+                watchlist_store.add_watchlist(conn, value, source_label)
+                imported += 1
+                runs = _matching_runs(conn, value, kind)
+                if runs:
+                    matched_runs[value] = runs
+        audit.log(conn, actor, "intel.import", target_type="watchlist", detail=f"{imported} values from {source_label}")
+
+    return {
+        "imported": imported,
+        "source": source_label,
+        "kinds": {k: len(v) for k, v in parsed.items()},
+        "matched_values": len(matched_runs),
+        "matched_runs": matched_runs,
+    }
 
 
 def _stale_cutoff() -> str:

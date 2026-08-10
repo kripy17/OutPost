@@ -126,6 +126,12 @@ export interface EventOut {
   protocol: string | null;
   file_path: string | null;
   registry_key: string | null;
+  // DNS query string (Sysmon DNS / DNS-aware collectors) — the DNS-channel
+  // rules read this.
+  query?: string | null;
+  // TLS Server Name Indication from the handshake (Sysmon Event ID 3
+  // DestinationHostname) — the TLS-SNI / DoH rules read this.
+  tls_sni?: string | null;
   // The collector's original payload (JSON) — the Event Viewer's raw-record
   // pane. Null for events ingested before the column existed.
   raw_record?: string | null;
@@ -141,6 +147,12 @@ export interface RunDetail {
   kill_chain?: KillChainLink[];
   // Roadmap 2.2 — uploaded-sample reputation evidence (YARA + VirusTotal).
   sample_reputation?: SampleReputation | null;
+  // Explainability: the tuning knobs that deviated from stock while this run
+  // was evaluated (captured once, immutable) — "scored under" context.
+  effective_tuning?: Record<string, number | string>;
+  // Storm guard: per-rule alert-cap suppressed counts (first-seen /
+  // enumeration-burst / network-scan) held back on a long live session.
+  suppressed_alerts?: Record<string, number>;
 }
 
 export interface KillChainLink {
@@ -185,6 +197,16 @@ export interface EnumPatternRow {
 export interface EnumPatternsResponse {
   platforms: Record<string, EnumPatternRow[]>;
   defaults: Record<string, EnumPatternRow[]>;
+}
+
+// Anti-forensics pattern tables (log-service-stop / log-clearing) — the same
+// operator-editable per-platform regex tables as enumeration, keyed by kind
+// ("service_stop" | "log_clear").
+export type LogPatternKind = "service_stop" | "log_clear";
+
+export interface LogPatternsResponse {
+  kinds: Record<LogPatternKind, Record<string, EnumPatternRow[]>>;
+  defaults: Record<LogPatternKind, Record<string, EnumPatternRow[]>>;
 }
 
 // -- Rule packs — versioned, diffable rule-set export/import -----------------
@@ -352,6 +374,9 @@ export interface SampleRow {
   vt_detections: number | null;
   malware_family: string | null;
   runs_count: number;
+  // True when the binary's entire detonation history comes from demo/synthetic
+  // provenance — hidden by default on the vault page, flagged when shown.
+  synthetic?: boolean;
 }
 
 export interface SamplesResponse {
@@ -486,6 +511,9 @@ export interface RuleMeta {
   // The alert severity the rule actually fires with (backend RULE_META) —
   // lets the coverage matrix tone chips by real severity, not weight.
   severity: Severity;
+  // Per-alert remediation guidance — a short "what to do" checklist rendered
+  // as an expandable block on each finding card.
+  remediation?: string[];
 }
 
 // -- Global event feed / Event Viewer (roadmap 1.1) -------------------------
@@ -733,6 +761,10 @@ export interface EventFeedParams {
   pid?: string;
   // Provenance facet — the Event Log's source tabs (Collectors / Webapp / Sandbox).
   source?: EventSource | "";
+  // Synthetic provenance (seeds / webapp detonations / the sandbox demo) is
+  // hidden by default — the Event Log reads as real telemetry first, like the
+  // History archive. Explicit source tabs and pid drill-downs pass true.
+  include_synthetic?: boolean;
   limit?: number;
   offset?: number;
 }
@@ -873,6 +905,9 @@ export interface FootprintPassive {
   // RDAP registration info per seed IP (live only): network name, CIDR,
   // organization, country.
   networks: { ip: string; cidr: string; netname: string | null; org: string | null; country: string | null; synthetic?: boolean }[];
+  // ASN / owner mapping per seed IP (keyless ip-api.com, live only): the
+  // autonomous-system identity the registration sits on.
+  asn: { ip: string; asn: string | null; as_name: string | null; org: string | null; country: string | null; country_code: string | null }[];
 }
 
 export interface Footprint {

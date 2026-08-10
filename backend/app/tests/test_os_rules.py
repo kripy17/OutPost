@@ -493,3 +493,68 @@ def test_windows_rules_still_fire(client):
     assert "masquerading" in ids        # svchost from C:\Temp
     assert "suspicious-parent-child" in ids  # winword → powershell
     assert "lolbin-abuse" in ids        # powershell -enc
+
+
+def test_process_map_incremental_cache_resolves_old_parent(client):
+    """The parent-child rule resolves a parent created in an EARLIER batch —
+    the incremental process-map cache keeps the full run history instead of
+    a time-bounded lookback that would miss an hours-old parent."""
+    from ..services import detection
+
+    run_id = make_run(client, sample_name="cross-batch.exe")
+    # Batch 1: the parent (winword) arrives alone.
+    _ingest(client, run_id, [_win_proc(run_id, 100, 4, "winword.exe", "WINWORD.EXE /q", ts=1)])
+    # Batch 2: the child spawns, referencing the batch-1 parent.
+    _ingest(client, run_id, [_win_proc(run_id, 200, 100, "powershell.exe", "powershell.exe -nop", ts=2)])
+
+    fired = [a for a in _alerts(client, run_id) if a["rule_id"] == "suspicious-parent-child"]
+    assert len(fired) == 1
+    assert "winword.exe spawned powershell.exe" in fired[0]["details"]
+
+    # The run's map is cached after evaluation (incremental reuse across batches).
+    assert any(k[1] == run_id for k in detection._PROCESS_MAP_CACHE)
+
+
+def test_process_map_evicted_on_completion(client):
+    """Completing a run drops its cached process map — finished sessions free
+    their memory promptly (the LRU cap is the backstop)."""
+    from ..services import detection
+
+    run_id = make_run(client, sample_name="evict-me.exe")
+    _ingest(client, run_id, [_win_proc(run_id, 100, 4, "winword.exe", "WINWORD.EXE /q", ts=1)])
+    assert any(k[1] == run_id for k in detection._PROCESS_MAP_CACHE)
+    client.post(f"/runs/{run_id}/complete")
+    assert not any(k[1] == run_id for k in detection._PROCESS_MAP_CACHE)
+
+
+def test_process_map_persisted_and_warm_restored_after_restart(client):
+    """Completion writes the map through to the DB; after a (simulated)
+    restart a late batch restores it warm — the pre-completion parent still
+    resolves without re-scanning the whole run."""
+    import sqlite3
+
+    from ..core import config
+    from ..services import detection
+
+    run_id = make_run(client, sample_name="warm-restore.exe")
+    _ingest(client, run_id, [_win_proc(run_id, 100, 4, "winword.exe", "WINWORD.EXE /q", ts=1)])
+    client.post(f"/runs/{run_id}/complete")
+
+    # Write-through landed in the DB.
+    conn = sqlite3.connect(config.DATABASE_PATH)
+    row = conn.execute(
+        "SELECT last_event_id, pids_json FROM run_process_maps WHERE run_id = ?", (run_id,)
+    ).fetchone()
+    conn.close()
+    assert row is not None
+    assert "100" in row[1]
+
+    # Simulate a backend restart: the in-memory cache is gone.
+    detection._PROCESS_MAP_CACHE.clear()
+
+    # A late collector batch after the restart — the child's parent (winword,
+    # from BEFORE the completion) must still resolve from the warm map.
+    _ingest(client, run_id, [_win_proc(run_id, 200, 100, "powershell.exe", "powershell.exe -nop", ts=2)])
+    fired = [a for a in _alerts(client, run_id) if a["rule_id"] == "suspicious-parent-child"]
+    assert len(fired) == 1
+    assert "winword.exe spawned powershell.exe" in fired[0]["details"]

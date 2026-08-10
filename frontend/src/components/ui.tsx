@@ -46,6 +46,7 @@ export function Panel({
   className = "",
   bodyClassName = "",
   pad = true,
+  id,
 }: {
   title?: ReactNode;
   kicker?: string;
@@ -54,9 +55,10 @@ export function Panel({
   className?: string;
   bodyClassName?: string;
   pad?: boolean;
+  id?: string;
 }) {
   return (
-    <section className={`panel ${className}`}>
+    <section id={id} className={`panel ${className}`}>
       {(title || kicker || right) && (
         <header className="panel-header">
           <div className="min-w-0">
@@ -125,7 +127,11 @@ export function Chip({
 /** Run provenance badge — where a run came from. Values mirror the backend's
  *  `source` column (monitor / live / cli / seed / sandbox:<provider>). */
 const SOURCE_META: Record<string, { label: string; tone: "clean" | "suspicious" | "malicious" | "muted" | "accent"; title: string }> = {
-  monitor: { label: "MON", tone: "muted", title: "Detonated from the webapp Monitor" },
+  // Legacy rows from before the honest label existed (webapp synthetic runs
+  // used to default to "monitor") — kept so old badges don't break.
+  monitor: { label: "MON", tone: "muted", title: "Webapp Monitor session (legacy source tag)" },
+  // Honest label for new webapp-synthetic detonations: generated, not host telemetry.
+  "webapp-demo": { label: "DEMO", tone: "suspicious", title: "Webapp-synthetic detonation — generated, not host telemetry" },
   live: { label: "LIVE", tone: "clean", title: "Live host-collector session" },
   cli: { label: "CLI", tone: "muted", title: "Created from the outpost CLI" },
   seed: { label: "SEED", tone: "muted", title: "Seeded demo data" },

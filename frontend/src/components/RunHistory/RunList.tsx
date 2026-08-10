@@ -1,7 +1,7 @@
 import type { RunSummary } from "../../types";
 import RunCard from "./RunCard";
 
-export default function RunList({ runs }: { runs: RunSummary[] }) {
+export default function RunList({ runs, highlightId = null }: { runs: RunSummary[]; highlightId?: string | null }) {
   if (runs.length === 0) {
     return (
       <div className="rounded-lg border border-border-subtle bg-bg-surface p-10 text-center">
@@ -20,7 +20,7 @@ export default function RunList({ runs }: { runs: RunSummary[] }) {
         <span className="pr-2 font-mono">procs · ips · alerts · risk · severity · started</span>
       </div>
       {runs.map((run) => (
-        <RunCard key={run.run_id} run={run} />
+        <RunCard key={run.run_id} run={run} highlighted={run.run_id === highlightId} />
       ))}
     </div>
   );

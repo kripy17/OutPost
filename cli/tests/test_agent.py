@@ -138,21 +138,29 @@ def test_agent_install_windows_never_elevates(tmp_path, monkeypatch):
 
 
 def _agent_runs():
+    # Relative timestamps — `agent summary --days 1` keeps only runs started
+    # within the window of *now*, so a hardcoded date would silently age out
+    # and turn the suite red the next day (a time-bomb fixture).
+    from datetime import datetime, timedelta, timezone
+
+    def ago(hours: float) -> str:
+        return (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+
     return [
         {
-            "run_id": "agent-run-1", "sample_name": "agent-archlinux-2026-08-09",
-            "session_type": "live", "started_at": "2026-08-09T00:10:00+00:00",
+            "run_id": "agent-run-1", "sample_name": "agent-archlinux",
+            "session_type": "live", "started_at": ago(2),
             "completed_at": None, "risk_score": 35,
         },
         {
-            "run_id": "agent-run-2", "sample_name": "agent-archlinux-2026-08-09",
-            "session_type": "live", "started_at": "2026-08-09T07:10:00+00:00",
+            "run_id": "agent-run-2", "sample_name": "agent-archlinux",
+            "session_type": "live", "started_at": ago(5),
             "completed_at": None, "risk_score": 0,
         },
         # Not an agent session — must never appear in the summary.
         {
             "run_id": "detonate-1", "sample_name": "evil.exe",
-            "session_type": "analysis", "started_at": "2026-08-09T08:00:00+00:00",
+            "session_type": "analysis", "started_at": ago(3),
             "completed_at": None, "risk_score": 100,
         },
     ]

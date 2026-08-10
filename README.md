@@ -14,7 +14,7 @@ dark/light web deck with a full terminal mirror.
 ![FastAPI](https://img.shields.io/badge/FastAPI-backend-009688?style=flat-square)
 ![React](https://img.shields.io/badge/React-19-61DAFB?style=flat-square)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-149%20passing-2ea44f?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-478%20passing-2ea44f?style=flat-square)
 ![CI](https://github.com/kripy17/OutPost/actions/workflows/ci.yml/badge.svg)
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 
@@ -29,9 +29,14 @@ Windows, Linux, and macOS and flags malicious activity with **explainable,
 rule-based heuristics** — no ML black box. Every finding is traceable to a
 named rule, mapped to the **MITRE ATT&CK** kill chain, and scored 0–100.
 
-It runs **fully synthetic scenarios** out of the box: pick a platform in the
-Monitor page, stream a detonation, and watch alerts toast in live as the rules
-fire — dynamic malware analysis without a sandbox, hypervisor, or malware.
+It runs **fully synthetic scenarios** out of the box: stream a detonation and
+watch alerts toast in live as the rules fire — dynamic malware analysis
+without a sandbox, hypervisor, or malware.
+
+**No OS picker anywhere** (the vision): on first open the webapp auto-detects
+the host OS from the backend (`GET /platform`), tailors the install-agent
+guidance to it, targets detonations at it by default, and the Overview's
+host-status panel answers "is THIS host monitored?" against the live fleet.
 
 > Originally built as a BSc Cybersecurity (Year 3) semester project. The
 > internal design documents used to build it aren't shipped in this repo.
@@ -40,16 +45,18 @@ fire — dynamic malware analysis without a sandbox, hypervisor, or malware.
 
 | | |
 |---|---|
-| 🖥️ **OS-aware detection engine** | 30+ rules across Windows / Linux / macOS — LOLBin abuse, reverse shells (`/dev/tcp`, osascript), persistence (Run keys, LaunchAgents, cron), C2 beaconing, ransomware write bursts, process masquerading |
-| 🎯 **Risk scoring + ATT&CK** | 0–100 risk per run, severity bands, every rule mapped to a kill-chain stage with a reconstructed attack chain |
-| 🗂️ **Campaign clustering** | Runs sharing IOCs are auto-grouped into campaign cards — combined timeline, shared IOC evidence, signature C2 |
-| 💾 **Sample vault** | Upload binaries; magic-sniffing detects PE/ELF/Mach-O, **script shebangs**, and **.lnk/.zip/Office archives**; YARA signatures + VirusTotal reputation per sample |
-| 📡 **SSE live push** | Fired alerts broadcast over `/events/stream` — the StatusBar pulse and Monitor toasts update instantly |
-| 🖇️ **Correlation & intel** | IOC extraction/export, cross-run IOC search, run comparison, personal watchlist, hash/YARA reputation, STIX 2.1 + JSON export, Suricata/Sigma rule generation |
-| 📝 **Analyst notes** | Per-run notes via the API, webapp, and `outpost notes` |
-| 🎨 **SOC deck UI** | Dark/light themes, risk-over-time + detection-volume charts, kill chain, process tree with reputation halos, live monitor |
-| ⌨️ **Terminal mirror** | The `outpost` CLI reaches the same API — 13 commands, Rich tables, colorized risk |
-| 🧪 **Collectors** | Verified Sysmon (Windows) and auditd (Linux) shippers |
+| 🖥️ **OS-aware detection engine** | **37 rules** across Windows / Linux / macOS covering all 14 MITRE tactics — LOLBin abuse, reverse shells, persistence, C2 beaconing, ransomware write bursts, process masquerading, DNS tunnels, fan-out plants, Discovery/Exfiltration chains |
+| ⛈️ **Storm guard** | Per-rule per-run alert caps (first-seen 20, beaconing 15, fan-out 10, default 25) with **held-back counts** surfaced on run detail and in exports — no alert flood on long live sessions |
+| 📈 **Alert-rate sparkline** | Per-minute severity bars with a flood guide line, live on the Monitor and per-run on run detail |
+| 🎯 **Risk scoring + ATT&CK** | 0–100 risk per run, severity bands, every rule mapped to a kill-chain stage, MITRE Navigator layer export, coverage matrix with gaps highlighted |
+| 🗂️ **Campaign clustering** | Runs sharing IOCs auto-grouped into campaign cards — combined timeline, shared IOC evidence, signature C2, campaign-level STIX bundles |
+| 💾 **Sample vault** | Upload binaries; magic-sniffing detects PE/ELF/Mach-O, **script shebangs**, and **.lnk/.zip/Office archives**; YARA signature lab + VirusTotal reputation |
+| 🔎 **Footprint + intel** | Passive DNS / CT certificates / RDAP per sample (crt.sh, real when online, synthetic fallback), enrichment cache with force-refresh and stale sweeps |
+| 📡 **SSE live push** | Fired alerts broadcast over `/events/stream` — StatusBar pulse, Monitor toasts, sparklines update instantly |
+| 🖇️ **Correlation & triage** | IOC extraction/export, cross-run search, run comparison, watchlist (with live webhook/desktop alerts), alert triage lifecycle (open/ack/resolved + allowlists + suppressions), STIX 2.1 + JSON + PDF export |
+| 🧪 **Real-collector live mode** | `outpost agent run/install` — auditd/Sysmon telemetry streams into live sessions; heartbeat fleet with last-seen/uptime and silent-host flags |
+| 🎨 **SOC deck UI** | Dark/light themes, collapsible rail, risk-over-time + detection-volume charts, kill chain, process tree with reputation halos, live monitor, browser notifications |
+| ⌨️ **Terminal mirror** | The `outpost` CLI reaches the same API — **19 commands**, Rich tables, colorized risk, recon markers, rule knobs |
 
 ## 📸 Screenshots
 
@@ -97,7 +104,7 @@ Sample vault → Monitor detonation → Run detail) is recorded automatically by
         ┌────────────────────┐                ┌────────────────────┐
         │   React webapp     │                │   CLI (outpost)   │
         │   SOC deck UI      │                │   Rich terminal   │
-        │   14 pages         │                │   13 commands     │
+        │   19 pages         │                │   19 commands     │
         └────────────────────┘                └────────────────────┘
 ```
 
@@ -122,7 +129,8 @@ bash scripts/install.sh
 bash scripts/dev.sh start
 #    → webapp:  http://localhost:5174   API: http://localhost:8001
 
-# 3. That's it — detonate a sample on the Monitor page.
+# 3. That's it — the webapp auto-detects this host's OS and
+detonations/live sessions target it; detonate a sample on the Monitor page.
 ```
 
 Prefer to drive it by hand? [`scripts/install.sh`](scripts/install.sh) shows
@@ -168,18 +176,25 @@ LaunchAgent/osascript run).
 ### CLI usage
 
 ```bash
-outpost --help          # all commands
-outpost list            # session history (colorized risk)
-outpost show <run_id>   # full report: risk, kill chain, tree, network
-outpost run <sample>    # analyze a synthetic sample
-outpost watch           # live event watch mode
-outpost search <ioc>    # cross-run IOC search
-outpost compare <a> <b> # diff two runs
-outpost campaigns       # campaign clusters
-outpost samples         # sample vault
-outpost rules <run_id>  # Suricata/Sigma detection rules
-outpost watchlist       # add|list|remove|export|import
-outpost notes <run_id>  # analyst notes
+outpost --help             # all commands
+outpost list               # session history (colorized risk)
+outpost show <run_id>      # full report: risk, kill chain, tree, network
+outpost run <sample>       # analyze a synthetic sample
+outpost watch              # live event watch mode (recon markers)
+outpost search <ioc>       # cross-run IOC search
+outpost compare <a> <b>    # diff two runs
+outpost campaigns          # campaign clusters
+outpost samples            # sample vault
+outpost rules <run_id>     # Suricata/Sigma detection rules
+outpost rules knobs        # tunable detection thresholds
+outpost rules log-patterns # anti-forensics pattern tables
+outpost watchlist          # add|list|remove|export|import
+outpost notes <run_id>     # analyst notes
+outpost yara list|test     # signature lab mirror
+outpost footprint <sample> # passive DNS / CT / ASN per sample
+outpost coverage           # MITRE ATT&CK coverage matrix
+outpost intel              # enrichment cache status + refresh
+outpost agent run|install  # bootstrap the host collector
 outpost export <run_id> --format json|stix -o out.json
 ```
 
@@ -205,10 +220,10 @@ One command runs the whole sweep:
 
 | Suite | Count | Covers |
 |---|---|---|
-| Backend pytest | **129** | ingestion, OS-aware rules (win/linux/macOS), risk + ATT&CK, campaigns, events search, samples vault, SSE broadcast, notes, roadmap tiers |
-| Collector pytest | **12** | Sysmon + auditd shipping, normalization |
-| CLI pytest | **8** | rendering regressions, campaigns output, risk columns |
-| Frontend | clean `tsc --noEmit` + Vite build | — |
+| Backend pytest | **406** | ingestion, OS-aware rules (win/linux/macOS), risk + ATT&CK, campaigns, events search, samples vault, SSE broadcast, notes, storm caps, triage, footprint, YARA, auth, roadmap tiers |
+| Collector pytest | **23** | Sysmon + auditd shipping, normalization |
+| CLI pytest | **49** | rendering regressions, campaigns output, risk columns, YARA + footprint mirrors, rules knobs |
+| Frontend | clean `tsc --noEmit` + Vite build + unit tests | — |
 
 **CI:** the same sweep runs automatically on every push and pull request via
 [GitHub Actions](https://github.com/kripy17/OutPost/actions/workflows/ci.yml)

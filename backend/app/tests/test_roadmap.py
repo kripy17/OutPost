@@ -266,9 +266,9 @@ def test_runs_filter_by_sample_name(client):
     """Sample vault → detonation history: GET /runs?q=<sample> filters."""
     a = make_run(client, sample_name="qfilter-sample-a.exe")
     make_run(client, sample_name="qfilter-sample-b.exe")
-    hit = client.get("/runs", params={"q": "qfilter-sample-a"}).json()
+    hit = client.get("/runs", params={"q": "qfilter-sample-a", "include_synthetic": "true"}).json()
     assert [r["run_id"] for r in hit] == [a]
-    miss = client.get("/runs", params={"q": "no-such-sample-xyz"}).json()
+    miss = client.get("/runs", params={"q": "no-such-sample-xyz", "include_synthetic": "true"}).json()
     assert miss == []
 
 

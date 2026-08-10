@@ -7,6 +7,7 @@ artifact — same data, same service.
 """
 
 import io
+import json
 from typing import Optional
 
 from ..core.db import db_session
@@ -23,6 +24,27 @@ def build_json_report(run_id: str) -> dict:
         summary = run_store.to_summary(conn, run_row)
         events = event_store.list_events_for_run(conn, run_id)
         alerts = event_store.list_alerts_for_run(conn, run_id)
+        # Explainability — the tuned thresholds this run was scored under.
+        tuning_row = conn.execute(
+            "SELECT params FROM run_tuning_snapshot WHERE run_id = ?", (run_id,)
+        ).fetchone()
+        effective_tuning = {}
+        if tuning_row:
+            try:
+                effective_tuning = json.loads(tuning_row["params"] or "{}")
+            except (ValueError, TypeError):
+                effective_tuning = {}
+        # Storm guard — per-rule alert-cap suppressed counts (exported so the
+        # cap is visible offline, not just in the UI).
+        suppressed_alerts = {}
+        sup_row = conn.execute(
+            "SELECT suppressed_alerts FROM runs WHERE run_id = ?", (run_id,)
+        ).fetchone()
+        if sup_row and sup_row["suppressed_alerts"]:
+            try:
+                suppressed_alerts = json.loads(sup_row["suppressed_alerts"])
+            except (ValueError, TypeError):
+                suppressed_alerts = {}
         # Campaign references — links this analysis back to its cluster(s).
         campaigns = campaigns_service.campaigns_for_run(conn, run_id)
         # Network connections — cache-first reputation reads (no new external
@@ -62,6 +84,8 @@ def build_json_report(run_id: str) -> dict:
         "alerts": alerts,
         "campaigns": campaigns,
         "network_connections": network_connections,
+        "effective_tuning": effective_tuning,
+        "suppressed_alerts": suppressed_alerts,
     }
 
 

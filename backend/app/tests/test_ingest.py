@@ -152,3 +152,35 @@ def test_ingest_validation_rejects_bad_event(client):
     ]
     resp = client.post("/ingest/batch", json=bad)
     assert resp.status_code == 422
+
+
+def test_runs_list_hides_synthetic_by_default(client, conn):
+    """GET /runs — the archive reads as real telemetry first.
+
+    Synthetic provenance (seed / webapp-demo / legacy monitor / sandbox:demo)
+    is hidden unless `include_synthetic=true`; live host sessions, CLI runs,
+    and real sandbox providers stay visible either way.
+    """
+    real = make_run(client, sample_name="realish.bin", source="live")
+    cli_run = make_run(client, sample_name="clirun.bin", source="cli")
+    prov = make_run(client, sample_name="prov.bin", source="sandbox:anyrun")
+    seed = make_run(client, sample_name="seeded.bin", source="seed")
+    demo = make_run(client, sample_name="demoed.bin", source="webapp-demo")
+    legacy = make_run(client, sample_name="oldmon.bin", source="monitor")
+    sand = make_run(client, sample_name="sand.bin", source="sandbox:demo")
+    try:
+        def names(rows: list[dict]) -> set[str]:
+            return {r["sample_name"] for r in rows}
+
+        hidden = names(client.get("/runs").json())
+        assert {"realish.bin", "clirun.bin", "prov.bin"} <= hidden
+        for s in ("seeded.bin", "demoed.bin", "oldmon.bin", "sand.bin"):
+            assert s not in hidden, f"{s} should be hidden by default"
+
+        shown = names(client.get("/runs?include_synthetic=true").json())
+        for s in ("realish.bin", "clirun.bin", "prov.bin", "seeded.bin", "demoed.bin", "oldmon.bin", "sand.bin"):
+            assert s in shown
+    finally:
+        for rid in (real, cli_run, prov, seed, demo, legacy, sand):
+            conn.execute("DELETE FROM runs WHERE run_id = ?", (rid,))
+        conn.commit()

@@ -25,6 +25,7 @@ from fastapi.responses import FileResponse
 from ..core import config
 from ..core.db import db_session
 from ..models import samples as samples_store
+from ..models.run import SYNTHETIC_SOURCES
 from ..services import enrichment, static_analysis, yara as yara_service
 
 router = APIRouter(tags=["samples"])
@@ -231,21 +232,47 @@ async def upload_sample(
     return {**row, "family": family}
 
 
+def _sample_synthetic_map(conn) -> dict[str, bool]:
+    """Per original-name: whether every detonation of that binary came from
+    synthetic-provenance runs. A binary with no runs is NOT synthetic (a
+    genuine analyst upload is indistinguishable from a demo one until it's
+    detonated, so we don't guess). One GROUP BY instead of a query per row."""
+    marks = ",".join("?" for _ in SYNTHETIC_SOURCES)
+    rows = conn.execute(
+        f"""
+        SELECT r.sample_name AS name,
+               COUNT(*) AS total,
+               SUM(CASE WHEN r.source NOT IN ({marks}) THEN 1 ELSE 0 END) AS real_n
+        FROM runs r
+        GROUP BY r.sample_name
+        """,
+        list(SYNTHETIC_SOURCES),
+    ).fetchall()
+    return {r["name"]: (r["total"] > 0 and r["real_n"] == 0) for r in rows}
+
+
 @router.get("/samples", response_model=None)
 def list_samples(
     q: str = Query("", max_length=200, description="Filter by name / hash prefix / family"),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    include_synthetic: bool = Query(
+        False,
+        description="Show binaries whose entire detonation history is demo/synthetic (seed / webapp-demo / sandbox demo)",
+    ),
 ):
     """Sample library — every uploaded binary with its reputation evidence.
 
-    Each row carries the parsed YARA hits, VirusTotal detection count, and how
-    many runs used the same sample name (so the webapp can link a binary to
-    its detonations). Powers the webapp /samples library page.
+    Each row carries the parsed YARA hits, VirusTotal detection count, how
+    many runs used the same sample name, and whether that history is entirely
+    synthetic. Synthetic-provenance binaries are hidden by default (archive
+    parity); `include_synthetic` reveals them. Powers the webapp /samples
+    library page.
     """
     with db_session() as conn:
-        rows = samples_store.list_samples(conn, q=q.strip(), limit=limit, offset=offset)
-        total = samples_store.count_samples(conn, q=q.strip())
+        rows = samples_store.list_samples(conn, q=q.strip(), limit=limit, offset=offset, include_synthetic=include_synthetic)
+        total = samples_store.count_samples(conn, q=q.strip(), include_synthetic=include_synthetic)
+        synth_map = _sample_synthetic_map(conn)
         out = []
         for r in rows:
             try:
@@ -268,6 +295,7 @@ def list_samples(
                     "vt_detections": r["vt_detections"],
                     "malware_family": r["malware_family"],
                     "runs_count": runs_count,
+                    "synthetic": synth_map.get(r["original_name"], False),
                 }
             )
     return {"total": total, "returned": len(out), "samples": out}
@@ -277,10 +305,15 @@ def list_samples(
 def export_samples(
     q: str = Query("", max_length=200),
     limit: int = Query(1000, ge=1, le=5000),
+    include_synthetic: bool = Query(
+        False,
+        description="Show binaries whose entire detonation history is demo/synthetic",
+    ),
 ):
     """CSV of the sample vault (same filter as GET /samples) — name, hash,
-    platform, size, family, YARA hits, VT detections, detonation count."""
-    data = list_samples(q=q, limit=limit, offset=0)
+    platform, size, family, YARA hits, VT detections, detonation count.
+    Honors the synthetic-hiding default so the export matches the page."""
+    data = list_samples(q=q, limit=limit, offset=0, include_synthetic=include_synthetic)
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow(["sample_id", "original_name", "sha256", "detected_platform", "size", "family", "yara_rules", "vt_detections", "malware_family", "runs_count", "created_at"])

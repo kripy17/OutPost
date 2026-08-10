@@ -6,7 +6,9 @@
 // page's ATT&CK chips read — one source of truth, no drift.
 
 import { useQuery } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 import ExportButton from "../components/ExportButton/ExportButton";
+import { Icon } from "../components/Icon";
 import { getNavigatorLayer, getRuleMeta } from "../lib/api";
 import { PageHeader, Panel } from "../components/ui";
 import type { RuleMeta } from "../types";
@@ -137,6 +139,16 @@ export default function CoveragePage() {
     queryFn: getRuleMeta,
     staleTime: 30_000,
   });
+  // "Gaps only" focus mode — dims covered tactics entirely so the blind spots
+  // read at a glance. Persisted (`outpost-coverage-gaps`) across visits.
+  const [gapsOnly, setGapsOnly] = useState(() => localStorage.getItem("outpost-coverage-gaps") === "1");
+  useEffect(() => {
+    try {
+      localStorage.setItem("outpost-coverage-gaps", gapsOnly ? "1" : "0");
+    } catch {
+      /* storage unavailable — toggle still applies for this visit */
+    }
+  }, [gapsOnly]);
 
   // Bucket rules by tactic, preserving the canonical order.
   const byTactic = new Map<string, RuleMeta[]>();
@@ -191,25 +203,47 @@ export default function CoveragePage() {
                 {gaps.length} gap{gaps.length === 1 ? "" : "s"}: {gaps.join(" · ")}
               </span>
             )}
+            <button
+              onClick={() => setGapsOnly((v) => !v)}
+              aria-pressed={gapsOnly}
+              className={`press inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 transition-colors duration-150 ${
+                gapsOnly ? "border-accent/50 bg-accent/10 text-accent" : "border-border-subtle text-text-muted hover:text-text-primary"
+              }`}
+              title={gapsOnly ? "Show every tactic, covered or not" : "Hide covered tactics — focus on the blind spots"}
+            >
+              {gapsOnly && <Icon name="eye" size={10} />}
+              gaps only
+            </button>
             <span className="ml-auto">
               <NavigatorExportButton />
             </span>
           </div>
 
-          {/* The matrix — one column per tactic, canonical order. */}
-          <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-            {TACTICS.map((tactic) => (
-              <TacticColumn key={tactic} tactic={tactic} rules={byTactic.get(tactic) ?? []} />
-            ))}
-            {unknownTactics.map((tactic) => (
-              <TacticColumn
-                key={tactic}
-                tactic={tactic}
-                rules={byTactic.get(tactic) ?? []}
-                unknown
-              />
-            ))}
-          </div>
+          {/* The matrix — one column per tactic, canonical order. In "gaps only"
+              mode, covered tactics collapse away and only the blind spots
+              (canonical gaps + any unknown-tactic catch-all) remain. */}
+          {gapsOnly && gaps.length === 0 ? (
+            <div className="mt-6 rounded-2xl border border-dashed border-border-strong bg-bg-surface/40 p-10 text-center">
+              <Icon name="shield" size={24} className="mx-auto text-risk-clean" />
+              <p className="mt-3 text-sm text-text-muted">
+                No gaps — every one of the {TACTICS.length} tactics has at least one rule. Nothing to hunt.
+              </p>
+            </div>
+          ) : (
+            <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+              {(gapsOnly ? gaps : TACTICS).map((tactic) => (
+                <TacticColumn key={tactic} tactic={tactic} rules={byTactic.get(tactic) ?? []} />
+              ))}
+              {unknownTactics.map((tactic) => (
+                <TacticColumn
+                  key={tactic}
+                  tactic={tactic}
+                  rules={byTactic.get(tactic) ?? []}
+                  unknown
+                />
+              ))}
+            </div>
+          )}
 
           {/* Legend for the technique chips. */}
           <p className="mt-4 font-mono text-[10px] text-text-faint">

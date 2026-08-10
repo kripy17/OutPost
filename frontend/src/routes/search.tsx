@@ -5,23 +5,51 @@ import { PageHeader } from "../components/ui";
 import { searchIocs } from "../lib/api";
 import type { IocSearchResponse } from "../types";
 
+const SEARCH_STORAGE = "outpost-search-query";
+
+function readSavedQuery(): string {
+  try {
+    return localStorage.getItem(SEARCH_STORAGE) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function writeSavedQuery(q: string) {
+  try {
+    if (q) localStorage.setItem(SEARCH_STORAGE, q);
+    else localStorage.removeItem(SEARCH_STORAGE);
+  } catch {
+    /* storage unavailable — query still works for this visit */
+  }
+}
+
 export default function SearchPage() {
   const [params] = useSearchParams();
-  const [value, setValue] = useState(params.get("q") ?? "");
+  // Deep links (?q=…) win; a bare visit restores the last submitted query so
+  // the investigation resumes mid-thought instead of staring at an empty box.
+  const [value, setValue] = useState(params.get("q") ?? readSavedQuery());
   const [result, setResult] = useState<IocSearchResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Deep-link support (?q=…): static-analysis IOC chips jump here pre-filled
-  // and the search runs once on mount — one click from sample → history.
+  // and the search runs once on mount — one click from sample → history. On a
+  // bare visit the last submitted query is re-run (same UX as the deep link).
   useEffect(() => {
     const query = (params.get("q") ?? "").trim();
-    if (query) void runSearch(query);
+    if (query) {
+      void runSearch(query);
+    } else {
+      const saved = readSavedQuery().trim();
+      if (saved) void runSearch(saved);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function runSearch(query: string) {
     setValue(query);
+    writeSavedQuery(query.trim());
     setLoading(true);
     setError(null);
     try {

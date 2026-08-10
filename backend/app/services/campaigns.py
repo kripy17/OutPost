@@ -16,6 +16,7 @@ watchlisted) infrastructure first, then by member count.
 
 from ..models import run as run_store
 from ..models.event import get_cache
+from ..models.run import SYNTHETIC_SOURCES
 from ..models.watchlist import get_watchlist
 from ..services import killchain
 
@@ -95,24 +96,36 @@ def campaigns_for_run(conn, run_id: str) -> list[dict]:
     return refs
 
 
-def build_campaigns(conn) -> list[dict]:
+def build_campaigns(conn, include_synthetic: bool = False) -> list[dict]:
+    """Every campaign in run history, strongest first. Synthetic provenance
+    (seeds / webapp detonations / the sandbox demo) is excluded by default,
+    mirroring the runs archive and Event Log — campaigns read as real
+    telemetry first. A campaign whose members fall below the two-run
+    clustering invariant after the filter is dropped entirely.
+    """
     campaigns: list[dict] = []
     for ip in _candidate_ips(conn):
         anchor = _anchor(conn, ip)
         if anchor is None:
             continue
 
+        excl = "" if include_synthetic else " AND r.source NOT IN (?,?,?,?)"
+        args: list = [] if include_synthetic else list(SYNTHETIC_SOURCES)
         run_rows = conn.execute(
-            """
+            f"""
             SELECT DISTINCT r.*
             FROM runs r
             JOIN events e ON e.run_id = r.run_id
-            WHERE e.dest_ip = ? AND e.event_type = 'network_connection'
+            WHERE e.dest_ip = ? AND e.event_type = 'network_connection'{excl}
             ORDER BY r.started_at DESC
             """,
-            (ip,),
+            (ip, *args),
         ).fetchall()
         run_ids = [r["run_id"] for r in run_rows]
+        # The clustering rule is two runs sharing the IP; a campaign reduced
+        # below that by the synthetic filter is no longer a campaign.
+        if len(run_ids) < 2:
+            continue
         placeholders = ",".join("?" * len(run_ids))
 
         timeline_rows = conn.execute(

@@ -451,7 +451,7 @@ function rankCampaign(c: Campaign): number {
 }
 
 function CampaignSpotlight() {
-  const { data: campaigns = [], isLoading, isError } = useQuery({ queryKey: ["campaigns"], queryFn: getCampaigns });
+  const { data: campaigns = [], isLoading, isError } = useQuery({ queryKey: ["campaigns"], queryFn: () => getCampaigns() });
 
   if (isLoading) return <p className="text-sm text-text-muted">Grouping runs…</p>;
   if (isError) return <p className="text-xs text-risk-malicious">Couldn't load campaigns.</p>;
@@ -843,7 +843,7 @@ function DemoBanner() {
 
 export default function OverviewPage() {
   const { data: runs = [], isLoading, isError } = useQuery({ queryKey: ["runs"], queryFn: () => getRuns() });
-  const { data: campaigns = [] } = useQuery({ queryKey: ["campaigns"], queryFn: getCampaigns });
+  const { data: campaigns = [] } = useQuery({ queryKey: ["campaigns"], queryFn: () => getCampaigns() });
 
   const totalAlerts = runs.reduce((n, r) => n + r.alert_count, 0);
   const trendBars = useMemo(() => aggregateTrend(runs), [runs]);
