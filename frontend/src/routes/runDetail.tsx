@@ -385,7 +385,10 @@ export default function RunDetailPage() {
   // Network rows don't carry a pid, so the filter uses the node's reached
   // IPs — the same list the halo annotation comes from.
   const [selectedPid, setSelectedPid] = useState<number | null>(null);
-  const treeData = data?.process_tree ?? [];
+  // Memoized so the `?? []` fallback never hands the walk useMemo a fresh
+  // array identity on every render (that would defeat its caching and re-walk
+  // the whole tree each render).
+  const treeData = useMemo(() => data?.process_tree ?? [], [data]);
   const timelineEvents = data?.timeline ?? [];
   const netData = data?.network_connections ?? [];
   const selectedNode = useMemo(() => {
