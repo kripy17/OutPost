@@ -1,39 +1,77 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { Chip, PageHeader, Panel } from "../components/ui";
-import { getFootprint, getSamples, refreshEnrichmentIp } from "../lib/api";
+import { exportFootprint, getFootprint, getSamples, refreshEnrichmentIp, saveBlob } from "../lib/api";
 import { intelAgeLabel } from "../lib/constants";
 import type { Footprint, FootprintSeedIp } from "../types";
 
-// Radial footprint map — sample at the center, its real seed IPs on ring 1,
-// and (when synthetic preview is on) passive nodes on ring 2.
+type MidNode = { key: string; label: string; kind: "res" | "sib"; ip?: string; angle: number; x: number; y: number };
+type DnsNode = { key: string; label: string; sourceIp?: string; sourceKind: "seed" | "sib" | "other"; x: number; y: number };
+
+// Radial footprint map — sample at the center, seed IPs on ring 1, passive
+// infrastructure (resolutions + sibling hosts) on ring 2, and the cohosted
+// passive-DNS domains on ring 3. Each cohosted domain fans around the seed or
+// sibling IP it was observed from, with the connecting edge tinted by that
+// source — so the map reads as a topology, not a flat ring.
 function FootprintMap({ footprint }: { footprint: Footprint }) {
   const seeds = footprint.seed_ips;
-  const passiveNodes = useMemo(() => {
-    const p = footprint.passive;
-    return [
-      ...p.resolutions.slice(0, 6).map((r) => ({ label: r.domain, tone: "res" as const })),
-      ...p.sibling_ips.slice(0, 6).map((s) => ({ label: s.ip, tone: "sib" as const })),
-    ];
-  }, [footprint]);
+  const p = footprint.passive;
 
-  const W = 560;
-  const H = 380;
+  const W = 600;
+  const H = 500;
   const cx = W / 2;
   const cy = H / 2;
-  const ring1 = 96;
-  const ring2 = 178;
+  const ring1 = 105;
+  const ring2 = 175;
+  const ring3 = 235;
+  const angleFor = (i: number, n: number) => (i / Math.max(n, 1)) * Math.PI * 2 - Math.PI / 2;
 
+  // Ring 1 — the observed seed IPs (reputation-colored).
   const seedPos = seeds.slice(0, 8).map((s, i) => {
-    const a = (i / Math.max(seeds.length, 1)) * Math.PI * 2 - Math.PI / 2;
-    return { ...s, x: cx + ring1 * Math.cos(a), y: cy + ring1 * Math.sin(a) };
+    const a = angleFor(i, seeds.length);
+    return { ...s, angle: a, x: cx + ring1 * Math.cos(a), y: cy + ring1 * Math.sin(a) };
   });
-  const passivePos = passiveNodes.map((n, i) => {
-    const a = (i / Math.max(passiveNodes.length, 1)) * Math.PI * 2 - Math.PI / 2;
-    return { ...n, x: cx + ring2 * Math.cos(a), y: cy + ring2 * Math.sin(a) };
+  const seedByIp = new Map(seedPos.map((s) => [s.ip, s]));
+
+  // Ring 2 — PTR resolutions + sibling hosts (the same-block hypothesis).
+  const midNodes: { key: string; label: string; kind: "res" | "sib"; ip?: string }[] = [
+    ...p.resolutions.slice(0, 5).map((r) => ({ key: `res-${r.domain}`, label: r.domain, kind: "res" as const })),
+    ...p.sibling_ips.slice(0, 5).map((s) => ({ key: `sib-${s.ip}`, label: s.ip, kind: "sib" as const, ip: s.ip })),
+  ];
+  const midPos: MidNode[] = midNodes.map((n, i) => {
+    const a = angleFor(i, midNodes.length);
+    return { ...n, angle: a, x: cx + ring2 * Math.cos(a), y: cy + ring2 * Math.sin(a) };
   });
+  const sibByIp = new Map(midPos.filter((n) => n.kind === "sib").map((n) => [n.ip!, n]));
+
+  // Ring 3 — cohosted passive-DNS domains, grouped by source IP so each fans
+  // around its seed/sibling node (a genuine topology instead of a flat ring).
+  const dnsRows = p.passive_dns.slice(0, 8);
+  const bySource = new Map<string, typeof dnsRows>();
+  for (const d of dnsRows) {
+    const src = d.source_ip ?? "__other__";
+    bySource.set(src, [...(bySource.get(src) ?? []), d]);
+  }
+  const dnsPos: DnsNode[] = [];
+  let fallback = angleFor(0, 1) + 0.6;
+  for (const [src, rows] of bySource) {
+    const owner = seedByIp.get(src) ?? sibByIp.get(src);
+    const base = owner?.angle ?? fallback;
+    rows.forEach((d, k) => {
+      const a = base + (k - (rows.length - 1) / 2) * 0.26;
+      dnsPos.push({
+        key: `dns-${d.domain}`,
+        label: d.domain,
+        sourceIp: d.source_ip,
+        sourceKind: owner ? (seedByIp.has(src) ? "seed" : "sib") : "other",
+        x: cx + ring3 * Math.cos(a),
+        y: cy + ring3 * Math.sin(a),
+      });
+    });
+    fallback += 0.7;
+  }
 
   const repFill: Record<string, string> = {
     malicious: "var(--risk-malicious)",
@@ -44,26 +82,40 @@ function FootprintMap({ footprint }: { footprint: Footprint }) {
 
   return (
     <div className="overflow-x-auto">
-      <svg viewBox={`0 0 ${W} ${H}`} className="mx-auto h-auto w-full max-w-[640px]" role="img" aria-label="Digital footprint map — sample at the center, seed IPs on the inner ring, passive infrastructure on the outer ring">
+      <svg viewBox={`0 0 ${W} ${H}`} className="mx-auto h-auto w-full max-w-[640px]" role="img" aria-label="Digital footprint map — sample at the center, seed IPs on ring 1, passive infrastructure on ring 2, cohosted passive-DNS domains on ring 3 with source-tinted edges">
         {/* grid rings */}
-        {[48, 96, 178].map((r) => (
+        {[60, ring1, ring2, ring3].map((r) => (
           <circle key={r} cx={cx} cy={cy} r={r} fill="none" stroke="var(--border-subtle)" strokeDasharray="2 5" />
         ))}
-        {/* passive ring edges */}
-        {passivePos.map((n) => {
+        {/* ring-3 edges — cohosted domains connect to their source, tinted by it */}
+        {dnsPos.map((n) => {
+          const owner = n.sourceKind === "seed" ? seedByIp.get(n.sourceIp ?? "") : sibByIp.get(n.sourceIp ?? "");
+          if (!owner) return null;
+          const tint = n.sourceKind === "seed" ? "var(--accent)" : "var(--risk-clean)";
+          return <line key={`de-${n.key}`} x1={owner.x} y1={owner.y} x2={n.x} y2={n.y} stroke={tint} strokeWidth="1.2" opacity="0.75" />;
+        })}
+        {/* ring-2 edges — resolutions/siblings attach to the lead seed */}
+        {midPos.map((n) => {
           const owner = seedPos[0];
           return owner ? (
-            <line key={`pe-${n.label}`} x1={owner.x} y1={owner.y} x2={n.x} y2={n.y} stroke="var(--border-subtle)" strokeWidth="1" strokeDasharray="1 4" opacity="0.7" />
+            <line key={`me-${n.key}`} x1={owner.x} y1={owner.y} x2={n.x} y2={n.y} stroke="var(--border-subtle)" strokeWidth="1" strokeDasharray="1 4" opacity="0.7" />
           ) : null;
         })}
         {/* seed ring edges */}
         {seedPos.map((s) => (
           <line key={`se-${s.ip}`} x1={cx} y1={cy} x2={s.x} y2={s.y} stroke="var(--border-strong)" strokeWidth="1" opacity="0.6" />
         ))}
-        {/* passive nodes */}
-        {passivePos.map((n) => (
-          <g key={`n-${n.label}`}>
-            <circle cx={n.x} cy={n.y} r="7" fill="var(--bg-surface)" stroke={n.tone === "res" ? "var(--accent)" : "var(--text-faint)"} strokeWidth="1" opacity="0.9" />
+        {/* cohosted passive-DNS nodes */}
+        {dnsPos.map((n) => (
+          <g key={`n-${n.key}`}>
+            <circle cx={n.x} cy={n.y} r="6" fill="var(--bg-surface)" stroke={n.sourceKind === "seed" ? "var(--accent)" : n.sourceKind === "sib" ? "var(--risk-clean)" : "var(--text-faint)"} strokeWidth="1" opacity="0.9" />
+            <title>{`${n.label} — cohosted ${n.sourceKind === "seed" ? "on seed" : n.sourceKind === "sib" ? "on sibling" : "(source unknown)"}${n.sourceIp ? ` ${n.sourceIp}` : ""}`}</title>
+          </g>
+        ))}
+        {/* ring-2 passive nodes */}
+        {midPos.map((n) => (
+          <g key={`m-${n.key}`}>
+            <circle cx={n.x} cy={n.y} r="7" fill="var(--bg-surface)" stroke={n.kind === "res" ? "var(--accent)" : "var(--text-faint)"} strokeWidth="1" opacity="0.9" />
             <title>{n.label}</title>
           </g>
         ))}
@@ -86,6 +138,8 @@ function FootprintMap({ footprint }: { footprint: Footprint }) {
         <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-risk-malicious" /> malicious IP</span>
         <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-risk-suspicious" /> suspicious IP</span>
         <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-risk-clean" /> clean IP</span>
+        <span className="flex items-center gap-1.5"><span className="h-3.5 w-3.5 rounded-full border border-accent bg-bg-surface" /> cohosted · seed</span>
+        <span className="flex items-center gap-1.5"><span className="h-3.5 w-3.5 rounded-full border border-risk-clean bg-bg-surface" /> cohosted · sibling</span>
         {footprint.passive.source === "synthetic_demo" && (
           <span className="flex items-center gap-1.5"><span className="h-3.5 w-3.5 rounded-full border border-accent bg-bg-surface" /> passive (synthetic)</span>
         )}
@@ -280,8 +334,8 @@ export default function FootprintPage() {
           <p className="mt-1 text-xs leading-relaxed text-text-muted">
             The inner ring is genuine: every IP this sample reached, aggregated from its runs with cache-first reputations. The outer layer expands it
             through keyless public sources — PTR reverse DNS for resolutions, Certificate Transparency logs (crt.sh) for passive DNS history + TLS
-            certificates, and RDAP for registration + sibling networks. When the sources are unreachable the page degrades to an honest empty state; the
-            preview toggle renders clearly-labeled synthetic data for demos.
+            certificates (including sibling hosts on the same block), and RDAP for registration + sibling networks. When the sources are unreachable the
+            page degrades to an honest empty state; the preview toggle renders clearly-labeled synthetic data for demos.
           </p>
         </div>
       </div>
@@ -312,6 +366,31 @@ export default function FootprintPage() {
         >
           <span className={`h-1.5 w-1.5 rounded-full ${mock ? "bg-accent" : "bg-text-faint"}`} />
           {mock ? "Synthetic preview on" : "Show synthetic preview"}
+        </button>
+        {/* Threat-intel handoff — export the passive layer (JSON structured /
+            CSV flat IOC sheet) for the current sample + preview state. */}
+        <span className="mx-1 hidden h-4 w-px bg-border-subtle md:block" />
+        <button
+          onClick={() => {
+            void exportFootprint(sampleId, "json", mock).then((blob) => saveBlob(blob, `outpost-footprint-${sampleId.slice(0, 8)}.json`));
+          }}
+          disabled={!sampleId}
+          className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-1.5 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent disabled:opacity-40"
+          title="Export the footprint as structured JSON (sample, seed IPs, passive layer)"
+        >
+          <Icon name="download" size={12} />
+          Export JSON
+        </button>
+        <button
+          onClick={() => {
+            void exportFootprint(sampleId, "csv", mock).then((blob) => saveBlob(blob, `outpost-footprint-${sampleId.slice(0, 8)}.csv`));
+          }}
+          disabled={!sampleId}
+          className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-1.5 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent disabled:opacity-40"
+          title="Export the footprint as a flat CSV IOC sheet (collection · indicator · detail · seen range)"
+        >
+          <Icon name="download" size={12} />
+          Export CSV
         </button>
       </div>
 
@@ -357,7 +436,11 @@ export default function FootprintPage() {
               title="Passive DNS history"
               note={passiveNote(footprint.passive.source, "crt.sh")}
               empty="No hostnames indexed in Certificate Transparency logs for the seed infrastructure — crt.sh may be unreachable, or none are registered."
-              nodes={footprint.passive.passive_dns.map((d) => ({ label: d.domain, sub: `${d.first_seen.slice(0, 10)} → ${d.last_seen.slice(0, 10)}`, synthetic: d.synthetic }))}
+              nodes={footprint.passive.passive_dns.map((d) => ({
+                label: d.domain,
+                sub: `${d.source_ip ? `${d.source_ip} · ` : ""}${d.first_seen.slice(0, 10)} → ${d.last_seen.slice(0, 10)}`,
+                synthetic: d.synthetic,
+              }))}
             />
             <PassiveCard
               title="Certificates"

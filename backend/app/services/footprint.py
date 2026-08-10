@@ -15,9 +15,12 @@ best-effort and isolated per IP so one provider failing never kills the page:
 - *Reverse DNS (PTR)* — `socket.gethostbyaddr`: the hostname registered for
   the seed IP. Fast and reliable; fills the resolution rows.
 - *crt.sh Certificate Transparency logs* — queried by the PTR-derived domain
-  (`https://crt.sh/?q=<domain>&output=json`). No API key. crt.sh is a flaky
-  public provider (502s under load), so it is strictly best-effort: when it
-  fails or returns nothing, the certificates card shows an honest empty state.
+  (`https://crt.sh/?q=<domain>&output=json`) AND by IP for the first two
+  sibling hosts (`?q=<sibling-ip>`), so infra beyond the apex domain surfaces
+  (names cohosted on the same block, each tagged with the sibling IP it came
+  from). No API key. crt.sh is a flaky public provider (502s under load), so
+  it is strictly best-effort: when it fails or returns nothing, the
+  certificates / passive-DNS cards show an honest empty state.
 - *RDAP* (`https://rdap.org/ip/<ip>`, follows the redirect to the owning
   registry) — registration info (network name, CIDR, organization, country)
   plus sibling hosts from the network block ("same operator" hypothesis).
@@ -334,8 +337,36 @@ async def _fetch_ip_passive(seed: dict) -> dict:
             ct = {"certificates": [], "domains": []}
         out["certificates"] = ct["certificates"]
         # Every hostname crt.sh has seen for this domain — the passive-DNS
-        # history (the apex PTR name itself stays in resolutions).
-        out["passive_dns"] = [d for d in ct["domains"] if d["domain"] != ptr]
+        # history (the apex PTR name itself stays in resolutions). Each row
+        # is tagged with the seed IP it was observed from.
+        out["passive_dns"] = []
+        for d in ct["domains"]:
+            if d["domain"] != ptr:
+                d["source_ip"] = ip
+                out["passive_dns"].append(d)
+
+    # 3b. Sibling hosts — crt.sh by IP, so infrastructure beyond the apex
+    # domain surfaces (names cohosted on the same block). Bounded to the
+    # first two siblings, queried concurrently, deduped against the apex
+    # names, and each row tagged with the sibling IP it came from.
+    siblings = out["sibling_ips"][:2]
+    if siblings:
+        try:
+            sib_results = await asyncio.gather(
+                *[_crtsh_lookup(s["ip"]) for s in siblings], return_exceptions=True
+            )
+        except Exception:
+            sib_results = []
+        seen = {d["domain"] for d in out["passive_dns"]}
+        for sib, res in zip(siblings, sib_results):
+            if not isinstance(res, dict):
+                continue
+            for d in res.get("domains", []):
+                if d["domain"] in seen:
+                    continue
+                seen.add(d["domain"])
+                d["source_ip"] = sib["ip"]
+                out["passive_dns"].append(d)
 
     # 4. ASN / owner mapping — keyless ip-api.com (free tier, 45 req/min,
     # plenty for a footprint page). RDAP gives registration; this gives the
@@ -443,12 +474,14 @@ def _mock_passive_dns(seed: dict) -> list[dict]:
             "domain": f"panel-{digest}.shelf.example",
             "first_seen": seed["first_seen"],
             "last_seen": seed["last_seen"],
+            "source_ip": seed["ip"],
             "synthetic": True,
         },
         {
             "domain": f"cdn-{digest}.shelf.example",
             "first_seen": seed["first_seen"],
             "last_seen": seed["last_seen"],
+            "source_ip": seed["ip"],
             "synthetic": True,
         },
     ]

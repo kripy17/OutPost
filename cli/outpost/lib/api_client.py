@@ -210,3 +210,15 @@ def footprint(sample_id: str, mock: bool = False) -> dict:
     """Passive digital footprint for one uploaded sample (reverse-DNS, CT
     certs, RDAP org, ASN) with an honest synthetic fallback flag."""
     return _get(f"/footprint/{sample_id}?mock={1 if mock else 0}")
+
+
+def export_footprint(sample_id: str, format: str = "json", mock: bool = False) -> bytes:
+    """Threat-intel handoff export — the same JSON/CSV artifact the webapp's
+    Export buttons download. Raw bytes: JSON arrives pre-indented from the
+    backend; CSV is the flat collection sheet."""
+    resp = requests.get(
+        f"{BASE_URL}/footprint/{sample_id}/export?format={format}&mock={1 if mock else 0}", timeout=20
+    )
+    if not resp.ok:
+        raise APIError(f"GET /footprint/{sample_id}/export → {resp.status_code}: {resp.text[:200]}")
+    return resp.content
