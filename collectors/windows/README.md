@@ -62,7 +62,10 @@ channel is empty, Sysmon is not actually filtering — see step 1.
 
 ## 3 · Collector smoke test (foreground, bounded)
 
-This proves the whole parse→ship→backend path without installing anything:
+This proves the whole parse→ship→backend path without installing anything.
+**Run it from an elevated prompt** — the Sysmon channel's default ACL is
+admin-readable, and a non-elevated `OpenEventLog` fails with a
+`pywintypes.error` access-denied (see troubleshooting below):
 
 ```bat
 python collectors\windows\collector_win.py --mode analysis --timeout 120 --backend-url http://<backend>:8001
@@ -86,7 +89,8 @@ The recommended path — the browser session IS the session:
 
 1. Open the webapp → **Monitor** → start live monitoring (a `source=live`
    session opens).
-2. On Windows, run the collector with **no** `--run-id`:
+2. On Windows, run the collector with **no** `--run-id` (elevated prompt,
+   same as step 3):
    ```bat
    python collectors\windows\collector_win.py --mode live --backend-url http://<backend>:8001
    ```
@@ -97,6 +101,13 @@ The recommended path — the browser session IS the session:
 Monitor filling with this machine's real activity, and alerts toasting as
 rules fire (e.g. opening `cmd.exe` from Explorer is expected to be quiet; a
 `powershell.exe -enc ...` would fire `lolbin-abuse`).
+
+> **Troubleshooting an empty/crashed run:** if the collector dies right after
+> the banner with a `pywintypes.error: (5, 'OpenEventLog', 'Access is
+> denied.')` — you're not elevated; re-run from an admin prompt. If it runs
+> but no events arrive while `wevtutil gli Microsoft-Windows-Sysmon/Operational`
+> shows a growing record count, the channel is readable but the config is
+> filtering everything out — re-check `sysmon_config.xml` (step 1).
 
 ## 5 · First soak — the real-host FP baseline
 

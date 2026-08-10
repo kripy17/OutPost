@@ -87,6 +87,7 @@ def test_footprint_seeds_real_ips_from_samples_runs(client, monkeypatch):
     assert data["passive"]["source"] == "not_configured"
     assert data["passive"]["resolutions"] == []
     assert data["passive"]["certificates"] == []
+    assert data["passive"]["passive_dns"] == []
     assert data["passive"]["sibling_ips"] == []
     assert data["passive"]["networks"] == []
 
@@ -98,6 +99,10 @@ def test_footprint_live_passive_layer(client, monkeypatch):
         return {
             "resolutions": [
                 {"domain": f"host-{seed['ip']}.example.net", "first_seen": "2026-08-01", "last_seen": "2026-08-02", "synthetic": False}
+            ],
+            "passive_dns": [
+                {"domain": f"cdn-{seed['ip']}.example.net", "first_seen": "2026-01-01", "last_seen": "2026-08-02", "synthetic": False},
+                {"domain": "panel.example.net", "first_seen": "2026-03-01", "last_seen": "2026-07-01", "synthetic": False},
             ],
             "certificates": [
                 {"cn": "*.example.net", "issuer": "C=US, O=Example CA", "not_before": "2026-01-01", "not_after": "2027-01-01", "synthetic": False}
@@ -121,6 +126,10 @@ def test_footprint_live_passive_layer(client, monkeypatch):
     assert data["passive"]["certificates"][0]["synthetic"] is False
     assert data["passive"]["networks"][0]["netname"] == "TEST-NET-3"
     assert data["passive"]["networks"][0]["cidr"] == "203.0.113.88/24"
+    # The passive-DNS history aggregates through to the response.
+    dns = data["passive"]["passive_dns"]
+    assert any(d["domain"] == "panel.example.net" for d in dns), "passive DNS rows reach the client"
+    assert all(d["synthetic"] is False for d in dns)
     # Live rows are never synthetic.
     for node in data["passive"]["resolutions"]:
         assert node["synthetic"] is False
@@ -194,11 +203,14 @@ def test_footprint_mock_fills_passive_layer_clearly_labeled(client):
     assert data["passive"]["source"] == "synthetic_demo"
     assert data["passive"]["resolutions"], "mock must render the UI shape"
     assert data["passive"]["certificates"]
+    assert data["passive"]["passive_dns"], "mock passive-DNS history fills the card"
     assert data["passive"]["sibling_ips"]
     # Every synthetic node is labeled so it can never be mistaken for intel.
     for node in data["passive"]["resolutions"]:
         assert node["synthetic"] is True
     for node in data["passive"]["certificates"]:
+        assert node["synthetic"] is True
+    for node in data["passive"]["passive_dns"]:
         assert node["synthetic"] is True
     for node in data["passive"]["sibling_ips"]:
         assert node["synthetic"] is True
