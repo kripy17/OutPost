@@ -379,8 +379,10 @@ def get_sample_static(sample_id: str):
     PE/ELF metadata (machine, sections, imports).
 
     Computed on demand from the persisted bytes; no external tooling.
-    404 when the sample is unknown or its bytes were never stored (uploads
-    from before byte persistence — the 404 detail names the fix: re-upload).
+    404 only when the sample is unknown; a known sample whose bytes were
+    never stored (uploads from before byte persistence) returns 200 with
+    `available: false` so the sample-detail panel renders its re-upload state
+    from data instead of the browser logging a 404 for a normal condition.
     """
     with db_session() as conn:
         row = samples_store.get_sample(conn, sample_id)
@@ -388,14 +390,21 @@ def get_sample_static(sample_id: str):
         raise HTTPException(status_code=404, detail=f"Unknown sample_id: {sample_id}")
     body = _load_bytes(sample_id)
     if body is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Sample bytes are not stored — re-upload the file to enable static analysis.",
-        )
+        return {
+            "sample_id": sample_id,
+            "sha256": row["sha256"],
+            "available": False,
+            "size": 0,
+            "strings": [],
+            "iocs": {"urls": [], "ips": [], "domains": [], "hashes": [], "emails": []},
+            "pe": None,
+            "elf": None,
+        }
     analysis = static_analysis.analyze_sample(body)
     return {
         "sample_id": sample_id,
         "sha256": row["sha256"],
+        "available": True,
         "size": len(body),
         **analysis,
     }

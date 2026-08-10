@@ -179,18 +179,62 @@ def test_windows_scheduled_task_schtasks(client):
 
 
 def test_windows_scheduled_task_registry(client):
-    """Rule 11 — a TaskCache registry write is scheduled-task persistence."""
+    """Rule 11 — a NON-system process writing a task definition into
+    TaskCache (Tasks or Tree subtree) is scheduled-task persistence."""
     run_id = make_run(client, sample_name="taskreg.exe")
     _ingest(client, run_id, [
         {
             "run_id": run_id, "platform": "windows", "event_type": "registry_write",
-            "timestamp": _ts(1), "pid": 500, "ppid": 4, "process_name": "svchost.exe",
+            "timestamp": _ts(1), "pid": 500, "ppid": 4, "process_name": "wscript.exe",
             "registry_key": r"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tasks\{abc}",
+        },
+        # Distinct pid so the per-run dedup (rule, pid) keeps both: two
+        # processes planting tasks is two persistence events.
+        {
+            "run_id": run_id, "platform": "windows", "event_type": "registry_write",
+            "timestamp": _ts(2), "pid": 501, "ppid": 4, "process_name": "wscript.exe",
+            "registry_key": r"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tree\EvilTask",
         },
     ])
     fired = [a for a in _alerts(client, run_id) if a["rule_id"] == "scheduled-task"]
-    assert len(fired) == 1
-    assert "TaskCache" in fired[0]["details"]
+    assert len(fired) == 2
+    assert all("TaskCache" in a["details"] for a in fired)
+
+
+def test_windows_scheduled_task_svchost_maintenance_is_clean(client):
+    """Rule 11 — svchost.exe (Task Scheduler) maintaining its own TaskCache
+    is routine, not persistence — the Windows soak FP #2."""
+    run_id = make_run(client, sample_name="taskmaint.exe")
+    _ingest(client, run_id, [
+        {
+            "run_id": run_id, "platform": "windows", "event_type": "registry_write",
+            "timestamp": _ts(1), "pid": 600, "ppid": 4, "process_name": "svchost.exe",
+            "registry_key": r"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache",
+        },
+        {
+            "run_id": run_id, "platform": "windows", "event_type": "registry_write",
+            "timestamp": _ts(2), "pid": 600, "ppid": 4, "process_name": "svchost.exe",
+            "registry_key": r"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tasks\{def}",
+        },
+    ])
+    fired = [a for a in _alerts(client, run_id) if a["rule_id"] == "scheduled-task"]
+    assert fired == []
+
+
+def test_windows_scheduled_task_weak_root_write_is_clean(client):
+    """Rule 11 — a non-system write to the TaskCache ROOT defines no task:
+    nothing was created, so it stays quiet (the Tasks/Tree subtrees are the
+    task-definition signal)."""
+    run_id = make_run(client, sample_name="taskweak.exe")
+    _ingest(client, run_id, [
+        {
+            "run_id": run_id, "platform": "windows", "event_type": "registry_write",
+            "timestamp": _ts(1), "pid": 500, "ppid": 4, "process_name": "wscript.exe",
+            "registry_key": r"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache",
+        },
+    ])
+    fired = [a for a in _alerts(client, run_id) if a["rule_id"] == "scheduled-task"]
+    assert fired == []
 
 
 def _win_proc(run_id: str, pid: int, ppid: int, name: str, cmd: str, ts: int = 0) -> dict:

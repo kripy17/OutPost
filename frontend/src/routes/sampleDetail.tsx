@@ -24,10 +24,13 @@ function StaticAnalysis({ sample }: { sample: { sample_id: string; sha256: strin
   const { data: st, isLoading, isError } = useQuery({
     queryKey: ["sample", "static", sample.sample_id],
     queryFn: () => getSampleStatic(sample.sample_id),
-    // 404 = "bytes not stored" (uploaded before persistence) — retrying can
-    // never succeed, so surface the message on the first attempt.
+    // Bytes-not-stored is now a 200 with `available: false` (data-driven
+    // state, no console noise); 404 only remains for an unknown sample.
     retry: false,
   });
+  // A known sample without stored bytes renders its re-upload state from
+  // data — not from a fetch error.
+  const unavailable = st !== undefined && st.available === false;
 
   const filteredStrings = useMemo(() => {
     if (!st) return [];
@@ -55,7 +58,7 @@ function StaticAnalysis({ sample }: { sample: { sample_id: string; sha256: strin
         kicker="Static · on-demand"
         title="Strings & candidate IOCs"
         right={
-          st ? (
+          st && st.available ? (
             <span className="font-mono text-[10px] text-text-faint">
               {st.strings.length} strings · {iocTotal} IOCs
             </span>
@@ -65,10 +68,15 @@ function StaticAnalysis({ sample }: { sample: { sample_id: string; sha256: strin
         {isLoading && <p className="text-sm text-text-muted">Analyzing bytes…</p>}
         {isError && (
           <p className="text-sm text-text-muted">
+            Static analysis unavailable — {sample.sample_id} could not be analyzed.
+          </p>
+        )}
+        {unavailable && (
+          <p className="text-sm text-text-muted">
             Static analysis unavailable — {sample.sample_id} was uploaded before byte persistence. Re-upload the file to enable it.
           </p>
         )}
-        {st && (
+        {st && st.available && (
           <>
             {/* IOC buckets — each chip jumps to search (pre-filled) or watchlists. */}
             {iocTotal > 0 ? (

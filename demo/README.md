@@ -5,7 +5,7 @@ Two Playwright demo scripts live here:
 | Script | Flow | Output |
 |---|---|---|
 | [`shelf-stack-demo.mjs`](shelf-stack-demo.mjs) | Campaign arc: detonate → search → compare → watchlist → rules (two samples sharing a C2 IP) | screenshots per step |
-| [`deck-demo.mjs`](deck-demo.mjs) | The redesigned SOC deck in 4 acts: Overview pan → Sample vault (library + detail) → Monitor detonation → run detail (risk gauge, kill chain, process-tree halos, timeline, analyst notes, detection rules) | **`deck-demo.webm`** video (cursor + subtitles) + 19 per-step screenshots |
+| [`deck-demo.mjs`](deck-demo.mjs) | The redesigned SOC deck in 5 acts: Overview pan → Sample vault (library + detail) → Monitor detonation → run detail (risk gauge, kill chain, process-tree halos, timeline, analyst notes, detection rules) → Findings triage queue (select → acknowledge → resolve, scoped to the fresh detonation) | **`deck-demo-trimmed.webm`** video (cursor + subtitles) + 25 per-step screenshots |
 
 ## One-time setup
 
@@ -55,15 +55,19 @@ cd demo && node deck-demo.mjs            # record (headless, dark deck)
 node deck-demo.mjs --rehearse            # verify selectors, no recording
 ```
 
-Records **`demo/deck-demo.webm`** (~2 min, 1440×900) plus stills in
+Records **`demo/deck-demo.webm`** (~2.5 min master, 1440×900) plus 25 stills in
 `demo/screenshots/deck/` — 01–06 Overview (stat strip, risk timeline,
-detection volume, findings, quick actions), 07–08 Monitor detonation (live
-toast stream → complete), 09–15 run detail (top, kill chain, process tree,
-network, timeline, notes, rules). The dark command-deck theme is forced via
+detection volume, findings, quick actions), 07–10 Sample vault (stats,
+table, filter, detail), 11–12 Monitor detonation (live toast stream →
+complete), 13–19 run detail (top, kill chain, process tree, network,
+timeline, notes, rules), 20–25 Findings triage (open queue scoped to the
+fresh detonation, select, acknowledge, acknowledged tab, resolve, resolved
+tab — the alert lifecycle). The dark command-deck theme is forced via
 `colorScheme: dark` + a seeded `outpost-theme` localStorage so footage looks
 identical regardless of OS preference. Detonation streams a fresh sample and
-the run detail act follows *that* run, so every recording captures a live
-analysis. No campaign seed needed.
+the run detail + findings acts follow *that* run, so every recording captures
+a live analysis. No campaign seed needed. The Monitor act needs no OS picker
+— the vision: the host OS is auto-detected and the detonation targets it.
 
 ## Options (env vars)
 
@@ -78,3 +82,28 @@ analysis. No campaign seed needed.
 The script deletes any stale watchlist entry for `C2_IP` before step 4, so
 re-runs are idempotent. `demo/screenshots/` is generated output — safe to
 delete or gitignore.
+
+## Tightened cut (recommended for viewing/sharing)
+
+```bash
+.venv/bin/python demo/trim-demo.py          # -> demo/deck-demo-trimmed.webm (~97s)
+.venv/bin/python demo/map-demo-pacing.py    # frame-diff pacing map (static runs + spikes)
+.venv/bin/python demo/make-gif-preview.py   # -> demo/deck-demo-preview.gif (~22s loop)
+.venv/bin/python demo/make-gif-preview.py --hero   # -> demo/deck-demo-hero.gif   (Overview, README)
+.venv/bin/python demo/make-gif-preview.py --hero2  # -> demo/deck-demo-hero2.gif  (Monitor + run detail, README)
+```
+
+`--preset preview|hero|hero2` selects the reel; `--out` overrides the default.
+
+`deck-demo-preview.gif` is a ~22s looping highlights reel (one window per
+act, 480px wide / 10 fps, ffmpeg palette, 1.6 MB) — previews the footage in
+any browser/git host without a video player. Windows live in
+`make-gif-preview.py` (trimmed timeline); re-run after any re-record.
+
+`deck-demo-trimmed.webm` is the tightened edit: **146.7s → 97.4s**. The trim
+cuts the 30s detonation wait down to the live-analysis glimpse + completion,
+removes the mid-pan jump (t=24–25), trims the hold pauses, and runs the cursor
+pans at 1.3× while every screenshot hold stays ~2s at 1× (segment table lives
+in `trim-demo.py`, chosen against the pacing map so no shot moment is lost).
+`deck-demo.webm` is kept as the master footage; re-trim after any re-record.
+Video-only (no audio), so cuts are silent-safe.

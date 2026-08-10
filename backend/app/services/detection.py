@@ -366,6 +366,12 @@ BASELINE_MIN_EVENTS = 100
 # port inside the window is active scanning, not routine use.
 SCAN_WINDOW_SECONDS = 60
 SCAN_DISTINCT_TARGETS = 5
+# Fanning out across many distinct hosts on the WEB ports is browsing, not
+# scanning — a page load hits a dozen CDN edges on 443 in seconds. The
+# network-scan heuristic exempts them; the scan signal lives on non-web
+# ports (22, 445, 3389, uncommon), where one pid hammering many hosts is
+# unambiguous recon (Windows soak FP #1).
+SCAN_EXEMPT_PORTS: tuple[int, ...] = (80, 443)
 
 # Resource Development (T1587.001) — compiling a binary into an attacker-
 # writable location (/tmp, /dev/shm, /var/tmp) rather than the normal install
@@ -829,12 +835,23 @@ def check_scheduled_task(event: dict) -> Optional[Alert]:
     elif event.get("event_type") == "registry_write":
         key = (event.get("registry_key") or "").lower()
         if "schedule\\taskcache" in key:
-            return _make_alert(
-                event["run_id"], "scheduled-task",
-                "Scheduled task created (persistence)",
-                "suspicious", event,
-                f"Write to scheduled-task registry: {event.get('registry_key')}",
-            )
+            # Windows Task Scheduler (svchost.exe) maintains its own TaskCache
+            # continuously — task state updates, trigger bookkeeping, tree
+            # rebuilds — so its writes into that subtree are routine
+            # maintenance, not persistence (Windows soak FP #2). Only a
+            # NON-system process planting a task definition
+            # (TaskCache\Tasks\{guid} / TaskCache\Tree\{name}) is the signal
+            # worth surfacing; a bare root write defines no task.
+            proc = (event.get("process_name") or "").lower()
+            if proc == "svchost.exe":
+                return None
+            if "\\tasks" in key or "\\tree" in key:
+                return _make_alert(
+                    event["run_id"], "scheduled-task",
+                    "Scheduled task created (persistence)",
+                    "suspicious", event,
+                    f"Write to scheduled-task registry: {event.get('registry_key')}",
+                )
     return None
 
 
@@ -1278,6 +1295,18 @@ def check_network_scan(
     targets = [r["dest_ip"] for r in rows]
     if len(targets) < min_targets:
         return None
+    # Web-browsing fan-out exemption (Windows soak FP #1): many distinct
+    # hosts on the web ports (80/443) is normal traffic — a page load fans
+    # out across CDNs — not a sweep. The scan signal lives on non-web ports.
+    if port in SCAN_EXEMPT_PORTS:
+        return None
+    # Reputation-clean exemption: when every distinct target is cached with a
+    # 'clean' reputation the pid reached known-good infrastructure (browsing /
+    # a clean API fan-out), not swept unknown targets. Positive evidence only —
+    # uncached/unknown targets still count toward the threshold, so a sweep of
+    # unknown infra keeps firing.
+    if all(_target_is_clean(conn, ip) for ip in targets):
+        return None
     return Alert(
         run_id=run_id,
         rule_id="network-scan",
@@ -1291,6 +1320,16 @@ def check_network_scan(
             f"within {SCAN_WINDOW_SECONDS}s — active scanning"
         ),
     )
+
+
+def _target_is_clean(conn: sqlite3.Connection, ip: str) -> bool:
+    """True only with positive evidence: the IP is cached with a 'clean'
+    reputation. Uncached / unknown are NOT clean — a scan of unknown targets
+    is still a scan, so the exemption never relies on absence of data."""
+    row = conn.execute(
+        "SELECT reputation FROM enrichment_cache WHERE ip = ?", (ip,)
+    ).fetchone()
+    return row is not None and row["reputation"] == "clean"
 
 
 def check_toolchain_build(event: dict) -> Optional[Alert]:

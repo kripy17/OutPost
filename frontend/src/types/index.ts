@@ -441,6 +441,10 @@ export interface ElfMetadata {
 export interface SampleStatic {
   sample_id: string;
   sha256: string;
+  /** false when the sample's bytes were never stored (pre-persistence
+   *  uploads) — the detail panel renders its re-upload state from this flag
+   *  instead of a 404. */
+  available: boolean;
   size: number;
   strings: string[];
   iocs: StaticIocs;
