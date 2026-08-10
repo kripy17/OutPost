@@ -4,6 +4,7 @@
 from datetime import datetime, timedelta, timezone
 
 from .conftest import make_run
+from ..core.schema import Alert
 from ..services import detection, stix as stix_service
 
 
@@ -311,7 +312,6 @@ def test_webhook_fires_on_malicious_alert(client, monkeypatch):
     client.put("/notifications/settings", json={"webhook_url": "http://hook.test/alert"})
 
     from ..services.notifications import _payload
-    from ..core.schema import Alert
 
     alerts = [
         Alert(
@@ -370,8 +370,6 @@ def _capture_http(monkeypatch):
 
 
 def _mal_alert() -> Alert:
-    from ..core.schema import Alert
-
     return Alert(
         run_id="multi", rule_id="beaconing", rule_name="Beaconing", severity="malicious",
         triggered_at=datetime.now(timezone.utc), details="203.0.113.9:4444 x5",

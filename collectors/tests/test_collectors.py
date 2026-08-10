@@ -18,7 +18,7 @@ sys.path.insert(0, str(_COMMON))
 sys.path.insert(0, str(_LINUX))
 sys.path.insert(0, str(_WINDOWS))
 
-from shipper import Shipper, agent_run_name, claim_active_live_run, resolve_live_run_id  # noqa: E402
+from shipper import Shipper, _default_host_id, agent_run_name, claim_active_live_run, resolve_live_run_id  # noqa: E402
 from collector_linux import _parse_saddr, parse_audit_line  # noqa: E402
 
 
@@ -417,7 +417,10 @@ def test_resolve_claims_webapp_live_session_first(monkeypatch):
 def test_resolve_reuses_todays_open_agent_run(monkeypatch):
     """Precedence 2: crash-restart of the service reuses today's run — the
     daily FP measurement stays one session per host per day."""
-    today = agent_run_name("archlinux")
+    # The run name uses the REAL host id (_default_host_id), not a fixed
+    # value — a hardcoded "archlinux" matched only on the dev box and fell
+    # through to an unpatched POST on CI hosts, failing with a DNS error.
+    today = agent_run_name(_default_host_id())
     calls = {"n": 0}
 
     def fake_get(url, timeout=None):
