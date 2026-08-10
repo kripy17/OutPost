@@ -4,6 +4,7 @@
 #   backend pytest  →  coverage gate (14/14 ATT&CK)  →  collector pytest
 #   →  CLI pytest  →  frontend lint/tests/build  →  collector soak gates
 #   →  doc-count gate (stale numeric references in shipped docs)
+#   →  badge refresh (dry-run; PUBLISH_BADGES=1 also publishes)
 #
 # Prints a colored pass/fail summary per step and exits non-zero if any step
 # fails. Environment overrides:
@@ -205,6 +206,26 @@ step "Doc counts     (stale-reference gate)" \
     [ "$CMDS_CLAIM" = "$CMDS_ACT" ] || { echo "  README claims $CMDS_CLAIM commands, actual $CMDS_ACT" >&2; ok=0; }
     [ "$ok" = 1 ] || exit 1
     echo "  badge=$sum (be=$BE + col=$COL + cli=$CLI + fe=$FE), rules=$RULES_ACT, commands=$CMDS_ACT — badge payloads + README claims match"
+  '
+
+# Badge refresh — recompute the dynamic badge payloads with the shared
+# refresh-badges.sh. Dry-run by default (confirms the script agrees with the
+# measured counts); PUBLISH_BADGES=1 bash verify.sh also commits + pushes them
+# (needs a git checkout with push rights — CI does this automatically after
+# the sweep).
+step "Badge refresh   (refresh-badges.sh)" \
+  env ROOT="$ROOT" PUBLISH="${PUBLISH_BADGES:-0}" bash -c '
+    cd "$ROOT"
+    if [ "$PUBLISH" = "1" ]; then
+      if [ ! -d "$ROOT/.git" ]; then
+        echo "PUBLISH_BADGES=1 needs a git checkout (this tree has no .git) — running dry-run instead" >&2
+        bash scripts/refresh-badges.sh
+      else
+        bash scripts/refresh-badges.sh --commit
+      fi
+    else
+      bash scripts/refresh-badges.sh
+    fi
   '
 
 echo
