@@ -61,6 +61,16 @@ SEVERITY_COLORS = {
 GRADIENT_MAX = max(m["weight"] for m in RULE_META.values())
 
 
+def tactic_coverage() -> tuple[int, int]:
+    """(covered, total) of the canonical Enterprise tactic set, read from the
+    actual Navigator layer output (not from RULE_META directly) — so the badge,
+    the layer, and the Coverage page can never disagree about the story.
+    """
+    layer = build_navigator_layer()
+    covered = {cell["tactic"] for cell in layer["techniques"]} & set(ENTERPRISE_TACTICS_14)
+    return len(covered), len(ENTERPRISE_TACTICS_14)
+
+
 def build_navigator_layer() -> dict[str, Any]:
     """A Navigator v4.3 layer covering every rule in RULE_META."""
     merged: dict[tuple[str, str], dict[str, Any]] = {}

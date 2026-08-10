@@ -200,12 +200,22 @@ step "Doc counts     (stale-reference gate)" \
     RULES_CLAIM=$(grep -oE "\*\*[0-9]+ rules\*\*" "$ROOT/README.md" | grep -oE "[0-9]+")
     CMDS_CLAIM=$(grep -oE "\*\*[0-9]+ commands\*\*" "$ROOT/README.md" | grep -oE "[0-9]+")
 
+    # Tactics — the fourth badge, fed from the Navigator layer output
+    # (tactic_coverage reads the built layer, not RULE_META directly).
+    COV_ACT=$( "$ROOT/.venv/bin/python" -c "from app.services.navigator import tactic_coverage; c, t = tactic_coverage(); print(f\"{c} {t}\")" )
+    COV_C=${COV_ACT% *}
+    COV_T=${COV_ACT#* }
+    COV_BADGE=$(grep -oE "\"message\": *\"[0-9]+/[0-9]+\"" "$ROOT/badges/coverage.json" | grep -oE "[0-9]+/[0-9]+")
+    COV_CLAIM=$(grep -oE "all [0-9]+ MITRE tactics" "$ROOT/README.md" | grep -oE "[0-9]+")
+
     [ "$RULES_BADGE" = "$RULES_ACT" ] || { echo "  badges/rules.json claims $RULES_BADGE, actual $RULES_ACT" >&2; ok=0; }
     [ "$CMDS_BADGE" = "$CMDS_ACT" ] || { echo "  badges/commands.json claims $CMDS_BADGE, actual $CMDS_ACT" >&2; ok=0; }
     [ "$RULES_CLAIM" = "$RULES_ACT" ] || { echo "  README claims $RULES_CLAIM rules, actual $RULES_ACT" >&2; ok=0; }
     [ "$CMDS_CLAIM" = "$CMDS_ACT" ] || { echo "  README claims $CMDS_CLAIM commands, actual $CMDS_ACT" >&2; ok=0; }
+    [ "$COV_BADGE" = "$COV_C/$COV_T" ] || { echo "  badges/coverage.json claims $COV_BADGE, actual $COV_C/$COV_T" >&2; ok=0; }
+    [ "$COV_CLAIM" = "$COV_C" ] || { echo "  README claims all $COV_CLAIM MITRE tactics, actual $COV_C" >&2; ok=0; }
     [ "$ok" = 1 ] || exit 1
-    echo "  badge=$sum (be=$BE + col=$COL + cli=$CLI + fe=$FE), rules=$RULES_ACT, commands=$CMDS_ACT — badge payloads + README claims match"
+    echo "  badge=$sum (be=$BE + col=$COL + cli=$CLI + fe=$FE), rules=$RULES_ACT, tactics=$COV_C/$COV_T, commands=$CMDS_ACT — badge payloads + README claims match"
   '
 
 # Badge refresh — recompute the dynamic badge payloads with the shared
