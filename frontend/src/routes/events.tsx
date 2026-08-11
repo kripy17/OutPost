@@ -120,27 +120,27 @@ function EventFields({ event }: { event: EventFeedEvent }) {
   );
 }
 
-/* A channel rail count. Unlike the main feed query, each rail row fixes its
-   own event_type (or none for "All events") but shares the live non-type
-   filters — severity, platform, source, search, pid, synthetic — so the rail
-   is a noise-meter that moves as you filter, not a static per-type total.
-   React Query dedupes on the key, so parallel rail rows only refetch when a
-   shared filter actually changes. */
-function CategoryCount({
+/* A live count badge, shared by the two rails. Each row fixes exactly ONE
+   facet — event_type for the category rail, source for the provenance/channel
+   source tabs — and shares every other live filter (severity, platform, the
+   other facet, search, pid, synthetic). So both rails are noise-meters that
+   move as you filter, not static per-bucket totals. React Query dedupes on
+   the key, so parallel rows only refetch when a shared filter changes. */
+function CountBadge({
   type,
+  source,
   live,
   severity,
   platform,
-  source,
   q,
   pids,
   includeSynthetic,
 }: {
   type: EventType | "";
+  source: EventSource | "";
   live: boolean;
   severity: Severity | "";
   platform: Platform | "";
-  source: EventSource | "";
   q: string;
   pids: number[];
   includeSynthetic: boolean;
@@ -149,10 +149,10 @@ function CategoryCount({
     queryKey: ["events", "count", type, severity, platform, source, q, pids.join(","), includeSynthetic],
     queryFn: () =>
       getEvents({
-        event_type: type,
+        event_type: type || undefined,
         severity,
         platform,
-        source,
+        source: source || undefined,
         q,
         pid: pids.length ? pids.join(",") : undefined,
         include_synthetic: includeSynthetic || undefined,
@@ -168,6 +168,7 @@ function CategoryCount({
     severity ? `level: ${severity}` : null,
     platform ? `platform: ${platform}` : null,
     source ? `source: ${source}` : null,
+    type ? `type: ${type}` : null,
     q ? `search: “${q}”` : null,
     pids.length ? `pid: ${pids.join(",")}` : null,
   ]
@@ -783,12 +784,12 @@ export default function EventsPage() {
                 >
                   <Icon name={c.icon} size={15} />
                   <span className="flex-1 truncate">{c.label}</span>
-                  <CategoryCount
+                  <CountBadge
                     type={c.type}
+                    source={source}
                     live={live}
                     severity={severity}
                     platform={platform}
-                    source={source}
                     q={submittedQ}
                     pids={submittedPids}
                     includeSynthetic={includeSynthetic}
@@ -939,6 +940,21 @@ export default function EventsPage() {
                 >
                   <Icon name={s.icon} size={11} />
                   {s.label}
+                  {/* Live per-channel count — the source rail is a noise-meter
+                      too: it shares the active category/severity/platform/
+                      search/pid filters, and a specific tab always counts its
+                      full content (a deliberate provenance ask, mirroring the
+                      feed's include-synthetic rule). */}
+                  <CountBadge
+                    type={category}
+                    source={s.v}
+                    live={live}
+                    severity={severity}
+                    platform={platform}
+                    q={submittedQ}
+                    pids={submittedPids}
+                    includeSynthetic={showSynthetic || s.v !== "" || submittedPids.length > 0}
+                  />
                 </button>
               ))}
             </div>
