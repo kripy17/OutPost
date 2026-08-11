@@ -28,6 +28,14 @@ function relativeTime(iso: string): string {
   return `${Math.floor(hrs / 24)}d ago`;
 }
 
+/** Channel mix bar color — same mapping as the Overview panel and CLI chips:
+ *  auditd teal, sysmon amber, any other channel (webapp, custom) muted. */
+function channelTone(channel: string): string {
+  if (channel === "auditd") return "bg-risk-clean";
+  if (channel === "sysmon") return "bg-accent";
+  return "bg-text-faint";
+}
+
 function AgentRow({ agent }: { agent: AgentInfo }) {
   const recent = agent.recent_run_ids ?? [];
   const status: "online" | "offline" | "silent" = agent.silent ? "silent" : agent.online ? "online" : "offline";
@@ -127,6 +135,43 @@ function AgentRow({ agent }: { agent: AgentInfo }) {
               <span className="text-text-faint">{agent.heartbeat_version}</span>
             )}
           </p>
+          {/* Channel mix — per-channel event volume, not just which channels
+              exist: a host that ships mostly auditd reads differently from
+              one that's mostly webapp detonations. Sorted by volume, each
+              entry carries a proportion bar of its share of the host's
+              telemetry. */}
+          {agent.channel_counts && Object.keys(agent.channel_counts).length > 0 && (
+            <div
+              className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1"
+              aria-label={`channel mix: ${Object.entries(agent.channel_counts)
+                .map(([c, n]) => `${c} ${n}`)
+                .join(", ")}`}
+            >
+              <span className="font-mono text-[10px] uppercase tracking-wider text-text-faint">channel mix</span>
+              {(() => {
+                const total = Object.values(agent.channel_counts ?? {}).reduce((a, b) => a + b, 0);
+                return Object.entries(agent.channel_counts)
+                  .sort((a, b) => b[1] - a[1])
+                  .map(([ch, n]) => {
+                  const pct = total > 0 ? Math.round((n / total) * 100) : 0;
+                  return (
+                    <span
+                      key={ch}
+                      className="flex items-center gap-1.5"
+                      title={`${n.toLocaleString()} ${ch} event${n === 1 ? "" : "s"} — ${pct}% of this host's telemetry`}
+                    >
+                      <span className={`h-1.5 w-1.5 rounded-full ${channelTone(ch)}`} aria-hidden />
+                      <span className="font-mono text-[10px] text-text-muted">{ch}</span>
+                      <span className="font-mono text-[10px] tabular-nums text-text-primary">{n.toLocaleString()}</span>
+                      <span className="hidden h-1 w-10 overflow-hidden rounded-full bg-bg-elevated sm:block" aria-hidden>
+                        <span className={`block h-full ${channelTone(ch)}`} style={{ width: `${pct}%` }} />
+                      </span>
+                    </span>
+                  );
+                  });
+                })()}
+            </div>
+          )}
         </div>
 
         <div className="flex shrink-0 flex-wrap items-center gap-2">

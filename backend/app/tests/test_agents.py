@@ -82,6 +82,38 @@ def test_event_only_hosts_are_webapp_identity_with_channels(client):
     assert col["channels"] == ["auditd"]
 
 
+def test_fleet_reports_per_channel_event_volume(client):
+    """channel_counts splits each host's telemetry by channel (auditd vs
+    sysmon vs webapp), so the Agents page shows the MIX — the counts must
+    sum to event_count and the distinct channels must agree with `channels`."""
+    a = make_run(client, sample_name="mix-a.bin", platform="linux")
+    now = datetime.now(timezone.utc)
+    # Distinct timestamps so the ingest dedup (which intentionally ignores
+    # log_source — a retry re-stamps the same channel) keeps all four events.
+    client.post(
+        "/ingest/batch",
+        json=[
+            {**_event(a, "linux", "mix-host", ts=now), "log_source": "auditd"},
+            {**_event(a, "linux", "mix-host", ts=now - timedelta(seconds=1)), "log_source": "auditd"},
+            {**_event(a, "linux", "mix-host", ts=now - timedelta(seconds=2)), "log_source": "sysmon"},
+            {**_event(a, "linux", "mix-host", ts=now - timedelta(seconds=3))},  # no stamp → webapp
+        ],
+    )
+
+    data = client.get("/agents").json()
+    by_host = {ag["host_id"]: ag for ag in data["agents"]}
+    host = by_host["mix-host"]
+    assert host["event_count"] == 4
+    assert host["channels"] == ["auditd", "sysmon", "webapp"]
+    assert host["channel_counts"] == {"auditd": 2, "sysmon": 1, "webapp": 1}
+    assert sum(host["channel_counts"].values()) == host["event_count"]
+
+    # Heartbeat-only hosts (no events yet) report an empty mix, not a missing key.
+    client.post("/agents/mix-hb/heartbeat", json={"platform": "linux", "version": "outpost-collector/1.0"})
+    hb = {ag["host_id"]: ag for ag in client.get("/agents").json()["agents"]}["mix-hb"]
+    assert hb["channel_counts"] == {}
+
+
 # ---------------------------------------------------------------------------
 # Heartbeat liveness
 # ---------------------------------------------------------------------------
