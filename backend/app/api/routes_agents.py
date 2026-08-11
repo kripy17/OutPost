@@ -14,7 +14,7 @@ and its events land here attributed to that host.
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from ..core.db import db_session
 
@@ -30,6 +30,7 @@ SILENT_WINDOW_SECONDS = 600
 @router.post("/agents/{host_id}/heartbeat", response_model=None)
 def post_heartbeat(
     host_id: str,
+    request: Request,
     payload: dict | None = None,
 ) -> dict:
     """Liveness ping from a running collector — upserted per host.
@@ -41,21 +42,30 @@ def post_heartbeat(
     """
     import json as _json
 
+    from ..core import auth as auth_service
     from ..services import fleet_health
 
     payload = payload or {}
     now = datetime.now(timezone.utc).isoformat()
+    # Last-auth context: how THIS heartbeat authenticated — 'agent' (the
+    # shared OUTPOST_AGENT_TOKEN), 'admin'/'analyst' (browser roles), or
+    # 'local' (auth off / no credential). This is what lets the fleet view
+    # tell collector-shipped hosts (authenticated as the agent) apart from
+    # webapp-local traffic.
+    auth_role = auth_service.role_from_request(request)
     with db_session() as conn:
         conn.execute(
             """
-            INSERT INTO agent_heartbeats (host_id, last_heartbeat, platform, version)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO agent_heartbeats (host_id, last_heartbeat, platform, version, last_auth_role, last_auth_at)
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(host_id) DO UPDATE SET
                 last_heartbeat = excluded.last_heartbeat,
                 platform = COALESCE(excluded.platform, agent_heartbeats.platform),
-                version = COALESCE(excluded.version, agent_heartbeats.version)
+                version = COALESCE(excluded.version, agent_heartbeats.version),
+                last_auth_role = excluded.last_auth_role,
+                last_auth_at = excluded.last_auth_at
             """,
-            (host_id, now, payload.get("platform"), payload.get("version")),
+            (host_id, now, payload.get("platform"), payload.get("version"), auth_role, now),
         )
         # The host is alive again — a silent episode (if any) is over; the
         # next silence pages fresh.
@@ -171,6 +181,7 @@ def list_agents(
                    COUNT(*)                                          AS event_count,
                    COUNT(DISTINCT e.run_id)                          AS run_count,
                    GROUP_CONCAT(DISTINCT e.platform)                 AS platforms,
+                   GROUP_CONCAT(DISTINCT COALESCE(e.log_source, 'webapp')) AS channels,
                    (SELECT COUNT(*) FROM alerts a
                     JOIN runs r ON r.run_id = a.run_id
                     WHERE r.run_id IN (SELECT DISTINCT run_id FROM events WHERE host_id = e.host_id))
@@ -192,7 +203,8 @@ def list_agents(
         hb_rows = {
             r["host_id"]: r
             for r in conn.execute(
-                "SELECT host_id, last_heartbeat, platform, version FROM agent_heartbeats"
+                "SELECT host_id, last_heartbeat, platform, version, last_auth_role, last_auth_at "
+                "FROM agent_heartbeats"
             ).fetchall()
         }
 
@@ -226,6 +238,15 @@ def list_agents(
                 "last_heartbeat": hb["last_heartbeat"] if hb else None,
                 "heartbeat_age_seconds": hb_age,
                 "heartbeat_version": hb["version"] if hb else None,
+                # Last-auth context + identity: only real collectors heartbeat
+                # (with version=outpost-collector/1.0), so a heartbeat marks a
+                # collector-shipped host; event-only hosts (webapp detonations,
+                # sandbox runs) read as 'webapp'. Channels come from the events'
+                # own log_source stamp (auditd / sysmon / webapp).
+                "last_auth_role": hb["last_auth_role"] if hb else None,
+                "last_auth_at": hb["last_auth_at"] if hb else None,
+                "identity": "collector" if hb else "webapp",
+                "channels": sorted({c for c in (r["channels"] or "").split(",") if c}),
                 "event_count": r["event_count"],
                 "run_count": r["run_count"],
                 "alert_count": r["alert_count"],
@@ -257,6 +278,10 @@ def list_agents(
                 "last_heartbeat": hb["last_heartbeat"] if hb else None,
                 "heartbeat_age_seconds": hb_age,
                 "heartbeat_version": hb["version"] if hb else None,
+                "last_auth_role": hb["last_auth_role"] if hb else None,
+                "last_auth_at": hb["last_auth_at"] if hb else None,
+                "identity": "collector" if hb else "webapp",
+                "channels": [],
                 "event_count": 0,
                 "run_count": 0,
                 "alert_count": 0,

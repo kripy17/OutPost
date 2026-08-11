@@ -150,7 +150,12 @@ CREATE TABLE IF NOT EXISTS agent_heartbeats (
     host_id TEXT PRIMARY KEY,
     last_heartbeat TEXT NOT NULL,
     platform TEXT,
-    version TEXT
+    version TEXT,
+    -- Last-auth context: how the host's traffic authenticated at its most
+    -- recent heartbeat ('agent' = OUTPOST_AGENT_TOKEN, 'admin'/'analyst' =
+    -- browser roles, 'local' = auth off / no credential) and when.
+    last_auth_role TEXT,
+    last_auth_at TEXT
 );
 
 -- Per-host behavioral baseline (roadmap 4.x): what binaries execute and which
@@ -335,6 +340,18 @@ def _migrate_runs_source(conn: sqlite3.Connection) -> None:
         conn.commit()
 
 
+def _migrate_agent_heartbeats_auth(conn: sqlite3.Connection) -> None:
+    """Idempotent: add the last-auth context columns (last_auth_role /
+    last_auth_at) to DBs created before the fleet-auth pass. Fresh DBs get
+    them from SCHEMA."""
+    cols = _column_names(conn, "agent_heartbeats")
+    if "last_auth_role" not in cols:
+        conn.execute("ALTER TABLE agent_heartbeats ADD COLUMN last_auth_role TEXT")
+    if "last_auth_at" not in cols:
+        conn.execute("ALTER TABLE agent_heartbeats ADD COLUMN last_auth_at TEXT")
+    conn.commit()
+
+
 def _migrate_events_host_id(conn: sqlite3.Connection) -> None:
     """Idempotent: add the `host_id` fleet column (which agent a host event
     came from) to pre-existing DBs. Fresh DBs get it from SCHEMA; older
@@ -473,6 +490,7 @@ def init_db() -> None:
         _migrate_alerts_related_pids(conn)
         _migrate_alerts_triage(conn)
         _migrate_alerts_assignee(conn)
+        _migrate_agent_heartbeats_auth(conn)
         _migrate_samples_platform_unknown(conn)
         _migrate_runs_platform_macos(conn)
         _migrate_runs_source(conn)

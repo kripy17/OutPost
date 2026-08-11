@@ -546,6 +546,17 @@ export interface AgentInfo {
   last_heartbeat?: string | null;
   heartbeat_age_seconds?: number | null;
   heartbeat_version?: string | null;
+  /** How the host authenticated at its last heartbeat: 'agent' (the shared
+   * OUTPOST_AGENT_TOKEN), 'admin'/'analyst' (browser roles), or 'local'
+   * (auth off / no credential). Null when the host never heartbeated. */
+  last_auth_role?: string | null;
+  /** When the host last authenticated (heartbeat). */
+  last_auth_at?: string | null;
+  /** 'collector' = real agent heartbeat (collector-shipped host),
+   * 'webapp' = event-only host (local detonations / sandbox runs). */
+  identity?: "collector" | "webapp";
+  /** Distinct event channels shipped by the host (auditd / sysmon / webapp). */
+  channels?: string[];
   event_count: number;
   run_count: number;
   alert_count: number;

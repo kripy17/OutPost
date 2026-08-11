@@ -150,6 +150,36 @@ def test_agent_token_ships_telemetry_but_stays_scoped(auth_env, monkeypatch):
         importlib.reload(auth_mod)
 
 
+def test_heartbeat_records_auth_role(auth_env, monkeypatch):
+    """The fleet's last-auth context: a heartbeat presented with the shared
+    agent token records role 'agent'; a browser-role token records that role —
+    so the Agents page can tell collector-shipped hosts from local traffic."""
+    from ..core import auth as auth_mod
+
+    monkeypatch.setenv("OUTPOST_AGENT_TOKEN", "agent-secret")
+    importlib.reload(auth_mod)
+    try:
+        c = _client()
+        agent_h = {"Authorization": "Bearer agent-secret"}
+        assert c.post("/agents/auth-host-a/heartbeat", json={"platform": "linux"}, headers=agent_h).status_code == 200
+
+        admin = c.post("/auth/login", json={"password": "admin-secret"}).json()["token"]
+        assert c.post("/agents/auth-host-b/heartbeat", json={"platform": "windows"}, headers={"Authorization": f"Bearer {admin}"}).status_code == 200
+
+        data = c.get("/agents", headers={"Authorization": f"Bearer {admin}"}).json()
+        by_host = {a["host_id"]: a for a in data["agents"]}
+        assert by_host["auth-host-a"]["last_auth_role"] == "agent"
+        assert by_host["auth-host-a"]["identity"] == "collector"
+        assert by_host["auth-host-b"]["last_auth_role"] == "admin"
+    finally:
+        from ..core.db import db_session
+
+        with db_session() as conn:
+            conn.execute("DELETE FROM agent_heartbeats WHERE host_id LIKE 'auth-host-%'")
+        monkeypatch.delenv("OUTPOST_AGENT_TOKEN", raising=False)
+        importlib.reload(auth_mod)
+
+
 def test_agent_token_without_admin_still_scoped(monkeypatch):
     """Agent token configured but NO role passwords: auth is enabled (agent
     token implies enforcement) and only the telemetry surface opens."""

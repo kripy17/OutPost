@@ -57,6 +57,31 @@ def test_fleet_groups_hosts_with_counts_and_online_flag(client):
     assert beta["platforms"] == ["windows"]
 
 
+def test_event_only_hosts_are_webapp_identity_with_channels(client):
+    """Hosts with events but no heartbeat (webapp detonations / sandbox
+    runs) read identity=webapp, channels=['webapp']; a collector-stamped
+    channel (auditd) surfaces in channels."""
+    a = make_run(client, sample_name="chan-a.bin", platform="linux")
+    client.post("/ingest/batch", json=[_event(a, "linux", "web-only", ts=datetime.now(timezone.utc))])
+    client.post(
+        "/ingest/batch",
+        json=[{**_event(a, "linux", "collector-host", ts=datetime.now(timezone.utc)), "log_source": "auditd"}],
+    )
+
+    data = client.get("/agents").json()
+    by_host = {ag["host_id"]: ag for ag in data["agents"]}
+
+    web = by_host["web-only"]
+    assert web["identity"] == "webapp"
+    assert web["last_auth_role"] is None
+    assert web["last_auth_at"] is None
+    assert web["channels"] == ["webapp"]
+
+    col = by_host["collector-host"]
+    assert col["identity"] == "webapp"  # events alone don't prove a collector
+    assert col["channels"] == ["auditd"]
+
+
 # ---------------------------------------------------------------------------
 # Heartbeat liveness
 # ---------------------------------------------------------------------------
@@ -81,6 +106,14 @@ def test_heartbeat_marks_host_online_and_reports_age(client):
     assert alpha["heartbeat_age_seconds"] is not None and alpha["heartbeat_age_seconds"] < 60
     assert alpha["heartbeat_version"] == "outpost-collector/1.0"
     assert alpha["event_count"] == 0  # online on heartbeat alone
+
+    # Last-auth context: with auth off (zero-config default) the heartbeat
+    # carries no credential — role 'local'; identity is collector because a
+    # heartbeat only ever comes from the real shipper.
+    assert alpha["identity"] == "collector"
+    assert alpha["last_auth_role"] == "local"
+    assert alpha["last_auth_at"] is not None
+    assert alpha["channels"] == []
     # This host is not silent — the fleet-wide silent count may be > 0 from
     # other tests' backdated hosts (shared session DB).
 
