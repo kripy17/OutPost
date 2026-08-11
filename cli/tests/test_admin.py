@@ -1,7 +1,6 @@
-"""`outpost admin backfill-channels` — on-demand channel backfill: admin
-login → POST /admin/backfill-channels, the healthy idempotent no-op output
-when there is nothing left to stamp, and the failure path when the admin
-login is refused."""
+"""`outpost admin` — on-demand channel backfill (login → POST, healthy
+idempotent no-op, bad-login failure, auth-off degradation) and the Tier 4
+Postgres migration command (subprocess wiring to the shared exporter)."""
 
 from typer.testing import CliRunner
 
@@ -91,6 +90,47 @@ def test_backfill_channels_fails_on_bad_login(monkeypatch):
     )
     assert result.exit_code == 2
     assert "Backfill failed" in result.output
+
+
+def test_pg_migrate_runs_the_exporter_subprocess(monkeypatch, tmp_path):
+    """The command shells out to scripts/migrate_to_postgres.py with the
+    same interpreter, forwarding --sqlite/--out/--import/--verify."""
+    import subprocess as sp
+    import outpost.commands.admin as admin_mod
+
+    fake_script = tmp_path / "migrate_to_postgres.py"
+    fake_script.write_text("#!/usr/bin/env python3\nimport sys; sys.exit(0)\n")
+    monkeypatch.setattr(admin_mod, "_MIGRATE_SCRIPT", fake_script)
+    captured: list[list[str]] = []
+
+    def fake_run(cmd):
+        captured.append(cmd)
+        return sp.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(admin_mod.subprocess, "run", fake_run)
+
+    result = runner.invoke(
+        app,
+        ["admin", "pg-migrate", "--sqlite", "/tmp/x.db", "--out", "/tmp/out", "--import", "--verify", "--psql-url", "postgres://u:p@h/db"],
+    )
+    assert result.exit_code == 0, result.output
+    assert len(captured) == 1
+    cmd = captured[0]
+    assert str(fake_script) in cmd
+    # The exporter is driven by the same interpreter that runs the CLI.
+    import sys
+    assert cmd[0] == sys.executable
+    for flag in ("--sqlite", "/tmp/x.db", "--out", "/tmp/out", "--import", "--verify", "--psql-url", "postgres://u:p@h/db"):
+        assert flag in cmd
+
+
+def test_pg_migrate_fails_loudly_when_script_missing(monkeypatch, tmp_path):
+    import outpost.commands.admin as admin_mod
+
+    monkeypatch.setattr(admin_mod, "_MIGRATE_SCRIPT", tmp_path / "nope.py")
+    result = runner.invoke(app, ["admin", "pg-migrate"])
+    assert result.exit_code == 2
+    assert "not found" in result.output
 
 
 def test_backfill_channels_works_with_auth_off(monkeypatch):
