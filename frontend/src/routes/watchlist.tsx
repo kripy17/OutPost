@@ -3,6 +3,7 @@ import { useRef, useState } from "react";
 import { Icon } from "../components/Icon";
 import { PageHeader } from "../components/ui";
 import { watchlistAdd, watchlistExport, watchlistImport, watchlistList, watchlistRemove } from "../lib/api";
+import { parseImport, typeOf } from "./watchlistHelpers";
 
 function download(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob);
@@ -11,16 +12,6 @@ function download(blob: Blob, name: string) {
   a.download = name;
   a.click();
   URL.revokeObjectURL(url);
-}
-
-/** Best-effort entry type — IP, hash, domain, or other. */
-const IPV4 = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
-
-function typeOf(value: string): { label: string; cls: string } {
-  if (IPV4.test(value)) return { label: "IP", cls: "border-signal/40 text-signal" };
-  if (/^[a-f0-9]{32,64}$/i.test(value)) return { label: "Hash", cls: "border-accent/40 text-accent" };
-  if (/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(value)) return { label: "Domain", cls: "border-risk-suspicious/40 text-risk-suspicious" };
-  return { label: "Other", cls: "border-border-subtle text-text-muted" };
 }
 
 export default function WatchlistPage() {
@@ -61,17 +52,8 @@ export default function WatchlistPage() {
     try {
       const text = await file.text();
       const isCsv = file.name.toLowerCase().endsWith(".csv");
-      const parsed: { value: string; label?: string }[] = isCsv
-        ? text
-            .split(/\r?\n/)
-            .map((l) => l.trim())
-            .filter(Boolean)
-            .map((l) => {
-              const [v, ...rest] = l.split(",");
-              return { value: v.trim(), label: rest.join(",").trim() };
-            })
-        : (JSON.parse(text).entries as { value: string; label?: string }[]) ?? [];
-      const res = await watchlistImport(parsed.filter((p) => p.value));
+      const parsed = parseImport(text, isCsv);
+      const res = await watchlistImport(parsed);
       setImportMsg(`Imported ${res.imported} entr${res.imported === 1 ? "y" : "ies"} from ${file.name}.`);
       await refetch();
     } catch {
