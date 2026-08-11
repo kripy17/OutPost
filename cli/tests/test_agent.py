@@ -109,6 +109,65 @@ def test_agent_status_reports_installed(tmp_path, monkeypatch):
     assert "installed" in result.output
 
 
+def test_agent_status_shows_fleet_auth_context(tmp_path, monkeypatch):
+    """`outpost agent status` must mirror the webapp's Agents page: the
+    backend's identity + last-auth role + channels for THIS host."""
+    import socket
+
+    import outpost.commands.agent as agent_mod
+    from outpost.lib import api_client
+
+    monkeypatch.setenv("OUTPOST_HOME", str(tmp_path))
+    monkeypatch.setenv("OUTPOST_HOST_ID", "clitesthost")  # pin the host label
+    monkeypatch.setattr(agent_mod, "_is_collector_running", lambda: False)
+
+    fleet = {
+        "total": 1,
+        "online": 1,
+        "silent": 0,
+        "agents": [
+            {
+                "host_id": "clitesthost",
+                "identity": "collector",
+                "online": True,
+                "silent": False,
+                "heartbeat_version": "outpost-collector/1.0",
+                "last_auth_role": "agent",
+                "channels": ["auditd"],
+                "event_count": 42,
+                "alert_count": 3,
+                "run_count": 2,
+            }
+        ],
+    }
+    monkeypatch.setattr(api_client, "get_agents", lambda identity="": fleet)
+
+    result = runner.invoke(app, ["agent", "status"])
+    assert result.exit_code == 0
+    assert "Fleet identity: collector" in result.output
+    assert "online" in result.output
+    assert "auth: agent" in result.output
+    assert "OUTPOST_AGENT_TOKEN" in result.output
+    assert "auditd" in result.output
+    assert "outpost-collector/1.0" in result.output
+
+
+def test_agent_status_fleet_missing_host(tmp_path, monkeypatch):
+    """A host the backend has never seen gets an honest "no row yet" line
+    (local checks still print), not a crash."""
+    import outpost.commands.agent as agent_mod
+    from outpost.lib import api_client
+
+    monkeypatch.setenv("OUTPOST_HOME", str(tmp_path))
+    monkeypatch.setenv("OUTPOST_HOST_ID", "brand-new-host")
+    monkeypatch.setattr(agent_mod, "_is_collector_running", lambda: False)
+    monkeypatch.setattr(api_client, "get_agents", lambda identity="": {"total": 0, "agents": []})
+
+    result = runner.invoke(app, ["agent", "status"])
+    assert result.exit_code == 0
+    assert "no row on the backend yet" in result.output
+
+
 def test_agent_install_never_elevates(tmp_path, monkeypatch):
     """The install command must not itself run sudo / schtasks — it only
     prints the enable command. Guard against a future regression that calls

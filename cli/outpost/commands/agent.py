@@ -192,10 +192,10 @@ nssm set OutPostAgent AppEnvironmentExtra SNAPSHOT_INTERVAL=3600 OUTPOST_API_URL
 nssm start OutPostAgent
 
 REM 2) Daily fired-rule summary via scheduled task (06:00, SYSTEM account).
-schtasks /Create /F /TN "OutPostAgentSummary" /SC DAILY /ST 06:00 /RU SYSTEM /TR "\"%DIR%\outpost-agent-summary.bat\""
+schtasks /Create /F /TN "OutPostAgentSummary" /SC DAILY /ST 06:00 /RU SYSTEM /TR "\"%DIR%\\outpost-agent-summary.bat\""
 
 REM No-nssm fallback — ONSTART task instead of step 1:
-REM schtasks /Create /F /TN "OutPostCollector" /SC ONSTART /RU SYSTEM /TR "\"%DIR%\outpost-agent.bat\""
+REM schtasks /Create /F /TN "OutPostCollector" /SC ONSTART /RU SYSTEM /TR "\"%DIR%\\outpost-agent.bat\""
 """
 
 
@@ -432,7 +432,14 @@ def _is_collector_running() -> bool:
 
 @app.command()
 def status():
-    """Is the host agent installed, and is it streaming right now?"""
+    """Is the host agent installed, is it streaming right now, and how does
+    the backend see it? The fleet readout mirrors the webapp's Agents page —
+    identity (collector vs webapp), last-auth role, and channels — so
+    terminal parity holds for the host identity story."""
+    import socket
+
+    from ..lib import api_client
+
     platform_name = monitor.detect_platform()
     cfg = _config_dir()
     # New name is outpost-agent.service; the old outpost-collector.service is
@@ -454,4 +461,49 @@ def status():
         console.print("[green]Collector process:[/green] running — telemetry is streaming")
     else:
         console.print("[yellow]Collector process:[/yellow] not running — run `outpost agent run`")
+
+    # Fleet-side view of THIS host — the backend's attribution for the local
+    # machine. Host-id convention matches the collector's shipper (hostname
+    # lowercased, OUTPOST_HOST_ID override) so the local agent's row is found.
+    host_id = os.getenv("OUTPOST_HOST_ID", "").strip().lower() or socket.gethostname().lower()
+    try:
+        fleet = api_client.get_agents()
+        me = next((a for a in fleet.get("agents", []) if a.get("host_id") == host_id), None)
+    except Exception as exc:  # dead backend / auth — honest "can't tell"
+        console.print(f"[dim]Fleet:[/dim] backend unreachable ({type(exc).__name__}) — local checks only")
+        return None
+
+    if me is None:
+        console.print(
+            "[dim]Fleet:[/dim] this host has no row on the backend yet — "
+            "start the collector (`outpost agent run`) and it will appear on the Agents page"
+        )
+        return None
+
+    identity = me.get("identity")
+    role = me.get("last_auth_role")
+    auth_txt = {
+        "agent": "via the shared OUTPOST_AGENT_TOKEN",
+        "local": "without a credential (auth off / open mode)",
+        None: "never authenticated",
+    }.get(role, f"as the {role} role")
+    state = (
+        "[red]silent — heartbeat lost[/red]"
+        if me.get("silent")
+        else "[green]online[/green]"
+        if me.get("online")
+        else "[yellow]idle[/yellow]"
+    )
+    console.print(
+        f"[bold]Fleet identity:[/bold] {identity} ({state})"
+        f"  ·  auth: {role or 'none'} — {auth_txt}"
+    )
+    if identity == "collector":
+        ver = me.get("heartbeat_version") or "?"
+        channels = ", ".join(me.get("channels") or []) or "—"
+        console.print(
+            f"[dim]  agent {ver} · channels: {channels}"
+            f" · events: {me.get('event_count', 0)} · alerts: {me.get('alert_count', 0)}"
+            f" · runs: {me.get('run_count', 0)}[/dim]"
+        )
     return None
