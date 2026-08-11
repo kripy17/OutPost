@@ -54,6 +54,14 @@ jobs:
           npm ci
           npx playwright install chromium
 
+      - name: Fast-fail on stale badges (cheap collect-only gate)
+        # Front-loads the badge/README claim check: a stale payload fails the
+        # push in ~1 minute instead of after the full 3.5-min sweep. --check
+        # is collect-only (pytest --collect-only + vitest list) — seconds,
+        # not a test run. verify.sh re-checks it later inside its own
+        # doc-count step, so nothing is skipped, just failed earlier.
+        run: bash scripts/refresh-badges.sh --check
+
       - name: Run the full verification sweep
         run: bash verify.sh
 
