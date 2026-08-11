@@ -85,6 +85,7 @@ def parse_audit_line(line: str, pid_cache: dict) -> dict | None:
             comm = a0.group(1) if a0 else None
         return {
             "platform": "linux",
+            "log_source": "auditd",  # the collector's own channel — explicit
             "event_type": "process_create",
             "timestamp": _ts(ts),
             "pid": pid,
@@ -99,6 +100,7 @@ def parse_audit_line(line: str, pid_cache: dict) -> dict | None:
         ip, port = _parse_saddr(body)
         return {
             "platform": "linux",
+            "log_source": "auditd",  # the collector's own channel — explicit
             "event_type": "network_connection",
             "timestamp": _ts(ts),
             "pid": pid,

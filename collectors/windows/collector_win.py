@@ -60,6 +60,7 @@ def parse_sysmon_event(record) -> dict | None:
     ts = datetime.datetime.fromtimestamp(record.TimeGenerated.timestamp(), datetime.timezone.utc).isoformat()
     ev = {
         "platform": "windows",
+        "log_source": "sysmon",  # the collector's own channel — explicit
         "event_type": EVENT_TYPE_MAP[event_id],
         "timestamp": ts,
         "pid": _int(data.get("ProcessId")),

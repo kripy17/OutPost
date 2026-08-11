@@ -137,7 +137,7 @@ def start_proxy(backend_port: int, cert: Path, key: Path) -> tuple[http.server.T
     return server, proxy_port
 
 
-def _walk_real_collector(base: str, admin: str, audit_log: Path, collector_log: Path) -> None:
+def _walk_real_collector(base: str, admin: str, audit_log: Path, collector_log: Path, db_path: Path) -> None:
     """Section 5 — drive the real Linux collector in live mode."""
     admin_h = {"Authorization": f"Bearer {admin}"}
 
@@ -197,6 +197,33 @@ def _walk_real_collector(base: str, admin: str, audit_log: Path, collector_log: 
         "5 · events attributed to host + auditd channel",
         all(e.get("host_id") == "walk-collector" and e.get("log_source") == "auditd" for e in events),
         f"hosts={sorted({e.get('host_id') for e in events})} channels={sorted({e.get('log_source') for e in events})}",
+    )
+
+    # GATE — no unstamped collector event may survive the walk. Every event a
+    # collector ships must carry its channel (auditd/sysmon): the Event Log's
+    # source tabs, the fleet channel mix, and the CLI status all depend on it.
+    # The shipped events prove stamping on the happy path; this scans the
+    # whole walk DB for the violation (live-run event + real host + NULL
+    # log_source) and fails the gate if any exist.
+    import sqlite3
+
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        try:
+            unstamped = conn.execute(
+                "SELECT COUNT(*) FROM events e "
+                "JOIN runs r ON r.run_id = e.run_id "
+                "WHERE r.source = 'live' AND e.host_id != 'local' AND e.log_source IS NULL"
+            ).fetchone()[0]
+        finally:
+            conn.close()
+    except sqlite3.Error as exc:
+        check("5 · gate: no unstamped collector event survives", False, f"db read failed: {exc}")
+        unstamped = -1
+    check(
+        "5 · gate: no unstamped collector event survives",
+        unstamped == 0,
+        f"unstamped={unstamped}",
     )
 
     # The heartbeat (2s interval) makes the collector host read online — and
@@ -358,7 +385,7 @@ def main() -> int:
             stderr=subprocess.STDOUT,
         )
         try:
-            _walk_real_collector(base, admin, audit_log, collector_log)
+            _walk_real_collector(base, admin, audit_log, collector_log, tmp / "walk.db")
         finally:
             collector.terminate()
             try:
