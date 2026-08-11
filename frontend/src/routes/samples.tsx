@@ -6,6 +6,7 @@ import { platformIconName } from "../components/iconMeta";
 import { Chip, PageHeader, Panel, Stat } from "../components/ui";
 import { exportSamplesCsv, getSamples, saveBlob } from "../lib/api";
 import type { SampleRow } from "../types";
+import { formatBytes } from "./samplesHelpers";
 
 const PLATFORM_META: Record<SampleRow["detected_platform"], { label: string; tone: "accent" | "clean" | "suspicious" | "muted" }> = {
   windows: { label: "win", tone: "accent" },
@@ -13,12 +14,6 @@ const PLATFORM_META: Record<SampleRow["detected_platform"], { label: string; ton
   macos: { label: "mac", tone: "suspicious" },
   unknown: { label: "?", tone: "muted" },
 };
-
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-}
 
 function SampleTile({ s }: { s: SampleRow }) {
   const plat = PLATFORM_META[s.detected_platform];

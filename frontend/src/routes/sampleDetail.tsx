@@ -6,12 +6,7 @@ import { platformIconName } from "../components/iconMeta";
 import { Chip, PageHeader, Panel } from "../components/ui";
 import { downloadSample, getRuns, getSample, getSampleStatic, getSandboxProviders, getSandboxTask, sandboxDetonate, watchlistAdd } from "../lib/api";
 import type { Platform, RunSummary, SampleStatic, SandboxTask } from "../types";
-
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-}
+import { formatBytes } from "./samplesHelpers";
 
 /* ── Static analysis (strings / IOCs / PE / ELF) ─────────────────────────── */
 

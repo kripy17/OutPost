@@ -11,57 +11,8 @@ import ExportButton from "../components/ExportButton/ExportButton";
 import { Icon } from "../components/Icon";
 import { getNavigatorLayer, getRuleMeta } from "../lib/api";
 import { PageHeader, Panel } from "../components/ui";
+import { buildCoverage, severityTone, TACTICS, TACTIC_BLURB } from "./coverageHelpers";
 import type { RuleMeta } from "../types";
-
-// The full MITRE ATT&CK (v15) Enterprise tactic order — all 14 canonical
-// tactics. `covered` tactics are derived at render time; the list itself is
-// static so the matrix always shows the complete picture, including the gaps.
-// The verify.sh coverage gate enforces that every one of these has at least
-// one rule, so the page and CI tell the same story.
-const TACTICS = [
-  "Reconnaissance",
-  "Resource Development",
-  "Initial Access",
-  "Execution",
-  "Persistence",
-  "Privilege Escalation",
-  "Defense Evasion",
-  "Credential Access",
-  "Discovery",
-  "Lateral Movement",
-  "Collection",
-  "Command and Control",
-  "Exfiltration",
-  "Impact",
-] as const;
-
-// Tactic → one-line what-it-means, shown under the header of a gap column so
-// a missing tactic reads as "here's what we can't see yet", not just a hole.
-const TACTIC_BLURB: Record<string, string> = {
-  Reconnaissance: "Learning about targets first — active scanning, port sweeps, host discovery.",
-  "Resource Development": "Building the attack kit — compiling tools, acquiring payloads before the intrusion.",
-  "Initial Access": "How an attacker gets in — phishing lures, exploit kits, exposed services.",
-  Execution: "Running code — script hosts, LOLBins, inline interpreters.",
-  Persistence: "Staying loaded across reboot — Run keys, cron, autostart, tasks.",
-  "Privilege Escalation": "Gaining higher rights — SUID, token tricks, service abuse.",
-  "Defense Evasion": "Hiding — masquerading, wiping logs, anti-forensics.",
-  "Credential Access": "Stealing secrets — LSASS dumps, hives, key material.",
-  Discovery: "Learning the environment — enumeration of users, shares, domains.",
-  "Lateral Movement": "Moving host-to-host — remote execution, RDP, SMB tricks.",
-  Collection: "Gathering data to steal — staging, clipboard, archives.",
-  "Command and Control": "Talking to the operator — beacons, unusual ports.",
-  Exfiltration: "Getting data out — archive-and-upload, DNS tunneling.",
-  Impact: "Damage — ransomware bursts, destruction, encryption.",
-};
-
-// Chip tone from the rule's *actual* fired severity (backend RULE_META), not
-// a weight proxy — lolbin-abuse (weight 14) is malicious, suid-set (weight 18)
-// is suspicious, and only severity tells them apart.
-function severityTone(severity: string): string {
-  return severity === "malicious"
-    ? "border-risk-malicious/30 text-risk-malicious"
-    : "border-risk-suspicious/30 text-risk-suspicious";
-}
 
 // The coverage matrix as an official MITRE Navigator layer — downloads the
 // same JSON the Navigator's "Upload a layer" dialog accepts.
@@ -150,21 +101,9 @@ export default function CoveragePage() {
     }
   }, [gapsOnly]);
 
-  // Bucket rules by tactic, preserving the canonical order.
-  const byTactic = new Map<string, RuleMeta[]>();
-  for (const rule of data) {
-    const t = rule.tactic;
-    if (!byTactic.has(t)) byTactic.set(t, []);
-    byTactic.get(t)!.push(rule);
-  }
-  const covered = TACTICS.filter((t) => byTactic.has(t));
-  const gaps = TACTICS.filter((t) => !byTactic.has(t));
-  // Rules whose tactic isn't in the canonical list (future stage, renamed
-  // tactic, backend typo) must never vanish — the matrix renders them in a
-  // catch-all column instead of silently dropping them (the "N rules" stat
-  // counts them, so an invisible rule would contradict the header).
-  const unknownTactics = [...byTactic.keys()].filter((t) => !(TACTICS as readonly string[]).includes(t));
-  const techniques = new Set(data.map((r) => r.technique)).size;
+  // Bucket rules by tactic, preserving the canonical order — pure derivation
+  // (coverageHelpers) so the gap-detection contract is unit-testable.
+  const { byTactic, covered, gaps, unknownTactics, techniqueCount: techniques } = buildCoverage(data);
 
   return (
     <div className="mx-auto max-w-7xl px-6 py-10">
