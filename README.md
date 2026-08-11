@@ -66,7 +66,8 @@ host-status panel answers "is THIS host monitored?" against the live fleet.
 | 🎯 **Risk scoring + ATT&CK** | 0–100 risk per run, severity bands, every rule mapped to a kill-chain stage, MITRE Navigator layer export, coverage matrix with gaps highlighted |
 | 🗂️ **Campaign clustering** | Runs sharing IOCs auto-grouped into campaign cards — combined timeline, shared IOC evidence, signature C2, campaign-level STIX bundles |
 | 💾 **Sample vault** | Upload binaries; magic-sniffing detects PE/ELF/Mach-O, **script shebangs**, and **.lnk/.zip/Office archives**; YARA signature lab + VirusTotal reputation |
-| 🔎 **Footprint + intel** | Passive DNS / CT certificates / RDAP per sample (crt.sh, real when online, synthetic fallback), enrichment cache with force-refresh and stale sweeps |
+| 🔎 **Footprint + intel** | Passive DNS / CT certificates / RDAP per sample (crt.sh, real when online, synthetic fallback), enrichment cache with force-refresh and stale sweeps, JSON/CSV footprint export |
+| 🚀 **Sandbox detonation** | Push vault samples to Any.Run / Hatching Triage / Joe Sandbox and stream the report through the real detection pipeline — `scripts/validate_sandbox_provider.py` runs the live end-to-end gate when a provider key is configured |
 | 📡 **SSE live push** | Fired alerts broadcast over `/events/stream` — StatusBar pulse, Monitor toasts, sparklines update instantly |
 | 🖇️ **Correlation & triage** | IOC extraction/export, cross-run search, run comparison, watchlist (with live webhook/desktop alerts), alert triage lifecycle (open/ack/resolved + allowlists + suppressions), STIX 2.1 + JSON + PDF export |
 | 🧪 **Real-collector live mode** | `outpost agent run/install` — auditd/Sysmon telemetry streams into live sessions; heartbeat fleet with last-seen/uptime and silent-host flags |
@@ -246,7 +247,14 @@ One command runs the whole sweep:
 | Backend pytest | **431** | ingestion, OS-aware rules (win/linux/macOS), risk + ATT&CK, campaigns, events search + channel-counts + log_source backfill, samples vault, SSE broadcast, notes, storm caps, triage, footprint, YARA, auth (fail-closed OUTPOST_AUTH_REQUIRED + agent token + rotation), fleet auth context + per-channel volume |
 | Collector pytest | **24** | Sysmon + auditd shipping, normalization, agent-token auth |
 | CLI pytest | **64** | rendering regressions, campaigns output, risk columns, YARA + footprint mirrors + exports, rules knobs, agent install (token embed + Windows bats), module entry, rotate-agent-token, fleet auth context in status, admin backfill-channels |
-| Frontend | clean `tsc --noEmit` + Vite build + unit tests | — |
+| Frontend | **94** | vitest unit tests (page-contract suites for the coverage matrix, footprint topology, campaign sorts, sample vault, chart + triage components) + clean `tsc --noEmit` + Vite build |
+
+Beyond the suites: the 14/14 ATT&CK coverage gate, both collector FP-baseline
+soaks, the **sandbox provider gate** (`scripts/validate_sandbox_provider.py` —
+runs a real Any.Run/Triage/Joe detonation end to end when a key is set,
+SKIPs cleanly without one), the Playwright layout sweep, the post-deploy walk
+(fail-closed auth + TLS + channel gate), and the doc-count gate all run as
+steps of the same sweep.
 
 **CI:** the same sweep runs automatically on every push and pull request via
 [GitHub Actions](https://github.com/kripy17/OutPost/actions/workflows/ci.yml)

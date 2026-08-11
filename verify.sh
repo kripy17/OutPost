@@ -3,6 +3,7 @@
 #
 #   backend pytest  →  coverage gate (14/14 ATT&CK)  →  collector pytest
 #   →  CLI pytest  →  frontend lint/tests/build  →  collector soak gates
+#   →  sandbox provider gate (skips cleanly without a provider key)
 #   →  layout sweep (Playwright overflow gate)  →  post-deploy walk
 #     (fail-closed auth + TLS + agent heartbeat)
 #   →  doc-count gate (stale numeric references in shipped docs)
@@ -143,6 +144,37 @@ step "Linux soak     (auditd FP baseline gate)" \
       --backend "http://127.0.0.1:$SOAK_PORT" --host "$(hostname)" --gate
   '
 
+# Sandbox provider gate — end-to-end validation of the live detonation
+# adapter (Any.Run / Triage / Joe) against an isolated backend. With no
+# provider key configured (stock installs, CI) the script SKIPs cleanly and
+# the step passes in seconds; with a key set it runs a REAL detonation —
+# upload → detonate → poll → assert events landed — taking up to --max-wait.
+step "Sandbox provider (live detonation gate)" \
+  env ROOT="$ROOT" PYTHON="$ROOT/.venv/bin/python" bash -c '
+    set -e
+    SBX_DB=$(mktemp --suffix=.db)
+    SBX_SAMPLES=$(mktemp -d)
+    SBX_PORT=8014
+    SBX_LOG=$(mktemp --suffix=.log)
+    SBX_PID=""
+    cleanup() {
+      [ -n "$SBX_PID" ] && kill "$SBX_PID" 2>/dev/null || true
+      rm -f "$SBX_DB" "$SBX_LOG"
+      rm -rf "$SBX_SAMPLES"
+    }
+    trap cleanup EXIT
+    DATABASE_PATH="$SBX_DB" SAMPLES_DIR="$SBX_SAMPLES" \
+      "$PYTHON" -m uvicorn app.main:app --host 127.0.0.1 --port "$SBX_PORT" >"$SBX_LOG" 2>&1 &
+    SBX_PID=$!
+    for _ in $(seq 1 30); do
+      curl -sf "http://127.0.0.1:$SBX_PORT/meta" >/dev/null 2>&1 && break
+      sleep 1
+    done
+    curl -sf "http://127.0.0.1:$SBX_PORT/meta" >/dev/null
+    cd "$ROOT"
+    "$PYTHON" scripts/validate_sandbox_provider.py --backend "http://127.0.0.1:$SBX_PORT"
+  '
+
 # Layout regression gate — the min-width bug class (a grid/flex item that
 # refuses to shrink pushes the page wider than the viewport) caught by a real
 # browser before it ships. Boots an ISOLATED backend (temp DB, spare ports
@@ -256,6 +288,7 @@ step "Doc counts     (stale-reference gate)" \
     BE_CLAIM=$(grep -oE "Backend pytest \| \*\*[0-9]+\*\*" "$ROOT/README.md" | grep -oE "[0-9]+")
     COL_CLAIM=$(grep -oE "Collector pytest \| \*\*[0-9]+\*\*" "$ROOT/README.md" | grep -oE "[0-9]+")
     CLI_CLAIM=$(grep -oE "CLI pytest \| \*\*[0-9]+\*\*" "$ROOT/README.md" | grep -oE "[0-9]+")
+    FE_CLAIM=$(grep -oE "^\| Frontend \| \*\*[0-9]+\*\*" "$ROOT/README.md" | grep -oE "[0-9]+")
 
     sum=$((BE + COL + CLI + FE))
     ok=1
@@ -263,6 +296,7 @@ step "Doc counts     (stale-reference gate)" \
     [ "$BE_CLAIM" = "$BE" ] || { echo "  README backend claim $BE_CLAIM, actual $BE" >&2; ok=0; }
     [ "$COL_CLAIM" = "$COL" ] || { echo "  README collector claim $COL_CLAIM, actual $COL" >&2; ok=0; }
     [ "$CLI_CLAIM" = "$CLI" ] || { echo "  README CLI claim $CLI_CLAIM, actual $CLI" >&2; ok=0; }
+    [ "$FE_CLAIM" = "$FE" ] || { echo "  README frontend claim $FE_CLAIM, actual $FE" >&2; ok=0; }
 
     # Rules + commands — the other two dynamic badges: RULE_META and the Typer
     # registry, validated against badges/*.json and the README Highlights table.

@@ -6,72 +6,20 @@ import { Chip, PageHeader, Panel } from "../components/ui";
 import { exportFootprint, getFootprint, getSamples, refreshEnrichmentIp, saveBlob } from "../lib/api";
 import { intelAgeLabel } from "../lib/constants";
 import type { Footprint, FootprintSeedIp } from "../types";
-
-type MidNode = { key: string; label: string; kind: "res" | "sib"; ip?: string; angle: number; x: number; y: number };
-type DnsNode = { key: string; label: string; sourceIp?: string; sourceKind: "seed" | "sib" | "other"; x: number; y: number };
+import { buildTopology, MAP, passiveNote } from "./footprintHelpers";
 
 // Radial footprint map — sample at the center, seed IPs on ring 1, passive
 // infrastructure (resolutions + sibling hosts) on ring 2, and the cohosted
 // passive-DNS domains on ring 3. Each cohosted domain fans around the seed or
 // sibling IP it was observed from, with the connecting edge tinted by that
-// source — so the map reads as a topology, not a flat ring.
+// source — so the map reads as a topology, not a flat ring. The layout math
+// lives in footprintHelpers.ts so the topology contract is unit-testable;
+// this component only renders it.
 function FootprintMap({ footprint }: { footprint: Footprint }) {
-  const seeds = footprint.seed_ips;
-  const p = footprint.passive;
-
-  const W = 600;
-  const H = 500;
+  const { W, H, ring1, ring2, ring3 } = MAP;
   const cx = W / 2;
   const cy = H / 2;
-  const ring1 = 105;
-  const ring2 = 175;
-  const ring3 = 235;
-  const angleFor = (i: number, n: number) => (i / Math.max(n, 1)) * Math.PI * 2 - Math.PI / 2;
-
-  // Ring 1 — the observed seed IPs (reputation-colored).
-  const seedPos = seeds.slice(0, 8).map((s, i) => {
-    const a = angleFor(i, seeds.length);
-    return { ...s, angle: a, x: cx + ring1 * Math.cos(a), y: cy + ring1 * Math.sin(a) };
-  });
-  const seedByIp = new Map(seedPos.map((s) => [s.ip, s]));
-
-  // Ring 2 — PTR resolutions + sibling hosts (the same-block hypothesis).
-  const midNodes: { key: string; label: string; kind: "res" | "sib"; ip?: string }[] = [
-    ...p.resolutions.slice(0, 5).map((r) => ({ key: `res-${r.domain}`, label: r.domain, kind: "res" as const })),
-    ...p.sibling_ips.slice(0, 5).map((s) => ({ key: `sib-${s.ip}`, label: s.ip, kind: "sib" as const, ip: s.ip })),
-  ];
-  const midPos: MidNode[] = midNodes.map((n, i) => {
-    const a = angleFor(i, midNodes.length);
-    return { ...n, angle: a, x: cx + ring2 * Math.cos(a), y: cy + ring2 * Math.sin(a) };
-  });
-  const sibByIp = new Map(midPos.filter((n) => n.kind === "sib").map((n) => [n.ip!, n]));
-
-  // Ring 3 — cohosted passive-DNS domains, grouped by source IP so each fans
-  // around its seed/sibling node (a genuine topology instead of a flat ring).
-  const dnsRows = p.passive_dns.slice(0, 8);
-  const bySource = new Map<string, typeof dnsRows>();
-  for (const d of dnsRows) {
-    const src = d.source_ip ?? "__other__";
-    bySource.set(src, [...(bySource.get(src) ?? []), d]);
-  }
-  const dnsPos: DnsNode[] = [];
-  let fallback = angleFor(0, 1) + 0.6;
-  for (const [src, rows] of bySource) {
-    const owner = seedByIp.get(src) ?? sibByIp.get(src);
-    const base = owner?.angle ?? fallback;
-    rows.forEach((d, k) => {
-      const a = base + (k - (rows.length - 1) / 2) * 0.26;
-      dnsPos.push({
-        key: `dns-${d.domain}`,
-        label: d.domain,
-        sourceIp: d.source_ip,
-        sourceKind: owner ? (seedByIp.has(src) ? "seed" : "sib") : "other",
-        x: cx + ring3 * Math.cos(a),
-        y: cy + ring3 * Math.sin(a),
-      });
-    });
-    fallback += 0.7;
-  }
+  const { seedPos, seedByIp, midPos, sibByIp, dnsPos } = buildTopology(footprint);
 
   const repFill: Record<string, string> = {
     malicious: "var(--risk-malicious)",
@@ -254,13 +202,6 @@ function PassiveCard({
       )}
     </Panel>
   );
-}
-
-/** Provider label per passive card — honest about where each row came from. */
-function passiveNote(source: Footprint["passive"]["source"], provider: string): string {
-  if (source === "synthetic_demo") return "synthetic preview";
-  if (source === "live") return `${provider} · live`;
-  return "offline — not configured";
 }
 
 export default function FootprintPage() {
