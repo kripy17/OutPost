@@ -23,6 +23,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
 from shipper import Shipper, resolve_live_run_id  # noqa: E402
 
 AUDIT_LOG = "/var/log/audit/audit.log"
+# AUDIT_LOG env override — lets the collector tail a test/simulated feed
+# (the post-deploy walk feeds a temp log so the real live-mode collector can
+# be exercised without root). Default stays the real auditd path.
 
 # Real auditd emits separate record types for the same event: type=SYSCALL
 # (syscall + pid), type=EXECVE (program args), type=SOCKADDR (connect dest).
@@ -139,8 +142,9 @@ def _ts(audit_ts: str) -> str:
 
 
 def main(run_id: str | None, backend_url: str, mode: str = "analysis", timeout: int = 240) -> None:
-    if not os.path.exists(AUDIT_LOG):
-        print(f"ERROR: {AUDIT_LOG} not found — is auditd installed and running?", file=sys.stderr)
+    log_path = os.environ.get("AUDIT_LOG", AUDIT_LOG)
+    if not os.path.exists(log_path):
+        print(f"ERROR: {log_path} not found — is auditd installed and running?", file=sys.stderr)
         sys.exit(2)
 
     # Standalone session resolution when no run_id was given: claim the
@@ -159,7 +163,7 @@ def main(run_id: str | None, backend_url: str, mode: str = "analysis", timeout: 
 
     print(f"[collector-linux] run_id={run_id} mode={mode} backend={backend_url}")
     try:
-        with open(AUDIT_LOG, "r", encoding="utf-8", errors="replace") as fh:
+        with open(log_path, "r", encoding="utf-8", errors="replace") as fh:
             # Start at EOF: only new records.
             fh.seek(0, os.SEEK_END)
             while True:
