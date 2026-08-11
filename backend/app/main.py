@@ -77,6 +77,23 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+
+def _agent_allowed(method: str, path: str) -> bool:
+    """Endpoints the agent credential may use: the collector/shipper surface.
+
+    Writes: event + snapshot ingestion, heartbeats, session creation and
+    completion. Reads: run data (the agent lists/claims sessions and the
+    daily summary reads its own runs' alerts). Everything else is off-limits.
+    """
+    if path.startswith("/ingest/") or path.startswith("/agents/"):
+        return method in ("GET", "POST")
+    if path.startswith("/runs"):
+        if method == "GET":
+            return True
+        return method == "POST" and (path == "/runs" or path.endswith("/complete"))
+    return False
+
+
 @app.middleware("http")
 async def auth_gate(request: Request, call_next):
     """Optional auth: with no role passwords configured this passes everything
@@ -92,10 +109,18 @@ async def auth_gate(request: Request, call_next):
 
     token = auth_service.token_from_request(dict(request.headers), dict(request.query_params))
     role = auth_service.verify_token(token) if token else None
+    # The shared agent credential (OUTPOST_AGENT_TOKEN) is a *host* identity,
+    # not a browser role: it may only touch telemetry (ship events, heartbeat,
+    # claim/create/complete sessions, read run data). Everything else 403s, so
+    # a stolen agent token can't triage alerts or touch settings.
+    if role is None and auth_service.verify_agent_token(token):
+        role = "agent"
     if role is None:
         return JSONResponse(status_code=401, content={"detail": "Authentication required"})
     if role == "analyst" and request.method not in ("GET", "HEAD", "OPTIONS"):
         return JSONResponse(status_code=403, content={"detail": "Read-only analyst role cannot modify data"})
+    if role == "agent" and not _agent_allowed(request.method, path):
+        return JSONResponse(status_code=403, content={"detail": "Agent credential is limited to telemetry endpoints"})
     return await call_next(request)
 
 

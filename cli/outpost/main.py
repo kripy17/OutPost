@@ -70,3 +70,11 @@ def main(ctx: typer.Context) -> None:
 
 
 _register_commands()
+
+
+if __name__ == "__main__":
+    # The installed `outpost` binary is wired to `outpost.main:app`, but
+    # `python -m outpost.main` must also run the CLI — the generated systemd
+    # summary unit uses it as ExecStart. Without this the module imported and
+    # exited 0 silently, no-op'ing the daily summary.
+    app()

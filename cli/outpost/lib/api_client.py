@@ -16,15 +16,26 @@ class APIError(RuntimeError):
     pass
 
 
+def _auth_headers() -> dict:
+    """Authorization for the shared agent credential (OUTPOST_AGENT_TOKEN).
+
+    The agent service (daily summary, `outpost agent run`'s own calls) runs
+    under the host credential when the backend is fail-closed — same env the
+    collector's shipper reads. Empty when unset (zero-config default).
+    """
+    tok = os.getenv("OUTPOST_AGENT_TOKEN", "").strip()
+    return {"Authorization": f"Bearer {tok}"} if tok else {}
+
+
 def _get(path: str) -> Any:
-    resp = requests.get(f"{BASE_URL}{path}", timeout=15)
+    resp = requests.get(f"{BASE_URL}{path}", headers=_auth_headers(), timeout=15)
     if not resp.ok:
         raise APIError(f"GET {path} → {resp.status_code}: {resp.text[:200]}")
     return resp.json()
 
 
 def _post(path: str, body: dict | None = None) -> Any:
-    resp = requests.post(f"{BASE_URL}{path}", json=body or {}, timeout=15)
+    resp = requests.post(f"{BASE_URL}{path}", json=body or {}, headers=_auth_headers(), timeout=15)
     if not resp.ok:
         raise APIError(f"POST {path} → {resp.status_code}: {resp.text[:200]}")
     return resp.json()

@@ -86,6 +86,92 @@ def test_gate_blocks_unauthenticated_writes_and_reads(auth_env):
     assert c.post("/runs", json={"sample_name": "x", "platform": "windows", "session_type": "analysis"}).status_code == 401
 
 
+# -- OUTPOST_AGENT_TOKEN (host collector credential) ---------------------------
+
+
+def test_agent_token_ships_telemetry_but_stays_scoped(auth_env, monkeypatch):
+    """The shared agent credential authenticates the collector surface
+    (heartbeat, ingest, session lifecycle, run reads) but is refused
+    everywhere else — a stolen agent token can't triage alerts or touch
+    settings/campaigns/watchlist."""
+    from ..core import auth as auth_mod
+
+    monkeypatch.setenv("OUTPOST_AGENT_TOKEN", "agent-secret")
+    importlib.reload(auth_mod)
+    try:
+        c = _client()
+        h = {"Authorization": "Bearer agent-secret"}
+
+        # Telemetry: heartbeat, snapshot, ingest.
+        assert c.post("/agents/prod-host/heartbeat", json={"platform": "linux"}, headers=h).status_code == 200
+        assert c.post("/ingest/snapshot", json={"host_id": "prod-host"}, headers=h).status_code == 200
+        # Full ingest loop: create a run as the agent, then ship a batch into it.
+        run = c.post(
+            "/runs",
+            json={"sample_name": "agent-prod-host-2026-08-11", "platform": "linux", "session_type": "live", "source": "agent"},
+            headers=h,
+        )
+        assert run.status_code == 201
+        run_id = run.json()["run_id"]
+        batch = c.post(
+            "/ingest/batch",
+            json=[
+                {
+                    "run_id": run_id,
+                    "platform": "linux",
+                    "event_type": "process_create",
+                    "timestamp": "2026-08-11T12:00:00Z",
+                    "pid": 1,
+                    "process_name": "bash",
+                }
+            ],
+            headers=h,
+        )
+        assert batch.status_code == 202
+
+        # Session lifecycle: list + active-live + complete are agent-ok.
+        assert c.get("/runs", headers=h).status_code == 200
+        assert c.get("/runs/active-live", headers=h).status_code in (200, 404)
+        assert c.post(f"/runs/{run_id}/complete", headers=h).status_code == 200
+
+        # Scoped OUT: non-telemetry surfaces refuse the agent credential.
+        assert c.get("/campaigns", headers=h).status_code == 403
+        assert c.get("/alerts/queue", headers=h).status_code == 403
+        assert c.post("/watchlist", json={"value": "1.2.3.4"}, headers=h).status_code == 403
+
+        # Without ANY credential the same telemetry is still 401.
+        assert c.post("/agents/prod-host/heartbeat", json={"platform": "linux"}).status_code == 401
+
+        # Admin credential is unaffected by the agent token's presence.
+        admin = c.post("/auth/login", json={"password": "admin-secret"}).json()["token"]
+        assert c.get("/campaigns", headers={"Authorization": f"Bearer {admin}"}).status_code == 200
+    finally:
+        monkeypatch.delenv("OUTPOST_AGENT_TOKEN", raising=False)
+        importlib.reload(auth_mod)
+
+
+def test_agent_token_without_admin_still_scoped(monkeypatch):
+    """Agent token configured but NO role passwords: auth is enabled (agent
+    token implies enforcement) and only the telemetry surface opens."""
+    from ..core import auth as auth_mod
+
+    monkeypatch.delenv("OUTPOST_ADMIN_PASSWORD", raising=False)
+    monkeypatch.delenv("OUTPOST_ANALYST_PASSWORD", raising=False)
+    monkeypatch.setenv("OUTPOST_AGENT_TOKEN", "agent-secret")
+    importlib.reload(auth_mod)
+    try:
+        assert auth_mod.auth_enabled() is True
+        c = _client()
+        h = {"Authorization": "Bearer agent-secret"}
+        assert c.post("/agents/h1/heartbeat", json={}, headers=h).status_code == 200
+        assert c.get("/runs", headers=h).status_code == 200
+        assert c.get("/campaigns", headers=h).status_code == 403
+        assert c.get("/campaigns").status_code == 401
+    finally:
+        monkeypatch.delenv("OUTPOST_AGENT_TOKEN", raising=False)
+        importlib.reload(auth_mod)
+
+
 # -- OUTPOST_AUTH_REQUIRED (production fail-closed flag) -----------------------
 
 

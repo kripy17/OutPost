@@ -21,6 +21,17 @@ COLLECTOR_VERSION = "outpost-collector/1.0"
 log = logging.getLogger("outpost.shipper")
 
 
+def _auth_headers() -> dict:
+    """Authorization for the shared agent credential (OUTPOST_AGENT_TOKEN).
+
+    When set, every request carries it so the collector works under
+    fail-closed auth (OUTPOST_AUTH_REQUIRED=1) — heartbeats, event shipping,
+    and session claims all authenticate as the host. Empty when unset.
+    """
+    tok = os.environ.get("OUTPOST_AGENT_TOKEN", "").strip()
+    return {"Authorization": f"Bearer {tok}"} if tok else {}
+
+
 def _default_host_id() -> str:
     """A stable-enough host label for fleet attribution: hostname, lowercased.
     Override with OUTPOST_HOST_ID for multi-host fleets where hostnames could
@@ -38,7 +49,7 @@ def claim_active_live_run(backend_url: str) -> str:
     Raises RuntimeError with a human message when nothing is open.
     """
     try:
-        resp = requests.get(f"{backend_url.rstrip('/')}/runs/active-live", timeout=5)
+        resp = requests.get(f"{backend_url.rstrip('/')}/runs/active-live", headers=_auth_headers(), timeout=5)
     except requests.RequestException:
         raise RuntimeError(
             f"Backend not reachable at {backend_url} — is it running? "
@@ -89,7 +100,7 @@ def resolve_live_run_id(backend_url: str, platform: str) -> str:
     name = agent_run_name(host)
     # Reuse today's open agent run if the service restarted mid-day.
     try:
-        resp = requests.get(f"{base}/runs", timeout=5)
+        resp = requests.get(f"{base}/runs", headers=_auth_headers(), timeout=5)
         if resp.ok:
             for r in resp.json():
                 if (
@@ -107,7 +118,7 @@ def resolve_live_run_id(backend_url: str, platform: str) -> str:
         "session_type": "live",
         "source": "agent",
     }
-    resp = requests.post(f"{base}/runs", json=payload, timeout=5)
+    resp = requests.post(f"{base}/runs", json=payload, headers=_auth_headers(), timeout=5)
     resp.raise_for_status()
     return resp.json()["run_id"]
 
@@ -167,6 +178,7 @@ class Shipper:
             resp = requests.post(
                 f"{self.backend_url}/agents/{quote(self.host_id, safe='')}/heartbeat",
                 json={"platform": platform, "version": COLLECTOR_VERSION},
+                headers=_auth_headers(),
                 timeout=5,
             )
             resp.raise_for_status()
@@ -187,6 +199,7 @@ class Shipper:
             resp = requests.post(
                 f"{self.backend_url}/ingest/snapshot",
                 json=payload,
+                headers=_auth_headers(),
                 timeout=5,
             )
             resp.raise_for_status()
@@ -202,7 +215,7 @@ class Shipper:
         if batch:
             for attempt in range(self.max_retries):
                 try:
-                    resp = requests.post(f"{self.backend_url}/ingest/batch", json=batch, timeout=5)
+                    resp = requests.post(f"{self.backend_url}/ingest/batch", json=batch, headers=_auth_headers(), timeout=5)
                     resp.raise_for_status()
                     self._replay_spool()
                     self.last_flush = time.time()
@@ -235,7 +248,7 @@ class Shipper:
             with open(self.spool_path, "r", encoding="utf-8") as fh:
                 events = [json.loads(line) for line in fh if line.strip()]
             if events:
-                requests.post(f"{self.backend_url}/ingest/batch", json=events, timeout=5).raise_for_status()
+                requests.post(f"{self.backend_url}/ingest/batch", json=events, headers=_auth_headers(), timeout=5).raise_for_status()
             os.remove(self.spool_path)
         except Exception:
             log.warning("Spool replay failed — will retry on next successful flush")

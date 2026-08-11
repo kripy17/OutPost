@@ -105,6 +105,7 @@ Type=simple
 # (webapp Live Monitor > today's agent run > creates one), so no browser
 # session has to be open for telemetry to flow.
 Environment=SNAPSHOT_INTERVAL=3600
+Environment=OUTPOST_AGENT_TOKEN={agent_token}
 ExecStart={python} {collector} --backend-url {backend_url} --mode live
 Restart=on-failure
 RestartSec=5
@@ -121,6 +122,7 @@ After=network.target
 [Service]
 Type=oneshot
 Environment=OUTPOST_API_URL={backend_url}
+Environment=OUTPOST_AGENT_TOKEN={agent_token}
 ExecStart={python} -m outpost.main agent summary --days 1 --json
 # systemd appends to the log itself — the summary is never lost to a crash.
 StandardOutput=append:{log}
@@ -156,6 +158,7 @@ REM (webapp Live Monitor > today's agent run > creates one), so no browser
 REM session has to be open for telemetry to flow.
 set OUTPOST_API_URL={backend_url}
 set SNAPSHOT_INTERVAL=3600
+set OUTPOST_AGENT_TOKEN={agent_token}
 "{python}" "{collector}" --backend-url {backend_url} --mode live
 """
 
@@ -164,6 +167,7 @@ _WIN_SUMMARY_BAT = """\
 REM OutPost daily fired-rule summary (FP-rate measurement) — appends JSON,
 REM mirroring systemd's StandardOutput=append on Linux.
 set OUTPOST_API_URL={backend_url}
+set OUTPOST_AGENT_TOKEN={agent_token}
 "{python}" -m outpost.main agent summary --days 1 --json >> "{log}"
 """
 
@@ -177,13 +181,14 @@ set PY={python}
 set COLLECTOR={collector}
 set BACKEND={backend_url}
 set DIR={dir}
+set TOKEN={agent_token}
 
 REM 1) Collector as a real service via nssm (auto-restart on crash, like
 REM    systemd's Restart=on-failure on Linux).
 nssm install OutPostAgent "%PY%" "%COLLECTOR%" --backend-url %BACKEND% --mode live
 nssm set OutPostAgent AppDirectory "%DIR%"
 nssm set OutPostAgent AppExit Default Restart
-nssm set OutPostAgent AppEnvironmentExtra SNAPSHOT_INTERVAL=3600 OUTPOST_API_URL=%BACKEND%
+nssm set OutPostAgent AppEnvironmentExtra SNAPSHOT_INTERVAL=3600 OUTPOST_API_URL=%BACKEND% OUTPOST_AGENT_TOKEN=%TOKEN%
 nssm start OutPostAgent
 
 REM 2) Daily fired-rule summary via scheduled task (06:00, SYSTEM account).
@@ -202,24 +207,37 @@ def _summary_log_path() -> str:
     return "/var/log/outpost-agent-summary.log"
 
 
-def _write_service_config(backend_url: str) -> tuple[Path, str]:
+def _write_service_config(backend_url: str, agent_token: str = "") -> tuple[Path, str]:
     """Generate the persistent service config; returns (path, enable_command).
 
     The enable command is what the operator runs as admin — the CLI never
-    self-elevates. This is printed, not executed.
+    self-elevates. This is printed, not executed. `agent_token` is the shared
+    OUTPOST_AGENT_TOKEN credential, embedded so the service can authenticate
+    against a fail-closed backend (OUTPOST_AUTH_REQUIRED=1).
     """
     platform_name = monitor.detect_platform()
     cfg = _config_dir()
     if platform_name == "linux":
         unit = cfg / "outpost-agent.service"
         unit.write_text(
-            _SYSTEMD_UNIT.format(platform=platform_name, python=_python_exe(), collector=_collector_abs(), backend_url=backend_url)
+            _SYSTEMD_UNIT.format(
+                platform=platform_name,
+                python=_python_exe(),
+                collector=_collector_abs(),
+                backend_url=backend_url,
+                agent_token=agent_token,
+            )
         )
         # Daily fired-rule summary — a oneshot service + timer pair that
         # measures the FP rate continuously, not in 5-minute bursts.
         summary_unit = cfg / "outpost-agent-summary.service"
         summary_unit.write_text(
-            _SYSTEMD_SUMMARY_UNIT.format(python=_python_exe(), backend_url=backend_url, log=_summary_log_path())
+            _SYSTEMD_SUMMARY_UNIT.format(
+                python=_python_exe(),
+                backend_url=backend_url,
+                log=_summary_log_path(),
+                agent_token=agent_token,
+            )
         )
         summary_timer = cfg / "outpost-agent-summary.timer"
         summary_timer.write_text(_SYSTEMD_SUMMARY_TIMER)
@@ -239,7 +257,10 @@ def _write_service_config(backend_url: str) -> tuple[Path, str]:
         unit.write_text(
             _crlf(
                 _WIN_COLLECTOR_BAT.format(
-                    python=_python_exe(), collector=_collector_abs(), backend_url=backend_url
+                    python=_python_exe(),
+                    collector=_collector_abs(),
+                    backend_url=backend_url,
+                    agent_token=agent_token,
                 )
             )
         )
@@ -247,7 +268,12 @@ def _write_service_config(backend_url: str) -> tuple[Path, str]:
         summary_unit = cfg / "outpost-agent-summary.bat"
         summary_unit.write_text(
             _crlf(
-                _WIN_SUMMARY_BAT.format(python=_python_exe(), backend_url=backend_url, log=_summary_log_path())
+                _WIN_SUMMARY_BAT.format(
+                    python=_python_exe(),
+                    backend_url=backend_url,
+                    log=_summary_log_path(),
+                    agent_token=agent_token,
+                )
             )
         )
         # 3) The one elevated script the operator runs: nssm service + schtasks.
@@ -259,6 +285,7 @@ def _write_service_config(backend_url: str) -> tuple[Path, str]:
                     collector=_collector_abs(),
                     backend_url=backend_url,
                     dir=cfg,
+                    agent_token=agent_token,
                 )
             )
         )
@@ -272,6 +299,13 @@ def _write_service_config(backend_url: str) -> tuple[Path, str]:
 @app.command()
 def install(
     backend_url: str = typer.Option(_backend_url, envvar="OUTPOST_API_URL", help="Backend base URL"),
+    agent_token: str = typer.Option(
+        "",
+        envvar="OUTPOST_AGENT_TOKEN",
+        help="Shared agent credential — embedded so the service can authenticate "
+        "against a fail-closed backend (OUTPOST_AUTH_REQUIRED=1). Use a long "
+        "random value (e.g. `openssl rand -hex 24`), alphanumeric only.",
+    ),
 ):
     """Generate a persistent service config (systemd / scheduled task)."""
     platform_name = monitor.detect_platform()
@@ -279,7 +313,7 @@ def install(
     if not script.exists():
         console.print(f"[red]Collector not found: {script}[/red]")
         raise typer.Exit(2)
-    unit, enable = _write_service_config(backend_url)
+    unit, enable = _write_service_config(backend_url, agent_token)
     console.print(f"[green]Wrote agent service config:[/green] {unit}")
     console.print(f"\n[bold]Platform:[/bold] {platform_name}")
     console.print("[bold]It streams:[/bold] auditd/Sysmon events → live session → webapp Live Monitor")
