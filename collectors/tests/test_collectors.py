@@ -35,6 +35,7 @@ def test_linux_parse_execve_event():
     assert ev["event_type"] == "process_create"
     assert ev["platform"] == "linux"
     assert ev["process_name"] == "/bin/bash"
+    assert ev["log_source"] == "auditd"  # the collector stamps its own channel
 
 
 def test_linux_parse_connect_event():
@@ -46,6 +47,7 @@ def test_linux_parse_connect_event():
     assert ev["dest_ip"] == "192.168.113.88"
     assert ev["dest_port"] == 4444
     assert ev["protocol"] == "TCP"
+    assert ev["log_source"] == "auditd"  # the collector stamps its own channel
 
 
 def test_linux_saddr_parser_decodes_hex():
@@ -109,6 +111,7 @@ def test_windows_sysmon_process_create():
     assert ev["pid"] == 4200
     assert ev["ppid"] == 4199
     assert ev["command_line"] == "cmd.exe /c whoami"
+    assert ev["log_source"] == "sysmon"  # the collector stamps its own channel
 
 
 def test_windows_sysmon_network_connection():
@@ -128,6 +131,7 @@ def test_windows_sysmon_network_connection():
     assert ev["dest_ip"] == "203.0.113.88"
     assert ev["dest_port"] == 4444
     assert ev["process_name"] == "evil.exe"
+    assert ev["log_source"] == "sysmon"  # the collector stamps its own channel
 
 
 def test_windows_sysmon_registry_write():

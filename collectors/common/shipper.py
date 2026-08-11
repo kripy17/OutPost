@@ -151,10 +151,10 @@ class Shipper:
         attribution — the backend's /agents view groups by it). An event that
         already names a host keeps its own.
 
-        The exact log channel is stamped from the event's own platform
-        (auditd on Linux, Sysmon on Windows) so the Event Log's source tabs
-        can split collector telemetry by channel — explicit provenance, not
-        inference from the platform label."""
+        The exact log channel comes from the collectors themselves (they
+        stamp auditd/sysmon on every event they build); this platform-based
+        fallback covers events built elsewhere, so no collector-shipped event
+        can ever land unstamped."""
         event["run_id"] = self.run_id
         event.setdefault("host_id", self.host_id)
         plat = (event.get("platform") or "").lower()
