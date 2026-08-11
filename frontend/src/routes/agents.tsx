@@ -29,7 +29,6 @@ function relativeTime(iso: string): string {
 }
 
 function AgentRow({ agent }: { agent: AgentInfo }) {
-  const isLocal = agent.host_id === "local";
   const recent = agent.recent_run_ids ?? [];
   const status: "online" | "offline" | "silent" = agent.silent ? "silent" : agent.online ? "online" : "offline";
   const statusTone =
@@ -73,9 +72,35 @@ function AgentRow({ agent }: { agent: AgentInfo }) {
               <span className={`h-1.5 w-1.5 rounded-full ${dotTone}`} aria-hidden />
               {status}
             </span>
-            {isLocal && (
-              <span className="rounded-full border border-border-subtle bg-bg-elevated/60 px-2 py-px font-mono text-[10px] text-text-muted" title="Events from the machine running the backend (webapp detonations, sandbox runs)">
-                this server
+            {agent.identity === "collector" && (
+              <span
+                className="inline-flex items-center gap-1 rounded-full border border-signal/40 bg-signal/10 px-2 py-px font-mono text-[10px] text-signal"
+                title={`Real host agent${agent.heartbeat_version ? ` · ${agent.heartbeat_version}` : ""} · channels: ${agent.channels?.join(", ") || "—"} · last auth: ${agent.last_auth_role ?? "—"}${agent.last_auth_at ? ` ${relativeTime(agent.last_auth_at)}` : ""}`}
+              >
+                <Icon name="terminal" size={10} />
+                collector
+              </span>
+            )}
+            {agent.identity === "webapp" && (
+              <span
+                className="rounded-full border border-border-subtle bg-bg-elevated/60 px-2 py-px font-mono text-[10px] text-text-muted"
+                title="No agent heartbeat — events came from this machine (webapp detonations, sandbox runs)"
+              >
+                webapp detonation
+              </span>
+            )}
+            {agent.last_auth_role && (
+              <span
+                className={`inline-flex items-center gap-1 rounded-full border px-2 py-px font-mono text-[10px] ${
+                  agent.last_auth_role === "agent"
+                    ? "border-accent/40 bg-accent/10 text-accent"
+                    : agent.last_auth_role === "local"
+                      ? "border-border-subtle bg-bg-elevated/60 text-text-faint"
+                      : "border-border-subtle bg-bg-elevated/60 text-text-muted"
+                }`}
+                title={`Authenticated ${agent.last_auth_role === "agent" ? "via the shared OUTPOST_AGENT_TOKEN" : agent.last_auth_role === "local" ? "without a credential (auth off / open mode)" : `as the ${agent.last_auth_role} role`}${agent.last_auth_at ? ` · ${relativeTime(agent.last_auth_at)}` : ""}`}
+              >
+                auth: {agent.last_auth_role === "agent" ? "agent token" : agent.last_auth_role}
               </span>
             )}
           </div>
