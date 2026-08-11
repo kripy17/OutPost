@@ -6,11 +6,16 @@
  * (library + detail) → Monitor detonation (live toast stream) → Run detail
  * (risk gauge, kill chain, process-tree halos, timeline, analyst notes) →
  * Findings triage queue (select → acknowledge → resolve — the alert
- * lifecycle, scoped to the detonation this run just created).
+ * lifecycle, scoped to the detonation this run just created; the live
+ * tab badges proving queue counts stay live under the active filter) →
+ * Quality gates (the History charts and a run detail at the 1280px layout
+ * sweep width — the min-width bug class the verify.sh Playwright gate
+ * catches, shown clean).
  *
  * Output:
  *   demo/deck-demo.webm              — the full recording (cursor + subtitles)
- *   demo/screenshots/deck/0X-*.png   — per-step stills (01–19; 20–25 findings)
+ *   demo/screenshots/deck/0X-*.png   — per-step stills (01–19; 20–26 findings;
+ *                                      27–28 quality gates)
  *
  * Prereqs (once):
  *   cd demo && npm i
@@ -189,7 +194,7 @@ async function shot(page, name) {
 // -- acts ----------------------------------------------------------------------
 
 async function actOverview(page) {
-  log("Act 1/5 — Overview: the command deck");
+  log(`Act 1/6 — Overview: the command deck`);
   await page.goto(`${WEBAPP}/`, { waitUntil: "domcontentloaded" });
   await injectCursor(page);
   await injectSubtitleBar(page);
@@ -230,7 +235,7 @@ async function actOverview(page) {
 }
 
 async function actVault(page) {
-  log("Act 2/5 — Sample vault: the binary library");
+  log("Act 2/6 — Sample vault: the binary library");
   await page.goto(`${WEBAPP}/samples`, { waitUntil: "domcontentloaded" });
   await injectCursor(page);
   await injectSubtitleBar(page);
@@ -264,7 +269,7 @@ async function actVault(page) {
 }
 
 async function actMonitor(page) {
-  log("Act 3/5 — Monitor: detonate a sample");
+  log("Act 3/6 — Monitor: detonate a sample");
   await page.goto(`${WEBAPP}/monitor`, { waitUntil: "domcontentloaded" });
   await injectCursor(page);
   await injectSubtitleBar(page);
@@ -306,7 +311,7 @@ async function actMonitor(page) {
 }
 
 async function actFindings(page) {
-  log("Act 5/5 — Findings: triage the alert queue");
+  log("Act 5/6 — Findings: triage the alert queue");
   await page.goto(`${WEBAPP}/findings`, { waitUntil: "domcontentloaded" });
   await injectCursor(page);
   await injectSubtitleBar(page);
@@ -317,9 +322,12 @@ async function actFindings(page) {
   // created them, so the lifecycle acts on THIS recording's alerts.
   await showSubtitle(page, "Scope to this run's findings");
   await moveAndClick(page, page.getByLabel("Search findings"), "Findings search", { postClickDelay: 400 });
-  await page.keyboard.type("detonate-demo", { delay: 90 });
+  // fill() sets the whole value atomically — keyboard.type races the
+  // controlled input's per-keystroke URL re-render and drops characters
+  // (the queue then matches nothing and the act silently fails).
+  await page.getByLabel("Search findings").fill("detonate-demo");
   await page.keyboard.press("Enter");
-  await page.waitForTimeout(1200);
+  await page.waitForTimeout(1400);
   await shot(page, "20-findings-open");
 
   // Select the first finding — the bulk action bar appears.
@@ -334,10 +342,17 @@ async function actFindings(page) {
   await page.waitForTimeout(800); // queue refetch after the status update
   await shot(page, "22-findings-acked");
 
+  // The queue-badge regression: the tab counts are LIVE totals under the
+  // active status filter. We're still on the open view, yet the
+  // Acknowledged/Resolved badges show the alerts in THOSE buckets — not 0.
+  await showSubtitle(page, "Tab badges stay live under the active filter");
+  await panElements(page, "button:has-text('Acknowledged'), button:has-text('Resolved')", 2, { sweepMs: 700 });
+  await shot(page, "23-findings-live-badges");
+
   // Verify the lifecycle moved: the Acknowledged tab now holds it.
   await showSubtitle(page, "The alert lifecycle moves");
   await moveAndClick(page, page.getByRole("button", { name: /Acknowledged/ }), "Acknowledged tab", { postClickDelay: 1100 });
-  await shot(page, "23-findings-acknowledged");
+  await shot(page, "24-findings-acknowledged");
 
   // Resolve it — the lifecycle completes. (/^Resolve$/ is the bulk button;
   // the "Resolved" tab would otherwise match too.)
@@ -345,17 +360,55 @@ async function actFindings(page) {
   await moveAndClick(page, page.getByLabel(/Select .* finding/).first(), "Acked finding checkbox", { postClickDelay: 700 });
   await moveAndClick(page, page.getByRole("button", { name: /^Resolve$/ }), "Resolve button", { postClickDelay: 1000 });
   await page.waitForTimeout(800);
-  await shot(page, "24-findings-resolved");
+  await shot(page, "25-findings-resolved");
 
   // Resolved tab — the final state.
   await showSubtitle(page, "Resolved — lifecycle complete");
   await moveAndClick(page, page.getByRole("button", { name: /Resolved/ }), "Resolved tab", { postClickDelay: 1100 });
-  await shot(page, "25-findings-resolved-tab");
+  await shot(page, "26-findings-resolved-tab");
   await showSubtitle(page, "");
 }
 
+async function actQualityGate(page, rid) {
+  log("Act 6/6 — Quality gates: the layout sweep + live queue badges");
+  // The verify.sh Playwright gate sweeps every route at 1440 / 1280 / 1024px
+  // and fails on any horizontal overflow (the min-width bug class). 1280px
+  // is where the History charts actually blew out before the ResizeObserver
+  // fix — show the same view clean, then a run detail at the same width.
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto(`${WEBAPP}/history`, { waitUntil: "domcontentloaded" });
+  await injectCursor(page);
+  await injectSubtitleBar(page);
+  await showSubtitle(page, "Quality gate - every route at 1440 / 1280 / 1024px");
+  await page.waitForTimeout(1800);
+
+  // Charts default to a 24h window — switch to "All" so the SVGs render
+  // (the same step the layout sweep takes on /history).
+  const allBtn = page.getByRole("button", { name: "All", exact: true });
+  try {
+    await allBtn.click({ timeout: 5000 });
+  } catch {
+    /* already on All */
+  }
+  await page.waitForTimeout(1200);
+  await showSubtitle(page, "1280px — charts re-measure to the column, zero overflow");
+  await panElements(page, "svg, [role='img']", 3, { sweepMs: 650 });
+  await shot(page, "27-quality-gate-history");
+
+  // The run-detail page is the classic min-width offender (kill-chain
+  // stepper, recon chips) — show it clean at the sweep width.
+  await page.goto(`${WEBAPP}/runs/${rid}`, { waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(1800);
+  await showSubtitle(page, "Run detail at 1280px — kill chain and recon chips stay in bounds");
+  await panElements(page, "[class*='kill'], [class*='recon'], .panel", 3, { sweepMs: 600 });
+  await shot(page, "28-quality-gate-runs");
+
+  await showSubtitle(page, "");
+  await page.setViewportSize({ width: VIEW.width, height: VIEW.height });
+}
+
 async function actRunDetail(page, rid) {
-  log(`Act 4/5 — Run detail: ${rid}`);
+  log(`Act 4/6 — Run detail: ${rid}`);
   await page.goto(`${WEBAPP}/runs/${rid}`, { waitUntil: "domcontentloaded" });
   await injectCursor(page);
   await injectSubtitleBar(page);
@@ -447,6 +500,7 @@ async function main() {
     const rid = await actMonitor(page); // detonation feeds the run-detail act
     await actRunDetail(page, rid);
     await actFindings(page); // triage the alerts the detonation just created
+    await actQualityGate(page, rid); // the layout sweep width, shown clean
     log("");
     log("✅ Walkthrough complete");
   } finally {

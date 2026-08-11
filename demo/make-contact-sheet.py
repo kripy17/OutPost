@@ -29,7 +29,15 @@ PAD = 18          # gutter between cells
 LABEL_H = 30      # label strip under each thumbnail
 MARGIN = 28
 
-GRID = 5  # 5x5 = 25 frames
+def _grid(n: int) -> tuple[int, int]:
+    """(cols, rows) — the widest grid that fits n cells with fewest empties.
+    28 frames → 7x4 exactly; odd counts pad the last row with empties."""
+    import math
+    cols = math.ceil(math.sqrt(n))
+    while cols * math.ceil(n / cols) < n:
+        cols += 1
+    rows = math.ceil(n / cols)
+    return cols, rows
 
 
 def _font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
@@ -50,25 +58,25 @@ def main() -> None:
     args = parser.parse_args()
 
     paths = sorted(glob.glob(os.path.join(args.src, "*.png")))
-    assert len(paths) == GRID * GRID, f"expected {GRID * GRID} frames, found {len(paths)}"
+    GRID_COLS, GRID_ROWS = _grid(len(paths))
 
     title_font = _font(26)
     label_font = _font(13)
 
     cell_w = CELL_W + 2 * PAD
     cell_h = CELL_H + LABEL_H + 2 * PAD
-    sheet_w = MARGIN * 2 + GRID * cell_w
-    sheet_h = MARGIN * 2 + 56 + GRID * cell_h  # header band for the title
+    sheet_w = MARGIN * 2 + GRID_COLS * cell_w
+    sheet_h = MARGIN * 2 + 56 + GRID_ROWS * cell_h  # header band for the title
 
     sheet = Image.new("RGB", (sheet_w, sheet_h), BG_BASE)
     draw = ImageDraw.Draw(sheet)
-    draw.text((MARGIN, MARGIN + 6), "OutPost — deck demo · all 25 frames",
+    draw.text((MARGIN, MARGIN + 6), f"OutPost — deck demo · all {len(paths)} frames",
               font=title_font, fill=TEXT_PRIMARY)
-    draw.text((MARGIN, MARGIN + 38), "Overview → vault → monitor detonation → run detail → findings triage",
+    draw.text((MARGIN, MARGIN + 38), "Overview → vault → monitor detonation → run detail → findings triage → quality gates",
               font=label_font, fill=TEXT_MUTED)
 
     for i, path in enumerate(paths):
-        col, row = i % GRID, i // GRID
+        col, row = i % GRID_COLS, i // GRID_COLS
         x0 = MARGIN + col * cell_w
         y0 = MARGIN + 62 + row * cell_h
 
