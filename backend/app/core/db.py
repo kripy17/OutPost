@@ -372,6 +372,29 @@ def _migrate_events_log_source(conn: sqlite3.Connection) -> None:
         conn.commit()
 
 
+def _backfill_events_log_source(conn: sqlite3.Connection) -> None:
+    """Idempotent backfill: events shipped by a real collector BEFORE
+    collectors started stamping `log_source` read NULL, leaving the
+    Auditd/Sysmon channels empty despite the telemetry being there. The only
+    remaining signal is the platform — the Linux collector streams auditd,
+    the Windows collector Sysmon — so infer the channel for legacy live-run
+    events that carry a real host (never the webapp-default 'local' stamp).
+
+    Safe to run at every startup: after the first pass nothing matches, and
+    new events are stamped explicitly by collectors so they are untouched."""
+    conn.execute(
+        """
+        UPDATE events
+        SET log_source = CASE WHEN platform = 'linux' THEN 'auditd' ELSE 'sysmon' END
+        WHERE log_source IS NULL
+          AND platform IN ('linux', 'windows')
+          AND host_id IS NOT NULL AND host_id != '' AND host_id != 'local'
+          AND run_id IN (SELECT run_id FROM runs WHERE source = 'live')
+        """
+    )
+    conn.commit()
+
+
 def _migrate_events_query(conn: sqlite3.Connection) -> None:
     """Idempotent: add the DNS `query` string column (DNS-tunnel detection)."""
     cols = _column_names(conn, "events")
@@ -497,6 +520,7 @@ def init_db() -> None:
         _migrate_events_host_id(conn)
         _migrate_events_raw_record(conn)
         _migrate_events_log_source(conn)
+        _backfill_events_log_source(conn)
         _migrate_events_query(conn)
         _migrate_events_tls_sni(conn)
         _migrate_runs_suppressed_alerts(conn)

@@ -172,6 +172,56 @@ def test_events_channel_counts_one_query_for_source_rail(client):
     client.post(f"/runs/{live}/complete")
 
 
+def test_events_backfill_infers_channel_for_legacy_collector_events(client):
+    """Events shipped before collectors stamped `log_source` read NULL, so
+    the Auditd/Sysmon channels stayed empty despite the telemetry. The
+    backfill infers the channel from the platform for legacy live-run events
+    carrying a real host: linux → auditd, windows → sysmon, while webapp-
+    'local' events (synthetic live sessions) are never touched."""
+    from ..core.db import _backfill_events_log_source, db_session
+
+    lin = make_run(client, sample_name="bf-lin.bin", platform="linux", session_type="live")
+    win = make_run(client, sample_name="bf-win.bin", platform="windows", session_type="live")
+    loc = make_run(client, sample_name="bf-loc.bin", platform="linux", session_type="live")
+
+    def _ev(run_id: str, name: str, platform: str, host: str | None) -> dict:
+        ev = _event(run_id, "process_create", platform, process_name=name, timestamp=_ts(1))
+        if host is not None:
+            ev["host_id"] = host
+        return ev
+
+    _ingest(client, lin, [_ev(lin, "bf-lin.exe", "linux", "legacy-host")])
+    _ingest(client, win, [_ev(win, "bf-win.exe", "windows", "legacy-win")])
+    _ingest(client, loc, [_ev(loc, "bf-loc.exe", "linux", None)])  # → 'local'
+
+    # Pre-backfill: nothing carries a channel yet.
+    assert client.get("/events", params={"source": "auditd", "q": "bf-lin.exe"}).json()["total"] == 0
+    assert client.get("/events", params={"source": "sysmon", "q": "bf-win.exe"}).json()["total"] == 0
+
+    with db_session() as conn:
+        _backfill_events_log_source(conn)
+
+    # Linux collector event → auditd; Windows → sysmon.
+    aud = client.get("/events", params={"source": "auditd", "q": "bf-lin.exe"}).json()
+    assert aud["total"] == 1 and aud["events"][0]["log_source"] == "auditd"
+    sys = client.get("/events", params={"source": "sysmon", "q": "bf-win.exe"}).json()
+    assert sys["total"] == 1 and sys["events"][0]["log_source"] == "sysmon"
+
+    # The webapp-'local' event is NOT collector telemetry — stays unstamped.
+    loc_hit = client.get("/events", params={"source": "live", "q": "bf-loc.exe"}).json()
+    assert loc_hit["total"] == 1 and loc_hit["events"][0]["log_source"] is None
+
+    # Idempotent: a second pass changes nothing.
+    with db_session() as conn:
+        _backfill_events_log_source(conn)
+    assert client.get("/events", params={"source": "auditd", "q": "bf-lin.exe"}).json()["total"] == 1
+
+    # Close the live runs so /runs/active-live's 404 contract holds.
+    client.post(f"/runs/{lin}/complete")
+    client.post(f"/runs/{win}/complete")
+    client.post(f"/runs/{loc}/complete")
+
+
 def test_events_feed_shape_and_pagination(client):
     marker = "feedshape-"
     a = make_run(client, sample_name="feed-a.bin")
