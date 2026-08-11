@@ -172,6 +172,77 @@ def test_agent_token_without_admin_still_scoped(monkeypatch):
         importlib.reload(auth_mod)
 
 
+def test_agent_token_rotation_via_api(auth_env, monkeypatch):
+    """POST /auth/agent-token (admin) stores a DB token that immediately wins
+    over the env bootstrap value; the old token stops working, the new one
+    works, and only the admin role can rotate."""
+    from ..core import auth as auth_mod
+
+    monkeypatch.setenv("OUTPOST_AGENT_TOKEN", "old-env-token-0001")
+    importlib.reload(auth_mod)
+    try:
+        c = _client()
+        admin = c.post("/auth/login", json={"password": "admin-secret"}).json()["token"]
+        ah = {"Authorization": f"Bearer {admin}"}
+
+        # Pre-rotation: the env token works on telemetry.
+        assert c.post("/agents/h1/heartbeat", json={}, headers={"Authorization": "Bearer old-env-token-0001"}).status_code == 200
+
+        # Rotate (admin) → the endpoint stores the new token.
+        resp = c.post("/auth/agent-token", json={"token": "new-rotated-token-0002"}, headers=ah)
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"
+
+        # DB-stored value now wins: the OLD env token is rejected, the new
+        # one authenticates — no restart needed.
+        assert c.post("/agents/h1/heartbeat", json={}, headers={"Authorization": "Bearer old-env-token-0001"}).status_code == 401
+        assert c.post("/agents/h1/heartbeat", json={}, headers={"Authorization": "Bearer new-rotated-token-0002"}).status_code == 200
+        assert auth_mod.agent_token() == "new-rotated-token-0002"
+
+        # Scoping holds for the rotated token too.
+        assert c.get("/campaigns", headers={"Authorization": "Bearer new-rotated-token-0002"}).status_code == 403
+
+        # Only admin rotates: analyst + anonymous are refused. (/auth/* is
+        # public by design — the endpoint enforces its own admin check, so
+        # both come back 403, exactly like /auth/password.)
+        analyst = c.post("/auth/login", json={"password": "analyst-secret"}).json()["token"]
+        assert c.post("/auth/agent-token", json={"token": "x" * 20}, headers={"Authorization": f"Bearer {analyst}"}).status_code == 403
+        assert c.post("/auth/agent-token", json={"token": "x" * 20}).status_code == 403
+    finally:
+        # The settings row would leak into later tests (DB-stored wins over
+        # their env tokens) — remove it and restore the pure-env state.
+        from ..core.db import db_session
+
+        with db_session() as conn:
+            conn.execute("DELETE FROM settings WHERE key = 'AGENT_TOKEN'")
+        monkeypatch.delenv("OUTPOST_AGENT_TOKEN", raising=False)
+        importlib.reload(auth_mod)
+
+
+def test_agent_token_rotation_bootstrap_when_auth_disabled(monkeypatch):
+    """With no role credentials, setting an agent token is the one-time
+    bootstrap: it enables enforcement and the telemetry surface opens to it."""
+    from ..core import auth as auth_mod
+
+    monkeypatch.delenv("OUTPOST_ADMIN_PASSWORD", raising=False)
+    monkeypatch.delenv("OUTPOST_ANALYST_PASSWORD", raising=False)
+    importlib.reload(auth_mod)
+    try:
+        assert auth_mod.auth_enabled() is False
+        c = _client()
+        # No auth on → the bootstrap call is accepted without a token.
+        assert c.post("/auth/agent-token", json={"token": "bootstrap-token-0003"}).status_code == 200
+        assert auth_mod.auth_enabled() is True
+        assert c.post("/agents/h1/heartbeat", json={}, headers={"Authorization": "Bearer bootstrap-token-0003"}).status_code == 200
+        assert c.get("/campaigns", headers={"Authorization": "Bearer bootstrap-token-0003"}).status_code == 403
+    finally:
+        from ..core.db import db_session
+
+        with db_session() as conn:
+            conn.execute("DELETE FROM settings WHERE key = 'AGENT_TOKEN'")
+        importlib.reload(auth_mod)
+
+
 # -- OUTPOST_AUTH_REQUIRED (production fail-closed flag) -----------------------
 
 

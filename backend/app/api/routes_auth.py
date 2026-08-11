@@ -101,6 +101,36 @@ def me(
     }
 
 
+class AgentTokenIn(BaseModel):
+    """New shared agent credential for the collector fleet."""
+    token: str = Field(min_length=16, max_length=200)
+
+
+@router.post("/auth/agent-token", response_model=None)
+def set_agent_token(body: AgentTokenIn, request: Request) -> dict:
+    """Rotate the shared agent credential (admin only).
+
+    The token is stored in the settings table and wins over the env bootstrap
+    value on the next request — rotation applies immediately, survives
+    restarts, and makes a stale OUTPOST_AGENT_TOKEN env inert. Collectors
+    must be re-embedded with the new value (`outpost auth rotate-agent-token`
+    does this locally; other hosts re-run `outpost agent install`).
+    """
+    if auth.auth_enabled():
+        tok = auth.token_from_request(dict(request.headers), dict(request.query_params))
+        role = auth.verify_token(tok) if tok else None
+        if role != "admin":
+            raise HTTPException(status_code=403, detail="Only the admin role can rotate the agent token")
+    actor = auth.role_from_request(request)
+    with db_session() as conn:
+        auth.set_agent_token(conn, body.token)
+        audit.log(conn, actor, "auth.agent_token", target_type="auth", target_id="agent-token")
+    return {
+        "status": "ok",
+        "message": "Agent token stored — re-embed collectors with the new value (outpost auth rotate-agent-token)",
+    }
+
+
 @router.post("/auth/password", response_model=None)
 def set_password(body: PasswordIn, request: Request) -> dict:
     """Rotate a role's password (admin only). Also the one-time bootstrap:

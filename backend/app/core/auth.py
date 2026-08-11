@@ -40,15 +40,39 @@ _HASH_ALGO = "pbkdf2_sha256"
 _ROLES = ("admin", "analyst")
 
 
-def agent_token() -> str:
-    """The shared agent credential: `OUTPOST_AGENT_TOKEN` (optional).
+def _stored_agent_token() -> str:
+    """DB-stored agent token (settings `AGENT_TOKEN`, written by
+    POST /auth/agent-token rotation). Lazy import keeps this module free of
+    db.py at import time (no circular dependency) — same pattern as
+    `_stored_hash`."""
+    from ..core.db import db_session
 
-    When set, the auth gate accepts it (Bearer) for telemetry endpoints so
-    collectors can ship events, heartbeat, and claim/create sessions under
-    fail-closed auth (OUTPOST_AUTH_REQUIRED=1) without holding a browser
-    role's token. Empty when unset — the zero-config default.
+    with db_session() as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key = 'AGENT_TOKEN'").fetchone()
+        return (row["value"] if row else "").strip()
+
+
+def set_agent_token(conn, token: str) -> None:
+    """Persist a fresh agent token (rotation); the DB-stored value then wins
+    over the env bootstrap token until rotated again."""
+    conn.execute(
+        """
+        INSERT INTO settings (key, value) VALUES ('AGENT_TOKEN', ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        """,
+        (token,),
+    )
+
+
+def agent_token() -> str:
+    """The shared agent credential, resolved per request.
+
+    DB-stored (rotation via POST /auth/agent-token) wins over the env
+    bootstrap `OUTPOST_AGENT_TOKEN` — so a rotated token applies immediately
+    and survives restarts, and a stale env value becomes inert. Empty when
+    neither is set — the zero-config default.
     """
-    return os.getenv("OUTPOST_AGENT_TOKEN", "").strip()
+    return _stored_agent_token() or os.getenv("OUTPOST_AGENT_TOKEN", "").strip()
 
 
 def verify_agent_token(token: str) -> bool:
