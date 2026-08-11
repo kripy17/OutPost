@@ -243,9 +243,9 @@ One command runs the whole sweep:
 
 | Suite | Count | Covers |
 |---|---|---|
-| Backend pytest | **422** | ingestion, OS-aware rules (win/linux/macOS), risk + ATT&CK, campaigns, events search, samples vault, SSE broadcast, notes, storm caps, triage, footprint, YARA, auth (incl. fail-closed OUTPOST_AUTH_REQUIRED + agent token), roadmap tiers |
+| Backend pytest | **424** | ingestion, OS-aware rules (win/linux/macOS), risk + ATT&CK, campaigns, events search, samples vault, SSE broadcast, notes, storm caps, triage, footprint, YARA, auth (fail-closed OUTPOST_AUTH_REQUIRED + agent token + rotation), roadmap tiers |
 | Collector pytest | **24** | Sysmon + auditd shipping, normalization, agent-token auth |
-| CLI pytest | **55** | rendering regressions, campaigns output, risk columns, YARA + footprint mirrors + exports, rules knobs, agent install (token embed + Windows bats), module entry |
+| CLI pytest | **58** | rendering regressions, campaigns output, risk columns, YARA + footprint mirrors + exports, rules knobs, agent install (token embed + Windows bats), module entry, rotate-agent-token |
 | Frontend | clean `tsc --noEmit` + Vite build + unit tests | — |
 
 **CI:** the same sweep runs automatically on every push and pull request via

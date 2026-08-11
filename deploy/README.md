@@ -70,6 +70,24 @@ Assumes the repo at `/opt/outpost` with its venv; the unit hardens the process
   systemd unit / scheduled-task batch files. Without it, agents get 401s
   under fail-closed auth.
 
+### Rotating the agent token
+
+`outpost auth rotate-agent-token` rotates the credential end to end (admin
+password required, prompted unless `OUTPOST_ADMIN_PASSWORD` is set):
+
+```bash
+outpost auth rotate-agent-token --backend-url https://<host>
+# or with an explicit new value:  --token <new>
+```
+
+It generates (or accepts) a new token, stores it via `POST /auth/agent-token`
+— the **DB-stored value immediately wins** over the env bootstrap token, so
+old tokens stop working without a redeploy or restart — then re-embeds it
+into this host's agent config (systemd unit / .bat files). Other monitored
+hosts re-run `outpost agent install --agent-token <new>` with the printed
+value. After a rotation the old `OUTPOST_AGENT_TOKEN` env is inert; remove it
+on the next deploy.
+
 ## Post-deploy checklist
 
 The first four items run automatically on every push as verify.sh's
