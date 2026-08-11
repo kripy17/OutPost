@@ -557,6 +557,8 @@ export interface AgentInfo {
   identity?: "collector" | "webapp";
   /** Distinct event channels shipped by the host (auditd / sysmon / webapp). */
   channels?: string[];
+  /** Per-channel event volume — the telemetry mix (auditd: 12, sysmon: 340, …). */
+  channel_counts?: Record<string, number>;
   event_count: number;
   run_count: number;
   alert_count: number;

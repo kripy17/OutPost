@@ -200,6 +200,16 @@ def list_agents(
             ORDER BY last_seen DESC
             """
         ).fetchall()
+        # Per-channel event volume — the telemetry mix per host. The same
+        # COALESCE-to-webapp rule as `channels`, but grouped by channel so the
+        # Agents page can show proportions, not just which channels exist.
+        chan_rows = conn.execute(
+            "SELECT host_id, COALESCE(log_source, 'webapp') AS channel, COUNT(*) AS n "
+            "FROM events GROUP BY host_id, channel"
+        ).fetchall()
+    chan_map: dict[str, dict[str, int]] = {}
+    for cr in chan_rows:
+        chan_map.setdefault(cr["host_id"], {})[cr["channel"]] = cr["n"]
 
     with db_session() as conn:
         snap_rows = {
@@ -253,6 +263,7 @@ def list_agents(
                 "last_auth_at": hb["last_auth_at"] if hb else None,
                 "identity": "collector" if hb else "webapp",
                 "channels": sorted({c for c in (r["channels"] or "").split(",") if c}),
+                "channel_counts": chan_map.get(r["host_id"], {}),
                 "event_count": r["event_count"],
                 "run_count": r["run_count"],
                 "alert_count": r["alert_count"],
@@ -288,6 +299,7 @@ def list_agents(
                 "last_auth_at": hb["last_auth_at"] if hb else None,
                 "identity": "collector" if hb else "webapp",
                 "channels": [],
+                "channel_counts": {},
                 "event_count": 0,
                 "run_count": 0,
                 "alert_count": 0,
