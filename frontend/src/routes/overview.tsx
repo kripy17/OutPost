@@ -11,6 +11,16 @@ import { copyToClipboard } from "../lib/clipboard";
 import { SEVERITY_BG } from "../lib/constants";
 import { BASE_URL, getAgents, getCampaigns, getHealth, getIntelFreshness, getIntelKeys, getMeta, getPlatform, getProcessSummary, getRecentAlerts, getRuleMeta, getRuns } from "../lib/api";
 import { useEventStream } from "../lib/useEventStream";
+
+// Compact relative time for the host panel's auth-context tooltips (the
+// Agents page keeps its own copy — same convention).
+function _rel(iso: string): string {
+  const s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
 import type { Campaign, ProcessSummary, RunSummary, Severity } from "../types";
 
 /* ──────────────────────────────────────────────────────────────────────── */
@@ -616,13 +626,52 @@ function HostMonitorPanel() {
         <p className={`font-mono text-xs font-semibold ${monitored ? "text-risk-clean" : "text-risk-suspicious"}`}>
           {monitored ? `This host is monitored — ${agent?.online ? "agent online" : "agent silent"}` : "This host isn't monitored yet"}
         </p>
-        <p className="mt-0.5 font-mono text-[10px] text-text-muted">
-          {plat.hostname} · {plat.os} {plat.release} · {plat.collector}
-          {monitored && agent?.silent
-            ? " — heartbeat lost, agent may be down"
-            : monitored
-              ? " — live events stream into the Monitor"
-              : " — run the agent to stream its activity live"}
+        <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[10px] text-text-muted">
+          <span className="truncate">
+            {plat.hostname} · {plat.os} {plat.release} · {plat.collector}
+          </span>
+          {monitored && agent && (
+            <>
+              {agent.identity === "collector" ? (
+                <span
+                  className="inline-flex items-center gap-1 rounded border border-risk-clean/40 bg-risk-clean/10 px-1.5 py-px text-[10px] text-risk-clean"
+                  title={`Real host agent${agent.heartbeat_version ? ` · ${agent.heartbeat_version}` : ""} · channels: ${agent.channels?.join(", ") || "—"} · last auth: ${agent.last_auth_role ?? "—"}${agent.last_auth_at ? ` ${_rel(agent.last_auth_at)}` : ""}`}
+                >
+                  <Icon name="activity" size={9} />
+                  collector
+                </span>
+              ) : (
+                <span
+                  className="inline-flex items-center gap-1 rounded border border-border-subtle bg-bg-elevated/50 px-1.5 py-px text-[10px] text-text-faint"
+                  title="No agent heartbeat — events came from this machine (webapp detonations, sandbox runs)"
+                >
+                  <Icon name="terminal" size={9} />
+                  webapp detonation
+                </span>
+              )}
+              {agent.last_auth_role && (
+                <span
+                  className={`inline-flex items-center gap-1 rounded border px-1.5 py-px text-[10px] ${
+                    agent.last_auth_role === "agent"
+                      ? "border-accent/40 bg-accent/10 text-accent"
+                      : agent.last_auth_role === "local"
+                        ? "border-border-subtle bg-bg-elevated/50 text-text-faint"
+                        : "border-border-subtle bg-bg-elevated/50 text-text-muted"
+                  }`}
+                  title={`Authenticated ${agent.last_auth_role === "agent" ? "via the shared OUTPOST_AGENT_TOKEN" : agent.last_auth_role === "local" ? "without a credential (auth off / open mode)" : `as the ${agent.last_auth_role} role`}${agent.last_auth_at ? ` · ${_rel(agent.last_auth_at)}` : ""}`}
+                >
+                  auth: {agent.last_auth_role === "agent" ? "agent token" : agent.last_auth_role}
+                </span>
+              )}
+            </>
+          )}
+          <span className="text-text-faint">
+            {monitored && agent?.silent
+              ? "— heartbeat lost, agent may be down"
+              : monitored
+                ? "— live events stream into the Monitor"
+                : "— run the agent to stream its activity live"}
+          </span>
         </p>
       </div>
       {monitored ? (
