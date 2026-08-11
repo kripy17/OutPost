@@ -768,6 +768,15 @@ export interface EventFeedResponse {
 
 export type EventSource = "live" | "webapp" | "sandbox" | "auditd" | "sysmon";
 
+/** Per-channel totals for the Event Log's source-tab rail — one query for all
+ *  six tabs. `total` is the grand count (the "All sources" tab); `channels`
+ *  buckets each filtered event into every channel it belongs to (auditd /
+ *  sysmon are cross-cutting log_source stamps, so they overlap live). */
+export interface ChannelCountsResponse {
+  total: number;
+  channels: Record<EventSource, number>;
+}
+
 export interface EventFeedParams {
   event_type?: EventType | "";
   platform?: Platform | "";

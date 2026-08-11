@@ -19,6 +19,7 @@ import type {
   Campaign,
   HostWatchResponse,
   MetaInfo,
+  ChannelCountsResponse,
   EventFeedParams,
   EventFeedResponse,
   Footprint,
@@ -755,4 +756,21 @@ export async function getEvents(params: EventFeedParams = {}): Promise<EventFeed
   if (params.offset !== undefined) qs.set("offset", String(params.offset));
   const suffix = qs.toString();
   return get<EventFeedResponse>(`/events${suffix ? `?${suffix}` : ""}`);
+}
+
+/** Per-channel totals for the source-tab rail — one request instead of one
+ *  per tab. Accepts the same filters as getEvents minus `source` (the split
+ *  dimension); `total` feeds the "All sources" tab, `channels` the rest. */
+export async function getEventChannelCounts(
+  params: Omit<EventFeedParams, "source" | "limit" | "offset"> = {},
+): Promise<ChannelCountsResponse> {
+  const qs = new URLSearchParams();
+  if (params.event_type) qs.set("event_type", params.event_type);
+  if (params.platform) qs.set("platform", params.platform);
+  if (params.severity) qs.set("severity", params.severity);
+  if (params.q) qs.set("q", params.q);
+  if (params.pid) qs.set("pid", params.pid);
+  if (params.include_synthetic !== undefined) qs.set("include_synthetic", String(params.include_synthetic));
+  const suffix = qs.toString();
+  return get<ChannelCountsResponse>(`/events/channel-counts${suffix ? `?${suffix}` : ""}`);
 }
