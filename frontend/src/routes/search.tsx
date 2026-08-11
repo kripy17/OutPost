@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { EVENT_ICON, Icon, platformIconName } from "../components/Icon";
+import { Icon } from "../components/Icon";
+import { EVENT_ICON, platformIconName } from "../components/iconMeta";
 import { PageHeader } from "../components/ui";
 import { searchIocs } from "../lib/api";
 import type { IocSearchResponse } from "../types";

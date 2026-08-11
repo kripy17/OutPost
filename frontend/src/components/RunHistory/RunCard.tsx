@@ -1,5 +1,6 @@
 import { Link, useNavigate } from "react-router-dom";
-import { Icon, platformIconName } from "../Icon";
+import { Icon } from "../Icon";
+import { platformIconName } from "../iconMeta";
 import { Chip, SourceBadge } from "../ui";
 import { riskBand } from "../../lib/constants";
 import type { RunSummary } from "../../types";

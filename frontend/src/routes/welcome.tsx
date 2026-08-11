@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Icon, platformIconName } from "../components/Icon";
+import { Icon } from "../components/Icon";
+import { platformIconName } from "../components/iconMeta";
 import { PageHeader, Panel } from "../components/ui";
 import { copyToClipboard } from "../lib/clipboard";
 import { BASE_URL, getPlatform, onboard } from "../lib/api";

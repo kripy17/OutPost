@@ -6,7 +6,7 @@
 // Colors are read from the CSS design tokens at runtime and re-read whenever
 // the data-theme attribute changes, so the chart re-themes with the toggle.
 
-import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { Panel } from "../ui";
 import { fmtDayShort, riskBand, TREND_WINDOWS, type TrendWindow } from "../../lib/constants";
@@ -34,19 +34,29 @@ function fmtDay(ts: number): string {
 
 export default function RiskTimeline({ runs, windowKey }: { runs: RunSummary[]; windowKey: TrendWindow }) {
   const colors = useThemeColors();
-  const wrapRef = useRef<HTMLDivElement>(null);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const roRef = useRef<ResizeObserver | null>(null);
   const [width, setWidth] = useState(720);
 
-  useEffect(() => {
-    const el = wrapRef.current;
+  // Combined ref: the plain ref backs the hover-tooltip geometry reads, and
+  // the observer attaches when the chart node MOUNTS (the chart renders only
+  // after runs arrive, so a mount-time effect with a [] dep would early-return
+  // on a null ref and never re-attach — the SVG would stay at its initial
+  // width and overflow a squeezed column).
+  const setWrap = useCallback((el: HTMLDivElement | null) => {
+    wrapRef.current = el;
+    roRef.current?.disconnect();
+    roRef.current = null;
     if (!el) return;
     const ro = new ResizeObserver((entries) => {
       const w = entries[0]?.contentRect.width;
       if (w) setWidth(Math.round(w));
     });
     ro.observe(el);
-    return () => ro.disconnect();
+    roRef.current = ro;
   }, []);
+
+  useEffect(() => () => roRef.current?.disconnect(), []);
 
   // -- interaction: click-to-open + rich hover tooltip ----------------------
   const navigate = useNavigate();
@@ -172,7 +182,7 @@ export default function RiskTimeline({ runs, windowKey }: { runs: RunSummary[]; 
               : `No sessions in the last ${windowKey}.`}
         </p>
       ) : (
-        <div ref={wrapRef} className="relative">
+        <div ref={setWrap} className="relative">
           <svg
             role="img"
             aria-label="Risk scores over time — each bar is a session, the line is the 24-hour mean"

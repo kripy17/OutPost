@@ -188,7 +188,17 @@ export default function FindingsPage() {
       {/* Status tabs with live counts */}
       <div className="mb-4 flex flex-wrap items-center gap-2">
         {STATUS_TABS.map((t) => {
-          const count = t.v === "open" ? data?.open : t.v === "acknowledged" ? data?.acknowledged : t.v === "resolved" ? data?.resolved : data?.total;
+          // Badges are live totals across the active non-status filters; the
+          // "All" badge sums the three status buckets (data.total is scoped
+          // to the active view for pagination).
+          const count =
+            t.v === "open"
+              ? data?.open
+              : t.v === "acknowledged"
+                ? data?.acknowledged
+                : t.v === "resolved"
+                  ? data?.resolved
+                  : (data?.open ?? 0) + (data?.acknowledged ?? 0) + (data?.resolved ?? 0);
           return (
             <button
               key={t.v}

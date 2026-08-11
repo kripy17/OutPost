@@ -9,7 +9,8 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { Icon, platformIconName } from "../components/Icon";
+import { Icon } from "../components/Icon";
+import { platformIconName } from "../components/iconMeta";
 import { PageHeader, Panel } from "../components/ui";
 import { getAgents, getHostBaseline, getHostSnapshot, resetHostBaseline } from "../lib/api";
 import { useEventStream } from "../lib/useEventStream";

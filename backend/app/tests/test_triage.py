@@ -291,6 +291,31 @@ def test_queue_filters_by_status_rule_host_and_text(client):
     assert client.get("/alerts/queue", params={"status": "all", "q": "zzz-no-match"}).json()["total"] == 0
 
 
+def test_queue_tab_badges_stay_live_under_status_filter(client):
+    """The Open view's tab badges (Acknowledged / Resolved counts) are live
+    totals across the active non-status filters — a status-filtered query must
+    NOT zero out the other buckets (regression: the counts query inherited the
+    status WHERE clause, so the Open view always showed Acknowledged 0)."""
+    run_id = make_run(client, sample_name="queue-tabs.bin")
+    client.post("/ingest/batch", json=[_conn(run_id, "203.0.113.88"), _lolbin(run_id)])
+    alerts = client.get(f"/runs/{run_id}/alerts").json()
+    assert len(alerts) == 2
+    # Ack one, resolve the other — a mixed-status run.
+    client.patch(f"/alerts/{alerts[0]['id']}", json={"status": "acknowledged"})
+    client.patch(f"/alerts/{alerts[1]['id']}", json={"status": "resolved"})
+
+    # Viewing the OPEN tab must still report the acknowledged + resolved
+    # totals (1 each) while pagination stays scoped to open (total 0 here).
+    q = client.get("/alerts/queue", params={"status": "open", "q": "queue-tabs.bin"}).json()
+    assert q["acknowledged"] >= 1
+    assert q["resolved"] >= 1
+    assert q["total"] == 0  # no open alerts in this run — pagination scoped
+    # And the ALL view reports both buckets too.
+    allv = client.get("/alerts/queue", params={"status": "all", "q": "queue-tabs.bin"}).json()
+    assert allv["open"] == 0 and allv["acknowledged"] >= 1 and allv["resolved"] >= 1
+    assert allv["total"] == allv["open"] + allv["acknowledged"] + allv["resolved"]
+
+
 def test_queue_aging_sort_surfaces_oldest_open_first(client):
     """sort=aging (the default) puts the longest-open alert first — the SLA
     pressure the queue exists to surface."""

@@ -7,7 +7,7 @@
 // Data comes from the same GET /alerts feed the findings list uses (a larger
 // limit), bucketed client-side by rule_id → kill-chain stage → family.
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Panel } from "../ui";
 import { fmtDayShort, KILL_CHAIN_STAGE, TREND_WINDOWS, type TrendWindow } from "../../lib/constants";
@@ -67,19 +67,26 @@ export default function DetectionVolume({ windowKey }: { windowKey: TrendWindow 
     refetchInterval: 30_000, // live detonations show up here too
   });
 
-  const wrapRef = useRef<HTMLDivElement>(null);
+  const roRef = useRef<ResizeObserver | null>(null);
   const [width, setWidth] = useState(420);
 
-  useEffect(() => {
-    const el = wrapRef.current;
+  // Callback ref: attach the observer when the chart node MOUNTS (the chart
+  // renders only after the alert fetch lands, so a mount-time effect with a
+  // [] dep would early-return on a null ref and never re-attach — the SVG
+  // would stay at its initial width and overflow a squeezed column).
+  const wrapRef = useCallback((el: HTMLDivElement | null) => {
+    roRef.current?.disconnect();
+    roRef.current = null;
     if (!el) return;
     const ro = new ResizeObserver((entries) => {
       const w = entries[0]?.contentRect.width;
       if (w) setWidth(Math.round(w));
     });
     ro.observe(el);
-    return () => ro.disconnect();
+    roRef.current = ro;
   }, []);
+
+  useEffect(() => () => roRef.current?.disconnect(), []);
 
   // -- bucket alerts into the window ------------------------------------------
   // 24h → one slot per hour; 7d / all → one slot per day (all spans the oldest

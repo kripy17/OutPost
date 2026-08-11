@@ -2,37 +2,16 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import ExportButton from "../components/ExportButton/ExportButton";
-import { EVENT_ICON, Icon, platformIconName } from "../components/Icon";
-import { eventDetail, TYPE_STYLE } from "../components/TimelineView/TimelineView";
+import { Icon } from "../components/Icon";
+import { EVENT_ICON, platformIconName } from "../components/iconMeta";
+import { eventDetail, TYPE_STYLE } from "../components/TimelineView/timeline";
 import { PageHeader } from "../components/ui";
+import { CAMPAIGN_SORTS, sortCampaigns, type CampaignSort } from "./campaignsHelpers";
 import { getCampaigns, getCampaignStix } from "../lib/api";
 import type { Campaign, CampaignIoc, Severity } from "../types";
 
 const MAX_TIMELINE = 40;
 const MAX_CHIPS = 10;
-
-/** Campaign list ordering — persisted (`outpost-campaigns-sort`) so the deck
- *  resumes the analyst's preferred view. reputation = externally-flagged or
- *  watchlisted infrastructure first; size = most member runs first; newest =
- *  most recent span start first. */
-export type CampaignSort = "reputation" | "size" | "newest";
-
-export const CAMPAIGN_SORTS: { key: CampaignSort; label: string; title: string }[] = [
-  { key: "reputation", label: "Reputation", title: "Watchlisted / externally-flagged infrastructure first" },
-  { key: "size", label: "Size", title: "Most member runs first" },
-  { key: "newest", label: "Newest", title: "Most recent activity first" },
-];
-
-/** Pure sorter — exported for tests. Stable: equal keys keep API order. */
-export function sortCampaigns(campaigns: Campaign[], sort: CampaignSort): Campaign[] {
-  const repRank: Record<string, number> = { malicious: 0, suspicious: 1, unknown: 2 };
-  const cmp: Record<CampaignSort, (a: Campaign, b: Campaign) => number> = {
-    reputation: (a, b) => (repRank[a.reputation ?? "unknown"] ?? 2) - (repRank[b.reputation ?? "unknown"] ?? 2),
-    size: (a, b) => b.runs.length - a.runs.length,
-    newest: (a, b) => (b.span_start ?? "").localeCompare(a.span_start ?? ""),
-  };
-  return [...campaigns].sort(cmp[sort]);
-}
 
 const SEV_DOT: Record<Severity, string> = {
   malicious: "text-risk-malicious",

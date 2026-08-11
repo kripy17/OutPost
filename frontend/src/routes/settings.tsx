@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { browserNotifyEnabled, browserPermission, setBrowserNotifyEnabled } from "../components/BrowserNotifications/BrowserNotifications";
+import { browserNotifyEnabled, browserPermission, setBrowserNotifyEnabled } from "../components/BrowserNotifications/notify";
 import { Icon } from "../components/Icon";
 import { PageHeader, Panel } from "../components/ui";
 import {
@@ -24,8 +24,8 @@ import {
   setRetention,
   testIntelKey,
 } from "../lib/api";
+import { lockedIpsText, rateLimitBadge, runResetFlow } from "./settingsHelpers";
 import type { NotificationSettings, NotificationSettingsIn } from "../types";
-import type { ResetResult } from "../lib/api";
 
 const inputCls =
   "w-full rounded border border-border-subtle bg-bg-base px-3 py-2 font-mono text-sm text-text-primary placeholder:text-text-faint focus:border-accent/60 focus:outline-none";
@@ -142,41 +142,6 @@ function ThemePalettePanel() {
  *  (AUTH_MAX_ATTEMPTS / AUTH_WINDOW_SECONDS / AUTH_LOCKOUT_SECONDS) plus the
  *  live state: how many IPs are tracked and currently locked out. Polls so
  *  an admin watching a live attack sees the lockout counter move. */
-/** The Settings "Clear demo data" flow, extracted for deterministic tests.
- *  Branches: cancel → no-op; success → busy then a confirmation message plus a
- *  deferred reload; failure → error message and busy cleared. */
-export async function runResetFlow(deps: {
-  confirm: () => boolean;
-  resetStore: () => Promise<ResetResult>;
-  setBusy: (b: "reset" | null) => void;
-  setMsg: (m: { ok: boolean; text: string } | null) => void;
-  reload: () => void;
-}): Promise<void> {
-  if (!deps.confirm()) return;
-  deps.setBusy("reset");
-  try {
-    const out = await deps.resetStore();
-    deps.setMsg({
-      ok: true,
-      text: `Cleared ${out.deleted_runs} demo/synthetic run${out.deleted_runs === 1 ? "" : "s"} (${out.deleted_events} events) — kept ${out.kept_runs} local-host session${out.kept_runs === 1 ? "" : "s"}. Reloading…`,
-    });
-    window.setTimeout(() => deps.reload(), 900);
-  } catch (e) {
-    deps.setMsg({ ok: false, text: e instanceof Error ? e.message : "Reset failed." });
-    deps.setBusy(null);
-  }
-}
-
-/** Pure label helpers for the login-guard panel — exported for tests. */
-export function rateLimitBadge(enabled: boolean): string {
-  return enabled ? "active" : "auth off · inactive";
-}
-
-export function lockedIpsText(n: number): string {
-  if (n === 0) return "No IPs currently locked out.";
-  return `${n} IP${n === 1 ? " is" : "s are"} locked out — even valid passwords are refused until the cooldown expires.`;
-}
-
 function LoginRateLimitPanel() {
   const { data, isLoading, isError } = useQuery({
     queryKey: ["auth", "ratelimit"],

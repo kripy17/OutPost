@@ -6,8 +6,8 @@
 //    newest), including stability for ties.
 
 import { describe, expect, it } from "vitest";
-import { readEnumDrafts, readYaraDraft, writeEnumDrafts } from "../routes/rules";
-import { sortCampaigns } from "../routes/campaigns";
+import { readEnumDrafts, readYaraDraft, writeEnumDrafts } from "../routes/rulesDrafts";
+import { sortCampaigns } from "../routes/campaignsHelpers";
 import type { Campaign, EnumPatternRow } from "../types";
 
 function campaign({ key, ...over }: Omit<Partial<Campaign>, "key"> & { key: string }): Campaign {

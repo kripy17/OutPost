@@ -4,7 +4,7 @@
 // empty live-monitor sessions defaulted out.
 
 import { describe, expect, it } from "vitest";
-import { aggregateTrend, ageBucket, collapseFindings, openSince, sortFindingsRiskFirst } from "../routes/overview";
+import { aggregateTrend, ageBucket, collapseFindings, openSince, sortFindingsRiskFirst } from "../routes/overviewHelpers";
 import type { GlobalAlert, RuleMeta, RunSummary } from "../types";
 
 function alert(over: Partial<GlobalAlert>): GlobalAlert {

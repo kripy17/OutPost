@@ -8,8 +8,7 @@
 // persistence on every remount.
 
 import { describe, expect, it } from "vitest";
-import { resolveSavedFilters } from "../routes/events";
-import type { SavedFilters } from "../routes/events";
+import { resolveSavedFilters, type SavedFilters } from "../routes/eventsHelpers";
 
 const saved: SavedFilters = { severity: "malicious", category: "network_connection", q: "8.8.8.8", pids: [1001, 1002] };
 const storage = JSON.stringify(saved);

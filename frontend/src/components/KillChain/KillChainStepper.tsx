@@ -9,14 +9,6 @@
 import { KILL_CHAIN_ORDER, KILL_CHAIN_STAGE } from "../../lib/constants";
 import type { Alert } from "../../types";
 
-/** Coverage stats for the Panel's right slot — one source of truth. */
-export function killChainStats(alerts: Alert[]): { fired: number; stages: number } {
-  const reached = new Set(
-    alerts.map((a) => KILL_CHAIN_STAGE[a.rule_id]).filter((s): s is string => Boolean(s)),
-  );
-  return { fired: alerts.filter((a) => KILL_CHAIN_STAGE[a.rule_id]).length, stages: reached.size };
-}
-
 export default function KillChainStepper({ alerts }: { alerts: Alert[] }) {
   const reached = new Set(
     alerts.map((a) => KILL_CHAIN_STAGE[a.rule_id]).filter((s): s is string => Boolean(s)),
