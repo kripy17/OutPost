@@ -509,8 +509,10 @@ export async function getRecentAlerts(limit = 20): Promise<GlobalAlert[]> {
 }
 
 // -- Agent fleet (which hosts stream telemetry) ------------------------------
-export async function getAgents(): Promise<AgentsResponse> {
-  return get<AgentsResponse>("/agents");
+// `identity` narrows the fleet server-side: collector / webapp / silent.
+export async function getAgents(identity: string = ""): Promise<AgentsResponse> {
+  const qs = identity ? `?identity=${encodeURIComponent(identity)}` : "";
+  return get<AgentsResponse>(`/agents${qs}`);
 }
 
 // -- Host watch (Monitor 'watch a host' mode) --------------------------------

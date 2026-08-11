@@ -80,7 +80,7 @@ export default function MonitorPage() {
   const hostPlatform: Platform = host?.os === "windows" ? "windows" : host?.os === "macos" ? "macos" : "linux";
 
   // Fleet hosts for the host picker (the 'watch a host' live mode).
-  const { data: fleet } = useQuery({ queryKey: ["agents"], queryFn: getAgents, staleTime: 15_000, refetchInterval: 30_000 });
+  const { data: fleet } = useQuery({ queryKey: ["agents"], queryFn: () => getAgents(), staleTime: 15_000, refetchInterval: 30_000 });
   // When watching a host, its learned baseline rides along (anomaly count).
   const { data: baseline } = useQuery({
     queryKey: ["baseline", hostId],

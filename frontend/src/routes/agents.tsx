@@ -8,7 +8,7 @@
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { platformIconName } from "../components/iconMeta";
 import { PageHeader, Panel } from "../components/ui";
@@ -394,11 +394,22 @@ function BaselinePanel({ agents }: { agents: AgentInfo[] }) {
   );
 }
 
+const IDENTITY_FILTERS = [
+  { value: "", label: "All" },
+  { value: "collector", label: "Collectors" },
+  { value: "webapp", label: "Webapp" },
+  { value: "silent", label: "Silent" },
+] as const;
+
 export default function AgentsPage() {
   const queryClient = useQueryClient();
+  // Filter-in-URL (Event Log parity): ?identity=collector|webapp|silent is
+  // the shareable/bookmarkable fleet view.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const identity = searchParams.get("identity") ?? "";
   const { data, isLoading, isError } = useQuery({
-    queryKey: ["agents"],
-    queryFn: getAgents,
+    queryKey: ["agents", identity],
+    queryFn: () => getAgents(identity),
     refetchInterval: 15_000,
   });
 
@@ -439,6 +450,35 @@ export default function AgentsPage() {
         }
       />
 
+      {/* Identity filter — ?identity= in the URL (Event Log parity). */}
+      <div className="mb-5 flex flex-wrap items-center gap-2" role="group" aria-label="Filter fleet by identity">
+        {IDENTITY_FILTERS.map((f) => {
+          const active = (identity || "") === f.value;
+          return (
+            <button
+              key={f.value || "all"}
+              onClick={() => {
+                const next = new URLSearchParams(searchParams);
+                if (f.value) {
+                  next.set("identity", f.value);
+                } else {
+                  next.delete("identity");
+                }
+                setSearchParams(next, { replace: true });
+              }}
+              aria-pressed={active}
+              className={`press inline-flex items-center gap-1.5 rounded-full border px-3 py-1 font-mono text-[11px] transition-colors duration-150 ${
+                active
+                  ? "border-accent/60 bg-accent/10 text-accent"
+                  : "border-border-subtle bg-bg-surface text-text-muted hover:border-accent/40 hover:text-accent"
+              }`}
+            >
+              {f.label}
+            </button>
+          );
+        })}
+      </div>
+
       {/* Fleet summary strip */}
       <div className="mb-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
         {[
@@ -475,18 +515,31 @@ export default function AgentsPage() {
       )}
 
       {!isLoading && !isError && agents.length === 0 && (
-        <Panel kicker="Fleet" title="No agents yet">
+        <Panel kicker="Fleet" title={identity ? "No hosts match this filter" : "No agents yet"}>
           <div className="py-6 text-center">
             <Icon name="terminal" size={28} className="mx-auto text-text-faint" />
-            <p className="mx-auto mt-3 max-w-md text-sm leading-relaxed text-text-muted">
-              Telemetry appears here the moment any event lands. To bring a real host online, open the{" "}
-              <Link to="/monitor" className="text-accent hover:underline">
-                Live Monitor
-              </Link>
-              , start a live session, then run{" "}
-              <code className="rounded bg-bg-elevated px-1.5 py-0.5 font-mono text-[11px] text-text-primary">outpost agent run</code>{" "}
-              on the host — its auditd/Sysmon events stream in under this host's name.
-            </p>
+            {identity ? (
+              <p className="mx-auto mt-3 max-w-md text-sm leading-relaxed text-text-muted">
+                No host fits <code className="rounded bg-bg-elevated px-1.5 py-0.5 font-mono text-[11px]">identity={identity}</code>{" "}
+                right now.
+                <button
+                  onClick={() => setSearchParams(new URLSearchParams(), { replace: true })}
+                  className="ml-2 text-accent underline-offset-2 hover:underline"
+                >
+                  Clear filter
+                </button>
+              </p>
+            ) : (
+              <p className="mx-auto mt-3 max-w-md text-sm leading-relaxed text-text-muted">
+                Telemetry appears here the moment any event lands. To bring a real host online, open the{" "}
+                <Link to="/monitor" className="text-accent hover:underline">
+                  Live Monitor
+                </Link>
+                , start a live session, then run{" "}
+                <code className="rounded bg-bg-elevated px-1.5 py-0.5 font-mono text-[11px] text-text-primary">outpost agent run</code>{" "}
+                on the host — its auditd/Sysmon events stream in under this host's name.
+              </p>
+            )}
           </div>
         </Panel>
       )}

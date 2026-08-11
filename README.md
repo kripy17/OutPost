@@ -243,7 +243,7 @@ One command runs the whole sweep:
 
 | Suite | Count | Covers |
 |---|---|---|
-| Backend pytest | **426** | ingestion, OS-aware rules (win/linux/macOS), risk + ATT&CK, campaigns, events search, samples vault, SSE broadcast, notes, storm caps, triage, footprint, YARA, auth (fail-closed OUTPOST_AUTH_REQUIRED + agent token + rotation), fleet auth context |
+| Backend pytest | **427** | ingestion, OS-aware rules (win/linux/macOS), risk + ATT&CK, campaigns, events search, samples vault, SSE broadcast, notes, storm caps, triage, footprint, YARA, auth (fail-closed OUTPOST_AUTH_REQUIRED + agent token + rotation), fleet auth context |
 | Collector pytest | **24** | Sysmon + auditd shipping, normalization, agent-token auth |
 | CLI pytest | **58** | rendering regressions, campaigns output, risk columns, YARA + footprint mirrors + exports, rules knobs, agent install (token embed + Windows bats), module entry, rotate-agent-token |
 | Frontend | clean `tsc --noEmit` + Vite build + unit tests | — |

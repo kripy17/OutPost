@@ -170,8 +170,14 @@ def reset_host_baseline(host_id: str) -> dict:
 def list_agents(
     online_window: int = Query(ONLINE_WINDOW_SECONDS, ge=10, le=3600),
     silent_window: int = Query(SILENT_WINDOW_SECONDS, ge=60, le=86400),
+    identity: str = Query("", pattern="^(collector|webapp|silent|)$"),
 ) -> dict:
-    """Fleet overview grouped by host_id."""
+    """Fleet overview grouped by host_id.
+
+    `?identity=` narrows the fleet: 'collector' (real agent heartbeats),
+    'webapp' (event-only hosts: local detonations / sandbox runs), 'silent'
+    (dead-agent flag). The response totals are scoped to the filtered set.
+    """
     now = datetime.now(timezone.utc)
     with db_session() as conn:
         rows = conn.execute(
@@ -291,11 +297,21 @@ def list_agents(
             }
         )
 
+    # Identity filter (mirrors the Event Log's filter-in-URL pattern): the
+    # same agent rows, narrowed — totals below are computed on the result.
+    if identity == "collector":
+        agents = [a for a in agents if a["identity"] == "collector"]
+    elif identity == "webapp":
+        agents = [a for a in agents if a["identity"] == "webapp"]
+    elif identity == "silent":
+        agents = [a for a in agents if a["silent"]]
+
     return {
         "total": len(agents),
         "online": sum(1 for a in agents if a["online"]),
         "silent": sum(1 for a in agents if a["silent"]),
         "online_window_seconds": online_window,
         "silent_window_seconds": silent_window,
+        "identity": identity or None,
         "agents": agents,
     }
