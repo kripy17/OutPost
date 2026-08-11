@@ -16,6 +16,7 @@ runner = CliRunner()
 def test_agent_install_writes_systemd_unit(tmp_path, monkeypatch):
     monkeypatch.setenv("OUTPOST_HOME", str(tmp_path))
     monkeypatch.setenv("OUTPOST_API_URL", "http://localhost:8123")
+    monkeypatch.setenv("OUTPOST_AGENT_TOKEN", "tok-abc123")
     result = runner.invoke(app, ["agent", "install"])
     assert result.exit_code == 0
     d = Path(tmp_path) / "outpost"
@@ -28,6 +29,10 @@ def test_agent_install_writes_systemd_unit(tmp_path, monkeypatch):
     assert "http://localhost:8123" in text
     assert "--mode live" in text
     assert "SNAPSHOT_INTERVAL=3600" in text
+    # The shared agent credential is embedded so the service authenticates
+    # against a fail-closed backend — in BOTH the collector and summary units.
+    assert "Environment=OUTPOST_AGENT_TOKEN=tok-abc123" in text
+    assert "Environment=OUTPOST_AGENT_TOKEN=tok-abc123" in (d / "outpost-agent-summary.service").read_text()
     # The daily fired-rule summary pair is generated alongside.
     assert (d / "outpost-agent-summary.service").exists()
     assert (d / "outpost-agent-summary.timer").exists()
@@ -37,6 +42,53 @@ def test_agent_install_writes_systemd_unit(tmp_path, monkeypatch):
     assert "systemctl enable" in result.output
     assert "outpost-agent" in result.output
     assert "sudo" in result.output
+
+
+def test_agent_install_windows_branch_embeds_token(tmp_path, monkeypatch):
+    """Windows install: the collector + summary .bat set the token and the
+    install .bat passes it to nssm's AppEnvironmentExtra — same credential
+    the Linux systemd path embeds."""
+    import outpost.commands.agent as agent_mod
+    from outpost.monitoring import session as sess
+
+    monkeypatch.setattr(sess, "detect_platform", lambda: "windows")
+    monkeypatch.setattr(agent_mod, "_config_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        agent_mod, "_python_exe", lambda: r"C:\Python314\python.exe",
+    )
+    monkeypatch.setattr(
+        agent_mod, "_collector_abs", lambda: tmp_path / "collector_win.py",
+    )
+
+    _, enable = agent_mod._write_service_config("https://outpost.example.com", "tok-win-42")
+    assert "outpost-agent-install.bat" in enable
+
+    collector_bat = (tmp_path / "outpost-agent.bat").read_text()
+    summary_bat = (tmp_path / "outpost-agent-summary.bat").read_text()
+    install_bat = (tmp_path / "outpost-agent-install.bat").read_text()
+    # read_text() normalizes CRLF→LF under universal newlines — check bytes.
+    assert b"\r\n" in (tmp_path / "outpost-agent.bat").read_bytes()  # CRLF, required on Windows
+    assert "set OUTPOST_AGENT_TOKEN=tok-win-42" in collector_bat
+    assert "set OUTPOST_AGENT_TOKEN=tok-win-42" in summary_bat
+    assert "set TOKEN=tok-win-42" in install_bat
+    assert "OUTPOST_AGENT_TOKEN=%TOKEN%" in install_bat
+
+
+def test_module_entry_runs_cli():
+    """`python -m outpost` must actually run the CLI — the generated systemd
+    summary unit uses `python -m outpost.main` as ExecStart, and a module
+    that imports and exits 0 silently would no-op the daily summary."""
+    import subprocess
+    import sys
+
+    out = subprocess.run(
+        [sys.executable, "-m", "outpost", "--help"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert out.returncode == 0
+    assert "Usage:" in out.stdout
 
 
 def test_agent_status_reports_not_installed(tmp_path, monkeypatch):

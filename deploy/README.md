@@ -42,6 +42,7 @@ DATABASE_PATH=/opt/outpost/data/outpost.db
 CORS_ORIGINS=["https://outpost.example.com"]
 OUTPOST_AUTH_REQUIRED=1
 OUTPOST_ADMIN_PASSWORD=CHANGE_ME
+OUTPOST_AGENT_TOKEN=CHANGE_ME_TOO
 EOF
 sudo chmod 600 /etc/outpost/backend.env
 sudo systemctl daemon-reload
@@ -62,6 +63,12 @@ Assumes the repo at `/opt/outpost` with its venv; the unit hardens the process
   convenience; for a secret-free env use `OUTPOST_ADMIN_PASSWORD_HASH` from
   `outpost auth hash` (see `backend/app/core/auth.py`).
 - The read-only `analyst` role is optional; without it only admin logins exist.
+- **Host agents**: set `OUTPOST_AGENT_TOKEN` (same value on the backend and
+  every monitored host). Collectors authenticate as the `agent` role — scoped
+  to telemetry only (ship events, heartbeat, claim/complete sessions, read
+  run data). `outpost agent install --agent-token …` embeds it into the
+  systemd unit / scheduled-task batch files. Without it, agents get 401s
+  under fail-closed auth.
 
 ## Post-deploy checklist
 

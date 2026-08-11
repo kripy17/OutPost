@@ -40,6 +40,26 @@ _HASH_ALGO = "pbkdf2_sha256"
 _ROLES = ("admin", "analyst")
 
 
+def agent_token() -> str:
+    """The shared agent credential: `OUTPOST_AGENT_TOKEN` (optional).
+
+    When set, the auth gate accepts it (Bearer) for telemetry endpoints so
+    collectors can ship events, heartbeat, and claim/create sessions under
+    fail-closed auth (OUTPOST_AUTH_REQUIRED=1) without holding a browser
+    role's token. Empty when unset — the zero-config default.
+    """
+    return os.getenv("OUTPOST_AGENT_TOKEN", "").strip()
+
+
+def verify_agent_token(token: str) -> bool:
+    """Constant-time check against the configured agent token. Fails closed:
+    no token configured or an empty presented token never matches."""
+    configured = agent_token()
+    if not configured or not token:
+        return False
+    return hmac.compare_digest(token.encode(), configured.encode())
+
+
 def _env_hash(role: str) -> str:
     return os.getenv(f"OUTPOST_{role.upper()}_PASSWORD_HASH", "").strip()
 
@@ -116,13 +136,16 @@ def _auth_required_flag() -> bool:
 
 
 def auth_enabled() -> bool:
-    """True when auth must be enforced: the OUTPOST_AUTH_REQUIRED flag OR any
-    role has a credential configured (env or DB).
+    """True when auth must be enforced: the OUTPOST_AUTH_REQUIRED flag, OR a
+    role has a credential configured (env or DB), OR an agent token is set
+    (a deploy that configured agents means the surface is protected).
 
     Env check first — the zero-config default has neither, so the DB read
     below only happens once auth is genuinely in play.
     """
     if _auth_required_flag():
+        return True
+    if agent_token():
         return True
     if any(_env_hash(r) or _env_plain(r) for r in _ROLES):
         return True
@@ -298,11 +321,16 @@ def verify_token(token: str) -> str | None:
 def role_from_request(request) -> str:
     """The acting identity for a request: the verified role when auth is on
     (falls back to 'local' if the token is missing/invalid so audit rows are
-    never lost), or 'local' when auth is off. Audit logging uses this."""
+    never lost), or 'local' when auth is off. Collector traffic presents the
+    shared agent credential and is attributed as 'agent'. Audit logging uses
+    this."""
     if not auth_enabled():
         return "local"
     tok = token_from_request(dict(request.headers), dict(request.query_params))
-    return verify_token(tok) if tok else "local"
+    role = verify_token(tok) if tok else None
+    if role is None and verify_agent_token(tok):
+        return "agent"
+    return role or "local"
 
 
 def token_from_request(headers: dict, query: dict) -> str:

@@ -160,7 +160,7 @@ def test_shipper_batches_at_batch_size(monkeypatch, tmp_path):
         def raise_for_status(self):
             return None
 
-    def fake_post(url, json=None, timeout=None):
+    def fake_post(url, json=None, timeout=None, headers=None):
         posted.append(json or [])
         return FakeResp()
 
@@ -184,7 +184,7 @@ def test_shipper_stamps_log_channel_from_platform(monkeypatch, tmp_path):
         def raise_for_status(self):
             return None
 
-    def fake_post(url, json=None, timeout=None):
+    def fake_post(url, json=None, timeout=None, headers=None):
         posted.append(json or [])
         return FakeResp()
 
@@ -205,7 +205,7 @@ def test_shipper_stamps_log_channel_from_platform(monkeypatch, tmp_path):
 def test_shipper_spools_when_backend_down(monkeypatch, tmp_path):
     import requests
 
-    def fake_post(url, json=None, timeout=None):
+    def fake_post(url, json=None, timeout=None, headers=None):
         raise requests.ConnectionError("down")
 
     monkeypatch.setattr("shipper.requests.post", fake_post)
@@ -269,7 +269,7 @@ def test_shipper_replays_spool_after_recovery(monkeypatch, tmp_path):
         def raise_for_status(self):
             return None
 
-    def fake_post(url, json=None, timeout=None):
+    def fake_post(url, json=None, timeout=None, headers=None):
         import requests
 
         calls["n"] += 1
@@ -306,7 +306,7 @@ def test_snapshot_collect_shapes_and_ships(monkeypatch, tmp_path):
         def raise_for_status(self):
             return None
 
-    def fake_post(url, json=None, timeout=None):
+    def fake_post(url, json=None, timeout=None, headers=None):
         posted["url"] = url
         posted["json"] = json
         return FakeResp()
@@ -339,7 +339,7 @@ def test_heartbeat_pings_once_per_interval(monkeypatch, tmp_path):
 
     posted: list[tuple] = []
 
-    def fake_post(url, json=None, timeout=None):
+    def fake_post(url, json=None, timeout=None, headers=None):
         if url.endswith("/heartbeat"):
             posted.append((url, json))
 
@@ -372,6 +372,39 @@ def test_heartbeat_pings_once_per_interval(monkeypatch, tmp_path):
     sh.maybe_heartbeat(platform="linux", interval=0.0)  # must not raise
     assert len(posted) == 2  # nothing new posted
     assert sh._last_heartbeat > 0  # retry bookkeeping still advances
+
+
+def test_shipper_sends_agent_token_when_configured(monkeypatch, tmp_path):
+    """With OUTPOST_AGENT_TOKEN set, every shipped request carries it as
+    `Authorization: Bearer` — the collector authenticates against a
+    fail-closed backend (OUTPOST_AUTH_REQUIRED=1). Without it, no header."""
+    seen: list[dict] = []
+
+    class FakeResp:
+        def raise_for_status(self):
+            return None
+
+    def fake_post(url, json=None, timeout=None, headers=None):
+        seen.append(headers or {})
+        return FakeResp()
+
+    monkeypatch.setattr("shipper.requests.post", fake_post)
+    monkeypatch.setenv("OUTPOST_AGENT_TOKEN", "agent-secret")
+
+    sh = Shipper("http://backend", "run-auth", batch_size=2, flush_interval=999, spool_path=str(tmp_path / "s.jsonl"))
+    sh.add({"event_type": "process_create", "pid": 1})
+    sh.add({"event_type": "file_write", "file_path": "/tmp/x"})
+    sh.flush()
+    assert seen and seen[0].get("Authorization") == "Bearer agent-secret"
+
+    # Unset → no Authorization header at all.
+    monkeypatch.delenv("OUTPOST_AGENT_TOKEN", raising=False)
+    seen.clear()
+    sh2 = Shipper("http://backend", "run-noauth", batch_size=2, flush_interval=999, spool_path=str(tmp_path / "s2.jsonl"))
+    sh2.add({"event_type": "process_create", "pid": 2})
+    sh2.add({"event_type": "process_create", "pid": 3})
+    sh2.flush()
+    assert all("Authorization" not in (h or {}) for h in seen)
 
 
 # ---------------------------------------------------------------------------
@@ -423,7 +456,7 @@ def test_resolve_reuses_todays_open_agent_run(monkeypatch):
     today = agent_run_name(_default_host_id())
     calls = {"n": 0}
 
-    def fake_get(url, timeout=None):
+    def fake_get(url, timeout=None, headers=None):
         calls["n"] += 1
         if "/runs/active-live" in url:
             return _resp(ok=False, status=404)
@@ -441,12 +474,12 @@ def test_resolve_creates_fresh_run_when_none_open(monkeypatch):
     its own live session (source=agent)."""
     posted = {}
 
-    def fake_get(url, timeout=None):
+    def fake_get(url, timeout=None, headers=None):
         if "/runs/active-live" in url:
             return _resp(ok=False, status=404)
         return _resp(data=[])
 
-    def fake_post(url, json=None, timeout=None):
+    def fake_post(url, json=None, timeout=None, headers=None):
         posted["url"] = url
         posted["json"] = json
         return _resp(status=201, data={"run_id": "brand-new"})
