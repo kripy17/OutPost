@@ -111,6 +111,14 @@ def watchlist_remove(value: str) -> None:
         raise APIError(f"DELETE /watchlist/{value} → {resp.status_code}: {resp.text[:200]}")
 
 
+def get_agents(identity: str = "") -> dict:
+    """The fleet grouped by host_id (`GET /agents`). `?identity=` narrows
+    to collector/webapp/silent — same param the webapp's Agents page uses.
+    """
+    q = f"?identity={identity}" if identity else ""
+    return _get(f"/agents{q}")
+
+
 def get_campaigns() -> list[dict]:
     # Opt into synthetic-provenance members explicitly — the terminal mirror
     # shows the full story (same parity rule as list_runs).
