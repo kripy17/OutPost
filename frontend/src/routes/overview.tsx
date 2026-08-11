@@ -651,6 +651,25 @@ function HostMonitorPanel() {
                   webapp detonation
                 </Link>
               )}
+              {agent.identity === "collector" &&
+                (agent.channels ?? [])
+                  .filter((c) => c !== "webapp")
+                  .map((c) => (
+                    <span
+                      key={c}
+                      className={`inline-flex items-center gap-1 rounded border px-1.5 py-px font-mono text-[10px] ${
+                        c === "auditd"
+                          ? "border-risk-clean/30 bg-risk-clean/5 text-risk-clean/90"
+                          : c === "sysmon"
+                            ? "border-accent/30 bg-accent/5 text-accent/90"
+                            : "border-border-subtle bg-bg-elevated/50 text-text-muted"
+                      }`}
+                      title={`Telemetry channel: ${c === "auditd" ? "Linux audit daemon events (execve, connect, file writes)" : c === "sysmon" ? "Windows Sysmon events (process create, network, file, registry)" : "Custom collector channel"} — streamed live from this host`}
+                    >
+                      <Icon name="activity" size={9} />
+                      {c}
+                    </span>
+                  ))}
               {agent.last_auth_role && (
                 <span
                   className={`inline-flex items-center gap-1 rounded border px-1.5 py-px text-[10px] ${
