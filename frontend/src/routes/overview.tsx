@@ -570,7 +570,9 @@ function IntelFreshness() {
 function HostMonitorPanel() {
   const queryClient = useQueryClient();
   const { data: plat } = useQuery({ queryKey: ["platform"], queryFn: getPlatform, staleTime: Infinity });
-  const { data: fleet } = useQuery({ queryKey: ["agents"], queryFn: getAgents, staleTime: 15_000, refetchInterval: 30_000 });
+  const { data: fleet } =useQuery({
+    queryKey: ["agents"],
+    queryFn: () => getAgents(), staleTime: 15_000, refetchInterval: 30_000 });
   const [copied, setCopied] = useState(false);
 
   // Live fleet: a heartbeat from this host flips the panel to "monitored"

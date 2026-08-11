@@ -87,6 +87,39 @@ def test_event_only_hosts_are_webapp_identity_with_channels(client):
 # ---------------------------------------------------------------------------
 
 
+def test_identity_filter_narrows_fleet(client):
+    """?identity=collector|webapp|silent filters the same fleet rows the
+    Agents page uses (filter-in-URL parity), with totals scoped to the result."""
+    a = make_run(client, sample_name="filt-a.bin", platform="linux")
+    now = datetime.now(timezone.utc)
+    # Event-only host → webapp identity.
+    client.post("/ingest/batch", json=[_event(a, "linux", "filt-web", ts=now - timedelta(seconds=5))])
+    # Collector host → heartbeats + events.
+    client.post("/agents/filt-col/heartbeat", json={"platform": "linux", "version": "outpost-collector/1.0"})
+    client.post("/ingest/batch", json=[_event(a, "linux", "filt-col", ts=now - timedelta(seconds=3))])
+
+    # Session DB is shared across files — assert per-host rows + cross-
+    # exclusion, never absolute totals (file convention).
+    all_ = client.get("/agents").json()
+    assert all_["identity"] is None
+    ids = {a["host_id"] for a in all_["agents"]}
+    assert "filt-web" in ids and "filt-col" in ids
+
+    cols = client.get("/agents", params={"identity": "collector"}).json()
+    assert cols["identity"] == "collector"
+    col_ids = {a["host_id"] for a in cols["agents"]}
+    assert "filt-col" in col_ids and "filt-web" not in col_ids
+    assert all(a["identity"] == "collector" for a in cols["agents"])
+
+    webs = client.get("/agents", params={"identity": "webapp"}).json()
+    web_ids = {a["host_id"] for a in webs["agents"]}
+    assert "filt-web" in web_ids and "filt-col" not in web_ids
+    assert all(a["identity"] == "webapp" for a in webs["agents"])
+
+    # Unknown value → 422 (the pattern whitelists exactly the three views).
+    assert client.get("/agents", params={"identity": "bogus"}).status_code == 422
+
+
 def test_heartbeat_marks_host_online_and_reports_age(client):
     """A fresh heartbeat makes a host online even with no events, and the
     fleet reports last_heartbeat + age + version."""
