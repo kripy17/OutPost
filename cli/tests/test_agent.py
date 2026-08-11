@@ -133,7 +133,9 @@ def test_agent_status_shows_fleet_auth_context(tmp_path, monkeypatch):
                 "silent": False,
                 "heartbeat_version": "outpost-collector/1.0",
                 "last_auth_role": "agent",
-                "channels": ["auditd"],
+                # auditd (teal) + sysmon (amber) chips; webapp is filtered out
+                # like the Overview panel — detonation noise, not host telemetry.
+                "channels": ["auditd", "sysmon", "webapp"],
                 "event_count": 42,
                 "alert_count": 3,
                 "run_count": 2,
@@ -148,8 +150,12 @@ def test_agent_status_shows_fleet_auth_context(tmp_path, monkeypatch):
     assert "online" in result.output
     assert "auth: agent" in result.output
     assert "OUTPOST_AGENT_TOKEN" in result.output
-    assert "auditd" in result.output
     assert "outpost-collector/1.0" in result.output
+    # Channel chips (webapp panel parity): auditd + sysmon render as chips,
+    # the webapp pseudo-channel is filtered out.
+    assert "▪ auditd" in result.output
+    assert "▪ sysmon" in result.output
+    assert "webapp" not in result.output
 
 
 def test_agent_status_fleet_missing_host(tmp_path, monkeypatch):

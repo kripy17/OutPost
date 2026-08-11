@@ -430,12 +430,31 @@ def _is_collector_running() -> bool:
         return False
 
 
+def _channel_chips(channels: list[str]) -> str:
+    """Colored channel chips — webapp Overview panel parity. auditd is teal,
+    sysmon is amber (the signature accent), and any custom channel is muted.
+    The `webapp` pseudo-channel (detonation events, not host telemetry) is
+    filtered out exactly like the webapp panel does."""
+    chips = []
+    for c in channels or []:
+        if c == "webapp":
+            continue
+        if c == "auditd":
+            chips.append(f"[bold #3FA796]▪ {c}[/bold #3FA796]")
+        elif c == "sysmon":
+            chips.append(f"[bold #D9A441]▪ {c}[/bold #D9A441]")
+        else:
+            chips.append(f"[dim]▪ {c}[/dim]")
+    return " ".join(chips) or "—"
+
+
 @app.command()
 def status():
     """Is the host agent installed, is it streaming right now, and how does
     the backend see it? The fleet readout mirrors the webapp's Agents page —
-    identity (collector vs webapp), last-auth role, and channels — so
-    terminal parity holds for the host identity story."""
+    identity (collector vs webapp), last-auth role, and channels (rendered as
+    colored chips like the Overview panel) — so terminal parity holds for the
+    host identity story."""
     import socket
 
     from ..lib import api_client
@@ -500,10 +519,10 @@ def status():
     )
     if identity == "collector":
         ver = me.get("heartbeat_version") or "?"
-        channels = ", ".join(me.get("channels") or []) or "—"
+        chip_row = _channel_chips(me.get("channels") or [])
         console.print(
-            f"[dim]  agent {ver} · channels: {channels}"
-            f" · events: {me.get('event_count', 0)} · alerts: {me.get('alert_count', 0)}"
+            f"[dim]  agent {ver} · channels:[/dim] {chip_row}"
+            f"[dim] · events: {me.get('event_count', 0)} · alerts: {me.get('alert_count', 0)}"
             f" · runs: {me.get('run_count', 0)}[/dim]"
         )
     return None
