@@ -51,6 +51,10 @@ _PUBLIC_PREFIXES = ("/health", "/platform", "/auth/")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    # Fail-closed auth: OUTPOST_AUTH_REQUIRED=1 refuses to start without an
+    # admin credential (an empty signing key would be forgeable, worse than
+    # running open). Only reached after init_db so DB credentials are visible.
+    auth_service.validate_config()
     # Background auto-prune scheduler (off by default) — wakes every 60s and
     # runs the retention prune when a schedule is set. Canceled on shutdown.
     prune_task = asyncio.create_task(auto_prune_loop())

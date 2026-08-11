@@ -175,6 +175,11 @@ The **host agent is not part of the stack** — the collectors live on the
 machines you monitor and stream into this backend (`outpost agent install`
 on the target host, pointing `OUTPOST_API_URL` at the server).
 
+**Production:** a TLS-terminated stack (Caddy front + auth on by default,
+fail-closed) lives in [`deploy/`](deploy/README.md) — `docker compose -f
+deploy/docker-compose.prod.yml up --build` with a public domain for
+automatic Let's Encrypt, or a hardened systemd unit for the backend alone.
+
 ### Try it without a collector
 
 The webapp and CLI run against **seeded demo data** — no live telemetry
@@ -238,7 +243,7 @@ One command runs the whole sweep:
 
 | Suite | Count | Covers |
 |---|---|---|
-| Backend pytest | **417** | ingestion, OS-aware rules (win/linux/macOS), risk + ATT&CK, campaigns, events search, samples vault, SSE broadcast, notes, storm caps, triage, footprint, YARA, auth, roadmap tiers |
+| Backend pytest | **420** | ingestion, OS-aware rules (win/linux/macOS), risk + ATT&CK, campaigns, events search, samples vault, SSE broadcast, notes, storm caps, triage, footprint, YARA, auth (incl. fail-closed OUTPOST_AUTH_REQUIRED), roadmap tiers |
 | Collector pytest | **23** | Sysmon + auditd shipping, normalization |
 | CLI pytest | **53** | rendering regressions, campaigns output, risk columns, YARA + footprint mirrors + exports, rules knobs |
 | Frontend | clean `tsc --noEmit` + Vite build + unit tests | — |

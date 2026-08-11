@@ -1,0 +1,42 @@
+# OutPost backend as a systemd service (non-Docker path).
+#
+# Install:
+#   sudo cp deploy/outpost-backend.service /etc/systemd/system/
+#   sudo mkdir -p /etc/outpost
+#   sudo tee /etc/outpost/backend.env >/dev/null <<'EOF'
+#   DATABASE_PATH=/opt/outpost/data/outpost.db
+#   CORS_ORIGINS=["https://outpost.example.com"]
+#   OUTPOST_AUTH_REQUIRED=1
+#   OUTPOST_ADMIN_PASSWORD=CHANGE_ME
+#   EOF
+#   sudo chmod 600 /etc/outpost/backend.env
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now outpost-backend
+#
+# Assumes the repo lives at /opt/outpost with its venv (.venv) and that the
+# webapp static build is served separately (Caddy/nginx — see deploy/README).
+# Same fail-closed auth as the Docker path: with OUTPOST_AUTH_REQUIRED=1 the
+# backend exits at boot unless an admin credential is configured.
+
+[Unit]
+Description=OutPost backend (FastAPI behavioral monitor)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/outpost/backend.env
+WorkingDirectory=/opt/outpost/backend
+ExecStart=/opt/outpost/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8001
+Restart=on-failure
+RestartSec=3
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/outpost/data
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

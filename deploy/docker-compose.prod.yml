@@ -1,0 +1,58 @@
+# OutPost — production stack (backend + TLS web front).
+#
+#   cp deploy/.env.example .env.prod            # set OUTPOST_HOST + admin password
+#   docker compose -f deploy/docker-compose.prod.yml --env-file .env.prod up --build -d
+#
+# Auth is ON by default: OUTPOST_AUTH_REQUIRED=1 makes the backend FAIL CLOSED
+# — it refuses to start until OUTPOST_ADMIN_PASSWORD (or a precomputed
+# OUTPOST_ADMIN_PASSWORD_HASH) is set, so a production deploy can never run
+# open or with a forgeable signing key.
+#
+# TLS: Caddy auto-provisions Let's Encrypt for OUTPOST_HOST. No domain? Use
+# `tls internal` in deploy/Caddyfile (self-signed) and set OUTPOST_HOST to the
+# server's IP/hostname. The webapp calls the API through the same origin
+# (VITE_API_URL=/api), so there's exactly one TLS endpoint.
+#
+# The SQLite DB persists in the `outpost-data` volume. The collectors are NOT
+# part of this stack — install the agent on the machines you monitor
+# (`outpost agent install`; see collectors/windows/README.md for the Sysmon
+# host validation checklist).
+
+services:
+  backend:
+    build: ./backend
+    environment:
+      DATABASE_PATH: /data/outpost.db
+      # NOTE: double quotes are required — compose interpolates ${OUTPOST_HOST}
+      # only in unquoted/double-quoted values, never inside single quotes.
+      CORS_ORIGINS: "[\"https://${OUTPOST_HOST}\"]"
+      # Fail-closed auth — required in production.
+      OUTPOST_AUTH_REQUIRED: "1"
+      OUTPOST_ADMIN_PASSWORD: ${OUTPOST_ADMIN_PASSWORD}
+      OUTPOST_ANALYST_PASSWORD: ${OUTPOST_ANALYST_PASSWORD:-}
+      # Rate-limit knobs (see Settings -> Security).
+      AUTH_MAX_ATTEMPTS: ${AUTH_MAX_ATTEMPTS:-5}
+      AUTH_WINDOW_SECONDS: ${AUTH_WINDOW_SECONDS:-300}
+      AUTH_LOCKOUT_SECONDS: ${AUTH_LOCKOUT_SECONDS:-900}
+    volumes:
+      - outpost-data:/data
+    restart: unless-stopped
+    # No host ports — only reachable through Caddy's /api proxy.
+
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.web
+      args:
+        VITE_API_URL: /api
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      OUTPOST_HOST: ${OUTPOST_HOST}
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  outpost-data:
