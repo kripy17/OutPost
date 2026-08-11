@@ -372,7 +372,7 @@ def _migrate_events_log_source(conn: sqlite3.Connection) -> None:
         conn.commit()
 
 
-def _backfill_events_log_source(conn: sqlite3.Connection) -> None:
+def _backfill_events_log_source(conn: sqlite3.Connection) -> int:
     """Idempotent backfill: events shipped by a real collector BEFORE
     collectors started stamping `log_source` read NULL, leaving the
     Auditd/Sysmon channels empty despite the telemetry being there. The only
@@ -381,8 +381,10 @@ def _backfill_events_log_source(conn: sqlite3.Connection) -> None:
     events that carry a real host (never the webapp-default 'local' stamp).
 
     Safe to run at every startup: after the first pass nothing matches, and
-    new events are stamped explicitly by collectors so they are untouched."""
-    conn.execute(
+    new events are stamped explicitly by collectors so they are untouched.
+    Returns the number of events newly tagged (0 when the channel data is
+    already complete) — the on-demand endpoint surfaces this to operators."""
+    cur = conn.execute(
         """
         UPDATE events
         SET log_source = CASE WHEN platform = 'linux' THEN 'auditd' ELSE 'sysmon' END
@@ -393,6 +395,7 @@ def _backfill_events_log_source(conn: sqlite3.Connection) -> None:
         """
     )
     conn.commit()
+    return cur.rowcount
 
 
 def _migrate_events_query(conn: sqlite3.Connection) -> None:

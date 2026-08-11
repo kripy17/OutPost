@@ -41,6 +41,30 @@ def _post(path: str, body: dict | None = None) -> Any:
     return resp.json()
 
 
+def backfill_channels(admin_password: str) -> dict:
+    """Admin-only: stamp `log_source` on legacy collector events on demand
+    (the startup migration, no restart needed). Logs in as admin, POSTs
+    /admin/backfill-channels, and returns {"updated": n} — 0 once the
+    channel data is complete, so it doubles as a health check.
+
+    Degrades to the zero-config default: when the backend has no auth
+    configured (login 404s), the endpoint is open (actor 'local'), so the
+    POST proceeds without a token. Under fail-closed auth a bad login still
+    fails loudly."""
+    login = requests.post(f"{BASE_URL}/auth/login", json={"password": admin_password or ""}, timeout=15)
+    headers: dict[str, str] = {}
+    if login.status_code == 200:
+        headers = {"Authorization": f"Bearer {login.json()['token']}"}
+    elif login.status_code == 404 and "not configured" in login.text:
+        pass  # zero-config default — auth off, the endpoint accepts any actor
+    else:
+        raise APIError(f"POST /auth/login → {login.status_code}: {login.text[:200]}")
+    resp = requests.post(f"{BASE_URL}/admin/backfill-channels", headers=headers, timeout=15)
+    if not resp.ok:
+        raise APIError(f"POST /admin/backfill-channels → {resp.status_code}: {resp.text[:200]}")
+    return resp.json()
+
+
 # -- runs --------------------------------------------------------------------
 def create_run(sample_name: str, platform: str, session_type: str = "analysis") -> str:
     return _post(

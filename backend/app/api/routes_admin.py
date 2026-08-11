@@ -7,6 +7,8 @@
 - POST /admin/prune             — delete runs (and their events/alerts/notes/
                                   allowlists) older than N days; uses the
                                   stored retention when no days are given
+- POST /admin/backfill-channels  — stamp log_source on legacy collector
+                                  events (the startup migration, on demand)
 - GET  /admin/backup            — download a SQLite backup of the whole store
 - POST /admin/restore           — replace the store from an uploaded backup
                                   (a safety copy of the pre-restore DB is kept)
@@ -30,7 +32,7 @@ from pydantic import BaseModel
 
 from ..core import auth
 from ..core.config import DATA_DIR, DATABASE_PATH
-from ..core.db import db_session, init_db
+from ..core.db import _backfill_events_log_source, db_session, init_db
 from ..models import audit
 
 router = APIRouter(tags=["admin"])
@@ -144,6 +146,27 @@ def set_retention(body: RetentionIn, request: Request) -> dict:
 
 class PruneIn(BaseModel):
     days: Optional[int] = None
+
+
+@router.post("/admin/backfill-channels", response_model=None)
+def backfill_channels(request: Request) -> dict:
+    """Stamp `log_source` on legacy collector events WITHOUT a restart — the
+    same idempotent inference the startup migration runs (linux live-run
+    events with a real host → auditd, windows → sysmon; webapp-'local'
+    events are never touched). Returns how many events were newly tagged;
+    once the channel data is complete it returns 0, so the command doubles
+    as a health check. Admin-only when auth is on; audited."""
+    actor = _require_admin(request)
+    with db_session() as conn:
+        updated = _backfill_events_log_source(conn)
+        audit.log(
+            conn,
+            actor,
+            "admin.backfill-channels",
+            target_type="events",
+            detail=f"{updated} event(s) stamped" if updated else "no legacy events to stamp (channels complete)",
+        )
+    return {"updated": updated}
 
 
 def _prune(conn, days: int, actor: str) -> dict:
