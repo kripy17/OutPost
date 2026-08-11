@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
 """Build a small looping GIF preview of the deck demo.
 
-A full 97s GIF at a watchable resolution would be 20+ MB, so this extracts a
-~20s highlights reel — one window per act of deck-demo-trimmed.webm — at
+A full 128s GIF at a watchable resolution would be 20+ MB, so this extracts a
+~25s highlights reel — one window per act of deck-demo-trimmed.webm — at
 480px wide / 10 fps with ffmpeg's two-pass palette (no gifsicle needed).
 Loops forever; renders in any browser/git host without a video player.
 
 Highlight windows are in the TRIMMED timeline (see trim-demo.py for the
 segment map):
-  Act 1  Overview       17.0-21.9s  detection-volume chart (the bright one)
-  Act 2  Vault          38.0-42.0s  library table pan
-  Act 3  Monitor        56.0-60.0s  live analysis streaming
-  Act 4  Run detail     73.0-76.0s  process tree with risk halos
-  Act 5  Findings       88.0-94.0s  triage lifecycle
+  Act 1  Overview       15.5-20.0s  detection-volume chart (the bright one)
+  Act 2  Vault          34.0-39.0s  library table pan
+  Act 3  Monitor        65.0-71.0s  live analysis streaming
+  Act 4  Run detail     84.0-87.0s  process tree with risk halos
+  Act 5  Findings       100.5-110.5s triage lifecycle + live tab badges
+  Act 6  Quality gates  117.0-124.0s layout sweep width, shown clean
 
 Usage: .venv/bin/python demo/make-gif-preview.py [--out demo/deck-demo-preview.gif]
 """
@@ -27,21 +28,22 @@ import sys
 SRC = os.path.join(os.path.dirname(__file__), "deck-demo-trimmed.webm")
 
 WINDOWS: list[tuple[float, float]] = [
-    (17.0, 21.9),   # Act 1 — Overview, detection volume
-    (38.0, 42.0),   # Act 2 — Vault, table pan
-    (56.0, 60.0),   # Act 3 — Monitor, live analysis
-    (73.0, 76.0),   # Act 4 — Run detail, process tree
-    (88.0, 94.0),   # Act 5 — Findings, triage
+    (15.5, 20.0),   # Act 1 — Overview, detection volume
+    (34.0, 39.0),   # Act 2 — Vault, table pan
+    (65.0, 71.0),   # Act 3 — Monitor, live analysis
+    (84.0, 87.0),   # Act 4 — Run detail, process tree
+    (100.5, 110.5), # Act 5 — Findings, triage + live tab badges
+    (117.0, 124.0), # Act 6 — Quality gates, layout-sweep width clean
 ]
 
 # README hero presets: two scenes each, 2x the preview width.
 HERO_OVERVIEW_WINDOWS: list[tuple[float, float]] = [
-    (17.5, 21.5),   # detection-volume chart
-    (24.5, 29.5),   # live findings feed
+    (15.5, 19.5),   # detection-volume chart
+    (22.5, 27.0),   # live findings feed
 ]
 HERO_LIVE_WINDOWS: list[tuple[float, float]] = [
-    (56.0, 61.0),   # Monitor — live analysis streaming
-    (73.0, 79.0),   # Run detail — process tree with halos + network
+    (65.0, 71.0),   # Monitor — live analysis streaming
+    (84.5, 89.5),   # Run detail — process tree with halos + network
 ]
 
 WIDTH = 480
