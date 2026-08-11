@@ -633,21 +633,23 @@ function HostMonitorPanel() {
           {monitored && agent && (
             <>
               {agent.identity === "collector" ? (
-                <span
-                  className="inline-flex items-center gap-1 rounded border border-risk-clean/40 bg-risk-clean/10 px-1.5 py-px text-[10px] text-risk-clean"
-                  title={`Real host agent${agent.heartbeat_version ? ` · ${agent.heartbeat_version}` : ""} · channels: ${agent.channels?.join(", ") || "—"} · last auth: ${agent.last_auth_role ?? "—"}${agent.last_auth_at ? ` ${_rel(agent.last_auth_at)}` : ""}`}
+                <Link
+                  to="/agents?identity=collector"
+                  className="inline-flex items-center gap-1 rounded border border-risk-clean/40 bg-risk-clean/10 px-1.5 py-px text-[10px] text-risk-clean transition-colors duration-150 hover:border-risk-clean/70 hover:bg-risk-clean/20"
+                  title={`Real host agent${agent.heartbeat_version ? ` · ${agent.heartbeat_version}` : ""} · channels: ${agent.channels?.join(", ") || "—"} · last auth: ${agent.last_auth_role ?? "—"}${agent.last_auth_at ? ` ${_rel(agent.last_auth_at)}` : ""} — open the collector fleet`}
                 >
                   <Icon name="activity" size={9} />
                   collector
-                </span>
+                </Link>
               ) : (
-                <span
-                  className="inline-flex items-center gap-1 rounded border border-border-subtle bg-bg-elevated/50 px-1.5 py-px text-[10px] text-text-faint"
-                  title="No agent heartbeat — events came from this machine (webapp detonations, sandbox runs)"
+                <Link
+                  to="/agents?identity=webapp"
+                  className="inline-flex items-center gap-1 rounded border border-border-subtle bg-bg-elevated/50 px-1.5 py-px text-[10px] text-text-faint transition-colors duration-150 hover:border-border-subtle hover:bg-bg-elevated hover:text-text-muted"
+                  title="No agent heartbeat — events came from this machine (webapp detonations, sandbox runs) — open the webapp hosts"
                 >
                   <Icon name="terminal" size={9} />
                   webapp detonation
-                </span>
+                </Link>
               )}
               {agent.last_auth_role && (
                 <span
