@@ -1,43 +1,15 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { EVENT_ICON, Icon, platformIconName } from "../components/Icon";
+import { Icon } from "../components/Icon";
+import { EVENT_ICON, platformIconName } from "../components/iconMeta";
 import { PageHeader } from "../components/ui";
 import { exportEventsCsv, getEvents, saveBlob } from "../lib/api";
 import { useEventStream } from "../lib/useEventStream";
+import { resolveSavedFilters, type SavedFilters } from "./eventsHelpers";
 import type { EventFeedEvent, EventSource, EventType, Platform, Severity } from "../types";
 
 const PAGE = 60;
-
-/** The persisted Event-Log filter set (localStorage, key `outpost-events-filters`). */
-export type SavedFilters = {
-  category?: string;
-  severity?: string;
-  platform?: string;
-  source?: string;
-  q?: string;
-  pids?: number[];
-};
-
-/** Resolve the persisted filter set for a fresh EventsPage mount. Returns null
- *  when the URL carries any filter param (deep links win), storage is empty,
- *  or the stored JSON is corrupt/unavailable. Callers feed the result into
- *  useState initializers — a mount effect would be too late, because the
- *  URL-mirror effect would clobber storage with the empty default first. */
-export function resolveSavedFilters(
-  hasParam: (k: string) => string | null,
-  readStorage: () => string | null,
-): SavedFilters | null {
-  if (["type", "severity", "platform", "source", "q", "pid"].some((k) => hasParam(k))) return null;
-  try {
-    const raw = readStorage();
-    if (!raw) return null;
-    const parsed: unknown = JSON.parse(raw);
-    return parsed && typeof parsed === "object" ? (parsed as SavedFilters) : null;
-  } catch {
-    return null;
-  }
-}
 
 /** Parse the `pid` URL/filter value — one integer or a comma-separated list
  *  (the recon-sweep jump: every enumerating PID at once). Invalid tokens are
@@ -479,7 +451,7 @@ export default function EventsPage() {
     refetchInterval: live ? 5_000 : false,
   });
 
-  const events = data?.events ?? [];
+  const events = useMemo(() => data?.events ?? [], [data]);
   const total = data?.total ?? 0;
 
   // Live tail with pause: while `live` is on, an SSE run-update (a batch
@@ -604,7 +576,6 @@ export default function EventsPage() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [events, selected]);
 
   // Process breadcrumb for pid deep-links: per-pid identity (name + run +

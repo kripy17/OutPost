@@ -48,6 +48,12 @@ jobs:
         working-directory: frontend
         run: npm ci
 
+      - name: Install demo deps (Playwright — layout sweep gate)
+        working-directory: demo
+        run: |
+          npm ci
+          npx playwright install chromium
+
       - name: Run the full verification sweep
         run: bash verify.sh
 

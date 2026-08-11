@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { plantIpsFromAlerts } from "../components/PlantStrip/PlantStrip";
+import { plantIpsFromAlerts } from "../components/PlantStrip/plant";
 import type { Alert } from "../types";
 
 function alert(ruleId: string, details: string, relatedIp: string | null = null): Alert {

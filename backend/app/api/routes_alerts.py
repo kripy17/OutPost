@@ -293,11 +293,13 @@ def list_alert_queue(
     limit = max(1, min(limit, 200))
     offset = max(0, offset)
 
+    # Filters EXCLUDING status — the per-status tab badges are live totals
+    # no matter which view is active (the "Open" tab must still show the
+    # acknowledged/resolved counts). The status filter is applied separately
+    # to the row query so `total` stays scoped to the active view for
+    # pagination.
     where: list[str] = []
     params: list = []
-    if status != "all":
-        where.append("a.status = ?")
-        params.append(status)
     if rule_id:
         where.append("a.rule_id = ?")
         params.append(rule_id)
@@ -320,9 +322,18 @@ def list_alert_queue(
         where.append("(r.sample_name LIKE ? OR a.rule_id LIKE ? OR a.rule_name LIKE ? OR a.details LIKE ? OR a.related_ip LIKE ?)")
         params.extend([like] * 5)
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+    # Rows/pagination stay scoped to the active status view; the tab-badge
+    # counts above deliberately exclude the status filter.
+    if status != "all":
+        row_where = "WHERE " + " AND ".join(["a.status = ?", *where]) if where else "WHERE a.status = ?"
+        row_params: list = [status, *params]
+    else:
+        row_where = where_sql
+        row_params: list = list(params)
 
     order = "a.triggered_at ASC, a.id ASC" if sort == "aging" else "a.triggered_at DESC, a.id DESC"
     with db_session() as conn:
+        # Tab badges: per-status totals across the non-status filters only.
         counts = conn.execute(
             f"""
             SELECT a.status, COUNT(*) AS n
@@ -332,6 +343,10 @@ def list_alert_queue(
             """,
             params,
         ).fetchall()
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM alerts a JOIN runs r ON r.run_id = a.run_id {row_where}",
+            row_params,
+        ).fetchone()[0]
         rows = conn.execute(
             f"""
             SELECT a.*, r.sample_name,
@@ -339,11 +354,11 @@ def list_alert_queue(
                     WHERE e.run_id = a.run_id) AS host_ids
             FROM alerts a
             JOIN runs r ON r.run_id = a.run_id
-            {where_sql}
+            {row_where}
             ORDER BY {order}
             LIMIT ? OFFSET ?
             """,
-            [*params, limit, offset],
+            [*row_params, limit, offset],
         ).fetchall()
     total_by_status = {c["status"]: c["n"] for c in counts}
     out = []
@@ -353,7 +368,7 @@ def list_alert_queue(
         d["host_ids"] = [h for h in (d.pop("host_ids") or "").split(",") if h]
         out.append(d)
     return {
-        "total": sum(total_by_status.values()),
+        "total": total,
         "open": total_by_status.get("open", 0),
         "acknowledged": total_by_status.get("acknowledged", 0),
         "resolved": total_by_status.get("resolved", 0),

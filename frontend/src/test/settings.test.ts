@@ -1,7 +1,7 @@
 // Settings page pure helpers — the login brute-force guard's status text.
 
 import { describe, expect, it } from "vitest";
-import { lockedIpsText, rateLimitBadge } from "../routes/settings";
+import { lockedIpsText, rateLimitBadge } from "../routes/settingsHelpers";
 
 describe("rateLimitBadge", () => {
   it("labels an active guard", () => {

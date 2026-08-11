@@ -1,7 +1,8 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { Icon, platformIconName } from "../components/Icon";
+import { Icon } from "../components/Icon";
+import { platformIconName } from "../components/iconMeta";
 import { Chip, PageHeader, Panel } from "../components/ui";
 import { downloadSample, getRuns, getSample, getSampleStatic, getSandboxProviders, getSandboxTask, sandboxDetonate, watchlistAdd } from "../lib/api";
 import type { Platform, RunSummary, SampleStatic, SandboxTask } from "../types";

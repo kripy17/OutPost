@@ -3,7 +3,7 @@
 // Plus the "open since" label helper used on each open card.
 
 import { describe, expect, it } from "vitest";
-import { openDuration, sortAlertsForTriage } from "../components/AlertBanner/AlertBanner";
+import { openDuration, sortAlertsForTriage } from "../components/AlertBanner/triage";
 import type { Alert } from "../types";
 
 function alert(over: Partial<Alert>): Alert {

@@ -22,6 +22,7 @@ const EventsPage = lazy(() => import("./routes/events"));
 const FindingsPage = lazy(() => import("./routes/findings"));
 const FootprintPage = lazy(() => import("./routes/footprint"));
 const MonitorPage = lazy(() => import("./routes/monitor"));
+const NotFoundPage = lazy(() => import("./routes/notFound"));
 const RunDetailPage = lazy(() => import("./routes/runDetail"));
 const RunHistoryPage = lazy(() => import("./routes/index"));
 const OverviewPage = lazy(() => import("./routes/overview"));
@@ -128,6 +129,7 @@ const router = createBrowserRouter([
       { path: "/samples", element: <SamplesPage /> },
       { path: "/samples/:sampleId", element: <SampleDetailPage /> },
       { path: "/runs/:runId", element: <RunDetailPage /> },
+      { path: "*", element: <NotFoundPage /> },
     ],
   },
 ]);

@@ -4,7 +4,8 @@ import { copyToClipboard } from "../lib/clipboard";
 import { Link } from "react-router-dom";
 import AlertBanner from "../components/AlertBanner/AlertBanner";
 import ExportButton from "../components/ExportButton/ExportButton";
-import { Icon, platformIconName } from "../components/Icon";
+import { Icon } from "../components/Icon";
+import { platformIconName } from "../components/iconMeta";
 import { PageHeader } from "../components/ui";
 import NetworkTable from "../components/NetworkTable/NetworkTable";
 import ProcessTree from "../components/ProcessTree/ProcessTree";
@@ -212,7 +213,12 @@ export default function MonitorPage() {
     return () => {
       cancelRef.current = true;
       if (timerRef.current !== null) window.clearTimeout(timerRef.current);
-      toastTimers.current.forEach((t) => window.clearTimeout(t));
+      // The toasts effect appends timers after this mount effect runs, so a
+      // body-time copy would be empty and unmount would clear nothing — the
+      // ref read at cleanup time is deliberate.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      const timers = toastTimers.current;
+      timers.forEach((t) => window.clearTimeout(t));
     };
   }, []);
 
@@ -657,7 +663,7 @@ export default function MonitorPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[3fr_2fr]">
-        <section className="rounded-lg border border-border-subtle bg-bg-surface p-4">
+        <section className="min-w-0 rounded-lg border border-border-subtle bg-bg-surface p-4">
           <h2 className="mb-3 flex items-center gap-2 text-xs font-semibold text-text-muted">
             Process tree
             {effectiveRecon.size > 0 && (
@@ -688,7 +694,7 @@ export default function MonitorPage() {
           )}
         </section>
 
-        <div className="space-y-6">
+        <div className="min-w-0 space-y-6">
           <section className="rounded-lg border border-border-subtle bg-bg-surface p-4">
             <h2 className="mb-3 text-xs font-semibold text-text-muted">Network connections</h2>
             <NetworkTable connections={data?.network_connections ?? []} />

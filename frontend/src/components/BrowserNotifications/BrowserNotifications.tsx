@@ -12,21 +12,7 @@
 
 import { useNavigate } from "react-router-dom";
 import { useEventStream, type StreamAlert } from "../../lib/useEventStream";
-
-export const BROWSER_NOTIFY_KEY = "outpost-browser-notify";
-
-export function browserNotifyEnabled(): boolean {
-  return typeof localStorage !== "undefined" && localStorage.getItem(BROWSER_NOTIFY_KEY) === "on";
-}
-
-export function setBrowserNotifyEnabled(on: boolean): void {
-  if (on) localStorage.setItem(BROWSER_NOTIFY_KEY, "on");
-  else localStorage.removeItem(BROWSER_NOTIFY_KEY);
-}
-
-export function browserPermission(): NotificationPermission {
-  return typeof Notification === "undefined" ? "denied" : Notification.permission;
-}
+import { browserNotifyEnabled } from "./notify";
 
 export default function BrowserNotifications() {
   const navigate = useNavigate();

@@ -57,6 +57,15 @@ else
   (cd frontend && "$NPM_BIN" install)
 fi
 
+# ---- demo tooling (Playwright — the verify.sh layout-sweep gate) -----------
+if [ -d demo/node_modules ]; then
+  say "Reusing demo/node_modules (Playwright)"
+else
+  say "Installing demo dependencies (Playwright for the layout regression gate)"
+  (cd demo && "$NPM_BIN" install)
+  (cd demo && "$NPM_BIN" exec playwright install chromium) || warn "chromium download skipped — run 'cd demo && npx playwright install chromium' when you need the layout gate locally"
+fi
+
 # ---- frontend API target ---------------------------------------------------
 if [ ! -f frontend/.env.local ]; then
   say "Writing frontend/.env.local  (VITE_API_URL=http://localhost:$API_PORT)"

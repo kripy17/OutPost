@@ -11,8 +11,8 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import ReputationBadge from "../components/NetworkTable/ReputationBadge";
 import { intelAgeLabel } from "../lib/constants";
-import { intelFreshness, intelKeyHealth } from "../routes/overview";
-import { connectionSources } from "../routes/runDetail";
+import { intelFreshness, intelKeyHealth } from "../routes/overviewHelpers";
+import { connectionSources } from "../routes/runDetailHelpers";
 import type { IntelKeyStatus, NetworkConnection } from "../types";
 
 function conn(over: Partial<NetworkConnection>): NetworkConnection {

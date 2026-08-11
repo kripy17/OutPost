@@ -5,7 +5,7 @@
 // Wording is asserted too: 1 run/session singularizes.
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { runResetFlow } from "../routes/settings";
+import { runResetFlow } from "../routes/settingsHelpers";
 import type { ResetResult } from "../lib/api";
 
 const OK_RESULT: ResetResult = {

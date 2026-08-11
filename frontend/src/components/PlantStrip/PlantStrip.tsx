@@ -10,25 +10,7 @@ import { useMemo } from "react";
 import { Panel } from "../ui";
 import { Icon } from "../Icon";
 import type { Alert } from "../../types";
-
-export interface PlantInfo {
-  ip: string;
-  windows: number;
-}
-
-// The details string is engine-owned and stable: "… in N distinct 300s windows …".
-const WINDOWS_RE = /in (\d+) distinct/;
-
-export function plantIpsFromAlerts(alerts: Alert[]): PlantInfo[] {
-  const out: PlantInfo[] = [];
-  for (const a of alerts) {
-    if (a.rule_id !== "fanout-recurring" || !a.related_ip) continue;
-    const m = WINDOWS_RE.exec(a.details ?? "");
-    const windows = m ? parseInt(m[1], 10) : 0;
-    out.push({ ip: a.related_ip, windows });
-  }
-  return out.sort((a, b) => b.windows - a.windows);
-}
+import { plantIpsFromAlerts } from "./plant";
 
 export default function PlantStrip({
   alerts,

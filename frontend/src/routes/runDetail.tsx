@@ -6,9 +6,12 @@ import PersistencePanel from "../components/PersistencePanel/PersistencePanel";
 import AlertRate from "../components/AlertRate/AlertRate";
 import PlantStrip from "../components/PlantStrip/PlantStrip";
 import ExportButton from "../components/ExportButton/ExportButton";
-import { Icon, platformIconName } from "../components/Icon";
-import KillChainStepper, { killChainStats } from "../components/KillChain/KillChainStepper";
+import { Icon } from "../components/Icon";
+import { platformIconName } from "../components/iconMeta";
+import { killChainStats } from "../components/KillChain/killChain";
+import KillChainStepper from "../components/KillChain/KillChainStepper";
 import { Panel, SourceBadge } from "../components/ui";
+import { connectionSources } from "./runDetailHelpers";
 import NotesPanel from "../components/NotesPanel/NotesPanel";
 import ProcessTree from "../components/ProcessTree/ProcessTree";
 import { AllowlistPanel, QuickAllowlist, SuppressionPanel } from "../components/TriagePanels/TriagePanels";
@@ -60,18 +63,6 @@ const REP_META: Record<Reputation, { label: string; dot: string; text: string; b
   unknown: { label: "Unknown", dot: "bg-text-faint", text: "text-text-muted", border: "border-border-subtle" },
   clean: { label: "Clean", dot: "bg-risk-clean", text: "text-risk-clean", border: "border-risk-clean/30" },
 };
-
-// Reputation source attribution — the feeds that produced a verdict, as a
-// human line (watchlist / AbuseIPDB / VirusTotal / none). Exported for tests.
-export function connectionSources(c: NetworkConnection): string[] {
-  const parts: string[] = [];
-  if (c.watchlist) parts.push(`personal watchlist${c.watchlist_label ? ` (${c.watchlist_label})` : ""}`);
-  if (c.abuse_score !== null && c.abuse_score !== undefined) parts.push(`AbuseIPDB score ${c.abuse_score}`);
-  if (c.vt_malicious_count !== null && c.vt_malicious_count !== undefined)
-    parts.push(`VirusTotal: ${c.vt_malicious_count} malicious vendor${c.vt_malicious_count === 1 ? "" : "s"}`);
-  if (parts.length === 0) parts.push("no external intel configured");
-  return parts;
-}
 
 function NetworkGroups({ connections, runId }: { connections: NetworkConnection[]; runId: string }) {
   const queryClient = useQueryClient();
@@ -695,7 +686,7 @@ export default function RunDetailPage() {
       )}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[3fr_2fr]">
-        <div id="process-tree-panel" className="scroll-mt-24">
+        <div id="process-tree-panel" className="scroll-mt-24 min-w-0">
           <Panel kicker="Behavior" title="Process tree">
             <ProcessTree
               roots={process_tree}
@@ -716,7 +707,7 @@ export default function RunDetailPage() {
           </Panel>
         </div>
 
-        <div className="space-y-6">
+        <div className="min-w-0 space-y-6">
           <ReconActorsPanel alerts={alerts} tree={process_tree} onLocate={onLocate} />
           <PersistencePanel alerts={alerts} events={timelineEvents} />
           <AllowlistPanel runId={runId} />

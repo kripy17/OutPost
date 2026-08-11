@@ -1,7 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Icon, platformIconName } from "../components/Icon";
+import { Icon } from "../components/Icon";
+import { platformIconName } from "../components/iconMeta";
 import { Chip, PageHeader, Panel, Stat } from "../components/ui";
 import { exportSamplesCsv, getSamples, saveBlob } from "../lib/api";
 import type { SampleRow } from "../types";

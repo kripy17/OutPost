@@ -141,6 +141,68 @@ step "Linux soak     (auditd FP baseline gate)" \
       --backend "http://127.0.0.1:$SOAK_PORT" --host "$(hostname)" --gate
   '
 
+# Layout regression gate — the min-width bug class (a grid/flex item that
+# refuses to shrink pushes the page wider than the viewport) caught by a real
+# browser before it ships. Boots an ISOLATED backend (temp DB, spare ports
+# 8013/5176), seeds the campaign pair so the data-heavy pages (run detail,
+# History charts, campaigns) actually render, then drives every route at
+# several desktop widths with Playwright and fails on any horizontal overflow
+# or page that fails to render content. Skips with a note when Playwright
+# isn't installed locally (CI installs it — see .github/workflows/ci.yml).
+step "Layout sweep    (Playwright overflow gate)" \
+  env ROOT="$ROOT" PYTHON="$ROOT/.venv/bin/python" NPM="$NPM" bash -c '
+    set -e
+    if [ ! -d "$ROOT/demo/node_modules/playwright" ]; then
+      echo "  Playwright not installed (cd demo && npm i) — SKIPPING layout sweep; CI enforces it" >&2
+      exit 0
+    fi
+    SWEEP_DB=$(mktemp --suffix=.db)
+    SWEEP_SAMPLES=$(mktemp -d)
+    SWEEP_PORT=8013
+    SWEEP_WEB=5176
+    SWEEP_LOG=$(mktemp --suffix=.log)
+    SWEEP_WEBLOG=$(mktemp --suffix=.log)
+    SWEEP_PID=""
+    WEB_PID=""
+    cleanup() {
+      [ -n "$WEB_PID" ] && kill "$WEB_PID" 2>/dev/null || true
+      [ -n "$SWEEP_PID" ] && kill "$SWEEP_PID" 2>/dev/null || true
+      rm -f "$SWEEP_DB" "$SWEEP_LOG" "$SWEEP_WEBLOG"
+      rm -rf "$SWEEP_SAMPLES"
+    }
+    trap cleanup EXIT
+    DATABASE_PATH="$SWEEP_DB" SAMPLES_DIR="$SWEEP_SAMPLES" \
+      CORS_ORIGINS="http://localhost:$SWEEP_WEB" \
+      "$PYTHON" -m uvicorn app.main:app --host 127.0.0.1 --port "$SWEEP_PORT" >"$SWEEP_LOG" 2>&1 &
+    SWEEP_PID=$!
+    for _ in $(seq 1 30); do
+      curl -sf "http://127.0.0.1:$SWEEP_PORT/meta" >/dev/null 2>&1 && break
+      sleep 1
+    done
+    curl -sf "http://127.0.0.1:$SWEEP_PORT/meta" >/dev/null
+    # Seed the campaign pair (real detection alerts) so every data-heavy page
+    # renders with content — an empty page can never overflow. The campaign
+    # runs are source='seed' (synthetic, hidden by default), so also stream a
+    # live-sourced run through the real API: default views (History charts,
+    # Findings, Event Log) then lay out real data.
+    cd "$ROOT/backend"
+    DATABASE_PATH="$SWEEP_DB" "$PYTHON" -m app.seed_campaign >/dev/null 2>&1
+    "$PYTHON" "$ROOT/scripts/seed_sweep_live.py" --api "http://127.0.0.1:$SWEEP_PORT" >/dev/null
+    # Frontend dev server pointed at the isolated backend (VITE_API_URL env
+    # beats .env.local per Vite precedence).
+    cd "$ROOT/frontend"
+    VITE_API_URL="http://127.0.0.1:$SWEEP_PORT" \
+      "$NPM" run dev -- --port "$SWEEP_WEB" --strictPort >"$SWEEP_WEBLOG" 2>&1 &
+    WEB_PID=$!
+    for _ in $(seq 1 45); do
+      curl -sf "http://localhost:$SWEEP_WEB" >/dev/null 2>&1 && break
+      sleep 1
+    done
+    curl -sf "http://localhost:$SWEEP_WEB" >/dev/null
+    cd "$ROOT/demo"
+    node layout-sweep.mjs --web "http://localhost:$SWEEP_WEB" --api "http://127.0.0.1:$SWEEP_PORT"
+  '
+
 # Doc-count gate — the shipped READMEs must not drift from the code they
 # describe. Two checks: (1) known-stale numeric patterns (old test counts,
 # the pre-trim "2-minute/4 acts" demo copy) never reappear; (2) every claimed

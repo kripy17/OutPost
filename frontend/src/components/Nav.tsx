@@ -19,7 +19,8 @@ import { NavLink } from "react-router-dom";
 import CommandPalette from "./CommandPalette";
 import { getHealth, getMeta, getPlatform, getRecentAlerts, getRuns } from "../lib/api";
 import { useEventStream } from "../lib/useEventStream";
-import { Icon, IconMenu, IconMoon, IconSun, platformIconName, type IconName } from "./Icon";
+import { Icon, IconMenu, IconMoon, IconSun, type IconName } from "./Icon";
+import { platformIconName } from "./iconMeta";
 
 const STORAGE_KEY = "outpost-theme-v2"; // v2 key: dark-first default (index.html pre-paint)
 const RAIL_KEY = "outpost-rail"; // "collapsed" | "expanded" (pre-paint restored)
