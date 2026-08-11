@@ -219,6 +219,8 @@ outpost footprint <sample> # passive DNS / CT / ASN per sample
 outpost coverage           # MITRE ATT&CK coverage matrix
 outpost intel              # enrichment cache status + refresh
 outpost agent run|install  # bootstrap the host collector
+outpost admin backfill-channels   # stamp channels on legacy events
+outpost admin pg-migrate          # Tier 4: export SQLite → Postgres artifacts
 outpost export <run_id> --format json|stix -o out.json
 ```
 
@@ -244,9 +246,9 @@ One command runs the whole sweep:
 
 | Suite | Count | Covers |
 |---|---|---|
-| Backend pytest | **431** | ingestion, OS-aware rules (win/linux/macOS), risk + ATT&CK, campaigns, events search + channel-counts + log_source backfill, samples vault, SSE broadcast, notes, storm caps, triage, footprint, YARA, auth (fail-closed OUTPOST_AUTH_REQUIRED + agent token + rotation), fleet auth context + per-channel volume |
+| Backend pytest | **440** | ingestion, OS-aware rules (win/linux/macOS), risk + ATT&CK, campaigns, events search + channel-counts + log_source backfill, samples vault, SSE broadcast, notes, storm caps, triage, footprint, YARA, auth (fail-closed OUTPOST_AUTH_REQUIRED + agent token + rotation), fleet auth context + per-channel volume, Postgres migration core |
 | Collector pytest | **24** | Sysmon + auditd shipping, normalization, agent-token auth |
-| CLI pytest | **64** | rendering regressions, campaigns output, risk columns, YARA + footprint mirrors + exports, rules knobs, agent install (token embed + Windows bats), module entry, rotate-agent-token, fleet auth context in status, admin backfill-channels |
+| CLI pytest | **66** | rendering regressions, campaigns output, risk columns, YARA + footprint mirrors + exports, rules knobs, agent install (token embed + Windows bats), module entry, rotate-agent-token, fleet auth context in status, admin backfill-channels + pg-migrate wiring |
 | Frontend | **94** | vitest unit tests (page-contract suites for the coverage matrix, footprint topology, campaign sorts, sample vault, chart + triage components) + clean `tsc --noEmit` + Vite build |
 
 Beyond the suites: the 14/14 ATT&CK coverage gate, both collector FP-baseline
