@@ -5,25 +5,7 @@ import { EVENT_ICON, platformIconName } from "../components/iconMeta";
 import { PageHeader } from "../components/ui";
 import { searchIocs } from "../lib/api";
 import type { IocSearchResponse } from "../types";
-
-const SEARCH_STORAGE = "outpost-search-query";
-
-function readSavedQuery(): string {
-  try {
-    return localStorage.getItem(SEARCH_STORAGE) ?? "";
-  } catch {
-    return "";
-  }
-}
-
-function writeSavedQuery(q: string) {
-  try {
-    if (q) localStorage.setItem(SEARCH_STORAGE, q);
-    else localStorage.removeItem(SEARCH_STORAGE);
-  } catch {
-    /* storage unavailable — query still works for this visit */
-  }
-}
+import { platformTone, readSavedQuery, writeSavedQuery } from "./searchHelpers";
 
 export default function SearchPage() {
   const [params] = useSearchParams();
@@ -68,13 +50,6 @@ export default function SearchPage() {
     if (!query) return;
     void runSearch(query);
   };
-
-  const sampleTone = (p: string) =>
-    p === "windows"
-      ? "border-accent/50 text-accent"
-      : p === "linux"
-        ? "border-risk-clean/50 text-risk-clean"
-        : "border-text-faint text-text-muted";
 
   return (
     <div className="mx-auto max-w-5xl px-5 py-8 lg:px-8">
@@ -149,7 +124,7 @@ export default function SearchPage() {
                   >
                     <Icon name={platformIconName(s.detected_platform)} size={13} className="text-text-faint" />
                     <span className="font-mono text-sm text-text-primary">{s.original_name}</span>
-                    <span className={`rounded border px-1.5 py-0.5 font-mono text-[9px] uppercase ${sampleTone(s.detected_platform)}`}>
+                    <span className={`rounded border px-1.5 py-0.5 font-mono text-[9px] uppercase ${platformTone(s.detected_platform)}`}>
                       {s.detected_platform}
                     </span>
                     <span className="ml-auto font-mono text-[10px] text-text-faint">{s.sha256.slice(0, 24)}…</span>

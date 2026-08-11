@@ -15,26 +15,7 @@ import { PageHeader, Panel } from "../components/ui";
 import { getAgents, getHostBaseline, getHostSnapshot, resetHostBaseline } from "../lib/api";
 import { useEventStream } from "../lib/useEventStream";
 import type { AgentInfo, HostBaseline } from "../types";
-
-function relativeTime(iso: string): string {
-  const then = new Date(iso).getTime();
-  const secs = Math.max(0, Math.floor((Date.now() - then) / 1000));
-  if (secs < 5) return "just now";
-  if (secs < 60) return `${secs}s ago`;
-  const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  return `${Math.floor(hrs / 24)}d ago`;
-}
-
-/** Channel mix bar color — same mapping as the Overview panel and CLI chips:
- *  auditd teal, sysmon amber, any other channel (webapp, custom) muted. */
-function channelTone(channel: string): string {
-  if (channel === "auditd") return "bg-risk-clean";
-  if (channel === "sysmon") return "bg-accent";
-  return "bg-text-faint";
-}
+import { channelMix, channelTone, relativeTime } from "./agentsHelpers";
 
 function AgentRow({ agent }: { agent: AgentInfo }) {
   const recent = agent.recent_run_ids ?? [];
@@ -148,28 +129,20 @@ function AgentRow({ agent }: { agent: AgentInfo }) {
                 .join(", ")}`}
             >
               <span className="font-mono text-[10px] uppercase tracking-wider text-text-faint">channel mix</span>
-              {(() => {
-                const total = Object.values(agent.channel_counts ?? {}).reduce((a, b) => a + b, 0);
-                return Object.entries(agent.channel_counts)
-                  .sort((a, b) => b[1] - a[1])
-                  .map(([ch, n]) => {
-                  const pct = total > 0 ? Math.round((n / total) * 100) : 0;
-                  return (
-                    <span
-                      key={ch}
-                      className="flex items-center gap-1.5"
-                      title={`${n.toLocaleString()} ${ch} event${n === 1 ? "" : "s"} — ${pct}% of this host's telemetry`}
-                    >
-                      <span className={`h-1.5 w-1.5 rounded-full ${channelTone(ch)}`} aria-hidden />
-                      <span className="font-mono text-[10px] text-text-muted">{ch}</span>
-                      <span className="font-mono text-[10px] tabular-nums text-text-primary">{n.toLocaleString()}</span>
-                      <span className="hidden h-1 w-10 overflow-hidden rounded-full bg-bg-elevated sm:block" aria-hidden>
-                        <span className={`block h-full ${channelTone(ch)}`} style={{ width: `${pct}%` }} />
-                      </span>
-                    </span>
-                  );
-                  });
-                })()}
+              {channelMix(agent.channel_counts).map(({ channel, count, pct }) => (
+                <span
+                  key={channel}
+                  className="flex items-center gap-1.5"
+                  title={`${count.toLocaleString()} ${channel} event${count === 1 ? "" : "s"} — ${pct}% of this host's telemetry`}
+                >
+                  <span className={`h-1.5 w-1.5 rounded-full ${channelTone(channel)}`} aria-hidden />
+                  <span className="font-mono text-[10px] text-text-muted">{channel}</span>
+                  <span className="font-mono text-[10px] tabular-nums text-text-primary">{count.toLocaleString()}</span>
+                  <span className="hidden h-1 w-10 overflow-hidden rounded-full bg-bg-elevated sm:block" aria-hidden>
+                    <span className={`block h-full ${channelTone(channel)}`} style={{ width: `${pct}%` }} />
+                  </span>
+                </span>
+              ))}
             </div>
           )}
         </div>

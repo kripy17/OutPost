@@ -6,25 +6,7 @@ import { PageHeader, Panel } from "../components/ui";
 import { bulkUpdateAlertStatus, getAlertQueue, getRuleMeta } from "../lib/api";
 import { SEVERITY_BG, SEVERITY_COLORS, SEVERITY_LABEL } from "../lib/constants";
 import type { AlertStatus, QueueAlert, Severity } from "../types";
-
-const PAGE = 25;
-
-const STATUS_TABS: { v: "open" | "acknowledged" | "resolved" | "all"; label: string; tone: "malicious" | "suspicious" | "clean" | "muted" }[] = [
-  { v: "open", label: "Open", tone: "malicious" },
-  { v: "acknowledged", label: "Acknowledged", tone: "suspicious" },
-  { v: "resolved", label: "Resolved", tone: "clean" },
-  { v: "all", label: "All", tone: "muted" },
-];
-
-function ageLabel(ts: string): string {
-  const then = new Date(ts).getTime();
-  if (Number.isNaN(then)) return "—";
-  const secs = Math.max(0, Math.floor((Date.now() - then) / 1000));
-  if (secs < 60) return `${secs}s`;
-  if (secs < 3600) return `${Math.floor(secs / 60)}m`;
-  if (secs < 86400) return `${Math.floor(secs / 3600)}h`;
-  return `${Math.floor(secs / 86400)}d`;
-}
+import { ageLabel, PAGE, STATUS_TABS, statusTabCount } from "./findingsHelpers";
 
 function FindingRow({
   a,
@@ -191,14 +173,7 @@ export default function FindingsPage() {
           // Badges are live totals across the active non-status filters; the
           // "All" badge sums the three status buckets (data.total is scoped
           // to the active view for pagination).
-          const count =
-            t.v === "open"
-              ? data?.open
-              : t.v === "acknowledged"
-                ? data?.acknowledged
-                : t.v === "resolved"
-                  ? data?.resolved
-                  : (data?.open ?? 0) + (data?.acknowledged ?? 0) + (data?.resolved ?? 0);
+          const count = statusTabCount(t.v, data);
           return (
             <button
               key={t.v}

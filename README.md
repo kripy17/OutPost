@@ -249,7 +249,7 @@ One command runs the whole sweep:
 | Backend pytest | **440** | ingestion, OS-aware rules (win/linux/macOS), risk + ATT&CK, campaigns, events search + channel-counts + log_source backfill, samples vault, SSE broadcast, notes, storm caps, triage, footprint, YARA, auth (fail-closed OUTPOST_AUTH_REQUIRED + agent token + rotation), fleet auth context + per-channel volume, Postgres migration core |
 | Collector pytest | **24** | Sysmon + auditd shipping, normalization, agent-token auth |
 | CLI pytest | **66** | rendering regressions, campaigns output, risk columns, YARA + footprint mirrors + exports, rules knobs, agent install (token embed + Windows bats), module entry, rotate-agent-token, fleet auth context in status, admin backfill-channels + pg-migrate wiring |
-| Frontend | **94** | vitest unit tests (page-contract suites for the coverage matrix, footprint topology, campaign sorts, sample vault, chart + triage components) + clean `tsc --noEmit` + Vite build |
+| Frontend | **119** | vitest unit tests (page-contract suites for the coverage matrix, footprint topology, campaign sorts, sample vault, agents fleet, IOC search, watchlist, findings triage, chart + triage components) + clean `tsc --noEmit` + Vite build |
 
 Beyond the suites: the 14/14 ATT&CK coverage gate, both collector FP-baseline
 soaks, the **sandbox provider gate** (`scripts/validate_sandbox_provider.py` —
