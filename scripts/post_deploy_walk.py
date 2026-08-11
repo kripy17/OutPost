@@ -199,15 +199,38 @@ def _walk_real_collector(base: str, admin: str, audit_log: Path, collector_log: 
         f"hosts={sorted({e.get('host_id') for e in events})} channels={sorted({e.get('log_source') for e in events})}",
     )
 
-    # The heartbeat (2s interval) makes the collector host read online.
-    online = False
+    # The heartbeat (2s interval) makes the collector host read online — and
+    # because the backend is fail-closed, that heartbeat authenticates with
+    # the agent credential, so the fleet must record the auth context:
+    # identity=collector (only the real shipper heartbeats), last_auth_role=
+    # 'agent', the collector version, and the auditd channel from its events.
+    host_row = None
     for _ in range(20):
         agents = requests.get(f"{base}/api/agents", headers=admin_h, verify=False, timeout=5).json()
-        if any(a.get("host_id") == "walk-collector" and a.get("online") for a in agents.get("agents", [])):
-            online = True
+        host_row = next((a for a in agents.get("agents", []) if a.get("host_id") == "walk-collector"), None)
+        if host_row and host_row.get("online"):
             break
         time.sleep(0.5)
-    check("5 · walk-collector online on /agents", online)
+    check("5 · walk-collector online on /agents", bool(host_row and host_row.get("online")))
+    check(
+        "5 · fleet auth context: collector + agent role",
+        bool(host_row)
+        and host_row.get("identity") == "collector"
+        and host_row.get("last_auth_role") == "agent"
+        and bool(host_row.get("last_auth_at")),
+        (
+            f"identity={host_row.get('identity') if host_row else None} "
+            f"auth_role={host_row.get('last_auth_role') if host_row else None}"
+        ),
+    )
+    check(
+        "5 · fleet collector version + auditd channel",
+        bool(host_row)
+        and (host_row.get("heartbeat_version") or "").startswith("outpost-collector/")
+        and "auditd" in (host_row.get("channels") or []),
+        f"version={host_row.get('heartbeat_version') if host_row else None} "
+        f"channels={host_row.get('channels') if host_row else None}",
+    )
 
     # The run's verdict is computed from real events — a live session created
     # by the collector reads as host-telemetry provenance (source=live).
