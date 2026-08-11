@@ -72,6 +72,11 @@ Assumes the repo at `/opt/outpost` with its venv; the unit hardens the process
 
 ## Post-deploy checklist
 
+The first four items run automatically on every push as verify.sh's
+`Post-deploy walk` step (`scripts/post_deploy_walk.py` — fail-closed backend
+behind a self-signed TLS proxy, no Docker needed). On a live host, verify
+manually:
+
 1. `curl -k https://<host>/health` → `{"status":"ok"}` (TLS verified).
 2. `curl -s https://<host>/api/runs` **without** a token → `401` (auth enforced).
 3. Log in via the webapp (Settings → Security) with the admin password → the

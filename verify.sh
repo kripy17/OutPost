@@ -3,6 +3,8 @@
 #
 #   backend pytest  →  coverage gate (14/14 ATT&CK)  →  collector pytest
 #   →  CLI pytest  →  frontend lint/tests/build  →  collector soak gates
+#   →  layout sweep (Playwright overflow gate)  →  post-deploy walk
+#     (fail-closed auth + TLS + agent heartbeat)
 #   →  doc-count gate (stale numeric references in shipped docs)
 #   →  badge refresh (dry-run; PUBLISH_BADGES=1 also publishes)
 #
@@ -202,6 +204,17 @@ step "Layout sweep    (Playwright overflow gate)" \
     cd "$ROOT/demo"
     node layout-sweep.mjs --web "http://localhost:$SWEEP_WEB" --api "http://127.0.0.1:$SWEEP_PORT"
   '
+
+# Post-deploy checklist walk — fail-closed auth + TLS + the four
+# deploy/README.md assertions, live and without Docker. Boots an isolated
+# fail-closed backend (OUTPOST_AUTH_REQUIRED=1, admin + agent token) behind
+# a self-signed TLS proxy mirroring the Caddyfile, then asserts: TLS /health,
+# 401-without-token / 200-with-token, login → /auth/me, and the
+# OUTPOST_AGENT_TOKEN heartbeat flow (401 bare → 200 with token → host
+# online → 403 outside telemetry). Catches regressions in the exact
+# production shape compose deploys.
+step "Post-deploy walk (fail-closed auth + TLS)" \
+  bash -c "cd '$ROOT' && '$ROOT/.venv/bin/python' scripts/post_deploy_walk.py"
 
 # Doc-count gate — the shipped READMEs must not drift from the code they
 # describe. Two checks: (1) known-stale numeric patterns (old test counts,
