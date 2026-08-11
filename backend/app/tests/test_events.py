@@ -122,6 +122,56 @@ def test_events_channel_facets_split_collector_stream(client):
     client.post(f"/runs/{sys}/complete")
 
 
+def test_events_channel_counts_one_query_for_source_rail(client):
+    """/events/channel-counts returns the whole source-tab rail in one query:
+    the grand total plus per-bucket totals (live / auditd / sysmon / webapp /
+    sandbox). The run-source buckets partition `total`; auditd/sysmon are
+    cross-cutting log_source stamps that overlap live."""
+    live = make_run(client, sample_name="cc-live.bin", session_type="live")
+    sand = make_run(client, sample_name="cc-sand.bin", source="sandbox:anyrun")
+    web = make_run(client, sample_name="cc-web.bin", source="cli")
+    seed = make_run(client, sample_name="cc-seed.bin", source="seed")
+
+    def _ev(run_id: str, name: str, platform: str = "linux", chan: str | None = None) -> dict:
+        ev = _event(run_id, "process_create", platform, process_name=name, timestamp=_ts(1))
+        if chan:
+            ev["log_source"] = chan
+        return ev
+
+    _ingest(client, live, [_ev(live, "cc-aud.exe", chan="auditd"), _ev(live, "cc-live.exe")])
+    _ingest(client, sand, [_ev(sand, "cc-sand.exe", platform="windows")])
+    _ingest(client, web, [_ev(web, "cc-web.exe", platform="windows")])
+    _ingest(client, seed, [_ev(seed, "cc-seed.exe")])
+
+    # Default view (synthetic hidden): live 2 + sandbox 1 + cli 1; the seed
+    # run's event is excluded. Buckets partition the total.
+    data = client.get("/events/channel-counts", params={"q": "cc-"}).json()
+    assert data["total"] == 4
+    assert data["channels"]["live"] == 2
+    assert data["channels"]["auditd"] == 1
+    assert data["channels"]["sysmon"] == 0
+    assert data["channels"]["sandbox"] == 1
+    assert data["channels"]["webapp"] == 1
+    src_sum = data["channels"]["live"] + data["channels"]["sandbox"] + data["channels"]["webapp"]
+    assert src_sum == data["total"]
+
+    # include_synthetic reveals the seed event (still the webapp bucket).
+    full = client.get("/events/channel-counts", params={"q": "cc-", "include_synthetic": "true"}).json()
+    assert full["total"] == 5
+    assert full["channels"]["webapp"] == 2
+
+    # Shared filters apply to the buckets — event_type narrows them all.
+    typed = client.get("/events/channel-counts", params={"q": "cc-", "event_type": "network_connection"}).json()
+    assert typed["total"] == 0
+    assert all(v == 0 for v in typed["channels"].values())
+
+    # Shared validation: unknown event_type → 422.
+    assert client.get("/events/channel-counts", params={"event_type": "bogus"}).status_code == 422
+
+    # Close the live run so /runs/active-live's 404 contract holds.
+    client.post(f"/runs/{live}/complete")
+
+
 def test_events_feed_shape_and_pagination(client):
     marker = "feedshape-"
     a = make_run(client, sample_name="feed-a.bin")

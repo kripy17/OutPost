@@ -78,6 +78,69 @@ def _parse_pids(raw: Optional[str]) -> list[int]:
     return pids
 
 
+def _validate_event_filters(
+    event_type: Optional[str],
+    platform: Optional[str],
+    severity: Optional[str],
+    source: Optional[str],
+) -> None:
+    """Shared dimension validation for the event feed and its count endpoints.
+    `source` is None for /events/channel-counts (the dimension being split)."""
+    if event_type is not None and event_type not in _EVENT_TYPES:
+        raise HTTPException(status_code=422, detail=f"event_type must be one of {sorted(_EVENT_TYPES)}")
+    if platform is not None and platform not in _PLATFORMS:
+        raise HTTPException(status_code=422, detail=f"platform must be one of {sorted(_PLATFORMS)}")
+    if severity is not None and severity not in _SEVERITIES:
+        raise HTTPException(status_code=422, detail=f"severity must be one of {sorted(_SEVERITIES)}")
+    if source is not None and source not in _SOURCES:
+        raise HTTPException(status_code=422, detail=f"source must be one of {sorted(_SOURCES)}")
+
+
+def _event_where(
+    event_type: Optional[str],
+    platform: Optional[str],
+    severity: Optional[str],
+    q: Optional[str],
+    pids: list[int],
+    source: Optional[str],
+    include_synthetic: bool,
+) -> tuple[list[str], list]:
+    """Shared WHERE clause for the event feed and the channel-count split.
+    Values must already be validated; pids must be parsed."""
+    where = ["1=1"]
+    params: list = []
+    if pids:
+        where.append(f"e.pid IN ({','.join('?' * len(pids))})")
+        params += pids
+    if event_type:
+        where.append("e.event_type = ?")
+        params.append(event_type)
+    if platform:
+        where.append("e.platform = ?")
+        params.append(platform)
+    if severity:
+        where.append("EXISTS (SELECT 1 FROM alerts a WHERE a.run_id = e.run_id AND a.severity = ?)")
+        params.append(severity)
+    if q:
+        like = _like(q)
+        where.append(
+            "(e.process_name LIKE ? ESCAPE '\\' OR e.file_path LIKE ? ESCAPE '\\' "
+            "OR e.registry_key LIKE ? ESCAPE '\\' OR e.command_line LIKE ? ESCAPE '\\' "
+            "OR e.dest_ip = ? OR e.dest_ip LIKE ? ESCAPE '\\' "
+            "OR e.host_id LIKE ? ESCAPE '\\')"
+        )
+        params += [like, like, like, like, q, like, like]
+    if source:
+        frag, extra = _source_clause(source)
+        where.append(frag)
+        params += extra
+    if not include_synthetic:
+        marks = ",".join("?" for _ in SYNTHETIC_SOURCES)
+        where.append(f"r.source NOT IN ({marks})")
+        params += list(SYNTHETIC_SOURCES)
+    return where, params
+
+
 @router.get("/events", response_model=None)
 def list_events(
     event_type: Optional[str] = None,
@@ -110,49 +173,9 @@ def list_events(
       deliberately opt into a provenance facet (the webapp source tabs) pass
       `true` alongside, since choosing a tab is itself an explicit ask.
     """
-    if event_type is not None and event_type not in _EVENT_TYPES:
-        raise HTTPException(status_code=422, detail=f"event_type must be one of {sorted(_EVENT_TYPES)}")
-    if platform is not None and platform not in _PLATFORMS:
-        raise HTTPException(status_code=422, detail=f"platform must be one of {sorted(_PLATFORMS)}")
-    if severity is not None and severity not in _SEVERITIES:
-        raise HTTPException(status_code=422, detail=f"severity must be one of {sorted(_SEVERITIES)}")
-    if source is not None and source not in _SOURCES:
-        raise HTTPException(status_code=422, detail=f"source must be one of {sorted(_SOURCES)}")
-
-    where = ["1=1"]
-    params: list = []
-
+    _validate_event_filters(event_type, platform, severity, source)
     pids = _parse_pids(pid)
-    if pids:
-        where.append(f"e.pid IN ({','.join('?' * len(pids))})")
-        params += pids
-    if event_type:
-        where.append("e.event_type = ?")
-        params.append(event_type)
-    if platform:
-        where.append("e.platform = ?")
-        params.append(platform)
-    if severity:
-        where.append("EXISTS (SELECT 1 FROM alerts a WHERE a.run_id = e.run_id AND a.severity = ?)")
-        params.append(severity)
-    if q:
-        like = _like(q)
-        where.append(
-            "(e.process_name LIKE ? ESCAPE '\\' OR e.file_path LIKE ? ESCAPE '\\' "
-            "OR e.registry_key LIKE ? ESCAPE '\\' OR e.command_line LIKE ? ESCAPE '\\' "
-            "OR e.dest_ip = ? OR e.dest_ip LIKE ? ESCAPE '\\' "
-            "OR e.host_id LIKE ? ESCAPE '\\')"
-        )
-        params += [like, like, like, like, q, like, like]
-    if source:
-        frag, extra = _source_clause(source)
-        where.append(frag)
-        params += extra
-    if not include_synthetic:
-        marks = ",".join("?" for _ in SYNTHETIC_SOURCES)
-        where.append(f"r.source NOT IN ({marks})")
-        params += list(SYNTHETIC_SOURCES)
-
+    where, params = _event_where(event_type, platform, severity, q, pids, source, include_synthetic)
     clause = " AND ".join(where)
 
     with db_session() as conn:
@@ -186,6 +209,59 @@ def list_events(
         "offset": offset,
         "events": events,
     }
+
+
+@router.get("/events/channel-counts", response_model=None)
+def event_channel_counts(
+    event_type: Optional[str] = None,
+    platform: Optional[str] = None,
+    severity: Optional[str] = None,
+    q: Optional[str] = None,
+    pid: Optional[str] = None,
+    include_synthetic: bool = Query(
+        False,
+        description="Show events from synthetic-provenance runs (seeds / webapp detonations / the sandbox demo)",
+    ),
+) -> dict:
+    """Per-channel totals for the Event Log's source-tab rail — one query
+    instead of one request per tab. Mirrors list_events' filters minus
+    `source` (the dimension being split), and buckets every filtered event
+    into each channel it belongs to:
+
+      live    — r.source = 'live'            (host collectors)
+      sandbox — r.source LIKE 'sandbox:%'    (external sandboxes)
+      webapp  — everything else              (webapp detonations, CLI, seeds)
+      auditd / sysmon — the event's own log_source stamp (cross-cutting: a
+                        live collector event counts in live AND its channel)
+
+    `total` is the grand count across all buckets (the "All sources" tab).
+    The buckets are facets, not a partition — auditd/sysmon deliberately
+    overlap live, so the channel values need not sum to total."""
+    _validate_event_filters(event_type, platform, severity, None)
+    pids = _parse_pids(pid)
+    where, params = _event_where(event_type, platform, severity, q, pids, None, include_synthetic)
+    clause = " AND ".join(where)
+
+    with db_session() as conn:
+        row = conn.execute(
+            f"""
+            SELECT
+              COUNT(*) AS total,
+              SUM(CASE WHEN r.source = 'live' THEN 1 ELSE 0 END)                       AS live,
+              SUM(CASE WHEN r.source LIKE 'sandbox:%' THEN 1 ELSE 0 END)               AS sandbox,
+              SUM(CASE WHEN COALESCE(e.log_source, '') = 'auditd' THEN 1 ELSE 0 END)   AS auditd,
+              SUM(CASE WHEN COALESCE(e.log_source, '') = 'sysmon' THEN 1 ELSE 0 END)   AS sysmon,
+              SUM(CASE WHEN r.source != 'live' AND r.source NOT LIKE 'sandbox:%'
+                       THEN 1 ELSE 0 END)                                              AS webapp
+            FROM events e
+            JOIN runs r ON r.run_id = e.run_id
+            WHERE {clause}
+            """,
+            params,
+        ).fetchone()
+
+    channels = {k: int(row[k] or 0) for k in ("live", "auditd", "sysmon", "webapp", "sandbox")}
+    return {"total": int(row["total"] or 0), "channels": channels}
 
 
 @router.get("/events/process-summary", response_model=None)

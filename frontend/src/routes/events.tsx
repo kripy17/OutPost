@@ -4,7 +4,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { EVENT_ICON, platformIconName } from "../components/iconMeta";
 import { PageHeader } from "../components/ui";
-import { exportEventsCsv, getEvents, saveBlob } from "../lib/api";
+import { exportEventsCsv, getEventChannelCounts, getEvents, saveBlob } from "../lib/api";
 import { useEventStream } from "../lib/useEventStream";
 import { resolveSavedFilters, type SavedFilters } from "./eventsHelpers";
 import type { EventFeedEvent, EventSource, EventType, Platform, Severity } from "../types";
@@ -451,6 +451,34 @@ export default function EventsPage() {
       }),
     refetchInterval: live ? 5_000 : false,
   });
+
+  // Source-tab rail: ONE query for all six channel buckets instead of one
+  // per tab. Shares the page's filter universe (category, severity, platform,
+  // search, pid, and the synthetic toggle) so the rail reads coherently with
+  // the feed — the bucket counts even partition the feed's own total.
+  const channelCountsQuery = useQuery({
+    queryKey: ["events", "channel-counts", category, severity, platform, submittedQ, submittedPids.join(","), includeSynthetic],
+    queryFn: () =>
+      getEventChannelCounts({
+        event_type: category,
+        severity,
+        platform,
+        q: submittedQ,
+        pid: submittedPids.length ? submittedPids.join(",") : undefined,
+        include_synthetic: includeSynthetic || undefined,
+      }),
+    staleTime: live ? 0 : 15_000,
+    refetchInterval: live ? 5_000 : false,
+  });
+  const channelDesc = [
+    severity ? `level: ${severity}` : null,
+    platform ? `platform: ${platform}` : null,
+    category ? `type: ${category}` : null,
+    submittedQ ? `search: “${submittedQ}”` : null,
+    submittedPids.length ? `pid: ${submittedPids.join(",")}` : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
 
   const events = useMemo(() => data?.events ?? [], [data]);
   const total = data?.total ?? 0;
@@ -940,21 +968,16 @@ export default function EventsPage() {
                 >
                   <Icon name={s.icon} size={11} />
                   {s.label}
-                  {/* Live per-channel count — the source rail is a noise-meter
-                      too: it shares the active category/severity/platform/
-                      search/pid filters, and a specific tab always counts its
-                      full content (a deliberate provenance ask, mirroring the
-                      feed's include-synthetic rule). */}
-                  <CountBadge
-                    type={category}
-                    source={s.v}
-                    live={live}
-                    severity={severity}
-                    platform={platform}
-                    q={submittedQ}
-                    pids={submittedPids}
-                    includeSynthetic={showSynthetic || s.v !== "" || submittedPids.length > 0}
-                  />
+                  {/* Live per-channel count — one query feeds all six tabs. The
+                      rail is a noise-meter too: it shares the active
+                      category/severity/platform/search/pid filters AND the
+                      synthetic toggle, so it always sums to the feed's total. */}
+                  <span
+                    className="rounded-full border border-border-subtle bg-bg-elevated/60 px-1.5 py-px font-mono text-[10px] tabular-nums text-text-faint"
+                    title={channelDesc || "no active filters"}
+                  >
+                    {s.v === "" ? (channelCountsQuery.data?.total ?? "…") : (channelCountsQuery.data?.channels[s.v] ?? "…")}
+                  </span>
                 </button>
               ))}
             </div>
