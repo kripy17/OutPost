@@ -108,15 +108,45 @@ def set_password_hash(conn, role: str, new_password: str) -> str:
 # -- Enabling + credential check ------------------------------------------------
 
 
+def _auth_required_flag() -> bool:
+    """`OUTPOST_AUTH_REQUIRED=1` — the production switch: this instance must
+    ALWAYS enforce auth, even before any credential exists. Fail-closed at
+    startup (see validate_config) so a prod deploy can never run open."""
+    return os.getenv("OUTPOST_AUTH_REQUIRED", "").strip().lower() in ("1", "true", "yes", "on")
+
+
 def auth_enabled() -> bool:
-    """True when any role has a credential configured (env or DB).
+    """True when auth must be enforced: the OUTPOST_AUTH_REQUIRED flag OR any
+    role has a credential configured (env or DB).
 
     Env check first — the zero-config default has neither, so the DB read
     below only happens once auth is genuinely in play.
     """
+    if _auth_required_flag():
+        return True
     if any(_env_hash(r) or _env_plain(r) for r in _ROLES):
         return True
     return bool(_stored_hash("admin") or _stored_hash("analyst"))
+
+
+def validate_config() -> None:
+    """Fail-closed startup gate for OUTPOST_AUTH_REQUIRED.
+
+    With the flag set but no admin credential, tokens would be signed with an
+    empty verifier (trivially forgeable) — far worse than running open. Refuse
+    to boot with a clear message instead. Called from the app lifespan after
+    init_db so the DB-backed credential check can read the settings table.
+    """
+    if not _auth_required_flag():
+        return
+    verifier, _ = _verifier_for_role("admin")
+    if not verifier:
+        raise RuntimeError(
+            "OUTPOST_AUTH_REQUIRED=1 but no admin credential is configured — refusing to "
+            "start with auth that could be forged. Set OUTPOST_ADMIN_PASSWORD "
+            "(or a precomputed OUTPOST_ADMIN_PASSWORD_HASH from `outpost auth hash`) "
+            "and restart. OUTPOST_ANALYST_PASSWORD is optional."
+        )
 
 
 def _secret_for_role(role: str) -> str:

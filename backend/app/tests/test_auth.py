@@ -86,6 +86,67 @@ def test_gate_blocks_unauthenticated_writes_and_reads(auth_env):
     assert c.post("/runs", json={"sample_name": "x", "platform": "windows", "session_type": "analysis"}).status_code == 401
 
 
+# -- OUTPOST_AUTH_REQUIRED (production fail-closed flag) -----------------------
+
+
+def test_auth_required_flag_forces_enforcement_without_credentials(monkeypatch):
+    """Flag set + no credential: auth is ENFORCED (enabled) and startup
+    REFUSES to run — the fail-closed gate, so a prod deploy can't end up with
+    an empty (forgeable) token-signing key."""
+    from ..core import auth as auth_mod
+
+    monkeypatch.setenv("OUTPOST_AUTH_REQUIRED", "1")
+    monkeypatch.delenv("OUTPOST_ADMIN_PASSWORD", raising=False)
+    monkeypatch.delenv("OUTPOST_ANALYST_PASSWORD", raising=False)
+    monkeypatch.delenv("OUTPOST_ADMIN_PASSWORD_HASH", raising=False)
+    importlib.reload(auth_mod)
+    try:
+        assert auth_mod.auth_enabled() is True
+        with pytest.raises(RuntimeError, match="OUTPOST_AUTH_REQUIRED"):
+            auth_mod.validate_config()
+    finally:
+        monkeypatch.delenv("OUTPOST_AUTH_REQUIRED", raising=False)
+        importlib.reload(auth_mod)
+
+
+def test_auth_required_flag_with_admin_credential_starts(monkeypatch):
+    """Flag + a configured admin password: auth enforced AND startup passes."""
+    from ..core import auth as auth_mod
+
+    monkeypatch.setenv("OUTPOST_AUTH_REQUIRED", "1")
+    monkeypatch.setenv("OUTPOST_ADMIN_PASSWORD", "admin-secret")
+    monkeypatch.delenv("OUTPOST_ANALYST_PASSWORD", raising=False)
+    importlib.reload(auth_mod)
+    try:
+        assert auth_mod.auth_enabled() is True
+        auth_mod.validate_config()  # no raise
+        # And the live app enforces it.
+        c = _client()
+        assert c.get("/runs").status_code == 401
+        token = c.post("/auth/login", json={"password": "admin-secret"}).json()["token"]
+        assert c.get("/runs", headers={"Authorization": f"Bearer {token}"}).status_code == 200
+    finally:
+        monkeypatch.delenv("OUTPOST_AUTH_REQUIRED", raising=False)
+        monkeypatch.delenv("OUTPOST_ADMIN_PASSWORD", raising=False)
+        importlib.reload(auth_mod)
+
+
+def test_auth_required_flag_zero_preserves_zero_config_default(monkeypatch):
+    """OUTPOST_AUTH_REQUIRED=0 (or absent) + no credentials → open default."""
+    from ..core import auth as auth_mod
+
+    monkeypatch.setenv("OUTPOST_AUTH_REQUIRED", "0")
+    monkeypatch.delenv("OUTPOST_ADMIN_PASSWORD", raising=False)
+    monkeypatch.delenv("OUTPOST_ANALYST_PASSWORD", raising=False)
+    importlib.reload(auth_mod)
+    try:
+        assert auth_mod.auth_enabled() is False
+        auth_mod.validate_config()  # no raise
+    finally:
+        monkeypatch.delenv("OUTPOST_AUTH_REQUIRED", raising=False)
+        importlib.reload(auth_mod)
+
+
 def test_admin_token_can_read_and_write(auth_env):
     c = _client()
     token = c.post("/auth/login", json={"password": "admin-secret"}).json()["token"]
