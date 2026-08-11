@@ -137,6 +137,89 @@ def start_proxy(backend_port: int, cert: Path, key: Path) -> tuple[http.server.T
     return server, proxy_port
 
 
+def _walk_real_collector(base: str, admin: str, audit_log: Path, collector_log: Path) -> None:
+    """Section 5 — drive the real Linux collector in live mode."""
+    admin_h = {"Authorization": f"Bearer {admin}"}
+
+    # The collector claims/creates its live agent run (`agent-<host>-<date>`;
+    # live sessions normalize to source=live by design — host telemetry).
+    # Wait for it to appear.
+    run_id = None
+    for _ in range(40):
+        runs = requests.get(f"{base}/api/runs", headers=admin_h, verify=False, timeout=5).json()
+        for r in runs:
+            if (
+                (r.get("sample_name") or "").startswith("agent-")
+                and r.get("session_type") == "live"
+                and not r.get("completed_at")
+            ):
+                run_id = r["run_id"]
+                break
+        if run_id:
+            break
+        time.sleep(0.5)
+    check("5 · collector claims a live agent run", run_id is not None, f"run={run_id}")
+    if run_id is None:
+        print(f"    collector log:\n{(collector_log.read_text() if collector_log.exists() else '')[:800]}")
+        return
+
+    # Feed the audit log real auditd-format records (execve + connect). PIDs
+    # are real processes on this host so the collector's /proc reads populate
+    # process_name/command_line — nothing is patched in the collector itself.
+    now = time.time()
+    lines = [
+        f"type=SYSCALL msg=audit({now:.3f}:101): arch=c000003e syscall=59 success=yes exit=0 pid={os.getpid()} comm=\"outpost-walk\"",
+        f"type=SYSCALL msg=audit({now + 0.2:.3f}:102): arch=c000003e syscall=59 success=yes exit=0 pid=1 comm=\"systemd\"",
+        f"type=SYSCALL msg=audit({now + 0.4:.3f}:103): syscall=42 success=yes exit=0 pid={os.getpid()} saddr=02000050C0A8010A",
+        f"type=SYSCALL msg=audit({now + 0.6:.3f}:104): syscall=42 success=yes exit=0 pid=1 saddr=02001BBD7F000001",
+    ]
+    with open(audit_log, "a", encoding="utf-8") as fh:
+        fh.write("\n".join(lines) + "\n")
+
+    # The events must land in the claimed run (flush interval is 2s).
+    timeline_len = 0
+    events = []
+    for _ in range(50):  # up to ~25s
+        detail = requests.get(f"{base}/api/runs/{run_id}", headers=admin_h, verify=False, timeout=5).json()
+        events = detail.get("timeline", [])
+        if len(events) >= 4:
+            break
+        time.sleep(0.5)
+    check("5 · shipped events land in the run", len(events) >= 4, f"timeline={len(events)}")
+
+    kinds = sorted({e.get("event_type") for e in events})
+    check(
+        "5 · process_create + network_connection present",
+        "process_create" in kinds and "network_connection" in kinds,
+        f"kinds={kinds}",
+    )
+    check(
+        "5 · events attributed to host + auditd channel",
+        all(e.get("host_id") == "walk-collector" and e.get("log_source") == "auditd" for e in events),
+        f"hosts={sorted({e.get('host_id') for e in events})} channels={sorted({e.get('log_source') for e in events})}",
+    )
+
+    # The heartbeat (2s interval) makes the collector host read online.
+    online = False
+    for _ in range(20):
+        agents = requests.get(f"{base}/api/agents", headers=admin_h, verify=False, timeout=5).json()
+        if any(a.get("host_id") == "walk-collector" and a.get("online") for a in agents.get("agents", [])):
+            online = True
+            break
+        time.sleep(0.5)
+    check("5 · walk-collector online on /agents", online)
+
+    # The run's verdict is computed from real events — a live session created
+    # by the collector reads as host-telemetry provenance (source=live).
+    detail = requests.get(f"{base}/api/runs/{run_id}", headers=admin_h, verify=False, timeout=5).json()
+    run_meta = detail.get("run") or {}
+    check(
+        "5 · run summary real (live host-telemetry provenance)",
+        run_meta.get("source") == "live" and run_meta.get("session_type") == "live",
+        f"source={run_meta.get('source')} type={run_meta.get('session_type')}",
+    )
+
+
 def main() -> int:
     if shutil.which("openssl") is None:
         print("  FAIL — openssl not found; cannot generate the TLS cert for the walk")
@@ -145,6 +228,7 @@ def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="outpost-walk-"))
     backend = None
     proxy = None
+    collector = None
     try:
         backend_port = free_port()
         cert, key = make_cert(tmp)
@@ -223,9 +307,48 @@ def main() -> int:
         admin_still = requests.get(f"{base}/api/campaigns", headers={"Authorization": f"Bearer {admin}"}, verify=False, timeout=5)
         check("4 · admin unaffected → 200", admin_still.status_code == 200, f"HTTP {admin_still.status_code}")
 
+        # 5. Real collector — the actual Linux collector in live mode against
+        # the fail-closed backend. It claims/creates its agent run (with the
+        # OUTPOST_AGENT_TOKEN), tails a temp audit log, and ships real
+        # normalized events; those events must land in the run, attributed to
+        # the host with the auditd channel, and the heartbeat must make the
+        # host show online. This is the full agent→backend auth path.
+        audit_log = tmp / "audit.log"
+        audit_log.write_text("")
+        collector_log = tmp / "collector.log"
+        collector = subprocess.Popen(
+            [
+                sys.executable,
+                str(ROOT / "collectors" / "linux" / "collector_linux.py"),
+                "--backend-url", f"http://127.0.0.1:{backend_port}",
+                "--mode", "live",
+            ],
+            env={
+                **os.environ,
+                "AUDIT_LOG": str(audit_log),
+                "OUTPOST_AGENT_TOKEN": AGENT_TOKEN,
+                "OUTPOST_HOST_ID": "walk-collector",
+                "HEARTBEAT_INTERVAL": "2",
+                "SNAPSHOT_INTERVAL": "9999",
+            },
+            stdout=open(collector_log, "w"),
+            stderr=subprocess.STDOUT,
+        )
+        try:
+            _walk_real_collector(base, admin, audit_log, collector_log)
+        finally:
+            collector.terminate()
+            try:
+                collector.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                collector.kill()
+            collector = None
+
         print(f"\nPost-deploy walk: {len(PASSED)} passed, {len(FAILED)} failed")
         return 0 if not FAILED else 1
     finally:
+        if collector is not None:
+            collector.kill()
         if backend is not None:
             backend.terminate()
             try:
