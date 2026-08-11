@@ -28,3 +28,6 @@ demo/.deck-video/
 /1[0-3]-*.md
 /docs/14-*.md
 /docs/15-*.md
+
+# `script` session captures (the `script` command writes to ./typescript by default)
+/typescript
