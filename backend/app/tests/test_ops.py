@@ -85,6 +85,52 @@ def test_audit_action_filter(client):
     assert only and all(e["action"] == "alert.status" for e in only)
 
 
+# -- Channel backfill -----------------------------------------------------------
+
+
+def test_backfill_channels_endpoint_stamps_legacy_events(client):
+    """POST /admin/backfill-channels runs the startup migration on demand:
+    legacy live-run events with a real host get their channel inferred
+    (linux→auditd, windows→sysmon), and a second call returns 0 — the
+    idempotent no-op that doubles as a health check. Audited."""
+    lin = make_run(client, sample_name="bfc-lin.bin", platform="linux", session_type="live")
+    win = make_run(client, sample_name="bfc-win.bin", platform="windows", session_type="live")
+
+    now = datetime.now(timezone.utc)
+    for run_id, platform, name in ((lin, "linux", "bfc-lin.exe"), (win, "windows", "bfc-win.exe")):
+        client.post(
+            "/ingest/batch",
+            json=[{
+                "run_id": run_id, "platform": platform, "event_type": "process_create",
+                "timestamp": _ts(now), "pid": 1, "host_id": "bfc-host", "process_name": name,
+            }],
+        )
+
+    # Pre-backfill: neither event carries a channel.
+    assert client.get("/events", params={"source": "auditd", "q": "bfc-lin.exe"}).json()["total"] == 0
+    assert client.get("/events", params={"source": "sysmon", "q": "bfc-win.exe"}).json()["total"] == 0
+
+    out = client.post("/admin/backfill-channels").json()
+    # Only this test's two events match the backfill scope in the shared DB
+    # (NULL log_source + live run + real host) — the file convention's
+    # per-scope assertion.
+    assert out["updated"] == 2
+
+    assert client.get("/events", params={"source": "auditd", "q": "bfc-lin.exe"}).json()["total"] == 1
+    assert client.get("/events", params={"source": "sysmon", "q": "bfc-win.exe"}).json()["total"] == 1
+
+    # Idempotent — nothing left to stamp.
+    assert client.post("/admin/backfill-channels").json()["updated"] == 0
+
+    # The mutation landed in the audit trail.
+    ev = client.get("/audit").json()["events"]
+    assert any(e["action"] == "admin.backfill-channels" for e in ev)
+
+    # Close the live runs so /runs/active-live's 404 contract holds.
+    client.post(f"/runs/{lin}/complete")
+    client.post(f"/runs/{win}/complete")
+
+
 # -- Retention & backup --------------------------------------------------------
 
 

@@ -71,7 +71,7 @@ host-status panel answers "is THIS host monitored?" against the live fleet.
 | 🖇️ **Correlation & triage** | IOC extraction/export, cross-run search, run comparison, watchlist (with live webhook/desktop alerts), alert triage lifecycle (open/ack/resolved + allowlists + suppressions), STIX 2.1 + JSON + PDF export |
 | 🧪 **Real-collector live mode** | `outpost agent run/install` — auditd/Sysmon telemetry streams into live sessions; heartbeat fleet with last-seen/uptime and silent-host flags |
 | 🎨 **SOC deck UI** | Dark/light themes, collapsible rail, risk-over-time + detection-volume charts, kill chain, process tree with reputation halos, live monitor, browser notifications |
-| ⌨️ **Terminal mirror** | The `outpost` CLI reaches the same API — **19 commands**, Rich tables, colorized risk, recon markers, rule knobs |
+| ⌨️ **Terminal mirror** | The `outpost` CLI reaches the same API — **20 commands**, Rich tables, colorized risk, recon markers, rule knobs |
 
 ## 📸 Screenshots
 
@@ -122,7 +122,7 @@ GIFs above) are recorded automatically by
         ┌────────────────────┐                ┌────────────────────┐
         │   React webapp     │                │   CLI (outpost)   │
         │   SOC deck UI      │                │   Rich terminal   │
-        │   19 pages         │                │   19 commands     │
+        │   19 pages         │                │   20 commands     │
         └────────────────────┘                └────────────────────┘
 ```
 
@@ -243,9 +243,9 @@ One command runs the whole sweep:
 
 | Suite | Count | Covers |
 |---|---|---|
-| Backend pytest | **430** | ingestion, OS-aware rules (win/linux/macOS), risk + ATT&CK, campaigns, events search + channel-counts + log_source backfill, samples vault, SSE broadcast, notes, storm caps, triage, footprint, YARA, auth (fail-closed OUTPOST_AUTH_REQUIRED + agent token + rotation), fleet auth context + per-channel volume |
+| Backend pytest | **431** | ingestion, OS-aware rules (win/linux/macOS), risk + ATT&CK, campaigns, events search + channel-counts + log_source backfill, samples vault, SSE broadcast, notes, storm caps, triage, footprint, YARA, auth (fail-closed OUTPOST_AUTH_REQUIRED + agent token + rotation), fleet auth context + per-channel volume |
 | Collector pytest | **24** | Sysmon + auditd shipping, normalization, agent-token auth |
-| CLI pytest | **60** | rendering regressions, campaigns output, risk columns, YARA + footprint mirrors + exports, rules knobs, agent install (token embed + Windows bats), module entry, rotate-agent-token, fleet auth context in status |
+| CLI pytest | **64** | rendering regressions, campaigns output, risk columns, YARA + footprint mirrors + exports, rules knobs, agent install (token embed + Windows bats), module entry, rotate-agent-token, fleet auth context in status, admin backfill-channels |
 | Frontend | clean `tsc --noEmit` + Vite build + unit tests | — |
 
 **CI:** the same sweep runs automatically on every push and pull request via
