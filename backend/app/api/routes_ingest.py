@@ -102,10 +102,14 @@ async def ingest_batch(events: list[EventIn]) -> dict:
             # mode="json" serializes datetimes to ISO strings — sqlite-safe.
             raw_payload = event_in.model_dump(mode="json")
             normalized = normalizer.normalize_event(raw_payload)
-            # Keep the collector's original payload as the event's raw record
-            # (Event Viewer "raw record" pane — pivot from normalized row to
-            # the original auditd/Sysmon line).
-            normalized["raw_record"] = json.dumps(raw_payload)
+            # Keep the original source as the event's raw record (Event Viewer
+            # "raw record" pane — pivot from a normalized row to the source).
+            # Collectors ship the raw auditd/Sysmon line themselves; webapp /
+            # sandbox / seed events fall back to the normalized payload JSON.
+            # The payload always carries the field (EventIn default None), so
+            # fall back only when the collector left it empty.
+            if not normalized.get("raw_record"):
+                normalized["raw_record"] = json.dumps(raw_payload)
             key = (
                 normalized.get("event_type"),
                 normalized.get("timestamp"),

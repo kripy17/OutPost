@@ -30,6 +30,10 @@ class EventIn(BaseModel):
     ppid: Optional[int] = None
     process_name: Optional[str] = None
     command_line: Optional[str] = None
+    # Kernel-resolved executable path (auditd's `exe=`, symlinks followed) —
+    # authoritative for masquerading and immune to argv[0] spoofing. NULL for
+    # events that lack it (webapp/sandbox/seed, Sysmon without Image path).
+    exe_path: Optional[str] = None
     dest_ip: Optional[str] = None
     dest_port: Optional[int] = None
     protocol: Optional[str] = None
@@ -49,6 +53,10 @@ class EventIn(BaseModel):
     # TLS Server Name Indication from the handshake (Sysmon Event ID 3
     # DestinationHostname). Feeds the TLS-SNI / DNS-over-HTTPS rules.
     tls_sni: Optional[str] = None
+    # The raw source record as shipped by a collector (the exact auditd
+    # line / Sysmon event) — the Event Viewer's "raw record" pane pivots a
+    # normalized row back to its source. NULL for webapp/sandbox/seed events.
+    raw_record: Optional[str] = None
 
 
 class EventOut(EventIn):

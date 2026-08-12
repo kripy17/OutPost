@@ -16,6 +16,7 @@ Maps Sysmon Event IDs to the unified schema:
 
 import argparse
 import datetime
+import json
 import os
 import sys
 import time
@@ -76,6 +77,10 @@ def parse_sysmon_event(record) -> dict | None:
         # (present when the connection carried a TLS handshake). Feeds the
         # TLS-SNI and DNS-over-HTTPS detection rules.
         "tls_sni": data.get("DestinationHostname"),
+        # The raw EventData as shipped — the Event Viewer's "raw record" pane
+        # pivots a normalized row back to the exact Sysmon fields (the
+        # backend keeps it when the collector provides it).
+        "raw_record": json.dumps(data, default=str),
     }
     return ev
 

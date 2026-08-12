@@ -12,6 +12,7 @@ Modes:
 
 import argparse
 import datetime
+import ipaddress
 import os
 import re
 import sys
@@ -35,7 +36,11 @@ _AUDIT_RE = re.compile(r"type=([A-Z]+) msg=audit\(([\d.]+):\d+\):\s*(.+)")
 
 
 def _pid_from_syscall(body: str) -> int | None:
-    m = re.search(r"pid=(\d+)", body)
+    # \b is required: real auditd emits `ppid=… pid=…` (ppid first), and a
+    # bare `pid=(\d+)` matches INSIDE "ppid=" — silently reading the parent
+    # PID as the event's PID (real-feed fidelity bug: connect/execve events
+    # carried their PPID, corrupting the process map and recon-actor PIDs).
+    m = re.search(r"\bpid=(\d+)", body)
     return int(m.group(1)) if m else None
 
 
@@ -62,8 +67,34 @@ def _cmdline(pid: int) -> str | None:
         return None
 
 
-def parse_audit_line(line: str, pid_cache: dict) -> dict | None:
-    """Parse one audit.log line into a unified-schema event dict."""
+def _body_comm_exe(body: str) -> tuple[str | None, str | None]:
+    """The SYSCALL record's `comm="…"` / `exe="…"` fields.
+
+    The kernel stamps these on the execve/connect syscall: `comm` is the
+    (truncated) process name, `exe` is the fully-resolved executable path —
+    symlinks already followed. They are the fallback when the process is
+    gone from /proc by parse time (the real-auditd soak: ~61% of events had
+    process_name None because short-lived processes exited before the
+    collector read /proc). `exe` is also the authoritative masquerading
+    signal: a kernel-resolved path cannot be spoofed by argv[0].
+    """
+    comm = re.search(r'comm="([^"]*)"', body)
+    exe = re.search(r'exe="([^"]*)"', body)
+    return (comm.group(1) if comm else None, exe.group(1) if exe else None)
+
+
+def parse_audit_line(line: str, pid_cache: dict, conn_state: dict | None = None) -> dict | None:
+    """Parse one audit.log line into a unified-schema event dict.
+
+    `conn_state` (per-run dict, lives across lines) correlates the two records
+    auditd emits for one connect: the SYSCALL record carries identity (pid /
+    comm / exe) but NO saddr, the SOCKADDR record carries saddr but NO
+    identity. Without the merge, each connect became two events — an
+    identity-only row (process_name present, no dest) and a dest-only row
+    (dest present, process_name None) — the real-feed fidelity gap that left
+    ~half the network events unnamed. Soak/gate feeds that put saddr inline
+    on the SYSCALL record are untouched (complete event, stash never used).
+    """
     if "audit(" not in line:
         return None
 
@@ -74,12 +105,17 @@ def parse_audit_line(line: str, pid_cache: dict) -> dict | None:
 
     if record_type == "EXECVE" or "execve" in body or "syscall=59" in body:
         # Process-create: pid lives on the SYSCALL record (EXECVE records
-        # carry a0= program args instead). comm falls back to a0="name".
+        # carry a0= program args instead). Name fallback chain: /proc comm
+        # (live process) → SYSCALL body comm= (kernel-stamped, survives
+        # short-lived procs) → a0="name" (EXECVE args).
         pid = _pid_from_syscall(body)
         if pid in pid_cache:
             return None  # execve may repeat; dedup per pid
         pid_cache[pid] = True
         ppid, comm = _ppid_and_comm(pid) if pid else (None, None)
+        body_comm, exe_path = _body_comm_exe(body)
+        if not comm:
+            comm = body_comm
         if not comm:
             a0 = re.search(r'a0="([^"]*)"', body)
             comm = a0.group(1) if a0 else None
@@ -92,12 +128,39 @@ def parse_audit_line(line: str, pid_cache: dict) -> dict | None:
             "ppid": ppid,
             "process_name": comm,
             "command_line": _cmdline(pid) if pid else None,
+            "exe_path": exe_path,
+            # The raw auditd record — the Event Viewer's "raw record" pane
+            # pivots a normalized row back to the exact source line (the
+            # backend keeps it when the collector provides it).
+            "raw_record": line.strip(),
         }
 
-    if "connect" in body or "saddr=" in body:
+    if "connect" in body or "saddr=" in body or "syscall=42" in body:
         pid = _pid_from_syscall(body)
         _, comm = _ppid_and_comm(pid) if pid else (None, None)
+        body_comm, exe_path = _body_comm_exe(body)
+        if not comm:
+            comm = body_comm
         ip, port = _parse_saddr(body)
+        ts_float = float(ts)
+        if conn_state is not None:
+            if pid is not None and ip is None:
+                # The SYSCALL half: identity without a destination. Hold it
+                # for the SOCKADDR record that follows at the same timestamp.
+                conn_state["identity"] = (ts_float, pid, comm, exe_path)
+                return None
+            if pid is None:
+                stashed = conn_state.get("identity")
+                if stashed and abs(stashed[0] - ts_float) < 1.0:
+                    _ts_s, _pid, _comm, _exe = stashed
+                    pid, comm, exe_path = _pid, _comm or comm, _exe or exe_path
+                    conn_state["identity"] = None  # consumed
+        if ip is None:
+            # No routable destination (AF_UNIX / AF_NETLINK sockets, malformed
+            # saddr) — a connect without a destination is useless to the
+            # network rules and only bloats the Event Log. The real-feed
+            # re-measurement showed ~44% of events were these.
+            return None
         return {
             "platform": "linux",
             "log_source": "auditd",  # the collector's own channel — explicit
@@ -106,33 +169,70 @@ def parse_audit_line(line: str, pid_cache: dict) -> dict | None:
             "pid": pid,
             "ppid": None,
             "process_name": comm,
+            "exe_path": exe_path,
             "dest_ip": ip,
             "dest_port": port,
             "protocol": "TCP",
+            # See the process_create branch — same raw-record pivot.
+            "raw_record": line.strip(),
         }
 
     return None
 
 
 def _parse_saddr(body: str) -> tuple[str | None, int | None]:
-    """Extract dest IP:port from connect's `saddr` hex (AF_INET = 2).
+    """Extract dest IP:port from connect's `saddr` hex, family-aware.
 
-    auditd serializes sockaddr_in as: family (2B) + port (2B) + addr (4B)
-    = 16 hex chars, e.g. 02000050C0A80101 → port 80, IP 192.168.1.1.
+    auditd serializes the sockaddr as: family (2B, host byte order) + port
+    (2B, network order) + address bytes — 16 hex for AF_INET, 40 hex for
+    AF_INET6, e.g.:
+      02000050C0A80101 → AF_INET, port 80, 192.168.1.1
+      0A001F90<32 hex> → AF_INET6, port 8080, expanded v6 address
+
+    Family-aware parsing matters: before this, AF_INET6 records were parsed
+    as v4 — the first 16 hex chars became a FAKE v4 IP (real-auditd soak:
+    ~240 garbage "117.110.47.x:12146" connections from v6 dests, two of
+    which fired beaconing). Unknown families are skipped, not misparsed.
     """
     m = re.search(r"saddr=([0-9A-Fa-f]+)", body)
     if not m:
         return None, None
     raw = m.group(1)
-    if len(raw) < 16:
-        return None, None
-    try:
-        port = int(raw[4:8], 16)
-        # Network byte order: first addr byte is the first octet.
-        ip = ".".join(str(int(raw[i : i + 2], 16)) for i in range(8, 16, 2))
-        return ip, port
-    except ValueError:
-        return None, None
+    family = raw[:4].lower()
+    if family in ("0200", "0002"):  # AF_INET
+        if len(raw) < 16:
+            return None, None
+        try:
+            port = int(raw[4:8], 16)
+            # Network byte order: first addr byte is the first octet.
+            ip = ".".join(str(int(raw[i : i + 2], 16)) for i in range(8, 16, 2))
+            return ip, port
+        except ValueError:
+            return None, None
+    if family in ("0a00", "000a"):  # AF_INET6
+        # sockaddr_in6 is family(2B) + port(2B) + flowinfo(4B) + addr(16B) =
+        # 48 hex chars total. auditd emits flowinfo (usually zero), so the
+        # address starts at hex offset 16 — the elevated fidelity run stored
+        # "0000:0000:2001:4860:…" (16 hex of zero flowinfo + a cut-off Google
+        # DNS v6) when the slice ignored it. Older records without flowinfo
+        # (40 hex, address at offset 8) are tolerated defensively.
+        try:
+            port = int(raw[4:8], 16)
+            if len(raw) >= 48:
+                start, end = 16, 48
+            elif len(raw) >= 40:
+                start, end = 8, 40
+            else:
+                return None, None
+            # 16 addr bytes → 8 groups of 4 hex, colon-joined, then compressed
+            # to the canonical form (2001:db8:85a3::8a2e:370:7334) — the same
+            # representation the detection exclusions (DoH resolvers, baseline
+            # seen-sets) key on, so v6 and v4 are treated uniformly.
+            ip = ipaddress.ip_address(":".join(raw[i : i + 4] for i in range(start, end, 4))).compressed
+            return ip, port
+        except ValueError:
+            return None, None
+    return None, None  # AF_UNIX (family 01), AF_NETLINK (10), etc. — not TCP dests
 
 
 def _ts(audit_ts: str) -> str:
@@ -158,6 +258,7 @@ def main(run_id: str | None, backend_url: str, mode: str = "analysis", timeout: 
 
     shipper = Shipper(backend_url, run_id)
     pid_cache: dict = {}
+    conn_state: dict = {}  # SYSCALL-connect identity held for its SOCKADDR half
     start = time.time()
     snapshot_interval = float(os.getenv("SNAPSHOT_INTERVAL", "30"))
     last_snapshot = 0.0
@@ -171,7 +272,7 @@ def main(run_id: str | None, backend_url: str, mode: str = "analysis", timeout: 
             while True:
                 line = fh.readline()
                 if line:
-                    ev = parse_audit_line(line, pid_cache)
+                    ev = parse_audit_line(line, pid_cache, conn_state)
                     if ev:
                         shipper.add(ev)
                 else:

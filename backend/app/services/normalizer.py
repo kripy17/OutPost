@@ -11,8 +11,9 @@ from typing import Any
 # Fields that are always safe to persist as-is (possibly None).
 _PASSTHROUGH = (
     "run_id", "platform", "event_type", "timestamp", "pid", "ppid",
-    "process_name", "command_line", "dest_ip", "dest_port", "protocol",
-    "file_path", "registry_key", "host_id", "log_source", "query", "tls_sni",
+    "process_name", "command_line", "exe_path", "dest_ip", "dest_port",
+    "protocol", "file_path", "registry_key", "host_id", "log_source",
+    "query", "tls_sni", "raw_record",
 )
 
 

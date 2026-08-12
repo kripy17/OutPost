@@ -4,8 +4,9 @@
 #   backend pytest  →  coverage gate (14/14 ATT&CK)  →  collector pytest
 #   →  CLI pytest  →  frontend lint/tests/build  →  doc-count gate (fails
 #     FAST on stale badge/README claims — before the slow collector gates)
-#   →  collector soak gates  →  sandbox provider gate (skips cleanly without
-#     a provider key)  →  layout sweep (Playwright overflow gate)
+#   →  collector soak gates  →  collector live-claim gate  →  sandbox
+#     provider gate (skips cleanly without a provider key)  →  layout sweep
+#     (Playwright overflow gate)
 #   →  post-deploy walk (fail-closed auth + TLS + agent heartbeat)
 #   →  badge refresh (dry-run; PUBLISH_BADGES=1 also publishes)
 #
@@ -224,6 +225,41 @@ step "Linux soak     (auditd FP baseline gate)" \
     cd "$ROOT"
     "$PYTHON" scripts/soak_linux_collector.py \
       --backend "http://127.0.0.1:$SOAK_PORT" --host "$(hostname)" --gate
+  '
+
+# Collector live-claim gate — the one-line `--mode live` collector flow, end
+# to end. Boots an isolated backend and runs the REAL collector_linux.py with
+# no --run-id against a temp AUDIT_LOG feed (the documented root-less path):
+# with an open webapp live session it must CLAIM it and stream real events
+# into it (recon actors firing through the collector path, no rogue agent
+# run), and with NO session open it must create its own agent-<host>-<date>
+# run. The heartbeat must surface the host online as identity=collector with
+# the auditd channel, and no unstamped collector event may survive.
+step "Live-claim gate (collector live session claim)" \
+  env ROOT="$ROOT" PYTHON="$ROOT/.venv/bin/python" bash -c '
+    set -e
+    LC_DB=$(mktemp --suffix=.db)
+    LC_SAMPLES=$(mktemp -d)
+    LC_PORT=8015
+    LC_LOG=$(mktemp --suffix=.log)
+    LC_PID=""
+    cleanup() {
+      [ -n "$LC_PID" ] && kill "$LC_PID" 2>/dev/null || true
+      rm -f "$LC_DB" "$LC_LOG"
+      rm -rf "$LC_SAMPLES"
+    }
+    trap cleanup EXIT
+    DATABASE_PATH="$LC_DB" SAMPLES_DIR="$LC_SAMPLES" \
+      "$PYTHON" -m uvicorn app.main:app --host 127.0.0.1 --port "$LC_PORT" >"$LC_LOG" 2>&1 &
+    LC_PID=$!
+    for _ in $(seq 1 30); do
+      curl -sf "http://127.0.0.1:$LC_PORT/meta" >/dev/null 2>&1 && break
+      sleep 1
+    done
+    curl -sf "http://127.0.0.1:$LC_PORT/meta" >/dev/null
+    cd "$ROOT"
+    "$PYTHON" scripts/gate_live_claim.py \
+      --backend "http://127.0.0.1:$LC_PORT" --host "gate-host" --db "$LC_DB"
   '
 
 # Sandbox provider gate — end-to-end validation of the live detonation
