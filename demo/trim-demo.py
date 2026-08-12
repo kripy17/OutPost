@@ -69,9 +69,14 @@ SEGMENTS: list[tuple[float, float, float]] = [
     (163.0, 165.0, 1.0), # history @1280 load
     (165.0, 167.0, 1.0), # shot 27 hold
     (167.0, 170.0, 1.4), # pan
-    (170.0, 172.0, 1.0), # run detail @1280 load
-    (172.0, 174.0, 1.0), # shot 28 hold
-    (174.0, 177.0, 1.4), # end
+    (170.0, 173.0, 1.0), # run detail @1280 load
+    (173.0, 181.0, 1.4), # shot 28 hold + pan (moment at ~177-181 this recording)
+    # Act 7 — the gates run (shot 29). The three gate scripts execute in the
+    # terminal for ~5.3 min while the page sits static (t=207-510) — CUT;
+    # keep the subtitle bridge and the results panel (shot 29's moment
+    # ~508-514).
+    (181.0, 190.0, 2.0), # gates act subtitle bridge
+    (508.0, 514.5, 1.0), # results panel + shot 29 hold
 ]
 
 

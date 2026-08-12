@@ -37,6 +37,21 @@ async function apiGet(path) {
   return res.json();
 }
 
+async function waitFor(fn, { label, timeoutMs = 5000, intervalMs = 200 }) {
+  const deadline = Date.now() + timeoutMs;
+  let last = null;
+  while (Date.now() < deadline) {
+    try {
+      const v = await fn();
+      if (v) return v;
+    } catch (e) {
+      last = e;
+    }
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  throw new Error(`timed out waiting for ${label}${last ? ` (${last.message})` : ""}`);
+}
+
 let failures = 0;
 const fail = (msg) => {
   console.error(`  ✗ ${msg}`);
@@ -80,9 +95,26 @@ try {
   ok("run detail rendered the triage controls");
 
   // Leg 1 — Ack with a comment: pill Open -> Acked, comment persists.
+  // Scope BOTH controls to the Ack button's own card: the comment input
+  // renders on every alert card (acked ones included), while the Ack button
+  // only renders on open ones — so "first input" and "first Ack" can land
+  // in different cards (the sort is not guaranteed to lead with an open
+  // alert). The ancestor XPath pins the nearest rounded-lg card.
   const comment = `e2e-ack-${Date.now()}`;
-  await page.getByPlaceholder("Optional comment…").first().fill(comment);
-  await ackBtn.first().click();
+  const ackCard = ackBtn
+    .first()
+    .locator("xpath=(ancestor::div[contains(@class, 'rounded-lg')])[1]");
+  const commentInput = ackCard.getByPlaceholder("Optional comment…");
+  await commentInput.fill(comment);
+  // Playwright's fill is instant, but React commits the controlled-input
+  // draft asynchronously — a real user can't click before their typing
+  // renders. Wait for the draft to land before clicking, or the submit
+  // reads a stale closure and the comment never reaches the request.
+  await waitFor(
+    async () => (await commentInput.inputValue()) === comment,
+    { label: "comment draft to commit (React state flush)", timeoutMs: 5000 }
+  );
+  await ackCard.getByRole("button", { name: "Ack", exact: true }).click();
   await page
     .getByRole("button", { name: "Reopen", exact: true })
     .first()
@@ -90,6 +122,14 @@ try {
   await page.getByText("Acked", { exact: true }).first().waitFor({ timeout: 15000 });
   await page.getByText(comment).waitFor({ timeout: 15000 });
   ok("Ack with comment: pill -> Acked, comment rendered");
+
+  // Persistence proof via the API — immune to banner ordering/rendering.
+  const after = await apiGet(`/runs/${target.runId}`);
+  const persisted = (after.alerts ?? []).find(
+    (a) => a.status === "acknowledged" && a.status_comment === comment
+  );
+  if (!persisted) fail(`comment not persisted server-side (run ${target.runId})`);
+  else ok("comment persisted server-side (API round-trip)");
 
   // Leg 2 — Resolve: Acked -> Resolved (Reopen-only state).
   await page.getByRole("button", { name: "Resolve", exact: true }).first().click();
