@@ -48,6 +48,14 @@ jobs:
         working-directory: frontend
         run: npm ci
 
+      - name: Fast-fail on frontend type errors (tsc only)
+        # The build step inside verify.sh runs `tsc --noEmit && vite build`;
+        # this gate runs just the typecheck so a type error fails the push
+        # right after npm ci (~1 min in), before the Playwright download, the
+        # badge check, and the 3.5-min sweep. No emitted files, no vite run.
+        working-directory: frontend
+        run: npx tsc --noEmit
+
       - name: Install demo deps (Playwright — layout sweep gate)
         working-directory: demo
         run: |
