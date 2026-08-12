@@ -78,6 +78,34 @@ Notes:
 - Admin bypass still applies: `enforce_admins` is false, so an admin can
   force-merge a red PR with `gh pr merge --admin` in an emergency.
 
+To make this the default for every new PR, use the helper:
+
+```bash
+bash scripts/new-pr.sh "Title of the PR" "Optional body"
+```
+
+It pushes the current branch, opens the PR, and arms `--auto --squash` in
+one step (refuses to run from a detached HEAD or `main`).
+
+### If you ever need the merge queue (high-volume weeks)
+
+GitHub's merge queue **cannot be enabled through the REST or GraphQL API**
+— it is a UI-only branch setting (verified by schema introspection: the
+protection-rule mutation exposes no queue field). If concurrent merges ever
+need sequential re-testing against the latest `main`, enable it by hand
+once:
+
+1. Repo **Settings → Branches → edit** the `main` protection rule.
+2. Tick **Require merge queue** (it becomes available once required status
+   checks are set, as they are here).
+3. The merge button becomes **Merge when ready** — PRs enter the queue,
+   are re-tested against the latest `main`, and merge in order. Pair it
+   with `gh pr merge --auto` so green PRs enter the queue without a click.
+
+The queue adds serialization overhead (each PR is built/tested once more in
+the queue), so for a solo maintainer, plain auto-merge remains the better
+default — this is the policy to keep unless merge traffic grows.
+
 ## Inspecting / changing the rule
 
 ```bash
