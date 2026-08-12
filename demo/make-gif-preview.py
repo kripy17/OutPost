@@ -13,7 +13,8 @@ segment map):
   Act 3  Monitor        65.0-71.0s  live analysis streaming
   Act 4  Run detail     84.0-87.0s  process tree with risk halos
   Act 5  Findings       100.5-110.5s triage lifecycle + live tab badges
-  Act 6  Quality gates  117.0-124.0s layout sweep width, shown clean
+  Act 6  Quality gates  118.5-131.0s layout sweep width, shown clean
+  Act 7  The gates run  135.7-142.0s verify.sh Playwright gates, 3/3 green
 
 Usage: .venv/bin/python demo/make-gif-preview.py [--out demo/deck-demo-preview.gif]
 """
@@ -33,7 +34,8 @@ WINDOWS: list[tuple[float, float]] = [
     (65.0, 71.0),   # Act 3 — Monitor, live analysis
     (84.0, 87.0),   # Act 4 — Run detail, process tree
     (100.5, 110.5), # Act 5 — Findings, triage + live tab badges
-    (117.0, 124.0), # Act 6 — Quality gates, layout-sweep width clean
+    (118.5, 131.0), # Act 6 — Quality gates, layout-sweep width clean
+    (135.7, 142.0), # Act 7 — the verify.sh gates run, 3/3 green panel
 ]
 
 # README hero presets: two scenes each, 2x the preview width.
