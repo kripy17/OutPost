@@ -48,6 +48,36 @@ Never add `Refresh dynamic badges` to the required checks. That job only
 runs on `schedule`/`workflow_dispatch`, so it never appears on a PR — a
 required check that never runs makes every PR permanently unmergeable.
 
+## Auto-merge policy: green PRs merge themselves
+
+The repo has `allow_auto_merge` enabled, so a PR merges **automatically the
+instant the two required checks pass** — no human click needed. Combined
+with strict mode, only fully-green, up-to-date PRs ever merge.
+
+Per PR, the author opts in with one command:
+
+```bash
+gh pr merge <number> --auto --squash
+```
+
+(or the **Enable auto-merge** button in the PR sidebar). The PR then waits
+for the required checks to pass and merges itself; the "Auto-merge will
+merge this pull request when all required checks pass" state is visible on
+the PR. No required reviews are configured, so green = merge.
+
+Why auto-merge instead of a merge queue: GitHub's merge queue is not
+exposable through the REST/GraphQL API (it is a UI-only branch setting), so
+it cannot be applied as a repo policy from a script. Auto-merge achieves the
+same outcome — "merge when green, without waiting" — and is the right scale
+for a solo-maintainer repo. (If fleet-scale concurrent merging is ever
+needed, enable the queue in the branch-protection UI and keep this policy.)
+
+Notes:
+- The badge-refresh bot commits directly to `main` (no PR), so auto-merge
+  never touches it.
+- Admin bypass still applies: `enforce_admins` is false, so an admin can
+  force-merge a red PR with `gh pr merge --admin` in an emergency.
+
 ## Inspecting / changing the rule
 
 ```bash
