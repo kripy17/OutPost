@@ -265,7 +265,7 @@ step "Sandbox provider (live detonation gate)" \
 # several desktop widths with Playwright and fails on any horizontal overflow
 # or page that fails to render content. Skips with a note when Playwright
 # isn't installed locally (CI installs it — see .github/workflows/ci.yml).
-step "Layout sweep    (Playwright UI gates: overflow + alert lifecycle)" \
+step "Layout sweep    (Playwright UI gates: overflow + triage + live monitor)" \
   env ROOT="$ROOT" PYTHON="$ROOT/.venv/bin/python" NPM="$NPM" bash -c '
     set -e
     if [ ! -d "$ROOT/demo/node_modules/playwright" ]; then
@@ -321,6 +321,10 @@ step "Layout sweep    (Playwright UI gates: overflow + alert lifecycle)" \
     # (open→acked→resolved→open + bulk) driven in a real browser against the
     # seeded backend — closes the "no browser test for the lifecycle" gap.
     node e2e-alert-lifecycle.mjs --web "http://localhost:$SWEEP_WEB" --api "http://127.0.0.1:$SWEEP_PORT"
+    # Live-monitor gate on the SAME stack: the auto-detected-host detonation
+    # flow with SSE-driven live toasts — proves live monitoring in a real
+    # browser on every push, not just in the demo footage.
+    node e2e-live-monitor.mjs --web "http://localhost:$SWEEP_WEB" --api "http://127.0.0.1:$SWEEP_PORT"
   '
 
 # Post-deploy checklist walk — fail-closed auth + TLS + the four
