@@ -294,3 +294,154 @@ def test_rule6_rename_burst(client):
 def test_alerts_endpoint_404(client):
     resp = client.get("/runs/nope/alerts")
     assert resp.status_code == 404
+
+
+def test_rule1_masquerading_exe_path_authority_clears_sh_symlink(client):
+    """The real-auditd soak FP: bash invoked as /usr/bin/sh (Arch's sh→bash
+    symlink) reads as "bash from an unexpected path" to the cmdline check. The
+    kernel-resolved exe_path (/usr/bin/bash) is authoritative and clears it."""
+    run_id = make_run(client)
+    _post(
+        client,
+        run_id,
+        [{
+            "run_id": run_id, "platform": "linux", "event_type": "process_create",
+            "timestamp": BASE_TS, "pid": 89890, "ppid": 1,
+            "process_name": "bash", "command_line": "/usr/bin/sh -c whoami",
+            "exe_path": "/usr/bin/bash",
+        }],
+    )
+    assert all(a["rule_id"] != "masquerading" for a in _alerts(client, run_id))
+
+
+def test_rule1_masquerading_exe_path_authority_still_fires(client):
+    """argv[0] cannot spoof the resolved path: bash copied to /tmp fires even
+    when the command line claims /usr/bin/bash."""
+    run_id = make_run(client)
+    _post(
+        client,
+        run_id,
+        [{
+            "run_id": run_id, "platform": "linux", "event_type": "process_create",
+            "timestamp": BASE_TS, "pid": 89900, "ppid": 1,
+            "process_name": "bash", "command_line": "/usr/bin/bash -c 'echo hi'",
+            "exe_path": "/tmp/bash",
+        }],
+    )
+    masq = [a for a in _alerts(client, run_id) if a["rule_id"] == "masquerading"]
+    assert len(masq) == 1
+    assert "resolved /tmp/bash" in masq[0]["details"]
+
+
+def test_rule1_masquerading_sh_symlink_no_exe_path_ok(client):
+    """Legacy events without exe_path still tolerate the sh→bash alias — the
+    cmdline fallback must not reintroduce the FP for old rows."""
+    run_id = make_run(client)
+    _post(
+        client,
+        run_id,
+        [{
+            "run_id": run_id, "platform": "linux", "event_type": "process_create",
+            "timestamp": BASE_TS, "pid": 89891, "ppid": 1,
+            "process_name": "bash", "command_line": "/usr/bin/sh -c whoami",
+        }],
+    )
+    assert all(a["rule_id"] != "masquerading" for a in _alerts(client, run_id))
+
+
+def test_rule4_dns_resolver_cadence_not_beaconing(client):
+    """Real-auditd soak FPs: regular-interval DNS (53) and DoH (443) traffic
+    to public resolvers has exactly beacon-like cadence but is background
+    noise. Port 53 is DNS (the DNS-tunnel rules' job) and public DoH
+    resolvers on 443 are exempt; a resolver beacon on a C2 port still fires."""
+    from datetime import datetime, timedelta, timezone
+
+    run_id = make_run(client)
+    base = datetime(2026, 8, 1, 10, 0, 0, tzinfo=timezone.utc)
+    events = []
+    for i in range(6):
+        events.append({
+            "run_id": run_id, "platform": "linux", "event_type": "network_connection",
+            "timestamp": (base + timedelta(seconds=5 * i)).isoformat(),
+            "pid": 910, "dest_ip": "8.8.8.8", "dest_port": 53, "protocol": "TCP",
+        })
+        events.append({
+            "run_id": run_id, "platform": "linux", "event_type": "network_connection",
+            "timestamp": (base + timedelta(seconds=5 * i + 2)).isoformat(),
+            "pid": 911, "dest_ip": "8.8.8.8", "dest_port": 443, "protocol": "TCP",
+        })
+    _post(client, run_id, events)
+    assert all(a["rule_id"] != "beaconing" for a in _alerts(client, run_id))
+
+
+def test_rule4_v6_doh_resolver_cadence_not_beaconing(client):
+    """The real-feed re-measurement FP: the v6 Google resolver's regular 443
+    cadence (2001:4860:4860::8888) fired beaconing because only the v4 forms
+    were exempted. The compressed v6 DoH resolvers are exempt too — and a
+    v6 beacon on a C2 port still fires."""
+    from datetime import datetime, timedelta, timezone
+
+    run_id = make_run(client)
+    base = datetime(2026, 8, 1, 10, 0, 0, tzinfo=timezone.utc)
+    events = [{
+        "run_id": run_id, "platform": "linux", "event_type": "network_connection",
+        "timestamp": (base + timedelta(seconds=5 * i)).isoformat(),
+        "pid": 915, "dest_ip": "2001:4860:4860::8888", "dest_port": 443, "protocol": "TCP",
+    } for i in range(6)]
+    _post(client, run_id, events)
+    assert all(a["rule_id"] != "beaconing" for a in _alerts(client, run_id))
+    # A v6 destination on a C2 port still beacons (fan-out style, one pid).
+    base2 = datetime(2026, 8, 1, 11, 0, 0, tzinfo=timezone.utc)
+    run2 = make_run(client)
+    events2 = [{
+        "run_id": run2, "platform": "linux", "event_type": "network_connection",
+        "timestamp": (base2 + timedelta(seconds=5 * i)).isoformat(),
+        "pid": 916, "dest_ip": "2606:4700:4700::1111", "dest_port": 4444, "protocol": "TCP",
+    } for i in range(5)]
+    _post(client, run2, events2)
+    beac = [a for a in _alerts(client, run2) if a["rule_id"] == "beaconing"]
+    assert len(beac) == 1
+
+
+def test_rule4_resolver_beacon_on_non_dns_port_still_fires(client):
+    """The exemptions only cover the resolver protocols — a beacon to a known
+    resolver on a C2 port fires (the demo/soak 1.1.1.1:4444 beacon must not
+    be silently exempted by the DoH list)."""
+    from datetime import datetime, timedelta, timezone
+
+    run_id = make_run(client)
+    base = datetime(2026, 8, 1, 10, 0, 0, tzinfo=timezone.utc)
+    events = [{
+        "run_id": run_id, "platform": "linux", "event_type": "network_connection",
+        "timestamp": (base + timedelta(seconds=5 * i)).isoformat(),
+        "pid": 912, "dest_ip": "1.1.1.1", "dest_port": 4444, "protocol": "TCP",
+    } for i in range(5)]
+    assert _post(client, run_id, events) >= 1
+    beac = [a for a in _alerts(client, run_id) if a["rule_id"] == "beaconing"]
+    assert len(beac) == 1
+    assert "1.1.1.1:4444" in beac[0]["details"]
+
+
+def test_rule4_same_ip_different_ports_not_aggregated(client):
+    """A C2 channel is one ip:port tuple. 3 regular conns on each of two
+    ports to the same IP must NOT aggregate into a 6-conn beacon — the
+    real-auditd soak summed DNS-53 + DoH-443 into "12 connections to
+    8.8.8.8". Neither channel alone crosses the 5-conn threshold."""
+    from datetime import datetime, timedelta, timezone
+
+    run_id = make_run(client)
+    base = datetime(2026, 8, 1, 10, 0, 0, tzinfo=timezone.utc)
+    events = []
+    for i in range(3):
+        events.append({
+            "run_id": run_id, "platform": "linux", "event_type": "network_connection",
+            "timestamp": (base + timedelta(seconds=5 * i)).isoformat(),
+            "pid": 913, "dest_ip": "203.0.113.21", "dest_port": 8080, "protocol": "TCP",
+        })
+        events.append({
+            "run_id": run_id, "platform": "linux", "event_type": "network_connection",
+            "timestamp": (base + timedelta(seconds=5 * i + 2)).isoformat(),
+            "pid": 914, "dest_ip": "203.0.113.21", "dest_port": 9090, "protocol": "TCP",
+        })
+    _post(client, run_id, events)
+    assert all(a["rule_id"] != "beaconing" for a in _alerts(client, run_id))

@@ -496,6 +496,13 @@ def _alert_exists(conn: sqlite3.Connection, run_id: str, rule_id: str, related: 
 SYSTEMD_INIT_ALIASES = {"/sbin/init", "/usr/sbin/init"}
 
 
+# Distros where /bin/sh → bash (Arch, etc.): the kernel comm is "bash" even
+# though the argv[0] path is /usr/bin/sh. Without this, every benign `sh -c`
+# wrapper (cron, systemd services, the package manager) reads as bash from an
+# unexpected path (real-auditd soak FP: pid 89890's `/usr/bin/sh -c` fired).
+_BASH_SH_ALIASES = {"/usr/bin/sh", "/bin/sh"}
+
+
 def check_masquerading(event: dict) -> Optional[Alert]:
     r"""A known system binary running from an unexpected absolute path.
 
@@ -503,6 +510,13 @@ def check_masquerading(event: dict) -> Optional[Alert]:
     tells us nothing about where the binary actually lives, so it never fires.
     Windows drive-letter paths (C:\…) and POSIX absolute paths (/usr/bin/…) both
     qualify.
+
+    When the event carries the kernel-resolved `exe_path` (auditd's `exe=`,
+    stamped by the collector), that path is authoritative: symlinks are already
+    followed, so `/usr/bin/sh -c …` on a sh→bash distro resolves to
+    /usr/bin/bash and never fires, while a real masquerade (bash copied to
+    /tmp/x) shows its true path and always does — argv[0] cannot spoof it.
+    Events without `exe_path` fall back to the command line's first token.
     """
     platform = _platform(event)
     legit = LEGITIMATE_SYSTEM_PROCESSES.get(platform, {})
@@ -510,6 +524,18 @@ def check_masquerading(event: dict) -> Optional[Alert]:
     expected_path = legit.get(name)
     if not expected_path:
         return None
+    expected = expected_path.lower()
+
+    exe_path = (event.get("exe_path") or "").strip()
+    if exe_path:
+        if expected in exe_path.lower():
+            return None
+        return _make_alert(
+            event["run_id"], "masquerading", "Process masquerading as system binary",
+            "malicious", event,
+            f"{name} running from an unexpected path — expected {expected_path}, resolved {exe_path}",
+        )
+
     cmdline = (event.get("command_line") or "").strip()
     if not cmdline:
         return None
@@ -519,7 +545,9 @@ def check_masquerading(event: dict) -> Optional[Alert]:
         return None
     if name == "systemd" and first_token in SYSTEMD_INIT_ALIASES:
         return None  # pid 1's init execve — systemd via the distro symlink
-    if expected_path.lower() in cmdline.lower():
+    if name == "bash" and first_token in _BASH_SH_ALIASES:
+        return None  # sh→bash symlink distros (see _BASH_SH_ALIASES)
+    if expected in cmdline.lower():
         return None
     return _make_alert(
         event["run_id"], "masquerading", "Process masquerading as system binary",
@@ -630,11 +658,30 @@ def _window_cutoff(events: list[dict], window_seconds: int) -> datetime:
     return ref - timedelta(seconds=window_seconds)
 
 
-def _recent_connection_times(conn: sqlite3.Connection, run_id: str, dest_ip: str, cutoff: datetime) -> list[datetime]:
-    rows = conn.execute(
-        "SELECT timestamp FROM events WHERE run_id = ? AND dest_ip = ? AND timestamp >= ? ORDER BY timestamp ASC",
-        (run_id, dest_ip, cutoff.isoformat()),
-    ).fetchall()
+def _recent_connection_times(
+    conn: sqlite3.Connection,
+    run_id: str,
+    dest_ip: str,
+    cutoff: datetime,
+    dest_port: Optional[int] = None,
+) -> list[datetime]:
+    """Connection timestamps to one destination CHANNEL (ip + port).
+
+    Grouping by ip alone was a real-feed FP: a host's DNS-on-53 + DoH-on-443
+    + one-off ports to the same resolver IP all aggregated into one "beacon".
+    A C2 channel is one ip:port tuple — the port must participate.
+    """
+    if dest_port is None:
+        rows = conn.execute(
+            "SELECT timestamp FROM events WHERE run_id = ? AND dest_ip = ? AND timestamp >= ? ORDER BY timestamp ASC",
+            (run_id, dest_ip, cutoff.isoformat()),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT timestamp FROM events WHERE run_id = ? AND dest_ip = ? AND dest_port = ? AND timestamp >= ? "
+            "ORDER BY timestamp ASC",
+            (run_id, dest_ip, dest_port, cutoff.isoformat()),
+        ).fetchall()
     times = []
     for r in rows:
         ts = _parse_ts(r["timestamp"])
@@ -651,10 +698,25 @@ def check_beaconing(
     min_conn: int = BEACON_MIN_CONNECTIONS,
     variance: float = BEACON_VARIANCE_THRESHOLD,
     min_interval: float = BEACON_MIN_INTERVAL_SECONDS,
+    dest_port: Optional[int] = None,
 ) -> Optional[Alert]:
+    """Regular low-variance connections to one destination CHANNEL.
+
+    Two protocol-level exclusions keep real hosts quiet (both soak-discovered
+    on the live auditd feed):
+      * port 53 — DNS. Every machine queries its resolver at regular intervals;
+        covert DNS channels are the DNS-tunnel rules' job, not beaconing's.
+      * public DoH resolvers on 443 — dns.google / cloudflare-dns.com are
+        background browser noise with exactly beacon-like cadence. A beacon to
+        a resolver on a NON-DNS port (e.g. 1.1.1.1:4444) still fires.
+    """
     if not _is_routable_dest(dest_ip):
         return None
-    timestamps = _recent_connection_times(conn, run_id, dest_ip, cutoff)
+    if dest_port == 53:
+        return None  # DNS protocol — routine resolver cadence, covered by DNS-tunnel rules
+    if dest_ip in DOH_RESOLVERS and dest_port == 443:
+        return None  # public DoH resolver — legitimate background cadence (soak FP)
+    timestamps = _recent_connection_times(conn, run_id, dest_ip, cutoff, dest_port)
     if len(timestamps) < min_conn:
         return None
     intervals = [(t2 - t1).total_seconds() for t1, t2 in zip(timestamps, timestamps[1:])]
@@ -666,6 +728,7 @@ def check_beaconing(
         # A burst (all connections within a fraction of a second) reads as
         # perfectly regular to the variance gate — but it isn't a beacon.
         return None
+    port_suffix = f":{dest_port}" if dest_port is not None else ""
     return Alert(
         run_id=run_id,
         rule_id="beaconing",
@@ -674,7 +737,7 @@ def check_beaconing(
         triggered_at=datetime.now(timezone.utc),
         related_ip=dest_ip,
         details=(
-            f"{len(timestamps)} connections to {dest_ip} at regular "
+            f"{len(timestamps)} connections to {dest_ip}{port_suffix} at regular "
             f"~{int(statistics.mean(intervals))}s intervals (std-dev "
             f"{statistics.pstdev(intervals):.1f}s)"
         ),
@@ -1839,6 +1902,10 @@ def check_dns_unusual_port(event: dict) -> Optional[Alert]:
 # Event ID 3 (DestinationHostname) plus the connection tuple itself.
 # ---------------------------------------------------------------------------
 # Known public DoH resolvers (IP → provider) — the doh-resolver-use gate.
+# v6 keys are the COMPRESSED canonical form, matching what the collector
+# stores (2001:4860:4860::8888 etc.) — the real-feed re-measurement showed
+# the v6 Google resolver's regular 443 cadence firing beaconing because only
+# the v4 forms were exempted.
 DOH_RESOLVERS = {
     "1.1.1.1": "Cloudflare",
     "1.0.0.1": "Cloudflare",
@@ -1848,6 +1915,12 @@ DOH_RESOLVERS = {
     "149.112.112.112": "Quad9",
     "76.76.2.2": "NextDNS",
     "76.76.10.2": "NextDNS",
+    "2001:4860:4860::8888": "Google",
+    "2001:4860:4860::8844": "Google",
+    "2606:4700:4700::1111": "Cloudflare",
+    "2606:4700:4700::1001": "Cloudflare",
+    "2620:fe::fe": "Quad9",
+    "2620:fe::9": "Quad9",
 }
 # Script hosts / LOLBins malware uses to exfil over HTTPS (and that a normal
 # host rarely points at a DoH resolver) — the low-FP gate for doh-resolver-use.
@@ -2378,6 +2451,7 @@ def evaluate_batch(conn: sqlite3.Connection, run_id: str, events: list[dict]) ->
                 min_conn=int(t["BEACON_MIN_CONNECTIONS"]),
                 variance=int(t["BEACON_VARIANCE_THRESHOLD"] * 100) / 100.0,
                 min_interval=float(t["BEACON_MIN_INTERVAL_SECONDS"]),
+                dest_port=event.get("dest_port"),
             )
             if alert:
                 fire(alert)
