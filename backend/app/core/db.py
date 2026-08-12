@@ -52,6 +52,12 @@ CREATE TABLE IF NOT EXISTS events (
     ppid INTEGER,
     process_name TEXT,
     command_line TEXT,
+    -- The kernel-resolved executable path the collector got from auditd's
+    -- `exe=` field (symlinks already followed). Authoritative for the
+    -- masquerading rule: unlike argv[0]/cmdline it cannot be spoofed, and it
+    -- survives processes that exit before /proc can be read. NULL for events
+    -- that predate the column or lack the field.
+    exe_path TEXT,
     dest_ip TEXT,
     dest_port INTEGER,
     protocol TEXT,
@@ -372,6 +378,16 @@ def _migrate_events_log_source(conn: sqlite3.Connection) -> None:
         conn.commit()
 
 
+def _migrate_events_exe_path(conn: sqlite3.Connection) -> None:
+    """Idempotent: add the `exe_path` column (kernel-resolved executable path
+    from auditd's `exe=`) to DBs created before the collector fidelity pass.
+    Fresh DBs get it from SCHEMA; older installs need the ALTER."""
+    cols = _column_names(conn, "events")
+    if "exe_path" not in cols:
+        conn.execute("ALTER TABLE events ADD COLUMN exe_path TEXT")
+        conn.commit()
+
+
 def _backfill_events_log_source(conn: sqlite3.Connection) -> int:
     """Idempotent backfill: events shipped by a real collector BEFORE
     collectors started stamping `log_source` read NULL, leaving the
@@ -524,6 +540,7 @@ def init_db() -> None:
         _migrate_events_raw_record(conn)
         _migrate_events_log_source(conn)
         _backfill_events_log_source(conn)
+        _migrate_events_exe_path(conn)
         _migrate_events_query(conn)
         _migrate_events_tls_sni(conn)
         _migrate_runs_suppressed_alerts(conn)

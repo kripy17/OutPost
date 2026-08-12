@@ -36,6 +36,8 @@ def test_linux_parse_execve_event():
     assert ev["platform"] == "linux"
     assert ev["process_name"] == "/bin/bash"
     assert ev["log_source"] == "auditd"  # the collector stamps its own channel
+    # Every shipped event carries the raw auditd line for the raw-record pivot.
+    assert ev["raw_record"] == line
 
 
 def test_linux_parse_connect_event():
@@ -67,6 +69,115 @@ def test_linux_execve_dedup_per_pid():
     cache = {}
     assert parse_audit_line(line, cache) is not None
     assert parse_audit_line(line, cache) is None  # deduped
+
+
+def test_linux_comm_exe_fallback_for_short_lived_procs():
+    """Real-auditd fidelity gap: ~61% of events had process_name None because
+    short-lived processes exit before the collector reads /proc. The SYSCALL
+    body's `comm=`/`exe=` are kernel-stamped and survive — they must backfill
+    the name AND carry the resolved executable path."""
+    line = (
+        'type=SYSCALL msg=audit(1721234567.890:2): arch=c000003e syscall=59 '
+        'success=yes pid=4242 ppid=1 comm="bash" exe="/usr/bin/bash" '
+        'args="bash,-c,whoami"'
+    )
+    ev = parse_audit_line(line, {})
+    assert ev is not None
+    assert ev["event_type"] == "process_create"
+    # pid 4242 does not exist on the test host — /proc lookup fails, so the
+    # kernel-stamped comm must be used.
+    assert ev["process_name"] == "bash"
+    assert ev["exe_path"] == "/usr/bin/bash"
+
+
+def test_linux_connect_uses_body_comm_and_exe():
+    """Network events get the same attribution fallback: a gone process still
+    leaves the kernel's comm + resolved exe behind in the SYSCALL body."""
+    line = (
+        'type=SYSCALL msg=audit(1721234568.000:125): arch=c000003e syscall=42 '
+        'success=yes pid=7777 comm="curl" exe="/usr/bin/curl" '
+        'saddr=02001F90C0A87158'
+    )
+    ev = parse_audit_line(line, {})
+    assert ev is not None
+    assert ev["event_type"] == "network_connection"
+    assert ev["process_name"] == "curl"
+    assert ev["exe_path"] == "/usr/bin/curl"
+    assert ev["dest_ip"] == "192.168.113.88"
+    assert ev["dest_port"] == 8080
+
+
+def test_linux_saddr_v6_not_misparsed_as_v4():
+    """The real-auditd soak FP: AF_INET6 connect records were parsed as v4,
+    producing ~240 fake IPv4 "117.110.47.x" destinations (two of which fired
+    beaconing). Family 0a00 must parse the full 16-byte v6 address instead.
+
+    Uses the REAL auditd layout: family(2B) + port(2B) + flowinfo(4B) +
+    addr(16B) = 48 hex chars — the elevated fidelity run proved that slicing
+    without skipping flowinfo truncates the address ("0000:0000:2001:4860:…").
+    """
+    # 0a00 = AF_INET6 (host byte order), port 0x1F90 = 8080, flowinfo 00000000,
+    # then the 16-byte address 2001:0db8:85a3:0000:0000:8a2e:0370:7334.
+    saddr = "0a001f90" + "00000000" + "20010db885a3000000008a2e03707334"
+    ip, port = _parse_saddr(f"saddr={saddr}")
+    assert port == 8080
+    assert ip == "2001:db8:85a3::8a2e:370:7334"  # compressed canonical form
+    # The Google-DNS v6 the elevated run actually saw (2001:4860:4860::8888).
+    saddr2 = "0a00" + "01BB" + "00000000" + "20014860486000000000000000008888"
+    ip2, port2 = _parse_saddr(f"saddr={saddr2}")
+    assert port2 == 443
+    assert ip2 == "2001:4860:4860::8888"
+    # No-flowinfo records (40 hex) are tolerated defensively.
+    ip3, port3 = _parse_saddr("saddr=0a001f90" + "20010db885a3000000008a2e03707334")
+    assert port3 == 8080
+    assert ip3 == "2001:db8:85a3::8a2e:370:7334"
+    # And the legacy v4 path is untouched.
+    assert _parse_saddr("saddr=02000050" + "01020304") == ("1.2.3.4", 80)
+
+
+def test_linux_saddr_unknown_family_skipped():
+    """AF_UNIX / AF_NETLINK (families 01xx / 10xx) are not TCP destinations —
+    they must be skipped, never misparsed into a fake IP."""
+    assert _parse_saddr("saddr=0100000000000000") == (None, None)
+    assert _parse_saddr("saddr=1000000000000000") == (None, None)
+
+
+def test_linux_connect_halves_merged():
+    """Real auditd splits ONE connect into two records at the same timestamp:
+    SYSCALL (pid/comm/exe, no saddr) then SOCKADDR (saddr, no identity). The
+    collector must merge them into ONE event carrying both — without the
+    merge, the SOCKADDR half shipped alone with process_name None (the
+    real-feed fidelity gap: ~62% of network events unnamed)."""
+    state = {}
+    syscall = (
+        'type=SYSCALL msg=audit(1721234568.000:130): arch=c000003e syscall=42 '
+        'success=yes exit=0 a0=3 a1=0x7ffd ppid=1 pid=2022 auid=1000 uid=1000 '
+        'comm="curl" exe="/usr/bin/curl" key="vantage_net"'
+    )
+    sockaddr = 'type=SOCKADDR msg=audit(1721234568.000:131): saddr=02001F90C0A87158'
+    # The SYSCALL half is held (identity without a destination) — not emitted.
+    assert parse_audit_line(syscall, {}, state) is None
+    # The SOCKADDR half consumes the held identity and ships ONE event.
+    ev = parse_audit_line(sockaddr, {}, state)
+    assert ev is not None
+    assert ev["event_type"] == "network_connection"
+    assert ev["pid"] == 2022
+    assert ev["process_name"] == "curl"
+    assert ev["exe_path"] == "/usr/bin/curl"
+    assert ev["dest_ip"] == "192.168.113.88"
+    assert ev["dest_port"] == 8080
+    # Stash consumed — a later SOCKADDR without a near SYSCALL stays unnamed.
+    later = 'type=SOCKADDR msg=audit(1721234569.000:132): saddr=02000050C0A80101'
+    ev2 = parse_audit_line(later, {}, state)
+    assert ev2 is not None and ev2["pid"] is None
+    # A soak-style record with inline saddr + pid is a COMPLETE event, never
+    # split or held.
+    inline = ('type=SYSCALL msg=audit(1721234570.000:133): syscall=42 success=yes '
+              'exit=0 pid=2023 comm="curl" saddr=02000050C0A80102')
+    ev3 = parse_audit_line(inline, {}, state)
+    assert ev3 is not None
+    assert ev3["pid"] == 2023 and ev3["process_name"] == "curl"
+    assert ev3["dest_ip"] == "192.168.1.2"
 
 
 # ---------------------------------------------------------------------------
