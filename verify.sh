@@ -265,7 +265,7 @@ step "Sandbox provider (live detonation gate)" \
 # several desktop widths with Playwright and fails on any horizontal overflow
 # or page that fails to render content. Skips with a note when Playwright
 # isn't installed locally (CI installs it — see .github/workflows/ci.yml).
-step "Layout sweep    (Playwright overflow gate)" \
+step "Layout sweep    (Playwright UI gates: overflow + alert lifecycle)" \
   env ROOT="$ROOT" PYTHON="$ROOT/.venv/bin/python" NPM="$NPM" bash -c '
     set -e
     if [ ! -d "$ROOT/demo/node_modules/playwright" ]; then
@@ -317,6 +317,10 @@ step "Layout sweep    (Playwright overflow gate)" \
     curl -sf "http://localhost:$SWEEP_WEB" >/dev/null
     cd "$ROOT/demo"
     node layout-sweep.mjs --web "http://localhost:$SWEEP_WEB" --api "http://127.0.0.1:$SWEEP_PORT"
+    # Behavioral gate on the SAME stack: the alert-triage state machine
+    # (open→acked→resolved→open + bulk) driven in a real browser against the
+    # seeded backend — closes the "no browser test for the lifecycle" gap.
+    node e2e-alert-lifecycle.mjs --web "http://localhost:$SWEEP_WEB" --api "http://127.0.0.1:$SWEEP_PORT"
   '
 
 # Post-deploy checklist walk — fail-closed auth + TLS + the four
