@@ -112,10 +112,14 @@ def parse_audit_line(line: str, pid_cache: dict, conn_state: dict | None = None)
         if pid in pid_cache:
             return None  # execve may repeat; dedup per pid
         pid_cache[pid] = True
-        ppid, comm = _ppid_and_comm(pid) if pid else (None, None)
+        ppid, proc_comm = _ppid_and_comm(pid) if pid else (None, None)
         body_comm, exe_path = _body_comm_exe(body)
-        if not comm:
-            comm = body_comm
+        # Body comm= is kernel-stamped for THIS syscall — ground truth that
+        # survives short-lived procs and pid reuse. /proc is only a fallback
+        # (racy: the process may be gone or the pid reused by the time the
+        # collector reads it — CI caught pid 2022 resolving to an unrelated
+        # live process).
+        comm = body_comm or proc_comm
         if not comm:
             a0 = re.search(r'a0="([^"]*)"', body)
             comm = a0.group(1) if a0 else None
@@ -137,10 +141,11 @@ def parse_audit_line(line: str, pid_cache: dict, conn_state: dict | None = None)
 
     if "connect" in body or "saddr=" in body or "syscall=42" in body:
         pid = _pid_from_syscall(body)
-        _, comm = _ppid_and_comm(pid) if pid else (None, None)
+        _, proc_comm = _ppid_and_comm(pid) if pid else (None, None)
         body_comm, exe_path = _body_comm_exe(body)
-        if not comm:
-            comm = body_comm
+        # Same preference as the execve branch: kernel-stamped body comm= is
+        # authoritative; /proc reads are racy (gone procs, reused pids).
+        comm = body_comm or proc_comm
         ip, port = _parse_saddr(body)
         ts_float = float(ts)
         if conn_state is not None:
