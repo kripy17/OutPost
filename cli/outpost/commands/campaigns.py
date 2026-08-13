@@ -15,7 +15,7 @@ from typer.models import OptionInfo
 
 from ..lib import api_client
 from ..rendering.banners import show_banner
-from ..rendering.terminal_views import console
+from ..rendering.terminal_views import console, proc_label
 
 SEVERITY_STYLE = {"malicious": "#C4453B", "suspicious": "#D9A441"}
 
@@ -29,7 +29,7 @@ def _fmt(ts) -> str:
 def _detail(ev: dict) -> str:
     t = ev.get("event_type")
     if t == "process_create":
-        base = f"{ev.get('process_name') or '?'} (pid {ev.get('pid') or '?'})"
+        base = f"{proc_label(ev)} (pid {ev.get('pid') or '?'})"
         return f"{base} — {ev['command_line']}" if ev.get("command_line") else base
     if t == "network_connection":
         return f"{ev.get('dest_ip')}:{ev.get('dest_port') or '?'} [{ev.get('protocol') or '?'}]"

@@ -191,6 +191,21 @@ def test_watch_dashboard_tags_recon_actors_live(monkeypatch):
     assert "whoami [3003]" in out and "uname [3004]" in out and "getent [3005]" in out
 
 
+def test_proc_label_exe_path_fallback():
+    """CLI parity for the identity fallback: a nameless event renders its
+    resolved exe_path basename instead of the anonymous '?' — mirroring the
+    backend's process_name → exe_path resolution."""
+    from outpost.rendering.terminal_views import proc_label
+
+    assert proc_label({"process_name": "powershell.exe"}) == "powershell.exe"
+    # Nameless + Windows Image path.
+    assert proc_label({"process_name": None, "exe_path": r"C:\Windows\System32\svchost.exe"}) == "svchost.exe"
+    # Nameless + Linux exe path.
+    assert proc_label({"process_name": "", "exe_path": "/usr/bin/bash"}) == "bash"
+    # Genuinely nameless.
+    assert proc_label({"process_name": None}) == "?"
+
+
 def test_render_report_without_meta_omits_chips():
     report = {
         "run": _run(risk=0),
