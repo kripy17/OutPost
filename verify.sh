@@ -4,9 +4,9 @@
 #   backend pytest  →  coverage gate (14/14 ATT&CK)  →  collector pytest
 #   →  CLI pytest  →  frontend lint/tests/build  →  doc-count gate (fails
 #     FAST on stale badge/README claims — before the slow collector gates)
-#   →  collector soak gates  →  collector live-claim gate  →  sandbox
-#     provider gate (skips cleanly without a provider key)  →  layout sweep
-#     (Playwright overflow gate)
+#   →  collector soak baseline (cross-platform FP table)  →  collector
+#     live-claim gate  →  sandbox provider gate (skips cleanly without a
+#     provider key)  →  layout sweep (Playwright overflow gate)
 #   →  post-deploy walk (fail-closed auth + TLS + agent heartbeat)
 #   →  badge refresh (dry-run; PUBLISH_BADGES=1 also publishes)
 #
@@ -15,11 +15,12 @@
 #   PYTEST   path to pytest        (default: $ROOT/.venv/bin/pytest)
 #   NPM      npm binary            (default: npm)
 #
-# Steps 8/9 (collector soak gates) boot an ISOLATED backend (temp DB, spare
-# ports 8011/8012) and assert the modeled benign Sysmon/auditd baselines fire
-# ZERO alerts while the known-malicious stories still land their core
-# detections — the collector FP baselines are part of CI, not just local
-# measurements.
+# The soak baseline step boots an ISOLATED backend (temp DB, spare port
+# 8013) and runs BOTH collector soaks (Windows Sysmon + Linux auditd) with
+# --gate, asserting the modeled benign baselines fire ZERO alerts while the
+# known-malicious stories still land their core detections — the collector
+# FP baselines are part of CI, not just local measurements, and the table
+# shows both platforms at a glance.
 set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -171,68 +172,14 @@ step "Doc counts     (stale-reference gate)" \
     echo "  badge=$sum (be=$BE + col=$COL + cli=$CLI + fe=$FE), rules=$RULES_ACT, tactics=$COV_C/$COV_T, commands=$CMDS_ACT — badge payloads + README claims match"
   '
 
-# Windows collector soak gate — the real parser + Shipper over HTTP into an
-# isolated backend (temp DB, spare port), so the benign-baseline FP budget is
-# checked on every push, not just locally. Fails when Phase A fires any alert
-# or the malicious story misses its core detections (over-exemption guard).
-step "Windows soak    (Sysmon FP baseline gate)" \
-  env ROOT="$ROOT" PYTHON="$ROOT/.venv/bin/python" bash -c '
-    set -e
-    SOAK_DB=$(mktemp --suffix=.db)
-    SOAK_SAMPLES=$(mktemp -d)
-    SOAK_PORT=8011
-    SOAK_LOG=$(mktemp --suffix=.log)
-    SOAK_PID=""
-    cleanup() {
-      [ -n "$SOAK_PID" ] && kill "$SOAK_PID" 2>/dev/null || true
-      rm -f "$SOAK_DB" "$SOAK_LOG"
-      rm -rf "$SOAK_SAMPLES"
-    }
-    trap cleanup EXIT
-    DATABASE_PATH="$SOAK_DB" SAMPLES_DIR="$SOAK_SAMPLES" \
-      "$PYTHON" -m uvicorn app.main:app --host 127.0.0.1 --port "$SOAK_PORT" >"$SOAK_LOG" 2>&1 &
-    SOAK_PID=$!
-    for _ in $(seq 1 30); do
-      curl -sf "http://127.0.0.1:$SOAK_PORT/meta" >/dev/null 2>&1 && break
-      sleep 1
-    done
-    curl -sf "http://127.0.0.1:$SOAK_PORT/meta" >/dev/null
-    cd "$ROOT"
-    "$PYTHON" scripts/soak_windows_collector.py \
-      --backend "http://127.0.0.1:$SOAK_PORT" --host "$(hostname)" --gate
-  '
-
-# Linux collector soak gate — the auditd parser + real Shipper over HTTP into
-# an isolated backend, so the Linux benign-baseline FP budget is gated too.
-# Same semantics as the Windows gate: zero FPs on the modeled baseline, core
-# detections (lolbin-abuse / unusual-port / enumeration-burst) on the evil
-# story. (The soak's only simulations: the audit log tail + the /proc reads.)
-step "Linux soak     (auditd FP baseline gate)" \
-  env ROOT="$ROOT" PYTHON="$ROOT/.venv/bin/python" bash -c '
-    set -e
-    SOAK_DB=$(mktemp --suffix=.db)
-    SOAK_SAMPLES=$(mktemp -d)
-    SOAK_PORT=8012
-    SOAK_LOG=$(mktemp --suffix=.log)
-    SOAK_PID=""
-    cleanup() {
-      [ -n "$SOAK_PID" ] && kill "$SOAK_PID" 2>/dev/null || true
-      rm -f "$SOAK_DB" "$SOAK_LOG"
-      rm -rf "$SOAK_SAMPLES"
-    }
-    trap cleanup EXIT
-    DATABASE_PATH="$SOAK_DB" SAMPLES_DIR="$SOAK_SAMPLES" \
-      "$PYTHON" -m uvicorn app.main:app --host 127.0.0.1 --port "$SOAK_PORT" >"$SOAK_LOG" 2>&1 &
-    SOAK_PID=$!
-    for _ in $(seq 1 30); do
-      curl -sf "http://127.0.0.1:$SOAK_PORT/meta" >/dev/null 2>&1 && break
-      sleep 1
-    done
-    curl -sf "http://127.0.0.1:$SOAK_PORT/meta" >/dev/null
-    cd "$ROOT"
-    "$PYTHON" scripts/soak_linux_collector.py \
-      --backend "http://127.0.0.1:$SOAK_PORT" --host "$(hostname)" --gate
-  '
+# Cross-platform collector soak baseline — the Windows (Sysmon) and Linux
+# (auditd) soaks run with --gate against ONE isolated backend (temp DB,
+# spare port) and print the FP/detection baseline as a compact table, so
+# every sweep shows both platforms' numbers at a glance. Each soak's own
+# gate assertions are preserved: a benign-baseline FP or a missed core
+# detection fails the step (over-exemption guard).
+step "Soak baseline   (cross-platform FP table)" \
+  bash -c "'$ROOT/.venv/bin/python' '$ROOT/scripts/soak_baseline.py'"
 
 # Collector live-claim gate — the one-line `--mode live` collector flow, end
 # to end. Boots an isolated backend and runs the REAL collector_linux.py with
