@@ -153,6 +153,38 @@ bash scripts/dev.sh start
 detonations/live sessions target it; detonate a sample on the Monitor page.
 ```
 
+#### 🔬 Enable real sandbox detonations (Any.Run / Hatching Triage / Joe Sandbox)
+
+Without a provider key the sandbox panel runs a clearly-labeled demo
+detonation. To push samples to a **real** sandbox, export one provider key
+and restart the backend so it picks it up:
+
+```bash
+# pick ONE provider — copy-paste the matching line, then restart:
+
+export ANYRUN_API_KEY="your-anyrun-key"            # https://any.run → API access token
+export TRIAGE_API_KEY="your-triage-key"            # https://tria.ge → Hatching Triage API key
+export JOE_API_KEY="your-joe-key"                  # https://jbxcloud.joesecurity.org → API key
+
+# optional: pin the active provider instead of auto-picking the first set one
+# export SANDBOX_PROVIDER="anyrun"   # "anyrun" | "triage" | "joe"
+
+bash scripts/dev.sh stop && bash scripts/dev.sh start
+```
+
+The Monitor's sandbox panel switches to the live provider automatically
+(polling the analysis and streaming the report through the normal detection
+pipeline). Verify the whole path with one command — it detonates a sample
+end to end and asserts the events land in the run:
+
+```bash
+.venv/bin/python scripts/validate_sandbox_provider.py --backend http://127.0.0.1:8001
+```
+
+> Docker: the same vars work in `deploy/docker-compose.prod.yml` (the
+> backend's `environment:` block already interpolates `ANYRUN_API_KEY` /
+> `TRIAGE_API_KEY` / `JOE_API_KEY` from your shell).
+
 Prefer to drive it by hand? [`scripts/install.sh`](scripts/install.sh) shows
 every step it performs, in order.
 

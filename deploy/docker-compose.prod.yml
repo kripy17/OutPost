@@ -32,6 +32,11 @@ services:
       OUTPOST_ANALYST_PASSWORD: ${OUTPOST_ANALYST_PASSWORD:-}
       # Host agent credential — collectors authenticate with this (see .env.example).
       OUTPOST_AGENT_TOKEN: ${OUTPOST_AGENT_TOKEN:-}
+      # Real sandbox detonation providers (any one key enables live detonations).
+      ANYRUN_API_KEY: ${ANYRUN_API_KEY:-}
+      TRIAGE_API_KEY: ${TRIAGE_API_KEY:-}
+      JOE_API_KEY: ${JOE_API_KEY:-}
+      SANDBOX_PROVIDER: ${SANDBOX_PROVIDER:-}
       # Rate-limit knobs (see Settings -> Security).
       AUTH_MAX_ATTEMPTS: ${AUTH_MAX_ATTEMPTS:-5}
       AUTH_WINDOW_SECONDS: ${AUTH_WINDOW_SECONDS:-300}
