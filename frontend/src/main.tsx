@@ -4,6 +4,7 @@ import ReactDOM from "react-dom/client";
 import { createBrowserRouter, Navigate, Outlet, RouterProvider, useLocation } from "react-router-dom";
 import "./index.css";
 
+import BrowserCheck from "./components/BrowserCheck/BrowserCheck";
 import BrowserNotifications from "./components/BrowserNotifications/BrowserNotifications";
 import Nav from "./components/Nav";
 import WatchlistToaster from "./components/WatchlistToaster/WatchlistToaster";
@@ -85,6 +86,9 @@ function Layout() {
       <div className="narrow-notice" role="note">
         Best viewed at 1024px+ — this is a desk tool, not a phone app.
       </div>
+      {/* Old-browser warning — only renders when the engine misses the CSS
+          floor (see lib/browserSupport.ts); dismissed for the session. */}
+      <BrowserCheck />
       <Nav />
       {/* Global watchlist toaster — alive on every page, top-right. */}
       <WatchlistToaster />
