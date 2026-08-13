@@ -788,7 +788,11 @@ function DemoBanner() {
 /* ──────────────────────────────────────────────────────────────────────── */
 
 export default function OverviewPage() {
-  const { data: runs = [], isLoading, isError } = useQuery({ queryKey: ["runs"], queryFn: () => getRuns() });
+  // Archive parity: soak-named collector baselines (soak-…) are hidden so
+  // the dashboard's trend, session count, and severity mix read as real
+  // telemetry first — same default as the History page. Synthetic provenance
+  // stays visible (the Overview is the full-picture surface).
+  const { data: runs = [], isLoading, isError } = useQuery({ queryKey: ["runs"], queryFn: () => getRuns({ include_soak: false }) });
   const { data: campaigns = [] } = useQuery({ queryKey: ["campaigns"], queryFn: () => getCampaigns() });
 
   const totalAlerts = runs.reduce((n, r) => n + r.alert_count, 0);
