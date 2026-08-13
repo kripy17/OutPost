@@ -64,6 +64,11 @@ page.on("pageerror", (e) => pageErrors.push(String(e)));
 page.on("console", (m) => {
   if (m.type() === "error") pageErrors.push(m.text());
 });
+// Failed resource loads log an EMPTY-URL "Failed to load resource: 404"
+// console message — attach the actual URL so a CI failure is actionable.
+page.on("response", (r) => {
+  if (r.status() >= 400) pageErrors.push(`HTTP ${r.status()} ${r.url()}`);
+});
 
 try {
   await page.goto(`${WEB}/monitor`, { waitUntil: "domcontentloaded" });
