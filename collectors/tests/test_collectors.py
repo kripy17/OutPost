@@ -219,6 +219,7 @@ def test_windows_sysmon_process_create():
     assert ev["event_type"] == "process_create"
     assert ev["platform"] == "windows"
     assert ev["process_name"] == "cmd.exe"
+    assert ev["exe_path"] == r"C:\Windows\System32\cmd.exe"  # full resolved Image (Linux exe_path parity)
     assert ev["pid"] == 4200
     assert ev["ppid"] == 4199
     assert ev["command_line"] == "cmd.exe /c whoami"
