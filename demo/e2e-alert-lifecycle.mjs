@@ -88,8 +88,19 @@ page.on("console", (m) => {
 });
 // Failed resource loads log an EMPTY-URL "Failed to load resource: 404"
 // console message — attach the actual URL so a CI failure is actionable.
+// Air-gap gate: any request to an EXTERNAL origin (not localhost / the API)
+// fails the run — the console must render self-contained (fonts, assets,
+// no CDNs), so a dependency sneaking back in fails here, not in the field.
 page.on("response", (r) => {
   if (r.status() >= 400) pageErrors.push(`HTTP ${r.status()} ${r.url()}`);
+  try {
+    const host = new URL(r.url()).hostname;
+    if (host !== "localhost" && host !== "127.0.0.1" && host !== "[::1]") {
+      pageErrors.push(`external request ${r.url()}`);
+    }
+  } catch {
+    /* non-URL responses are not resource loads */
+  }
 });
 
 try {
