@@ -23,6 +23,15 @@ if [ -z "$TITLE" ]; then
   exit 2
 fi
 
+# The workspace (source of truth) is not a git checkout — this script runs
+# from the mirror. Sync the workspace's latest edits into the mirror FIRST
+# so a PR never ships stale content. Override with OUTPOST_WORKSPACE.
+WORKSPACE="${OUTPOST_WORKSPACE:-/home/kripy/Projects/OutPost}"
+if [ -n "$WORKSPACE" ] && [ "$WORKSPACE" != "$ROOT" ] && [ -f "$WORKSPACE/scripts/sync-mirror.sh" ]; then
+  echo "==> syncing workspace ($WORKSPACE) into this mirror…"
+  bash "$WORKSPACE/scripts/sync-mirror.sh" --quiet
+fi
+
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 if [ "$BRANCH" = "HEAD" ]; then
   echo "detached HEAD — checkout a feature branch first" >&2
