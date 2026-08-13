@@ -147,12 +147,15 @@ function StatusCluster({
 
   const health = useQuery({ queryKey: ["health"], queryFn: getHealth, refetchInterval: 5_000 });
   const latest = useQuery({ queryKey: ["statusbar", "latest-finding"], queryFn: () => getRecentAlerts(1), refetchInterval: 10_000 });
-  // The session count mirrors the History page's synthetic toggle: the
-  // status bar reads as real telemetry first, matching the archive default.
-  // The 10 s poll picks up toggle changes within a few seconds.
+  // The session count mirrors the History page's toggles (synthetic + soak):
+  // the status bar reads as real telemetry first, matching the archive
+  // default. The 10 s poll picks up toggle changes within a few seconds.
   const runs = useQuery({
-    queryKey: ["statusbar", "runs"],
-    queryFn: () => getRuns({ include_synthetic: localStorage.getItem("outpost-history-synthetic") === "1" ? undefined : false }),
+    queryKey: ["statusbar", "runs", "soak", localStorage.getItem("outpost-history-soak") === "1"],
+    queryFn: () => getRuns({
+      include_synthetic: localStorage.getItem("outpost-history-synthetic") === "1" ? undefined : false,
+      include_soak: localStorage.getItem("outpost-history-soak") === "1" ? undefined : false,
+    }),
     refetchInterval: 10_000,
   });
   const meta = useQuery({ queryKey: ["meta"], queryFn: getMeta, staleTime: 60_000 });
