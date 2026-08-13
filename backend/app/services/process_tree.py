@@ -9,7 +9,20 @@ that made an outbound connection carries the worst reputation of the IPs it
 reached (risk halo) plus the IP list itself.
 """
 
+import os
+
 from ..core.schema import ProcessNode, Reputation
+
+
+def _node_name(ev: dict, pid: int) -> str:
+    """Node label: process_name, falling back to the resolved exe_path
+    basename (auditd exe= / Sysmon Image) so a nameless row renders as its
+    real binary instead of the anonymous pid-N placeholder."""
+    name = ev.get("process_name")
+    if not name:
+        exe = (ev.get("exe_path") or "").strip()
+        name = os.path.basename(exe.replace("\\", "/")) if exe else ""
+    return name or f"pid-{pid}"
 
 
 def build_process_tree(events: list[dict]) -> list[ProcessNode]:
@@ -26,7 +39,7 @@ def build_process_tree(events: list[dict]) -> list[ProcessNode]:
             node = ProcessNode(
                 pid=pid,
                 ppid=ev.get("ppid"),
-                process_name=ev.get("process_name") or f"pid-{pid}",
+                process_name=_node_name(ev, pid),
                 command_line=ev.get("command_line"),
             )
             nodes[pid] = node

@@ -15,6 +15,7 @@ so first-day traffic never spams anomalies.
 """
 
 import datetime
+import os
 from typing import Iterator
 
 from ..core.schema import Alert
@@ -29,8 +30,17 @@ def _now() -> str:
 
 def _kinds(event: dict) -> Iterator[tuple[str, str]]:
     """The baseline-able observations of one normalized event."""
-    if event.get("event_type") == "process_create" and event.get("process_name"):
-        yield "process", event["process_name"]
+    if event.get("event_type") == "process_create":
+        # Identity: process_name, falling back to the resolved exe_path
+        # basename (both collectors ship it) so a nameless process still
+        # contributes to the host baseline instead of silently never
+        # being learned.
+        name = event.get("process_name")
+        if not name:
+            exe = (event.get("exe_path") or "").strip()
+            name = os.path.basename(exe.replace("\\", "/")) if exe else ""
+        if name:
+            yield "process", name
     elif event.get("event_type") == "network_connection" and event.get("dest_ip"):
         yield "net", event["dest_ip"]
 

@@ -537,7 +537,7 @@ def check_masquerading(event: dict) -> Optional[Alert]:
     """
     platform = _platform(event)
     legit = LEGITIMATE_SYSTEM_PROCESSES.get(platform, {})
-    name = (event.get("process_name") or "").lower()
+    name = _proc_name(event)
     expected_path = legit.get(name)
     if not expected_path:
         return None
@@ -930,7 +930,7 @@ def check_scheduled_task(event: dict) -> Optional[Alert]:
             # NON-system process planting a task definition
             # (TaskCache\Tasks\{guid} / TaskCache\Tree\{name}) is the signal
             # worth surfacing; a bare root write defines no task.
-            proc = (event.get("process_name") or "").lower()
+            proc = _proc_name(event)
             if proc == "svchost.exe":
                 return None
             if "\\tasks" in key or "\\tree" in key:
@@ -1010,7 +1010,12 @@ def check_suspicious_extension(event: dict) -> Optional[Alert]:
     carries the *writer's* process name (e.g. cmd.exe) alongside the written
     path, and taking process_name first would silently skip every file write."""
     if event.get("event_type") == "process_create":
-        value = event.get("process_name") or ""
+        # process_name, falling back to the resolved exe_path basename — a
+        # double-extension masquerade on the Image itself (renamed binary)
+        # is still a masquerade even when the row is nameless.
+        value = event.get("process_name") or os.path.basename(
+            (event.get("exe_path") or "").strip().replace("\\", "/")
+        ) or ""
     elif event.get("event_type") == "file_write":
         value = event.get("file_path") or ""
     else:
@@ -1527,7 +1532,7 @@ def check_screen_capture(event: dict) -> Optional[Alert]:
     if event.get("event_type") != "process_create":
         return None
     platform = _platform(event)
-    name = (event.get("process_name") or "").lower()
+    name = _proc_name(event)
     if name in CAPTURE_PROCESS_NAMES.get(platform, set()):
         return _make_alert(
             event["run_id"], "screen-capture",
@@ -2029,7 +2034,7 @@ def check_doh_resolver_use(event: dict) -> Optional[Alert]:
         return None
     if port != 443 or ip not in DOH_RESOLVERS:
         return None
-    name = (event.get("process_name") or "").lower()
+    name = _proc_name(event)
     if name in DOH_SCRIPT_HOSTS:
         return _make_alert(
             event["run_id"], "doh-resolver-use",
