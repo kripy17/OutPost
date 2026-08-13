@@ -4,6 +4,7 @@ Uses the design-system color language (docs/07-UI-DESIGN-SYSTEM.md):
 clean teal / suspicious amber / malicious brick.
 """
 
+import os
 from datetime import datetime, timezone
 
 from rich.console import Console
@@ -14,6 +15,19 @@ from rich.tree import Tree
 from .banners import show_banner
 
 console = Console()
+
+
+def proc_label(ev: dict) -> str:
+    """A process's display identity, mirroring the backend's fallback:
+    `process_name`, else the resolved `exe_path` basename, else '?'.
+
+    The API ships exe_path on every event (auditd exe= / Sysmon Image), so a
+    nameless row renders its real binary instead of the anonymous '?'."""
+    name = ev.get("process_name")
+    if not name:
+        exe = (ev.get("exe_path") or "").strip()
+        name = os.path.basename(exe.replace("\\", "/")) if exe else ""
+    return name or "?"
 
 
 def intel_age(checked_at: str | None) -> str:
@@ -125,7 +139,7 @@ def render_run_table(runs: list[dict]) -> Table:
 
 
 def _add_tree_children(tree: Tree, node: dict, recon_pids: set[int]) -> None:
-    label = f"[bold]{node.get('process_name', '?')}[/bold]"
+    label = f"[bold]{proc_label(node)}[/bold]"
     pid = node.get("pid")
     if pid is not None:
         label += f" [dim][{pid}][/dim]"
@@ -188,7 +202,7 @@ def render_timeline(events: list[dict]) -> Table:
 
 def _event_detail(ev: dict) -> str:
     if ev["event_type"] == "process_create":
-        return f"{ev.get('process_name', '?')} (pid {ev.get('pid')}) {ev.get('command_line') or ''}".strip()
+        return f"{proc_label(ev)} (pid {ev.get('pid')}) {ev.get('command_line') or ''}".strip()
     if ev["event_type"] == "network_connection":
         return f"{ev.get('dest_ip')}:{ev.get('dest_port')} [{ev.get('protocol')}]"
     if ev["event_type"] == "file_write":

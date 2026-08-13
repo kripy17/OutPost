@@ -44,9 +44,12 @@ def build_process_tree(events: list[dict]) -> list[ProcessNode]:
             )
             nodes[pid] = node
         else:
-            # A later event may carry a better name/command line.
-            if not node.process_name.startswith("pid-") and ev.get("process_name"):
-                node.process_name = ev["process_name"]
+            # A later event may carry a better name/command line — resolved
+            # via the same identity fallback (nameless-but-exe_path events
+            # upgrade the label too).
+            name = _node_name(ev, pid)
+            if name and (node.process_name.startswith("pid-") or not ev.get("process_name")):
+                node.process_name = name
             if ev.get("command_line") and not node.command_line:
                 node.command_line = ev["command_line"]
 
