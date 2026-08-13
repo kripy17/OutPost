@@ -59,14 +59,23 @@ def _synthetic_clause(include_synthetic: bool) -> str:
     return f" AND r.source NOT IN ({marks})"
 
 
-def list_runs(conn: sqlite3.Connection, q: str = "", host: str = "", include_synthetic: bool = False) -> list[dict]:
+def _soak_clause(include_soak: bool) -> str:
+    """Soak runs (modeled collector baselines) are named soak-<platform>-…
+    to keep them distinguishable from REAL agent sessions (agent-<host>-…).
+    Hidden by default so the archive reads as real telemetry first; the soak
+    baseline script, CLI mirror, and the History page's toggle opt back in."""
+    return "" if include_soak else " AND r.sample_name NOT LIKE 'soak-%'"
+
+
+def list_runs(conn: sqlite3.Connection, q: str = "", host: str = "", include_synthetic: bool = False, include_soak: bool = False) -> list[dict]:
     """All runs newest-first; `q` filters by sample-name substring (the
     sample-vault's detonation history links here with ?q=<sample>) and `host`
     filters to runs whose events came from that host_id (the fleet links here
     with ?host=<host>). Synthetic provenance (seeds / webapp detonations / the
-    keyless sandbox demo) is hidden unless `include_synthetic` is set — the
-    archive reads as real telemetry first."""
-    excl = _synthetic_clause(include_synthetic)
+    keyless sandbox demo) is hidden unless `include_synthetic` is set, and
+    soak-named collector baselines (soak-…) are hidden unless `include_soak`
+    is set — the archive reads as real telemetry first."""
+    excl = _synthetic_clause(include_synthetic) + _soak_clause(include_soak)
     args: tuple = SYNTHETIC_SOURCES if not include_synthetic else ()
     if q and host:
         rows = conn.execute(
@@ -82,12 +91,12 @@ def list_runs(conn: sqlite3.Connection, q: str = "", host: str = "", include_syn
         ).fetchall()
     elif q:
         rows = conn.execute(
-            f"SELECT * FROM runs WHERE sample_name LIKE ?{excl.replace('r.source', 'source')} ORDER BY started_at DESC",
+            f"SELECT * FROM runs WHERE sample_name LIKE ?{excl.replace('r.source', 'source').replace('r.sample_name', 'sample_name')} ORDER BY started_at DESC",
             (f"%{q}%", *args),
         ).fetchall()
     else:
         rows = conn.execute(
-            f"SELECT * FROM runs WHERE 1=1{excl.replace('r.source', 'source')} ORDER BY started_at DESC",
+            f"SELECT * FROM runs WHERE 1=1{excl.replace('r.source', 'source').replace('r.sample_name', 'sample_name')} ORDER BY started_at DESC",
             args,
         ).fetchall()
     return [dict(r) for r in rows]

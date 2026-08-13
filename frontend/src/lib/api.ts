@@ -213,15 +213,17 @@ export async function resetStore(): Promise<ResetResult> {
 }
 
 // -- runs -------------------------------------------------------------------
-export async function getRuns(params: { q?: string; host?: string; include_synthetic?: boolean } = {}): Promise<RunSummary[]> {
+export async function getRuns(params: { q?: string; host?: string; include_synthetic?: boolean; include_soak?: boolean } = {}): Promise<RunSummary[]> {
   const qs = new URLSearchParams();
   if (params.q) qs.set("q", params.q);
   if (params.host) qs.set("host", params.host);
   // The archive API hides synthetic provenance (seeds / webapp detonations /
-  // the sandbox demo) by default. Surfaces that want the full story
-  // (Overview, palette, sample detonation history) explicitly opt back in to
-  // keep their behavior; the History page relies on the same default.
+  // the sandbox demo) and soak-named collector baselines by default. Surfaces
+  // that want the full story (Overview, palette, sample detonation history)
+  // explicitly opt back in to keep their behavior; the History page passes
+  // both flags explicitly from its toggles.
   qs.set("include_synthetic", params.include_synthetic === false ? "false" : "true");
+  qs.set("include_soak", params.include_soak === false ? "false" : "true");
   return get<RunSummary[]>(`/runs?${qs.toString()}`);
 }
 

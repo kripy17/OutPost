@@ -39,7 +39,7 @@ sys.path.insert(0, str(ROOT / "collectors" / "linux"))
 sys.path.insert(0, str(ROOT / "collectors" / "common"))
 
 import collector_linux  # noqa: E402
-from shipper import Shipper, agent_run_name  # noqa: E402
+from shipper import Shipper  # noqa: E402
 
 BASE = "http://127.0.0.1:8001"
 
@@ -196,7 +196,11 @@ def main() -> int:
     args = ap.parse_args()
     BASE = args.backend.rstrip("/")
 
-    run = _post("/runs", {"sample_name": agent_run_name(args.host),
+    # Distinct soak- name so the archive can tell a modeled baseline from a
+    # REAL agent session (agent-<host>-<date>) — soak runs masquerading as
+    # agent sessions used to pollute History and the daily summary.
+    soak_name = f"soak-linux-{args.host}-{time.strftime('%Y-%m-%d', time.gmtime())}"
+    run = _post("/runs", {"sample_name": soak_name,
                           "platform": "linux", "session_type": "live"})
     run_id = run["run_id"]
     print(f"Linux collector soak → live session {run_id} (host {args.host}, "
