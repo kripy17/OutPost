@@ -60,6 +60,13 @@ echo "${C_DIM}OutPost verification sweep — root: $ROOT${C_RESET}"
 step "Backend pytest  (backend/app/tests)" \
   bash -c "cd '$ROOT/backend' && '$PYTEST' -q"
 
+# Process-identity gate — no event-level process_name read may exist without
+# an exe_path resolution (AST scan of detection/process_tree/baseline). Locks
+# the identity-fallback invariant so a future rule can't silently regress to
+# name-only matching that skips nameless rows.
+step "Identity gate   (process_name → exe_path resolution)" \
+  bash -c "'$ROOT/.venv/bin/python' '$ROOT/scripts/gate_proc_identity.py'"
+
 # Coverage gate — the Navigator layer (and therefore RULE_META) must touch all
 # 14 canonical ATT&CK Enterprise tactics. A new rule that forgets its RULE_META
 # entry, or a tactic renamed off the canonical list, fails here — CI enforces
