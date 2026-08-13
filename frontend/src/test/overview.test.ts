@@ -3,9 +3,38 @@
 // identical findings fold into ×N rows, and the risk trend is per-sample with
 // empty live-monitor sessions defaulted out.
 
-import { describe, expect, it } from "vitest";
-import { aggregateTrend, ageBucket, collapseFindings, openSince, sortFindingsRiskFirst } from "../routes/overviewHelpers";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { aggregateTrend, ageBucket, collapseFindings, openSince, overviewRunParams, sortFindingsRiskFirst } from "../routes/overviewHelpers";
 import type { GlobalAlert, RuleMeta, RunSummary } from "../types";
+
+describe("overviewRunParams", () => {
+  it("hides soak-named collector baselines by default (History archive parity)", () => {
+    // Locked: the dashboard's trend / session count / severity mix must read
+    // as real telemetry first — a future edit that flips this default would
+    // surface modeled soak runs as if the host had run them.
+    expect(overviewRunParams()).toEqual({ include_soak: false });
+  });
+});
+
+describe("getRuns soak serialization", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("include_soak=false lands on the wire when the Overview passes it", async () => {
+    const seen: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL | Request) => {
+        seen.push(String(url));
+        return new Response(JSON.stringify([]), { status: 200, headers: { "Content-Type": "application/json" } });
+      }),
+    );
+    const { getRuns } = await import("../lib/api");
+    await getRuns(overviewRunParams());
+    expect(seen[0]).toContain("include_soak=false");
+    // Synthetic stays opted-in on the Overview (the full-picture surface).
+    expect(seen[0]).toContain("include_synthetic=true");
+  });
+});
 
 function alert(over: Partial<GlobalAlert>): GlobalAlert {
   return {
