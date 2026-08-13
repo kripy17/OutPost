@@ -611,3 +611,40 @@ html[data-theme="dark"][data-palette="teal"] {
 @media (min-width: 1024px) {
   .narrow-notice { display: none; }
 }
+
+/* Browser-floor warning — an old/unknown engine gets one dismissible strip
+   (amber = warning tone, matching the toasts) instead of silently degrading
+   color-mix()/:has() visuals. Rendered only when the check fails. */
+.browser-check {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.45rem 1rem;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-elevated));
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border-subtle));
+}
+.browser-check-icon {
+  flex: none;
+}
+.browser-check-dismiss {
+  flex: none;
+  margin-left: auto;
+  padding: 0.1rem 0.45rem;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--accent);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: border-color 120ms ease, color 120ms ease;
+}
+.browser-check-dismiss:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  color: var(--accent-soft);
+}
