@@ -13,7 +13,12 @@ Every push to `main` and every pull request runs the `CI` workflow
 | `Deploy — web image + Caddyfile + compose` | Production image build + config validation | Dockerfile/Caddyfile/compose drift |
 
 Inside the verify job, three fast-fail tiers front-load the expensive checks
-so the cheapest signal fails first:
+so the cheapest signal fails first. The sweep itself is 16 steps; beyond the
+suites it includes the **identity gate** (`scripts/gate_proc_identity.py`) —
+an AST scan of the detection/process-tree/baseline/CLI-rendering modules that
+fails if any event-level `process_name` read lacks an `exe_path` resolution,
+locking the process-identity fallback so a future rule can't silently regress
+to name-only matching that skips nameless rows.
 
 1. **`npx tsc --noEmit`** (~1 min in) — frontend type errors fail before the
    Playwright download.
