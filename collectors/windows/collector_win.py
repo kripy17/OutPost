@@ -67,6 +67,12 @@ def parse_sysmon_event(record) -> dict | None:
         "pid": _int(data.get("ProcessId")),
         "ppid": _int(data.get("ParentProcessId")),
         "process_name": _basename(data.get("Image")),
+        # Sysmon's Image IS the ETW-resolved executable path (the Windows
+        # equivalent of auditd's exe= — symlinks/junction followed, immune to
+        # argv[0] spoofing). The masquerading rule keys on it authoritatively;
+        # Linux parity: the collector ships the resolved path, the backend
+        # decides.
+        "exe_path": data.get("Image"),
         "command_line": data.get("CommandLine"),
         "dest_ip": data.get("DestinationIp") or data.get("SourceIp"),
         "dest_port": _int(data.get("DestinationPort")),
