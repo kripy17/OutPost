@@ -114,6 +114,15 @@ export function intelKeyHealth(keys: IntelKeyStatus[]): { tone: "ok" | "stale" |
   return { tone: configured.some((k) => k.source === "db" && k.age_days !== null && k.age_days > 90) ? "stale" : "ok", items };
 }
 
+/** The Overview's run-query options — archive parity with History: soak-named
+ *  collector baselines (soak-…) are hidden by default so the dashboard reads
+ *  as real telemetry first; synthetic provenance stays visible (the Overview
+ *  is the full-picture surface). Extracted so a contract test locks the
+ *  default against future edits. */
+export function overviewRunParams(): { include_soak: boolean } {
+  return { include_soak: false };
+}
+
 /** Intel cache freshness — how stale the enrichment cache is fleet-wide
  *  (oldest verdict age + rows past the TTL). Feeds the one-line posture strip
  *  under the key health. */

@@ -6,7 +6,7 @@ import { Icon } from "../components/Icon";
 import { platformIconName } from "../components/iconMeta";
 import { RiskGauge, RiskTrendBars, SeverityDonut, type RiskTrendBar } from "../components/Posture/Posture";
 import { Chip, PageHeader, Panel } from "../components/ui";
-import { ageBucket, aggregateTrend, collapseFindings, intelFreshness, intelKeyHealth, openSince, sortFindingsRiskFirst } from "./overviewHelpers";
+import { ageBucket, aggregateTrend, collapseFindings, intelFreshness, intelKeyHealth, openSince, overviewRunParams, sortFindingsRiskFirst } from "./overviewHelpers";
 import { copyToClipboard } from "../lib/clipboard";
 import { SEVERITY_BG } from "../lib/constants";
 import { BASE_URL, getAgents, getCampaigns, getHealth, getIntelFreshness, getIntelKeys, getMeta, getPlatform, getProcessSummary, getRecentAlerts, getRuleMeta, getRuns } from "../lib/api";
@@ -790,9 +790,8 @@ function DemoBanner() {
 export default function OverviewPage() {
   // Archive parity: soak-named collector baselines (soak-…) are hidden so
   // the dashboard's trend, session count, and severity mix read as real
-  // telemetry first — same default as the History page. Synthetic provenance
-  // stays visible (the Overview is the full-picture surface).
-  const { data: runs = [], isLoading, isError } = useQuery({ queryKey: ["runs"], queryFn: () => getRuns({ include_soak: false }) });
+  // telemetry first — same default as the History page (see overviewRunParams).
+  const { data: runs = [], isLoading, isError } = useQuery({ queryKey: ["runs"], queryFn: () => getRuns(overviewRunParams()) });
   const { data: campaigns = [] } = useQuery({ queryKey: ["campaigns"], queryFn: () => getCampaigns() });
 
   const totalAlerts = runs.reduce((n, r) => n + r.alert_count, 0);
