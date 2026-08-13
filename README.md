@@ -61,6 +61,7 @@ host-status panel answers "is THIS host monitored?" against the live fleet.
 | | |
 |---|---|
 | 🖥️ **OS-aware detection engine** | **37 rules** across Windows / Linux / macOS covering all 14 MITRE tactics — LOLBin abuse, reverse shells, persistence, C2 beaconing, ransomware write bursts, process masquerading, DNS tunnels, fan-out plants, Discovery/Exfiltration chains |
+| 🆔 **Resolved process identity** | Every rule keys on the **kernel-resolved path** (auditd `exe=` / Sysmon `Image`, shipped as `exe_path`) with a `process_name` fallback — masquerading judges the real binary, and nameless rows still match instead of silently skipping. The AST **identity gate** in `verify.sh` locks it so a future rule can't regress to spoofable name-only matching |
 | ⛈️ **Storm guard** | Per-rule per-run alert caps (first-seen 20, beaconing 15, fan-out 10, default 25) with **held-back counts** surfaced on run detail and in exports — no alert flood on long live sessions |
 | 📈 **Alert-rate sparkline** | Per-minute severity bars with a flood guide line, live on the Monitor and per-run on run detail |
 | 🎯 **Risk scoring + ATT&CK** | 0–100 risk per run, severity bands, every rule mapped to a kill-chain stage, MITRE Navigator layer export, coverage matrix with gaps highlighted |

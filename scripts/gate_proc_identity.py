@@ -26,11 +26,15 @@ FILES = [
     ROOT / "backend/app/services/detection.py",
     ROOT / "backend/app/services/process_tree.py",
     ROOT / "backend/app/services/baseline.py",
+    # CLI parity: terminal_views proc_label() and the campaigns detail row
+    # must keep the same process_name → exe_path fallback.
+    ROOT / "cli/outpost/rendering/terminal_views.py",
+    ROOT / "cli/outpost/commands/campaigns.py",
 ]
 
 # Helpers whose job IS the process_name → exe_path fallback. A call to one of
 # these satisfies the "resolves exe_path" requirement for the caller.
-HELPERS = {"_proc_name", "_node_name", "_kinds"}
+HELPERS = {"_proc_name", "_node_name", "_kinds", "proc_label"}
 
 
 def _reads_exe_path(node: ast.AST) -> bool:
