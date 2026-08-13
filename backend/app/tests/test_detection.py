@@ -349,6 +349,66 @@ def test_rule1_masquerading_sh_symlink_no_exe_path_ok(client):
     assert all(a["rule_id"] != "masquerading" for a in _alerts(client, run_id))
 
 
+def test_rule1_masquerading_windows_exe_path_authority_clears_system_image(client):
+    """Windows parity for the exe_path pass: Sysmon's Image IS the ETW-
+    resolved path, so a system binary at its true location never fires —
+    even when argv[0]/cmdline disagrees (e.g. svchost launched with a
+    relative name). The collector now ships Image as exe_path."""
+    run_id = make_run(client)
+    _post(
+        client,
+        run_id,
+        [{
+            "run_id": run_id, "platform": "windows", "event_type": "process_create",
+            "timestamp": BASE_TS, "pid": 502, "ppid": 4,
+            "process_name": "svchost.exe",
+            "command_line": "svchost.exe -k netsvcs",
+            "exe_path": r"C:\Windows\System32\svchost.exe",
+        }],
+    )
+    assert all(a["rule_id"] != "masquerading" for a in _alerts(client, run_id))
+
+
+def test_rule1_masquerading_windows_exe_path_authority_still_fires(client):
+    """A real Windows masquerade — svchost.exe copied to a user-writable
+    directory — fires on the resolved Image path, not the claimed name."""
+    run_id = make_run(client)
+    _post(
+        client,
+        run_id,
+        [{
+            "run_id": run_id, "platform": "windows", "event_type": "process_create",
+            "timestamp": BASE_TS, "pid": 503, "ppid": 4,
+            "process_name": "svchost.exe",
+            "command_line": r"C:\Windows\System32\svchost.exe -k netsvcs",
+            "exe_path": r"C:\Users\Public\svchost.exe",
+        }],
+    )
+    masq = [a for a in _alerts(client, run_id) if a["rule_id"] == "masquerading"]
+    assert len(masq) == 1
+    assert "resolved C:\\Users\\Public\\svchost.exe" in masq[0]["details"]
+
+
+def test_rule1_masquerading_bare_exe_path_not_authoritative(client):
+    """Windows-soak FP: a basename-only exe_path ("explorer.exe") carries no
+    resolved-path authority — the rule must fall back to the cmdline check,
+    which sees the legit full path and stays quiet. Only an ABSOLUTE
+    exe_path is authoritative."""
+    run_id = make_run(client)
+    _post(
+        client,
+        run_id,
+        [{
+            "run_id": run_id, "platform": "windows", "event_type": "process_create",
+            "timestamp": BASE_TS, "pid": 504, "ppid": 4,
+            "process_name": "explorer.exe",
+            "command_line": r"C:\Windows\explorer.exe",
+            "exe_path": "explorer.exe",  # basename-only Image (older configs)
+        }],
+    )
+    assert all(a["rule_id"] != "masquerading" for a in _alerts(client, run_id))
+
+
 def test_rule4_dns_resolver_cadence_not_beaconing(client):
     """Real-auditd soak FPs: regular-interval DNS (53) and DoH (443) traffic
     to public resolvers has exactly beacon-like cadence but is background

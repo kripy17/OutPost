@@ -527,7 +527,15 @@ def check_masquerading(event: dict) -> Optional[Alert]:
     expected = expected_path.lower()
 
     exe_path = (event.get("exe_path") or "").strip()
-    if exe_path:
+    # exe_path is only authoritative when it is a RESOLVED path. A bare
+    # basename ("explorer.exe") carries no path authority — Sysmon Image
+    # can arrive basename-only (older configs, some providers), and treating
+    # it as resolved would flag every system binary (Windows-soak FP:
+    # "expected C:\Windows\explorer.exe, resolved explorer.exe").
+    exe_is_abs = exe_path.startswith("/") or (
+        len(exe_path) >= 3 and exe_path[1] == ":"
+    )
+    if exe_path and exe_is_abs:
         if expected in exe_path.lower():
             return None
         return _make_alert(

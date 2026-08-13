@@ -250,7 +250,13 @@ def main() -> int:
     # ------------------------------------------------------------------
     print(f"Phase 2 — collector creates its own agent run (no webapp session open)")
     audit_log.write_text("")
-    today = time.strftime("%Y-%m-%d")
+    # The shipper names agent runs in UTC (agent_run_name uses
+    # datetime.now(timezone.utc)) — local time is a different day on
+    # UTC+ hosts, so the gate must compute the expected name in UTC too
+    # (real failure: UTC+1 machine at 00:xx local expected
+    # agent-...-13 while the collector created agent-...-12).
+    import datetime as _dt
+    today = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
     agent_name = f"agent-{host}-{today}"
 
     collector = start_collector(base, audit_log, host, collector_log)
