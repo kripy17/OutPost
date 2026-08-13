@@ -221,6 +221,37 @@ def test_windows_scheduled_task_svchost_maintenance_is_clean(client):
     assert fired == []
 
 
+def test_windows_scheduled_task_nameless_svchost_via_exe_path_is_clean(client):
+    """Rule 11 — the TaskCache maintenance FP stays clean even when the
+    row is NAMELESS: the svchost identity resolves from the shipped exe_path
+    basename instead of degrading to 'unknown' (which would fire)."""
+    run_id = make_run(client, sample_name="taskmaint-none.exe")
+    _ingest(client, run_id, [
+        {
+            "run_id": run_id, "platform": "windows", "event_type": "registry_write",
+            "timestamp": _ts(1), "pid": 610, "ppid": 4, "process_name": None,
+            "exe_path": r"C:\Windows\System32\svchost.exe",
+            "registry_key": r"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tasks\{def}",
+        },
+    ])
+    fired = [a for a in _alerts(client, run_id) if a["rule_id"] == "scheduled-task"]
+    assert fired == []
+
+
+def test_windows_screen_capture_nameless_via_exe_path_fires(client):
+    """Rule — screen-capture: a NAMELESS process_create whose resolved
+    exe_path basename is a capture tool still fires — the identity fallback
+    closes the nameless-row gap instead of silently skipping collection."""
+    run_id = make_run(client, sample_name="snipe-none.exe")
+    _ingest(client, run_id, [
+        _win_proc(run_id, 310, 4, None, "snippingtool.exe", ts=1,
+                  exe=r"C:\Windows\System32\snippingtool.exe"),
+    ])
+    fired = [a for a in _alerts(client, run_id) if a["rule_id"] == "screen-capture"]
+    assert len(fired) == 1
+    assert "snippingtool" in fired[0]["details"]
+
+
 def test_windows_scheduled_task_weak_root_write_is_clean(client):
     """Rule 11 — a non-system write to the TaskCache ROOT defines no task:
     nothing was created, so it stays quiet (the Tasks/Tree subtrees are the

@@ -18,7 +18,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MIRROR="${MIRROR:-/tmp/outpost-clone}"
 REPO="${OUTPOST_REPO:-kripy17/OutPost}"
-PRINT_STATUS="${1:---print-status}"
+PRINT_STATUS="${1:---print-status}"  # --print-status | --quiet
 
 EXCLUDES=(--exclude='.git' --exclude='.venv' --exclude='node_modules'
   --exclude='__pycache__' --exclude='dist' --exclude='*.egg-info'
