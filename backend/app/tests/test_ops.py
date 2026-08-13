@@ -336,6 +336,31 @@ def test_auto_prune_off_never_prunes(client, conn):
     assert old in remaining
 
 
+def test_history_hides_soak_runs_by_default(client):
+    """Soak-named collector baselines (soak-<platform>-<host>-<date>) are
+    hidden from the default archive — the History page and CLI only see them
+    with include_soak=true. Critical non-regression: a REAL agent session
+    (agent-<host>-<date>, the same naming the soak used to fake) is never
+    caught by the soak filter."""
+    soak = make_run(client, sample_name="soak-linux-arch-2026-08-13", source="live")
+    real_agent = make_run(client, sample_name="agent-arch-2026-08-13", source="live")
+    normal = make_run(client, sample_name="normal.bin", source="live")
+
+    default = {r["run_id"]: r["sample_name"] for r in client.get("/runs").json()}
+    assert soak not in default
+    assert default[real_agent] == "agent-arch-2026-08-13"  # never hidden
+    assert default[normal] == "normal.bin"
+
+    with_soak = {r["run_id"]: r["sample_name"] for r in client.get("/runs", params={"include_soak": "true"}).json()}
+    assert with_soak[soak] == "soak-linux-arch-2026-08-13"
+
+    # The q + host filters keep the exclusion too.
+    q_hits = client.get("/runs", params={"q": "soak-linux", "include_synthetic": "true"}).json()
+    assert q_hits == []
+    q_hits_on = client.get("/runs", params={"q": "soak-linux", "include_soak": "true", "include_synthetic": "true"}).json()
+    assert [r["run_id"] for r in q_hits_on] == [soak]
+
+
 def test_auto_prune_requires_retention_window(client):
     from ..api.routes_admin import _maybe_auto_prune
 

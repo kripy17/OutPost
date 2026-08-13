@@ -79,9 +79,10 @@ def complete_run(run_id: str) -> dict:
 
 def list_runs() -> list[dict]:
     # Opt back in to synthetic provenance (seeds / webapp detonations / the
-    # sandbox demo) — the API hides it by default now, but the CLI is the
-    # parity mirror and should keep showing everything.
-    return _get("/runs?include_synthetic=true")
+    # sandbox demo) AND soak-named collector baselines — the API hides both
+    # by default now, but the CLI is the parity mirror and should keep
+    # showing everything.
+    return _get("/runs?include_synthetic=true&include_soak=true")
 
 
 def get_run(run_id: str) -> dict:

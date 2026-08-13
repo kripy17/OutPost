@@ -17,8 +17,10 @@ export default function RunHistoryPage() {
   const q = (searchParams.get("q") ?? "").trim();
   const host = (searchParams.get("host") ?? "").trim();
   // The archive reads as real telemetry first — synthetic provenance (seeds /
-  // webapp detonations / the sandbox demo) is hidden unless the operator asks.
+  // webapp detonations / the sandbox demo) AND soak-named collector baselines
+  // (soak-…) are hidden unless the operator asks.
   const [includeSynthetic, setIncludeSynthetic] = useState(() => localStorage.getItem("outpost-history-synthetic") === "1");
+  const [includeSoak, setIncludeSoak] = useState(() => localStorage.getItem("outpost-history-soak") === "1");
   useEffect(() => {
     try {
       localStorage.setItem("outpost-history-synthetic", includeSynthetic ? "1" : "0");
@@ -26,9 +28,16 @@ export default function RunHistoryPage() {
       /* storage unavailable */
     }
   }, [includeSynthetic]);
+  useEffect(() => {
+    try {
+      localStorage.setItem("outpost-history-soak", includeSoak ? "1" : "0");
+    } catch {
+      /* storage unavailable */
+    }
+  }, [includeSoak]);
   const { data, isLoading, isError } = useQuery({
-    queryKey: ["runs", "q", q, "host", host, "syn", includeSynthetic],
-    queryFn: () => getRuns({ q, host, include_synthetic: includeSynthetic }),
+    queryKey: ["runs", "q", q, "host", host, "syn", includeSynthetic, "soak", includeSoak],
+    queryFn: () => getRuns({ q, host, include_synthetic: includeSynthetic, include_soak: includeSoak }),
   });
   const [windowKey, setWindowKey] = useState<TrendWindow>(() => {
     const saved = localStorage.getItem("outpost-history-window");
@@ -181,6 +190,16 @@ export default function RunHistoryPage() {
                 }`}
               >
                 {includeSynthetic ? "●" : "○"} show synthetic
+              </button>
+              <button
+                onClick={() => setIncludeSoak((v) => !v)}
+                aria-pressed={includeSoak}
+                title={includeSoak ? "Hide soak baseline runs again" : "Include soak-named collector baselines (soak-linux-… / soak-windows-…)"}
+                className={`press rounded-md px-2.5 py-1 font-mono text-[11px] transition-colors duration-150 ${
+                  includeSoak ? "border border-accent/50 bg-accent/10 text-accent" : "border border-border-subtle text-text-faint hover:text-text-primary"
+                }`}
+              >
+                {includeSoak ? "●" : "○"} show soak runs
               </button>
             </div>
           </div>

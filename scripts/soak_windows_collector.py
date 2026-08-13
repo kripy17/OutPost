@@ -32,7 +32,7 @@ sys.path.insert(0, str(ROOT / "collectors" / "windows"))
 sys.path.insert(0, str(ROOT / "collectors" / "common"))
 
 from collector_win import parse_sysmon_event  # noqa: E402
-from shipper import Shipper, agent_run_name  # noqa: E402
+from shipper import Shipper  # noqa: E402
 
 
 class _StubTime:
@@ -216,7 +216,11 @@ def main() -> int:
     # Live session, exactly how a real Windows collector run is labeled:
     # session_type=live is forced to source="live" server-side (host telemetry).
     now = time.time()
-    run = _post("/runs", {"sample_name": agent_run_name(args.host),
+    # Distinct soak- name so the archive can tell a modeled baseline from a
+    # REAL agent session (agent-<host>-<date>) — soak runs masquerading as
+    # agent sessions used to pollute History and the daily summary.
+    soak_name = f"soak-windows-{args.host}-{time.strftime('%Y-%m-%d', time.gmtime())}"
+    run = _post("/runs", {"sample_name": soak_name,
                           "platform": "windows", "session_type": "live"})
     run_id = run["run_id"]
     print(f"Windows collector soak → live session {run_id} (host {args.host}, "
