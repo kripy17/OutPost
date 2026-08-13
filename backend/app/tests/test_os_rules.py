@@ -237,12 +237,15 @@ def test_windows_scheduled_task_weak_root_write_is_clean(client):
     assert fired == []
 
 
-def _win_proc(run_id: str, pid: int, ppid: int, name: str, cmd: str, ts: int = 0) -> dict:
-    return {
+def _win_proc(run_id: str, pid: int, ppid: int, name: str, cmd: str, ts: int = 0, exe: str | None = None) -> dict:
+    ev = {
         "run_id": run_id, "platform": "windows", "event_type": "process_create",
         "timestamp": _ts(ts), "pid": pid, "ppid": ppid, "process_name": name,
         "command_line": cmd,
     }
+    if exe is not None:
+        ev["exe_path"] = exe
+    return ev
 
 
 def test_windows_credential_dump_procdump_lsass(client):
@@ -537,6 +540,23 @@ def test_windows_rules_still_fire(client):
     assert "masquerading" in ids        # svchost from C:\Temp
     assert "suspicious-parent-child" in ids  # winword → powershell
     assert "lolbin-abuse" in ids        # powershell -enc
+
+
+def test_rule2_parent_child_resolves_missing_name_via_exe_path(client):
+    """Windows parity for identity: a process_create whose process_name is
+    MISSING (legacy rows / event types without Image) still resolves its
+    identity from the shipped exe_path basename — the parent-child pair
+    matches instead of silently never firing. The map stores the resolved
+    name, so a nameless PARENT resolves too."""
+    run_id = make_run(client, sample_name="exe-id.exe")
+    # Parent has process_name=None but the resolved exe_path is winword.
+    _ingest(client, run_id, [_win_proc(run_id, 100, 4, None, "WINWORD.EXE /q", ts=1, exe=r"C:\Program Files\Microsoft Office\root\Office16\WINWORD.EXE")])
+    # Child (named) spawned by the nameless parent.
+    _ingest(client, run_id, [_win_proc(run_id, 200, 100, "powershell.exe", "powershell.exe -nop", ts=2)])
+
+    fired = [a for a in _alerts(client, run_id) if a["rule_id"] == "suspicious-parent-child"]
+    assert len(fired) == 1
+    assert "winword.exe spawned powershell.exe" in fired[0]["details"]
 
 
 def test_process_map_incremental_cache_resolves_old_parent(client):
