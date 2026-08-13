@@ -12,6 +12,7 @@ so live monitoring is actually live.
 
 import ipaddress
 import json
+import os
 import re
 import statistics
 import sqlite3
@@ -42,7 +43,7 @@ def _load_process_map(conn: sqlite3.Connection, run_id: str) -> tuple[dict[int, 
         _PROCESS_MAP_CACHE.move_to_end(key)
         last_id, process_map = cached
         new_rows = conn.execute(
-            "SELECT id, pid, ppid, process_name FROM events "
+            "SELECT id, pid, ppid, process_name, exe_path FROM events "
             "WHERE run_id = ? AND event_type = 'process_create' AND id > ?",
             (run_id, last_id),
         ).fetchall()
@@ -50,7 +51,7 @@ def _load_process_map(conn: sqlite3.Connection, run_id: str) -> tuple[dict[int, 
         for r in new_rows:
             pid = r["pid"]
             if pid is not None and pid not in process_map:
-                process_map[pid] = {"pid": pid, "ppid": r["ppid"], "process_name": r["process_name"] or "unknown"}
+                process_map[pid] = {"pid": pid, "ppid": r["ppid"], "process_name": _proc_name(dict(r)) or "unknown"}
             if r["id"] > max_id:
                 max_id = r["id"]
         _PROCESS_MAP_CACHE[key] = (max_id, process_map)
@@ -74,21 +75,21 @@ def _load_process_map(conn: sqlite3.Connection, run_id: str) -> tuple[dict[int, 
             process_map = {}
             max_id = 0
         new_rows = conn.execute(
-            "SELECT id, pid, ppid, process_name FROM events "
+            "SELECT id, pid, ppid, process_name, exe_path FROM events "
             "WHERE run_id = ? AND event_type = 'process_create' AND id > ?",
             (run_id, max_id),
         ).fetchall()
         for r in new_rows:
             pid = r["pid"]
             if pid is not None and pid not in process_map:
-                process_map[pid] = {"pid": pid, "ppid": r["ppid"], "process_name": r["process_name"] or "unknown"}
+                process_map[pid] = {"pid": pid, "ppid": r["ppid"], "process_name": _proc_name(dict(r)) or "unknown"}
             if r["id"] > max_id:
                 max_id = r["id"]
         _PROCESS_MAP_CACHE[key] = (max_id, process_map)
         return process_map, max_id
 
     process_rows = conn.execute(
-        "SELECT id, pid, ppid, process_name FROM events "
+        "SELECT id, pid, ppid, process_name, exe_path FROM events "
         "WHERE run_id = ? AND event_type = 'process_create'",
         (run_id,),
     ).fetchall()
@@ -97,7 +98,7 @@ def _load_process_map(conn: sqlite3.Connection, run_id: str) -> tuple[dict[int, 
     for r in process_rows:
         pid = r["pid"]
         if pid is not None and pid not in process_map:
-            process_map[pid] = {"pid": pid, "ppid": r["ppid"], "process_name": r["process_name"] or "unknown"}
+            process_map[pid] = {"pid": pid, "ppid": r["ppid"], "process_name": _proc_name(dict(r)) or "unknown"}
         if r["id"] > max_id:
             max_id = r["id"]
     _PROCESS_MAP_CACHE[key] = (max_id, process_map)
@@ -444,6 +445,22 @@ def _platform(event: dict) -> str:
     return (event.get("platform") or "windows").lower()
 
 
+def _proc_name(event: dict) -> str:
+    """A process's identity, lowercased: `process_name` first, falling back to
+    the basename of the resolved `exe_path` (auditd exe= / Sysmon Image).
+
+    Both collectors now ship exe_path, and a bare basename is not a resolved
+    path — but when process_name is MISSING (legacy rows, event types without
+    Image), the exe_path basename is still a better identity than "unknown":
+    it lets parent-child / dropper / first-seen matching resolve a parent
+    that would otherwise silently never match."""
+    name = event.get("process_name") or ""
+    if not name:
+        exe = (event.get("exe_path") or "").strip()
+        name = os.path.basename(exe.replace("\\", "/")) if exe else ""
+    return name.lower()
+
+
 # ---------------------------------------------------------------------------
 # Alert factory + dedup
 # ---------------------------------------------------------------------------
@@ -573,7 +590,7 @@ def check_parent_child(event: dict, process_map: dict) -> Optional[Alert]:
     parent = process_map.get(event.get("ppid"))
     if not parent:
         return None
-    pair = (str(parent.get("process_name", "")).lower(), str(event.get("process_name", "")).lower())
+    pair = (_proc_name(parent), _proc_name(event))
     if pair in SUSPICIOUS_PARENT_CHILD:
         return _make_alert(
             event["run_id"], "suspicious-parent-child",
@@ -810,18 +827,18 @@ def check_first_seen(conn: sqlite3.Connection, run_id: str, event: dict, seen_na
     """
     if event.get("event_type") != "process_create":
         return None
-    name = event.get("process_name")
+    name = _proc_name(event)
     if not name:
         return None
     # Novelty alone is too noisy on a live host — require a script-host parent.
     parent = process_map.get(event.get("ppid"))
-    if not parent or str(parent.get("process_name", "")).lower() not in FIRST_SEEN_SCRIPT_HOSTS:
+    if not parent or _proc_name(parent) not in FIRST_SEEN_SCRIPT_HOSTS:
         return None
     if name in seen_names:
         return None
     seen_names.add(name)
     row = conn.execute(
-        "SELECT 1 FROM events WHERE process_name = ? AND run_id != ? LIMIT 1",
+        "SELECT 1 FROM events WHERE LOWER(process_name) = ? AND run_id != ? LIMIT 1",
         (name, run_id),
     ).fetchone()
     if row:
@@ -1441,8 +1458,8 @@ def check_document_dropper(event: dict, process_map: dict) -> Optional[Alert]:
     parent = process_map.get(event.get("ppid"))
     if not parent:
         return None
-    parent_name = str(parent.get("process_name", "")).lower()
-    child_name = str(event.get("process_name", "")).lower()
+    parent_name = _proc_name(parent)
+    child_name = _proc_name(event)
     if parent_name not in DOCUMENT_VIEWERS or child_name not in DROPPER_CHILDREN:
         return None
     return _make_alert(
