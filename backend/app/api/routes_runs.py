@@ -124,15 +124,17 @@ def list_runs(
     q: str = Query("", max_length=200),
     host: str = Query("", max_length=200),
     include_synthetic: bool = Query(False, description="Show seeds / webapp-synthetic detonations / the sandbox demo in the archive"),
+    include_soak: bool = Query(False, description="Show soak-named collector baselines (soak-… modeled runs) in the archive"),
 ) -> list[RunSummary]:
     """Run history, newest first. `?q=<sample>` filters by sample-name
     substring; `?host=<host_id>` filters to runs whose events came from that
     fleet host (the Agents page links here). Both combine when given.
     Synthetic provenance (seed / webapp-demo / legacy monitor / sandbox:demo)
-    is hidden by default so the archive reads as real telemetry first; the CLI
-    opts back in with `include_synthetic=true` to keep terminal parity."""
+    AND soak-named collector baselines (soak-…) are hidden by default so the
+    archive reads as real telemetry first; the CLI opts back in with
+    `include_synthetic=true` / `include_soak=true` for terminal parity."""
     with db_session() as conn:
-        rows = run_store.list_runs(conn, q=q.strip(), host=host.strip(), include_synthetic=include_synthetic)
+        rows = run_store.list_runs(conn, q=q.strip(), host=host.strip(), include_synthetic=include_synthetic, include_soak=include_soak)
         return [run_store.to_summary(conn, r) for r in rows]
 
 
