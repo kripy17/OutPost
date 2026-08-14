@@ -123,6 +123,21 @@ because its growth sources are lockfile-pinned, so a >300 MB jump means
 something structural (a second Playwright browser, apt creep). A budget
 should only be raised with a measurement in hand — never pre-emptively.
 
+**One-command recovery:** when the table, the stamps, and `image-sizes.json`
+have drifted apart (or a budget changed in `ci.yml`),
+`bash scripts/refresh-badges.sh --recover` regenerates the **entire size
+story** in one run: it parses the live `check-image-size.sh` gates from
+`.github/workflows/ci.yml` (resolving the script's own defaults), measures
+the `:measure` images fresh, rewrites every gated table row's measured +
+budget cells (description text preserved), re-inserts missing rows, drops
+rows whose image has no gate, and rewrites the per-image `Last measured`
+stamps + `badges/image-sizes.json` to match — so the `Image budgets` gate
+passes by construction. It needs the three `:measure` images built (the
+refresh job's recipe); a fresh run with nothing drifted is a genuine no-op
+(no diff, nothing to commit), and any actual changes land via the same
+PR + auto-merge path as the badge refresh. `--recover` covers only the size
+story — use `--commit` to also publish stale badge payloads.
+
 ## Branch protection on `main`
 
 `main` is protected with **required status checks**:
