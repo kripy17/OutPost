@@ -261,4 +261,9 @@ jobs:
           docker build -f backend/Dockerfile -t outpost-backend:measure backend
 
       - name: Refresh and publish badges
+        # GH_TOKEN is required for `gh pr create` in a workflow (the git
+        # push works via checkout's persisted credentials, but the gh CLI
+        # needs the explicit env). The job already has contents: write.
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: bash scripts/refresh-badges.sh --commit
