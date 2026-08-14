@@ -92,6 +92,19 @@ redirect instead of about serving; ACME is also impossible inside an empty
 namespace. Same image, same Caddyfile, one env knob — production TLS stays
 covered by `caddy validate` in the same Deploy job.
 
+**The backend container gets the same treatment.** `scripts/smoke-backend-image.sh`
+runs the actual `backend/Dockerfile` API image under `docker run --network
+none` with NO env vars — the zero-config default — and asserts, through the
+app's own python runtime via `docker exec` loopback (slim has no wget):
+the container boots without crash-looping, `/proc/net/route` is empty (the
+OS-level zero-egress assertion, so a license ping or update check in the
+entrypoint would fail immediately), `/health` returns 200, `/meta` reports
+`demo_mode:false` (a fresh backend never masquerades demo data), and
+`/runs` returns a 200 JSON array. Production fail-closed auth is asserted
+separately by the post-deploy walk (401 without a token, 200 with admin,
+agent token restricted to telemetry), so this smoke isolates the
+boot + serve + zero-egress contract for the API side of the stack.
+
 The volume run earned its keep immediately: the 11k/real-soak runs surfaced a
 15 MB `/campaigns` response (~1.06 s — the timeline query shipped every
 `raw_record` for all member runs) that the tiny-store runs never saw.
