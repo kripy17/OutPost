@@ -204,6 +204,15 @@ step "Image budgets  (docs/17 table vs ci.yml gates)" \
 step "Image-budget hints  (every drift direction prints a fix)" \
   bash -c "'$ROOT/.venv/bin/python' '$ROOT/scripts/test_image_budget_hints.py'"
 
+# Badge hint self-test — every drift direction the --check gate can report
+# must print the exact corrected artifact: the badge payload, the docs/17
+# 'Last measured' stamp line, the rewritten image-sizes.json, or a
+# restore/regenerate hint. The fixture self-calibrates the fake vitest count
+# from the real pytest collection + committed tests.json total, so the fresh
+# run passes by construction and each mutation flips exactly one direction.
+step "Badge hints  (every --check drift prints a fix)" \
+  bash -c "'$ROOT/.venv/bin/python' '$ROOT/scripts/test_badge_hints.py'"
+
 # Cross-platform collector soak baseline — the Windows (Sysmon) and Linux
 # (auditd) soaks run with --gate against ONE isolated backend (temp DB,
 # spare port) and print the FP/detection baseline as a compact table, so
