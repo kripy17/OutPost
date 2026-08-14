@@ -133,8 +133,12 @@ jobs:
         # (network available), so the runtime test runs with zero egress.
         run: docker build -f deploy/Dockerfile.airgap-ci -t outpost-airgap-ci .
 
-      - name: Run the air-gap bundle with the network namespace empty
-        run: docker run --network none --rm outpost-airgap-ci bash scripts/airgap-offline.sh
+      - name: Run the air-gap bundle at production volume, network namespace empty
+        # OUTPOST_OFFLINE_VOLUME=1 seeds a deterministic ~11k-event store
+        # (scripts/seed_volume.py) so the guarantee is proven at production
+        # scale on every push — the volume run surfaced the 15MB /campaigns
+        # payload that the tiny-store runs never would.
+        run: docker run --network none --rm -e OUTPOST_OFFLINE_VOLUME=1 outpost-airgap-ci bash scripts/airgap-offline.sh
 
   # On-demand badge refresh — no code push needed. Dispatch this workflow and
   # it recomputes the three counts from main and publishes any change.
