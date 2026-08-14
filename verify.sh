@@ -4,7 +4,8 @@
 #   backend pytest  →  coverage gate (14/14 ATT&CK)  →  collector pytest
 #   →  CLI pytest  →  frontend lint/tests/build  →  doc-count gate (fails
 #     FAST on stale badge/README claims — before the slow collector gates)
-#   →  collector soak baseline (cross-platform FP table)  →  collector
+#   →  collector soak baseline (cross-platform FP table)  →  CLI network
+#     gate (loopback-only air-gap, static + runtime)  →  collector
 #     live-claim gate  →  sandbox provider gate (skips cleanly without a
 #     provider key)  →  layout sweep (Playwright overflow gate)
 #   →  post-deploy walk (fail-closed auth + TLS + agent heartbeat)
@@ -180,6 +181,15 @@ step "Doc counts     (stale-reference gate)" \
 # detection fails the step (over-exemption guard).
 step "Soak baseline   (cross-platform FP table)" \
   bash -c "'$ROOT/.venv/bin/python' '$ROOT/scripts/soak_baseline.py'"
+
+# CLI air-gap gate — the CLI's network surface is loopback-only (air-gap
+# parity with the e2e gates). Static AST: HTTP only via lib/api_client.py
+# (and the two sanctioned env-seam callers), no raw sockets. Runtime: boots
+# an isolated backend, seeds it, and runs a 9-command CLI matrix under a
+# loopback-only socket patch — any external connect fails the sweep, and a
+# negative control proves the patch actually bites.
+step "CLI network gate (loopback-only air-gap)" \
+  bash -c "'$ROOT/.venv/bin/python' '$ROOT/scripts/gate_cli_network.py'"
 
 # Collector live-claim gate — the one-line `--mode live` collector flow, end
 # to end. Boots an isolated backend and runs the REAL collector_linux.py with

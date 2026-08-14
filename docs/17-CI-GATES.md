@@ -18,7 +18,13 @@ suites it includes the **identity gate** (`scripts/gate_proc_identity.py`) —
 an AST scan of the detection/process-tree/baseline/CLI-rendering modules that
 fails if any event-level `process_name` read lacks an `exe_path` resolution,
 locking the process-identity fallback so a future rule can't silently regress
-to name-only matching that skips nameless rows.
+to name-only matching that skips nameless rows — and the **CLI network gate**
+(`scripts/gate_cli_network.py`): a static AST scan proving HTTP only flows
+through the env-configured api seam (`lib/api_client.py` + the two sanctioned
+callers), plus a runtime proof that boots an isolated backend, seeds it, and
+runs a 9-command CLI matrix under a loopback-only socket patch — any connect
+outside loopback fails the sweep, and a negative control (an external-base
+command that must be blocked) proves the patch can't go vacuously green.
 
 1. **`npx tsc --noEmit`** (~1 min in) — frontend type errors fail before the
    Playwright download.
