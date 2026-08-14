@@ -214,6 +214,22 @@ fail-closed) lives in [`deploy/`](deploy/README.md) — `docker compose -f
 deploy/docker-compose.prod.yml up --build` with a public domain for
 automatic Let's Encrypt, or a hardened systemd unit for the backend alone.
 
+**Air-gapped by default.** The webapp makes **zero external HTTP requests**
+and renders identically with the network fully blocked:
+
+- **Self-hosted fonts** — IBM Plex Sans/Mono ship in the bundle
+  (`frontend/public/fonts/`, local `@font-face`), so the signature
+typeface never depends on the Google Fonts CDN.
+- **No third-party calls** — no CDNs, telemetry, or icon services; the CLI is
+network-minimal too (every request goes through one `api_client` seam,
+loopback-only, enforced by a CI gate).
+- **Enforced in CI** — both Playwright e2e gates treat *any* non-localhost
+request as a console error and fail the sweep, so an external dependency
+can never sneak back in unnoticed.
+- **Measured** — worst-case air-gapped cold start (browser boot + first
+interactive render, production build, cache disabled): **≈ 0.3 s**
+(`demo/measure-airgap-load.mjs`).
+
 ### Try it without a collector
 
 The webapp and CLI run against **seeded demo data** — no live telemetry
