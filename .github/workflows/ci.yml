@@ -19,6 +19,7 @@ jobs:
     if: github.event_name != 'workflow_dispatch' && github.event_name != 'schedule'
     permissions:
       contents: write  # the badge-refresh step commits badges/*.json on main
+      pull-requests: write  # …and lands count changes via PR + auto-merge (gh pr create/merge --auto)
     steps:
       - uses: actions/checkout@v7
 
@@ -96,7 +97,13 @@ jobs:
         run: bash verify.sh
 
       - name: Publish dynamic badges (main only)
+        # GH_TOKEN is required for `gh pr create` in a workflow (the git
+        # push works via checkout's persisted credentials, but the gh CLI
+        # needs the explicit env) — without it a count-changing push would
+        # fail this step instead of landing the refreshed payloads.
         if: github.ref == 'refs/heads/main' && success()
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: bash scripts/refresh-badges.sh --commit
 
   # Tier 4 — the live-Postgres runtime. The sqlite3-compat shim over psycopg
