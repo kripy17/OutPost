@@ -213,6 +213,14 @@ step "Image-budget hints  (every drift direction prints a fix)" \
 step "Badge hints  (every --check drift prints a fix)" \
   bash -c "'$ROOT/.venv/bin/python' '$ROOT/scripts/test_badge_hints.py'"
 
+# Hint-coverage guard — the self-explaining discipline is structural: every
+# gate under scripts/ that emits a '→ fix:' hint must be mapped to a
+# self-test with repair assertions, and that self-test must actually run in
+# this sweep. A future gate that adds hints without a test (or a test nobody
+# wired in) fails here, so hint coverage can't silently regress.
+step "Hint coverage  (every hint-emitting gate has a repair self-test)" \
+  bash -c "'$ROOT/.venv/bin/python' '$ROOT/scripts/gate_hint_coverage.py'"
+
 # Cross-platform collector soak baseline — the Windows (Sysmon) and Linux
 # (auditd) soaks run with --gate against ONE isolated backend (temp DB,
 # spare port) and print the FP/detection baseline as a compact table, so

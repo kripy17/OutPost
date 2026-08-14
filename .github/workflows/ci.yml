@@ -83,11 +83,14 @@ jobs:
         # forgot one), the self-tests fail here (~2 min in) instead of after
         # the 3.5-min sweep. The image-budget one is pure fixture regex
         # (milliseconds); the badge one copies source + runs the real
-        # collect-only counts (seconds). verify.sh re-runs both inside its
-        # own steps, so nothing is skipped, just failed earlier.
+        # collect-only counts (seconds). The coverage guard then proves no
+        # OTHER gate emits hints without a repair self-test. verify.sh
+        # re-runs all three inside its own steps, so nothing is skipped,
+        # just failed earlier.
         run: |
           .venv/bin/python scripts/test_image_budget_hints.py
           .venv/bin/python scripts/test_badge_hints.py
+          .venv/bin/python scripts/gate_hint_coverage.py
 
       - name: Run the full verification sweep
         run: bash verify.sh
