@@ -81,8 +81,10 @@ A dedicated `Refresh dynamic badges` job runs on the **weekly schedule and
 
 `main` is protected with **required status checks**:
 
-- **Required checks**: `verify.sh — backend · collectors · CLI · frontend`
-  and `Deploy — web image + Caddyfile + compose`
+- **Required checks**: `verify.sh — backend · collectors · CLI · frontend`,
+  `Deploy — web image + Caddyfile + compose`, and
+  `Air-gap — full bundle in a --network none container` (a red offline
+  air-gap run blocks merging, exactly like the verify sweep)
 - **Strict mode**: on (branches must be up to date with `main` before merge)
 - **Admins**: not enforced (admins can still merge in emergencies)
 
