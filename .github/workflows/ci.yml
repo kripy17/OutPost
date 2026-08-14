@@ -114,6 +114,28 @@ jobs:
         # images built or a backend running.
         run: docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env.example config -q
 
+  # The strongest air-gap proof: build a full-stack test image, then run the
+  # four-gate bundle + both e2e gates inside a container whose network
+  # namespace is EMPTY (--network none). Only loopback exists, so any attempt
+  # to reach an external host — by any library or technique — fails at the OS
+  # level, not just at the in-process probes' simulation level.
+  airgap-offline:
+    name: Air-gap — full bundle in a --network none container
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    if: github.event_name != 'workflow_dispatch' && github.event_name != 'schedule'
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build the air-gap CI image
+        # Installs backend+CLI into a venv, npm ci + vite build for the
+        # frontend, and Playwright+Chromium for the e2es — all at build time
+        # (network available), so the runtime test runs with zero egress.
+        run: docker build -f deploy/Dockerfile.airgap-ci -t outpost-airgap-ci .
+
+      - name: Run the air-gap bundle with the network namespace empty
+        run: docker run --network none --rm outpost-airgap-ci bash scripts/airgap-offline.sh
+
   # On-demand badge refresh — no code push needed. Dispatch this workflow and
   # it recomputes the three counts from main and publishes any change.
   refresh-badges:

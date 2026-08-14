@@ -38,6 +38,20 @@ bash scripts/airgap-verify.sh --web http://<host>:5174 --max 1000   # + latency 
 Runs gates 1–4 in sequence, then the cold-start harness against a live stack,
 failing if the worst interactive render exceeds the budget (default 1000 ms).
 
+## Offline proof in CI (the strongest layer)
+
+The `Air-gap` CI job builds `deploy/Dockerfile.airgap-ci` (full stack: backend
+venv, frontend production build, Playwright+Chromium) and then runs
+`scripts/airgap-offline.sh` inside a container launched with
+**`docker run --network none`** — the network namespace is empty, so only
+loopback exists and any attempt to reach an external host fails at the OS
+level, regardless of library or technique. The script boots the backend
+(with `CORS_ORIGINS` matching the frontend origin), seeds the campaign pair
+plus a live-sourced run, boots the production preview, and runs the four-gate
+bundle (with the latency budget) plus both Playwright e2e gates. This is the
+runtime proof that the in-process probes simulate: the empty namespace makes
+it real, on every push.
+
 ## Self-hosted by design
 
 - **Fonts** — IBM Plex Sans/Mono ship in the bundle (`frontend/public/fonts/`,

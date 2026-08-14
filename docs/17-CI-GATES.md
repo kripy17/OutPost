@@ -7,12 +7,13 @@ See [18-AIR-GAP.md](18-AIR-GAP.md) for the consolidated air-gap guarantees
 ## The gate stack (in order)
 
 Every push to `main` and every pull request runs the `CI` workflow
-(`.github/workflows/ci.yml`) with two parallel jobs:
+(`.github/workflows/ci.yml`) with three parallel jobs:
 
 | Job | What it runs | Fails on |
 |---|---|---|
 | `verify.sh — backend · collectors · CLI · frontend` | Fast-fail ladder, then the full sweep | stale badges/README claims, tsc errors, failing pytest/vitest, collector FP-baseline soaks, layout overflow, post-deploy walk |
 | `Deploy — web image + Caddyfile + compose` | Production image build + config validation | Dockerfile/Caddyfile/compose drift |
+| `Air-gap — full bundle in a --network none container` | Builds `deploy/Dockerfile.airgap-ci`, then `docker run --network none` runs `scripts/airgap-offline.sh`: the four-gate bundle + cold-start budget + both e2es with the network namespace EMPTY | any external host reachable by any library or technique (OS-level proof, not a simulation) |
 
 Inside the verify job, three fast-fail tiers front-load the expensive checks
 so the cheapest signal fails first. The sweep itself is 19 steps; beyond the
