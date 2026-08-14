@@ -102,3 +102,37 @@ manually:
 4. Deploy the agent on a monitored machine (`outpost agent install`) and watch
    it appear on the Agents page — for Windows hosts, run the
    [real-host validation checklist](../collectors/windows/README.md) first.
+
+## Air-gapped deployment
+
+The stack is fully self-contained at runtime — the webapp and backend make
+**zero external HTTP requests** when enrichment is not configured:
+
+- IBM Plex fonts ship in the bundle (`frontend/public/fonts/`, local
+  `@font-face`) — no font CDN.
+- SQLite persists locally; there is no telemetry, update check, or license
+  ping to the outside world.
+- This is **enforced in CI**: the Playwright e2e gates fail on any
+  non-localhost request, and `scripts/gate_airgap_artifacts.py` statically
+  scans the shipped build for external dependency syntax.
+
+To deploy on a firewalled host (no outbound egress):
+
+1. Build the images **on a connected machine** (`docker compose build`),
+   then `docker save`/`docker load` them onto the host — the build needs the
+   registry, the runtime does not.
+2. Run the stack with no outbound routes. Only loopback is used: browser →
+   Caddy (TLS) → backend → SQLite.
+3. Optional egress (all config-gated — skip them and the stack runs in pure
+   local mode):
+   - Threat-intel enrichment (AbuseIPDB / VirusTotal / abuse.ch) and
+     passive DNS (crt.sh / RDAP) — fire only when API keys are set in
+     Settings, and cache results so repeated lookups stay offline.
+   - Real sandbox detonation (Any.Run / Triage / Joe) — keyed providers
+     only; without a key the panel falls back to the labeled local demo.
+   - Webhook notifications — only to targets *you* configure.
+4. Verify after boot with egress disabled:
+   - the [post-deploy checklist](#post-deploy-checklist) items above, and
+   - `node demo/measure-airgap-load.mjs --web http://<host>:5174` for the
+     cold-start latency (≈ 0.3 s worst case on the production build) — a
+     clean run proves no external request is being attempted.
