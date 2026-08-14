@@ -110,6 +110,21 @@ jobs:
         # `caddy validate` in the step below.
         run: bash scripts/smoke-web-image.sh --image outpost-web:ci
 
+      - name: Build the backend image
+        # The API server container the compose stack ships (backend/Dockerfile,
+        # context ./backend). A separate step so its build failure is its own.
+        run: docker build -f backend/Dockerfile -t outpost-backend:ci backend
+
+      - name: Smoke-test the backend image — boots and serves /health with zero egress
+        # The API-side counterpart of the web smoke: the backend container
+        # under --network none must boot (RestartCount=0), keep /proc/net/route
+        # empty (zero egress at the OS level), and serve /health + /meta
+        # (demo_mode false — the zero-config default is honest) + /runs over
+        # loopback, probed through the app's own python runtime via docker
+        # exec (slim has no wget). Production fail-closed auth is asserted
+        # separately by the post-deploy walk, so this smoke runs zero-config.
+        run: bash scripts/smoke-backend-image.sh --image outpost-backend:ci
+
       - name: Validate the Caddyfile
         # caddy validate provisions the config without starting the server.
         # OUTPOST_HOST must be set or the {$OUTPOST_HOST} placeholder expands
