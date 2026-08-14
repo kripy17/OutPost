@@ -125,8 +125,10 @@ def main() -> int:
 
     if not enforced:
         check("ci.yml size-gate invocations found", False, "no check-image-size.sh steps")
+        hint(f"add a size-gate step to ci.yml, e.g.:  {ci_line('outpost-web:ci', defaults[0], defaults[1], defaults)}")
     if not table:
         check("docs/17 size-budget table found", False, "no budget rows parsed")
+        hint(f"add a budget row to docs/17 like:  | `outpost-web:ci` (…) | **?? MB** | {defaults[0]} MB | {defaults[1]} MB |   (the measured cell fills from the first gate run)")
 
     # 1. Every enforced gate must be documented with the same budgets.
     for img, (soft, hard) in sorted(enforced.items()):
@@ -166,6 +168,7 @@ def main() -> int:
                 hint(f"docs row should read:  {corrected}")
     else:
         check("badges/image-sizes.json present", False, "missing — measured column not checkable")
+        hint("regenerate badges/image-sizes.json + the stamps with:  bash scripts/refresh-badges.sh --commit   (or --recover for the whole size story)")
 
     # 3. A documented row with no gate is drift too.
     for img in sorted(table):

@@ -196,6 +196,14 @@ step "Doc counts     (stale-reference gate)" \
 step "Image budgets  (docs/17 table vs ci.yml gates)" \
   bash -c "'$ROOT/.venv/bin/python' '$ROOT/scripts/gate_image_budget_docs.py'"
 
+# Image-budget hint self-test — every drift direction the gate can report
+# must print a usable '→ fix:' line (a fresh fixture passes, and each of the
+# nine drift directions fails with the expected repair hint). Gates the gate:
+# a refactor that drops a hint or a new failure path that forgets one fails
+# the sweep here, so the self-explaining behavior can't silently regress.
+step "Image-budget hints  (every drift direction prints a fix)" \
+  bash -c "'$ROOT/.venv/bin/python' '$ROOT/scripts/test_image_budget_hints.py'"
+
 # Cross-platform collector soak baseline — the Windows (Sysmon) and Linux
 # (auditd) soaks run with --gate against ONE isolated backend (temp DB,
 # spare port) and print the FP/detection baseline as a compact table, so
