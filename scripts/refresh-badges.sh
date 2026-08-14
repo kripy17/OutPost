@@ -85,7 +85,9 @@ stamp_line() {
 write_size_stamp() {
   [[ -n "$WEB_MB" ]] || return 0
   local stamp; stamp=$(stamp_line)
-  "$PY" "$stamp" <<'PYEOF'
+  # `python -` reads the script from stdin (the heredoc) with the stamp as
+  # argv[1] — `python "$stamp"` would treat the stamp as a script FILE.
+  "$PY" - "$stamp" <<'PYEOF'
 import re, sys
 stamp = sys.argv[1]
 path = "docs/17-CI-GATES.md"
@@ -164,7 +166,7 @@ printf '%s\n' "$CV_BADGE" > "$ROOT/badges/coverage.json"
 if [[ -n "$WEB_MB" ]]; then
   printf '{"web_mb":%s,"backend_mb":%s,"commit":"%s","date":"%s"}\n' \
     "$WEB_MB" "$BACKEND_MB" "$size_commit" "$size_date" > "$SIZE_JSON"
-  write_size_stamp || { echo "  could not rewrite the docs/17 size stamp (no anchor)" >&2; exit 2; }
+  write_size_stamp || { echo "  could not rewrite the docs/17 size stamp (script failed or anchor missing)" >&2; exit 2; }
 fi
 
 if git diff --quiet -- badges/ docs/17-CI-GATES.md; then
