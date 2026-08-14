@@ -69,7 +69,14 @@ interactive render exceeds a budget).
    Playwright download.
 2. **`bash scripts/refresh-badges.sh --check`** (~1.5 min in) — a stale badge
    or README count fails before the 3.5-min sweep. Collect-only
-   (`pytest --collect-only` + `vitest list`), so it costs seconds.
+   (`pytest --collect-only` + `vitest list`), so it costs seconds. Every
+   drift prints the exact corrected artifact under a `→ fix:` line — the
+   badge payload, the docs/17 `Last measured` stamp (with the committed
+   JSON's commit/date), the rewritten `image-sizes.json`, or a
+   restore/regenerate hint when the file is missing — so the failure is
+   copy-paste-repairable. The measured-vs-committed check also catches a
+   live image size that no longer matches the committed JSON when the
+   `:measure` images are present.
 3. **`.venv/bin/python scripts/gate_image_budget_docs.py`** (same tier) — a
    budget drifted between docs/17 and the ci.yml size-gate flags (or a
    stamp/measured column out of sync) fails the push milliseconds later,

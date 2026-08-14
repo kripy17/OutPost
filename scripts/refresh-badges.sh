@@ -120,6 +120,9 @@ MODE="${1:-}"
 case "$MODE" in
   --check)
     stale=0
+    # --check is the gate tier (badge fast-fail): every drift prints the exact
+    # corrected payload/stamp/JSON line so the failure is self-explaining —
+    # copy-paste the "→ fix:" line and the sweep goes green.
     for spec in tests:T_BADGE rules:R_BADGE commands:CM_BADGE coverage:CV_BADGE; do
       name=${spec%%:*}
       var=${spec#*:}
@@ -127,7 +130,8 @@ case "$MODE" in
       file="$ROOT/badges/$name.json"
       if [ ! -f "$file" ] || [ "$(cat "$file")" != "$want" ]; then
         echo "  stale: badges/$name.json" >&2
-        diff -u "$file" <(printf '%s\n' "$want") 2>&1 | sed 's/^/    /' || true
+        echo "  → fix: write the payload below to badges/$name.json:" >&2
+        echo "        $want" >&2
         stale=1
       fi
     done
@@ -136,6 +140,13 @@ case "$MODE" in
     # measurement must match the committed JSON — so the baseline table can't
     # silently drift from the data file or from reality.
     if [ -f "$SIZE_JSON" ]; then
+      # Committed values (read once — the measured-vs-committed branch needs
+      # all three, not just the per-image loop value).
+      W=$(json_get "$SIZE_JSON" web_mb)
+      B=$(json_get "$SIZE_JSON" backend_mb)
+      A=$(json_get "$SIZE_JSON" airgap_mb)
+      J_COMMIT=$(json_get "$SIZE_JSON" commit)
+      J_DATE=$(json_get "$SIZE_JSON" date)
       # Every measured image needs its own stamp line carrying the
       # committed value (per-image lines — one combined line is no longer
       # accepted, so a table row can never be documented without trend data).
@@ -146,15 +157,20 @@ case "$MODE" in
         val=$(json_get "$SIZE_JSON" "$key")
         if [[ -n "$val" ]] && ! grep -q "^> \*\*Last measured:\*\* \`${img}\` ${val} MB" "$DOCS_STAMP"; then
           echo "  stale: docs/17 lacks the 'Last measured' stamp for ${img} (${val} MB)" >&2
+          echo "  → fix: add the line below to docs/17-CI-GATES.md:" >&2
+          echo "        > **Last measured:** \`${img}\` ${val} MB — badge job @ \`${J_COMMIT}\` (${J_DATE})." >&2
           stale=1
         fi
       done
       if [[ -n "$WEB_MB" ]] && { [ "$WEB_MB" != "$W" ] || [ "$BACKEND_MB" != "$B" ] || [ "$AIRGAP_MB" != "$A" ]; }; then
         echo "  stale: measured (web ${WEB_MB} / backend ${BACKEND_MB} / airgap ${AIRGAP_MB}) != committed image-sizes.json (web ${W} / backend ${B} / airgap ${A})" >&2
+        echo "  → fix: rewrite badges/image-sizes.json with the measured values:" >&2
+        echo "        {\"web_mb\":${WEB_MB},\"backend_mb\":${BACKEND_MB},\"airgap_mb\":${AIRGAP_MB},\"commit\":\"${size_commit}\",\"date\":\"${size_date}\"}" >&2
         stale=1
       fi
     else
       echo "  stale: badges/image-sizes.json missing (no size stamp data)" >&2
+      echo "  → fix: restore badges/image-sizes.json (or build the :measure images and run 'bash scripts/refresh-badges.sh --commit' to regenerate it)" >&2
       stale=1
     fi
     if [ "$stale" = 1 ]; then
