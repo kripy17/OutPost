@@ -1,0 +1,169 @@
+"""The Postgres runtime dialect (``core/db_pg``) — pure translation tests.
+
+No Postgres server and no psycopg required: ``_translate`` and the
+``RETURNING`` decision are pure string logic, and ``PgRow`` is a plain
+wrapper. The live runtime (schema init + real queries through the shim) is
+exercised for real in CI — the ``pg-runtime`` job spins up a postgres
+service container and runs ``scripts/gate_pg_runtime.py`` against it.
+"""
+
+from app.core import db_pg
+
+
+# -- placeholders ------------------------------------------------------------
+
+
+def test_placeholders_convert():
+    assert db_pg._translate("SELECT * FROM runs WHERE run_id = ?") == (
+        "SELECT * FROM runs WHERE run_id = %s"
+    )
+
+
+def test_placeholders_multiple_and_limit():
+    sql = "SELECT * FROM alerts WHERE run_id = ? AND severity = ? ORDER BY id LIMIT ? OFFSET ?"
+    assert db_pg._translate(sql) == (
+        "SELECT * FROM alerts WHERE run_id = %s AND severity = %s "
+        "ORDER BY id LIMIT %s OFFSET %s"
+    )
+
+
+# -- LIKE → ILIKE (SQLite LIKE is case-insensitive; keep the behavior) ------
+
+
+def test_like_becomes_ilike():
+    out = db_pg._translate("SELECT * FROM events WHERE process_name LIKE ?")
+    assert out == "SELECT * FROM events WHERE process_name ILIKE %s"
+
+
+def test_not_like_becomes_not_ilike():
+    out = db_pg._translate("SELECT * FROM runs WHERE sample_name NOT LIKE ?")
+    assert out == "SELECT * FROM runs WHERE sample_name NOT ILIKE %s"
+
+
+def test_ilike_not_double_mapped_and_escape_preserved():
+    sql = "SELECT * FROM samples WHERE original_name LIKE ? ESCAPE '\\' OR sha256 LIKE ?"
+    out = db_pg._translate(sql)
+    assert out.count("ILIKE") == 2
+    assert "ESCAPE '\\'" in out
+    # a literal ILIKE must not be re-matched by the LIKE rule
+    assert db_pg._translate("SELECT 1 WHERE 'a' ILIKE 'A'") == "SELECT 1 WHERE 'a' ILIKE 'A'"
+
+
+# -- INSERT OR IGNORE → ON CONFLICT DO NOTHING ------------------------------
+
+
+def test_insert_or_ignore():
+    out = db_pg._translate(
+        "INSERT OR IGNORE INTO run_tuning_snapshot (run_id, params) VALUES (?, ?)"
+    )
+    assert out == (
+        "INSERT INTO run_tuning_snapshot (run_id, params) VALUES (%s, %s) "
+        "ON CONFLICT DO NOTHING"
+    )
+
+
+def test_insert_or_ignore_trailing_semicolon_stripped():
+    out = db_pg._translate(
+        "INSERT OR IGNORE INTO watchlist_hits (run_id, ioc_type, ioc_value, first_seen) "
+        "VALUES (?, ?, ?, ?);"
+    )
+    assert out.endswith("ON CONFLICT DO NOTHING")
+    assert "; ON CONFLICT" not in out
+
+
+def test_plain_insert_untouched_by_or_ignore_rule():
+    out = db_pg._translate("INSERT INTO alerts (run_id, rule_id) VALUES (?, ?)")
+    assert out == "INSERT INTO alerts (run_id, rule_id) VALUES (%s, %s)"
+
+
+# -- GROUP_CONCAT → string_agg ----------------------------------------------
+
+
+def test_group_concat_distinct():
+    assert db_pg._translate(
+        "SELECT GROUP_CONCAT(DISTINCT e.platform) AS platforms FROM events e"
+    ) == "SELECT string_agg(DISTINCT e.platform, ',') AS platforms FROM events e"
+
+
+def test_group_concat_with_function_arg():
+    out = db_pg._translate(
+        "SELECT GROUP_CONCAT(DISTINCT COALESCE(e.log_source, 'webapp')) AS channels FROM events e"
+    )
+    assert out == (
+        "SELECT string_agg(DISTINCT COALESCE(e.log_source, 'webapp'), ',') AS channels "
+        "FROM events e"
+    )
+
+
+def test_group_concat_nested_subquery():
+    """The agents-page shape: GROUP_CONCAT(run_id) over a DISTINCT subquery —
+    the balanced-paren scan must not swallow the FROM subquery."""
+    sql = (
+        "SELECT (SELECT GROUP_CONCAT(run_id) FROM "
+        "(SELECT DISTINCT run_id FROM events WHERE host_id = e.host_id "
+        "ORDER BY timestamp DESC LIMIT 5)) AS recent_run_ids FROM events e"
+    )
+    expected = (
+        "SELECT (SELECT string_agg(run_id, ',') FROM "
+        "(SELECT DISTINCT run_id FROM events WHERE host_id = e.host_id "
+        "ORDER BY timestamp DESC LIMIT 5)) AS recent_run_ids FROM events e"
+    )
+    assert db_pg._translate(sql) == expected
+
+
+# -- INSERT target + RETURNING decision -------------------------------------
+
+
+def test_insert_table():
+    assert db_pg._insert_table("INSERT INTO alerts (run_id) VALUES (?)") == "alerts"
+    assert db_pg._insert_table("INSERT INTO events (run_id) VALUES (?)") == "events"
+    assert db_pg._insert_table("SELECT 1") is None
+    assert db_pg._insert_table("UPDATE alerts SET status = 'open'") is None
+
+
+def test_returning_applied_only_when_table_has_id_pk():
+    """The shim appends RETURNING id only for single-column-PK-named-id
+    tables; TEXT-PK tables (run_tuning_snapshot, watchlist_hits, runs) and
+    ON CONFLICT statements never get one."""
+    assert db_pg._insert_table("INSERT INTO alerts (run_id) VALUES (?)") == "alerts"
+    assert db_pg._insert_table("INSERT INTO runs (run_id, sample_name) VALUES (?, ?)") == "runs"
+    # the shim's guard combines: table has id PK  AND  no RETURNING  AND  no ON CONFLICT
+    for sql in (
+        "INSERT INTO alerts (run_id) VALUES (?)",
+        "INSERT INTO run_notes (run_id, note) VALUES (?, ?)",
+        "INSERT INTO rule_suppressions (rule_id, run_id) VALUES (?, ?)",
+        "INSERT INTO audit_log (ts, actor, action) VALUES (?, ?, ?)",
+    ):
+        assert db_pg._insert_table(sql) is not None
+    # OR IGNORE sites translate to ON CONFLICT DO NOTHING → never RETURNING
+    assert "ON CONFLICT" in db_pg._translate(
+        "INSERT OR IGNORE INTO watchlist_hits (run_id, ioc_type) VALUES (?, ?)"
+    )
+    # upserts keep their existing ON CONFLICT clause and gain no RETURNING
+    out = db_pg._translate(
+        "INSERT INTO settings (key, value) VALUES (?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+    )
+    assert out.endswith("DO UPDATE SET value = excluded.value")
+
+
+# -- PgRow: sqlite3.Row contract ---------------------------------------------
+
+
+def test_pgrow_key_and_index_access():
+    row = db_pg.PgRow(("a", 42), ["name", "n"])
+    assert row["name"] == "a"
+    assert row[1] == 42
+    assert row[0] == "a"
+    assert len(row) == 2
+    assert list(row) == ["a", 42]
+    assert list(row.keys()) == ["name", "n"]
+
+
+def test_pgrow_dict_compat():
+    row = db_pg.PgRow(("x", 7), ["k", "v"])
+    assert dict(row) == {"k": "x", "v": 7}
+
+
+def test_pgrow_equality():
+    assert db_pg.PgRow(("x", 7), ["k", "v"]) == {"k": "x", "v": 7}

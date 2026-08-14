@@ -31,7 +31,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from ..core import auth
-from ..core.config import DATA_DIR, DATABASE_PATH
+from ..core.config import DATA_DIR, DATABASE_PATH, DATABASE_URL
 from ..core.db import _backfill_events_log_source, db_session, init_db
 from ..models import audit
 
@@ -268,6 +268,11 @@ def backup(request: Request) -> FileResponse:
     """Stream a consistent SQLite backup (the online-backup API, safe while
     the server is running). Named outpost-backup-<ts>.db for restores."""
     _actor(request)  # requires a valid session when auth is on
+    if DATABASE_URL:
+        raise HTTPException(
+            status_code=400,
+            detail="Backup is SQLite-only — on a Postgres deployment use pg_dump (docs/16).",
+        )
     tmp = DATA_DIR / f"outpost-backup-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}.db"
     src = sqlite3.connect(DATABASE_PATH)
     dst = sqlite3.connect(tmp)
@@ -290,6 +295,11 @@ async def restore(request: Request) -> dict:
     re-initialized (idempotent migrations) on the restored store."""
     actor = _require_admin(request)
     data = await request.body()
+    if DATABASE_URL:
+        raise HTTPException(
+            status_code=400,
+            detail="Restore is SQLite-only — on a Postgres deployment use pg_restore (docs/16).",
+        )
     if not data.startswith(_SQLITE_MAGIC):
         raise HTTPException(status_code=422, detail="Not a SQLite database file")
     db_path = Path(DATABASE_PATH)

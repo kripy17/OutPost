@@ -99,6 +99,51 @@ jobs:
         if: github.ref == 'refs/heads/main' && success()
         run: bash scripts/refresh-badges.sh --commit
 
+  # Tier 4 — the live-Postgres runtime. The sqlite3-compat shim over psycopg
+  # (core/db_pg.py) runs the real backend DB layer against a postgres service
+  # container: schema init via the translated DDL, RETURNING-id lastrowid,
+  # upserts, INSERT OR IGNORE rowcount semantics, GROUP_CONCAT → string_agg,
+  # ILIKE search, executemany, and FK enforcement (scripts/gate_pg_runtime.py).
+  # Runs in parallel with the verify sweep — the only place a real PG server
+  # is available, so the shim is proven against the actual driver.
+  pg-runtime:
+    name: Postgres runtime (Tier 4)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event_name != 'workflow_dispatch' && github.event_name != 'schedule'
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: outpost
+          POSTGRES_PASSWORD: outpost
+          POSTGRES_DB: outpost
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U outpost"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Create venv + install backend (dev + pg)
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --upgrade pip
+          .venv/bin/pip install -e "./backend[dev,pg]"
+
+      - name: Postgres runtime smoke
+        env:
+          OUTPOST_DATABASE_URL: postgresql://outpost:outpost@localhost:5432/outpost
+        run: .venv/bin/python scripts/gate_pg_runtime.py
+
   # The deploy surface: build the production web image and validate the TLS
   # proxy config on every push/PR. Catches Caddyfile syntax drift, frontend
   # builds that break inside the node:20-alpine image, and compose/env
