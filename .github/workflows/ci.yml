@@ -97,7 +97,13 @@ jobs:
         # fails here.
         run: docker build -f deploy/Dockerfile.web -t outpost-web:ci .
 
-      - name: Smoke-test the shipped image — boots and serves with zero egress
+      - name: Build the backend image
+        # The API server container the compose stack ships (backend/Dockerfile,
+        # context ./backend). Built before the smokes so the end-to-end phase
+        # can attach it. A separate step so its build failure is its own.
+        run: docker build -f backend/Dockerfile -t outpost-backend:ci backend
+
+      - name: Smoke-test the shipped web image — boots and serves with zero egress
         # Runs the ACTUAL production artifact (not the air-gap harness image)
         # under --network none: the container has no interface besides
         # loopback, so this proves the image that ships boots, serves the SPA
@@ -110,10 +116,17 @@ jobs:
         # `caddy validate` in the step below.
         run: bash scripts/smoke-web-image.sh --image outpost-web:ci
 
-      - name: Build the backend image
-        # The API server container the compose stack ships (backend/Dockerfile,
-        # context ./backend). A separate step so its build failure is its own.
-        run: docker build -f backend/Dockerfile -t outpost-backend:ci backend
+      - name: Smoke web + real backend end to end — /api flips 502 -> 200
+        # The end-to-end proof of the same shipped artifacts: phase 1 re-runs
+        # the empty-namespace assertions (502 with no upstream), then the REAL
+        # backend container joins a docker --internal shared network (no
+        # external route by construction) and the web container attaches live
+        # via `docker network connect`. Caddy's reverse_proxy `backend:8001`
+        # resolves through the embedded DNS, so /api/health flips 502 -> 200
+        # and /api/runs returns a 200 JSON array through the proxy — while a
+        # socket connect from the backend to a TEST-NET address still fails
+        # (the pair cannot reach outside the host).
+        run: bash scripts/smoke-web-image.sh --image outpost-web:ci --with-backend outpost-backend:ci
 
       - name: Smoke-test the backend image — boots and serves /health with zero egress
         # The API-side counterpart of the web smoke: the backend container

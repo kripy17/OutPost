@@ -105,6 +105,20 @@ separately by the post-deploy walk (401 without a token, 200 with admin,
 agent token restricted to telemetry), so this smoke isolates the
 boot + serve + zero-egress contract for the API side of the stack.
 
+**The pair is proven end to end, still zero-egress.** The web smoke's
+`--with-backend` phase (`scripts/smoke-web-image.sh --image outpost-web:ci
+--with-backend outpost-backend:ci`) starts with the empty-namespace
+assertions (the 502 with no upstream), then runs the REAL backend container
+on a docker `--internal` shared network — docker's no-egress network, so
+containers reach each other by name but nothing routes out — and attaches
+the running web container to it live via `docker network connect` (no
+restart). Caddy's `reverse_proxy backend:8001` resolves through the
+embedded DNS, so `/api/health` **flips 502 → 200** and `/api/runs` returns
+a 200 JSON array through the proxy — the exact production topology (one TLS
+front, API server behind it). Egress stays proven: the network is asserted
+`Internal=true` and a socket connect from the backend to a TEST-NET-3
+address fails (the host drops the packets; nothing leaves the machine).
+
 The volume run earned its keep immediately: the 11k/real-soak runs surfaced a
 15 MB `/campaigns` response (~1.06 s — the timeline query shipped every
 `raw_record` for all member runs) that the tiny-store runs never saw.

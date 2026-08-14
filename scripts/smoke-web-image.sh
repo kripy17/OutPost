@@ -10,6 +10,8 @@
 #
 #   bash scripts/smoke-web-image.sh [--image outpost-web:ci]
 #   bash scripts/smoke-web-image.sh --dist frontend/dist   # offline artifact check (no docker)
+#   bash scripts/smoke-web-image.sh --image outpost-web:ci --with-backend outpost-backend:ci
+#                                                         # + the end-to-end flip phase
 #
 # The container runs with OUTPOST_HOST=http://localhost — the http:// scheme
 # disables Caddy's automatic HTTPS for the smoke run. Caddy's auto-HTTPS
@@ -19,7 +21,7 @@
 # namespace. Same image, same Caddyfile, one env knob — production TLS stays
 # covered by `caddy validate` in the same Deploy job.
 #
-# Assertions:
+# Assertions (phase 1 — web alone, empty namespace):
 #   1. The container starts and does not crash-loop (RestartCount == 0).
 #   2. ZERO EGRESS, asserted at the OS level: /proc/net/route inside the
 #      container is empty — no network devices besides loopback exist.
@@ -30,6 +32,15 @@
 #      GET /api/health -> 502 (Caddy's reverse_proxy reached, backend
 #      container not on this namespace — the honest isolated-state signal).
 #
+# Assertions (phase 2 — --with-backend: the REAL backend joins an --internal
+# shared network and the web container attaches live):
+#   6. The /api proxy FLIPS: /api/health 502 -> 200 through the real backend.
+#   7. End to end through the proxy: /api/runs -> 200 JSON array.
+#   8. The backend boots clean and answers its own /health on loopback.
+#   9. The pair still has zero external reach: the network is docker-internal
+#      (no route out), and a socket connect from the backend to a TEST-NET
+#      address fails — nothing leaves the host.
+#
 # The image is built with VITE_API_URL=/api, so this runs the exact
 # artifact the compose stack ships. Docker is required for the container
 # mode (the repo's convention: the strongest gates run on CI where docker
@@ -38,10 +49,12 @@ set -euo pipefail
 
 IMAGE="outpost-web:ci"
 DIST=""
+BACKEND_IMAGE=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --image) IMAGE="$2"; shift 2 ;;
     --dist)  DIST="$2"; shift 2 ;;
+    --with-backend) BACKEND_IMAGE="$2"; shift 2 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
 done
@@ -72,10 +85,15 @@ if ! command -v docker >/dev/null 2>&1; then
 fi
 
 NAME="outpost-web-smoke-$$"
+BACKEND="outpost-backend-e2e-$$"
+NET="outpost-smoke-net-$$"
 URL="http://localhost"
 echo "== smoke-testing $IMAGE with --network none (name $NAME) =="
 
-cleanup() { docker rm -f "$NAME" >/dev/null 2>&1 || true; }
+cleanup() {
+  docker rm -f "$NAME" "$BACKEND" >/dev/null 2>&1 || true
+  docker network rm "$NET" >/dev/null 2>&1 || true
+}
 trap cleanup EXIT
 
 docker run -d --network none --name "$NAME" \
@@ -139,4 +157,70 @@ S=$(status "$URL/api/health")
 [[ "$S" == *" 502"* ]] || { echo "  FAIL: expected 502 from /api (proxy live, backend absent) — got '$S'" >&2; exit 1; }
 echo "  OK: /api/health -> 502 (proxy wired, backend container not in this namespace)"
 
-echo "✓ smoke: $IMAGE boots and serves with the network namespace empty"
+echo "✓ phase 1: $IMAGE boots and serves with the network namespace empty"
+
+# -- Phase 2: the end-to-end flip ---------------------------------------------
+# The real backend joins an --internal shared network (docker's no-egress
+# network: containers reach each other by name, nothing routes out) and the
+# running web container attaches to it live via `docker network connect` —
+# no restart. Caddy's reverse_proxy `backend:8001` resolves through the
+# container's embedded DNS, so /api flips from 502 to 200.
+if [[ -n "$BACKEND_IMAGE" ]]; then
+  echo "== phase 2: real backend ($BACKEND_IMAGE) joins an --internal network, proxy flips 502 -> 200 =="
+
+  # Assertion 9 (set-up): the shared network is docker-internal — by
+  # construction it has no route to the outside world.
+  docker network create --internal "$NET" >/dev/null
+  INTERNAL=$(docker network inspect "$NET" -f '{{.Internal}}' || true)
+  [[ "$INTERNAL" == "true" ]] || { echo "  FAIL: expected internal network, got Internal=$INTERNAL" >&2; exit 1; }
+  echo "  OK: network $NET is docker-internal (no external route by construction)"
+
+  # The Caddyfile proxies to `backend:8001` by name — the network alias makes
+  # the backend resolve as `backend` on the shared network without needing a
+  # fixed container name.
+  docker run -d --network "$NET" --network-alias backend --name "$BACKEND" "$BACKEND_IMAGE" >/dev/null
+  RC=$(docker inspect --format '{{.RestartCount}}' "$BACKEND")
+  [[ "$RC" == "0" ]] || { echo "  FAIL: backend restarted ($RC times) — boot crash" >&2; docker logs "$BACKEND" 2>&1 | tail -20 >&2; exit 1; }
+  echo "  OK: backend container started cleanly (RestartCount=0)"
+
+  # Attach the web container to the shared network live — this is the moment
+  # the proxy gains a reachable upstream.
+  docker network connect "$NET" "$NAME"
+
+  # The flip: poll /api/health until Caddy's upstream DNS + dial succeed.
+  FLIPPED=""
+  for i in $(seq 1 20); do
+    S=$(status "$URL/api/health")
+    if [[ "$S" == *" 200"* ]]; then FLIPPED=1; break; fi
+    sleep 1
+  done
+  if [[ -z "$FLIPPED" ]]; then
+    echo "  FAIL: /api/health never flipped to 200 (last: '$(status "$URL/api/health")')" >&2
+    docker logs "$BACKEND" 2>&1 | tail -15 >&2
+    exit 1
+  fi
+  echo "  OK: /api/health 502 -> 200 — the real backend answered through the proxy"
+
+  # Assertion 7: end to end through the proxy.
+  RUNS=$(docker exec "$NAME" wget -q -O - "$URL/api/runs" || true)
+  echo "$RUNS" | grep -q '^\[' || { echo "  FAIL: /api/runs not a JSON array: ${RUNS:0:80}" >&2; exit 1; }
+  echo "  OK: /api/runs -> 200 JSON array through the proxy (end to end)"
+
+  # Assertion 8: the backend itself answers on loopback (probed with its own
+  # python runtime — slim has no wget).
+  BSTATUS=$(docker exec "$BACKEND" python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=5).status)" 2>/dev/null || true)
+  [[ "$BSTATUS" == "200" ]] || { echo "  FAIL: backend /health -> '$BSTATUS'" >&2; exit 1; }
+  echo "  OK: backend /health -> 200 on its own loopback"
+
+  # Assertion 9 (behavioral): the pair cannot reach outside the host — a
+  # socket connect from the backend to a TEST-NET-3 address must fail (the
+  # host drops the packets; nothing ever leaves the machine).
+  REACHED=$(docker exec "$BACKEND" python -c "import socket; socket.create_connection(('203.0.113.9', 53), timeout=3); print('REACHED')" 2>&1 || true)
+  if [[ "$REACHED" == *"REACHED"* ]]; then
+    echo "  FAIL: backend reached an external TEST-NET address from the internal network" >&2
+    exit 1
+  fi
+  echo "  OK: external socket connect fails from the internal network (zero egress)"
+
+  echo "✓ phase 2: web + real backend serve end to end on a zero-egress shared network"
+fi
