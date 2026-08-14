@@ -12,12 +12,17 @@
  * sweep width — the min-width bug class the verify.sh Playwright gate
  * catches, shown clean) → The gates run (the three verify.sh Playwright
  * gates — live monitor, alert lifecycle, layout sweep — executed against
- * this very stack, results rendered as a live panel: 3/3 green).
+ * this very stack, results rendered as a live panel: 3/3 green) →
+ * The air-gap story (the offline job's four gates — static artifact scan,
+ * CLI network matrix, backend egress contract, no-config runtime egress —
+ * plus the measured cold-start harness, all run live against this stack
+ * and rendered as a verdict panel: 4/4 green + the latency number).
  *
  * Output:
  *   demo/deck-demo.webm              — the full recording (cursor + subtitles)
  *   demo/screenshots/deck/0X-*.png   — per-step stills (01–19; 20–26 findings;
- *                                      27–28 quality gates; 29 the gates run)
+ *                                      27–28 quality gates; 29 the gates run;
+ *                                      30 the air-gap story: four gates + cold start)
  *
  * Prereqs (once):
  *   cd demo && npm i
@@ -200,7 +205,7 @@ async function shot(page, name) {
 // -- acts ----------------------------------------------------------------------
 
 async function actOverview(page) {
-  log(`Act 1/7 — Overview: the command deck`);
+  log(`Act 1/8 — Overview: the command deck`);
   await page.goto(`${WEBAPP}/`, { waitUntil: "domcontentloaded" });
   await injectCursor(page);
   await injectSubtitleBar(page);
@@ -241,7 +246,7 @@ async function actOverview(page) {
 }
 
 async function actVault(page) {
-  log("Act 2/7 — Sample vault: the binary library");
+  log("Act 2/8 — Sample vault: the binary library");
   await page.goto(`${WEBAPP}/samples`, { waitUntil: "domcontentloaded" });
   await injectCursor(page);
   await injectSubtitleBar(page);
@@ -275,7 +280,7 @@ async function actVault(page) {
 }
 
 async function actMonitor(page) {
-  log("Act 3/7 — Monitor: detonate a sample");
+  log("Act 3/8 — Monitor: detonate a sample");
   await page.goto(`${WEBAPP}/monitor`, { waitUntil: "domcontentloaded" });
   await injectCursor(page);
   await injectSubtitleBar(page);
@@ -317,7 +322,7 @@ async function actMonitor(page) {
 }
 
 async function actFindings(page) {
-  log("Act 5/7 — Findings: triage the alert queue");
+  log("Act 5/8 — Findings: triage the alert queue");
   await page.goto(`${WEBAPP}/findings`, { waitUntil: "domcontentloaded" });
   await injectCursor(page);
   await injectSubtitleBar(page);
@@ -376,7 +381,7 @@ async function actFindings(page) {
 }
 
 async function actQualityGate(page, rid) {
-  log("Act 6/7 — Quality gates: the layout sweep + live queue badges");
+  log("Act 6/8 — Quality gates: the layout sweep + live queue badges");
   // The verify.sh Playwright gate sweeps every route at 1440 / 1280 / 1024px
   // and fails on any horizontal overflow (the min-width bug class). 1280px
   // is where the History charts actually blew out before the ResizeObserver
@@ -415,21 +420,27 @@ async function actQualityGate(page, rid) {
 
 const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const tail = (s, n = 4) => s.split("\n").filter(Boolean).slice(-n).join("\n");
+// Gate outputs carry ANSI colors, CR, and progress-bar NULs — strip them so
+// the panel renders clean text.
+const clean = (s) => s.replace(/\x1b\[[0-9;]*m/g, "").replace(/\0/g, "").replace(/\r/g, "");
 
-/** Run one verify.sh Playwright gate against THIS stack and summarize it. */
-async function runGate(name, script) {
+/** Run one gate command against THIS stack and summarize it. */
+async function runGateCmd(name, cmd, args) {
   try {
-    const { stdout, stderr } = await execFileP("node", [script, "--web", WEBAPP, "--api", API], {
-      cwd: join(__dirname),
-    });
+    const { stdout, stderr } = await execFileP(cmd, args, { cwd: join(__dirname) });
     return { name, ok: true, out: `${stdout}\n${stderr}` };
   } catch (err) {
     return { name, ok: false, out: `${err.stdout ?? ""}\n${err.stderr ?? ""}\n${err.message}` };
   }
 }
 
+/** Run one verify.sh Playwright gate against THIS stack and summarize it. */
+async function runGate(name, script) {
+  return runGateCmd(name, "node", [script, "--web", WEBAPP, "--api", API]);
+}
+
 async function actGates(page) {
-  log("Act 7/7 — the verify.sh gates, run live");
+  log("Act 7/8 — the verify.sh gates, run live");
   await page.goto(`${WEBAPP}/history`, { waitUntil: "domcontentloaded" });
   await injectCursor(page);
   await injectSubtitleBar(page);
@@ -493,8 +504,81 @@ async function actGates(page) {
   await page.setViewportSize({ width: VIEW.width, height: VIEW.height });
 }
 
+async function actAirgap(page) {
+  log("Act 8/8 — the air-gap story: four gates + measured cold start");
+  // Backdrop: the Overview — the cold-start anchor (the session count in the
+  // status cluster) lives here, and this is the page the harness measures.
+  await page.goto(`${WEBAPP}/`, { waitUntil: "domcontentloaded" });
+  await injectCursor(page);
+  await injectSubtitleBar(page);
+  await showSubtitle(page, "Air-gap by default — zero external requests, proven per push");
+  await page.waitForTimeout(1400);
+
+  const ROOT = join(__dirname, "..");
+  const PY = join(ROOT, ".venv", "bin", "python");
+  const S = join(ROOT, "scripts");
+
+  // The offline job's four gates: static artifact scan, CLI loopback-only
+  // matrix, backend egress contract, and the runtime no-config egress probe
+  // (boots the app in-process and proves zero config = zero httpx calls).
+  const gates = [
+    await runGateCmd("Static artifact gate", PY, [join(S, "gate_airgap_artifacts.py"), "--dist", join(ROOT, "frontend", "dist")]),
+    await runGateCmd("CLI network gate", PY, [join(S, "gate_cli_network.py")]),
+    await runGateCmd("Backend egress contract", PY, [join(S, "gate_backend_egress.py")]),
+    await runGateCmd("No-config runtime egress", PY, [join(S, "gate_backend_no_config_egress.py")]),
+  ];
+  // The measured cold start — the same harness the offline job enforces a
+  // budget on (baseline / airgap / worstcase, cache disabled).
+  const cold = await runGateCmd("Cold-start latency", "node", [
+    join(__dirname, "measure-airgap-load.mjs"), "--web", WEBAPP, "--iters", "3",
+  ]);
+
+  const card = (g, linesN) => {
+    const color = g.ok ? "#3FA796" : "#C4453B";
+    const verdict = g.ok ? "PASS" : "FAIL";
+    const lines = tail(clean(g.out), linesN);
+    return `<div style="border:1px solid ${color}55;border-left:3px solid ${color};border-radius:8px;padding:10px 14px;margin:10px 0;background:rgba(20,23,28,0.6)">
+      <div style="display:flex;justify-content:space-between;align-items:baseline">
+        <span style="font:600 13px/1.2 'IBM Plex Mono',monospace;color:#E4E7EB">${esc(g.name)}</span>
+        <span style="font:700 12px/1.2 'IBM Plex Mono',monospace;color:${color}">${verdict}</span>
+      </div>
+      <pre style="margin:6px 0 0;font:11px/1.5 'IBM Plex Mono',monospace;color:#9AA3AF;white-space:pre-wrap">${lines}</pre>
+    </div>`;
+  };
+
+  const all = gates.every((g) => g.ok);
+  const panel = gates.map((g) => card(g, 4)).join("") + card(cold, 10);
+
+  await page.evaluate(({ panel, all }) => {
+    const host = document.createElement("div");
+    host.id = "gates-panel";
+    host.innerHTML =
+      `<div style="font:700 14px/1.3 'IBM Plex Sans',sans-serif;color:#E4E7EB;margin-bottom:4px">The air-gap story — ${all ? "4/4 gates green" : "gate failure"} · cold start measured</div>` +
+      `<div style="font:11px/1.4 'IBM Plex Mono',monospace;color:#7A8290;margin-bottom:10px">python scripts/gate_airgap_artifacts.py · gate_cli_network.py · gate_backend_egress.py · gate_backend_no_config_egress.py — plus node demo/measure-airgap-load.mjs against this stack</div>` +
+      panel;
+    Object.assign(host.style, {
+      position: "fixed",
+      inset: "96px 28px 28px",
+      zIndex: "9999",
+      overflow: "auto",
+      background: "rgba(10,12,16,0.95)",
+      border: `1px solid ${all ? "rgba(63,167,150,0.45)" : "rgba(196,69,59,0.5)"}`,
+      borderRadius: "12px",
+      padding: "18px 20px",
+      boxShadow: "0 18px 50px rgba(0,0,0,0.55)",
+    });
+    document.body.appendChild(host);
+  }, { panel, all });
+
+  await page.waitForTimeout(1800);
+  await showSubtitle(page, all ? "Zero external requests · zero hung requests · ~0.3s cold start — the offline job's gates, live" : "Gate failure surfaced in the panel");
+  await shot(page, "30-airgap-gates");
+  await page.evaluate(() => document.getElementById("gates-panel")?.remove());
+  await showSubtitle(page, "");
+}
+
 async function actRunDetail(page, rid) {
-  log(`Act 4/7 — Run detail: ${rid}`);
+  log(`Act 4/8 — Run detail: ${rid}`);
   await page.goto(`${WEBAPP}/runs/${rid}`, { waitUntil: "domcontentloaded" });
   await injectCursor(page);
   await injectSubtitleBar(page);
@@ -588,6 +672,7 @@ async function main() {
     await actFindings(page); // triage the alerts the detonation just created
     await actQualityGate(page, rid); // the layout sweep width, shown clean
     await actGates(page); // run the three verify.sh Playwright gates, live
+    await actAirgap(page); // the offline job's four gates + the measured cold start
     log("");
     log("✅ Walkthrough complete");
   } finally {

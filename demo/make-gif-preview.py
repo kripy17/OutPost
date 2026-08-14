@@ -7,14 +7,15 @@ A full 128s GIF at a watchable resolution would be 20+ MB, so this extracts a
 Loops forever; renders in any browser/git host without a video player.
 
 Highlight windows are in the TRIMMED timeline (see trim-demo.py for the
-segment map):
-  Act 1  Overview       15.5-20.0s  detection-volume chart (the bright one)
-  Act 2  Vault          34.0-39.0s  library table pan
-  Act 3  Monitor        65.0-71.0s  live analysis streaming
-  Act 4  Run detail     84.0-87.0s  process tree with risk halos
-  Act 5  Findings       100.5-110.5s triage lifecycle + live tab badges
-  Act 6  Quality gates  118.5-131.0s layout sweep width, shown clean
-  Act 7  The gates run  135.7-142.0s verify.sh Playwright gates, 3/3 green
+segment map; 2026-08-14 re-record, 150.3s trimmed):
+  Act 1  Overview       13.5-17.4s  detection-volume chart (the bright one)
+  Act 2  Vault          44.7-47.2s  library table pan
+  Act 3  Monitor        61.4-64.9s  live analysis streaming
+  Act 4  Run detail     83.3-85.6s  process tree with risk halos
+  Act 5  Findings       104.6-109.3s triage lifecycle + live tab badges
+  Act 6  Quality gates  114.1-121.9s layout sweep width, shown clean
+  Act 7  The gates run  138.0-139.6s verify.sh Playwright gates, 3/3 green
+  Act 8  Air-gap story  142.9-149.9s four gates + measured cold start
 
 Usage: .venv/bin/python demo/make-gif-preview.py [--out demo/deck-demo-preview.gif]
 """
@@ -29,23 +30,24 @@ import sys
 SRC = os.path.join(os.path.dirname(__file__), "deck-demo-trimmed.webm")
 
 WINDOWS: list[tuple[float, float]] = [
-    (15.5, 20.0),   # Act 1 — Overview, detection volume
-    (34.0, 39.0),   # Act 2 — Vault, table pan
-    (65.0, 71.0),   # Act 3 — Monitor, live analysis
-    (84.0, 87.0),   # Act 4 — Run detail, process tree
-    (100.5, 110.5), # Act 5 — Findings, triage + live tab badges
-    (118.5, 131.0), # Act 6 — Quality gates, layout-sweep width clean
-    (135.7, 142.0), # Act 7 — the verify.sh gates run, 3/3 green panel
+    (13.5, 17.4),   # Act 1 — Overview, detection volume
+    (44.7, 47.2),   # Act 2 — Vault, table pan
+    (61.4, 64.9),   # Act 3 — Monitor, live analysis
+    (83.3, 85.6),   # Act 4 — Run detail, process tree
+    (104.6, 109.3), # Act 5 — Findings, triage + live tab badges
+    (114.1, 121.9), # Act 6 — Quality gates, layout-sweep width clean
+    (138.0, 139.6), # Act 7 — the verify.sh gates run, 3/3 green panel
+    (142.9, 149.9), # Act 8 — the air-gap story: four gates + cold start
 ]
 
 # README hero presets: two scenes each, 2x the preview width.
 HERO_OVERVIEW_WINDOWS: list[tuple[float, float]] = [
-    (15.5, 19.5),   # detection-volume chart
-    (22.5, 27.0),   # live findings feed
+    (13.5, 16.4),   # detection-volume chart
+    (24.5, 29.1),   # live findings feed
 ]
 HERO_LIVE_WINDOWS: list[tuple[float, float]] = [
-    (65.0, 71.0),   # Monitor — live analysis streaming
-    (84.5, 89.5),   # Run detail — process tree with halos + network
+    (61.4, 63.5),   # Monitor — live analysis streaming
+    (83.3, 86.9),   # Run detail — process tree with halos + network
 ]
 
 WIDTH = 480
