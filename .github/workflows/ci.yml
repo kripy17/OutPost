@@ -138,6 +138,21 @@ jobs:
         # separately by the post-deploy walk, so this smoke runs zero-config.
         run: bash scripts/smoke-backend-image.sh --image outpost-backend:ci
 
+      - name: Walk the post-deploy checklist against the SHIPPED compose stack
+        # The real end-to-end of the deploy surface: brings up the actual
+        # deploy/docker-compose.prod.yml stack (real Caddy image + real
+        # backend container, OUTPOST_HOST=localhost so Caddy's auto-HTTPS
+        # serves its internal CA) and asserts the four post-deploy checklist
+        # items over real TLS — /api/health -> ok through the proxy, /api/runs
+        # 401 without / 200 with an admin token, /auth/login + /auth/me
+        # enabled, and the OUTPOST_AGENT_TOKEN flow (heartbeat 401 bare / 200
+        # with the token + host online, token refused outside telemetry).
+        # This is the one leg that proves the compose file, its env
+        # interpolation, and the Caddy -> backend wiring as the SHIPPED
+        # containers, complementing the docker-less post-deploy walk
+        # (scripts/post_deploy_walk.py) that runs in verify.sh.
+        run: bash scripts/walk-compose-stack.sh
+
       - name: Validate the Caddyfile
         # caddy validate provisions the config without starting the server.
         # OUTPOST_HOST must be set or the {$OUTPOST_HOST} placeholder expands
