@@ -90,12 +90,19 @@ on the next deploy.
 
 ## Post-deploy checklist
 
-The first four items run automatically on every push as verify.sh's
+The four items run automatically on every push in two forms: verify.sh's
 `Post-deploy walk` step (`scripts/post_deploy_walk.py` — fail-closed backend
-behind a self-signed TLS proxy, no Docker needed). On a live host, verify
-manually:
+behind a self-signed TLS proxy, no Docker needed) and, on CI's docker host,
+`scripts/walk-compose-stack.sh` — which brings up the **actual shipped compose
+stack** (real Caddy image + real backend container, `OUTPOST_HOST=localhost`
+→ Caddy auto-HTTPS with its internal CA) and asserts the same four items
+over real TLS. On a live host, verify manually:
 
-1. `curl -k https://<host>/health` → `{"status":"ok"}` (TLS verified).
+1. `curl -k https://<host>/api/health` → `{"status":"ok"}` (TLS verified).
+   Note the `/api` prefix: the Caddyfile proxies only `/api/*` (prefix
+   stripped) to the backend and serves everything else as the SPA fallback,
+   so `/health` returns `index.html` and the honest backend health JSON
+   comes through `/api/health`.
 2. `curl -s https://<host>/api/runs` **without** a token → `401` (auth enforced).
 3. Log in via the webapp (Settings → Security) with the admin password → the
    app loads real data and `/auth/me` reports `enabled: true`.
