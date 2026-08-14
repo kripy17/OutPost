@@ -66,7 +66,7 @@ if [[ "$SIZE_MB" -gt "$FAIL_MB" ]]; then
 fi
 
 if [[ "$SIZE_MB" -gt "$BUDGET_MB" ]]; then
-  MSG="⚠ web image ${SIZE_MB} MB exceeds the ${BUDGET_MB} MB soft budget (+$((SIZE_MB - BUDGET_MB)) MB over). Check dist size / build-chain bloat — the runtime image should be caddy + static assets only."
+  MSG="⚠ ${NAME} ${SIZE_MB} MB exceeds the ${BUDGET_MB} MB soft budget (+$((SIZE_MB - BUDGET_MB)) MB over). Check what the image is now carrying — the runtime image should stay close to its base + runtime deps only."
   echo "  $MSG"
   if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
     {
