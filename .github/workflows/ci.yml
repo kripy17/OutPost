@@ -208,6 +208,18 @@ jobs:
         # (network available), so the runtime test runs with zero egress.
         run: docker build -f deploy/Dockerfile.airgap-ci -t outpost-airgap-ci .
 
+      - name: Gate the air-gap image size
+        # Same bloat gate as the shipped images, calibrated for the test
+        # HARNESS (GB-class, not MB-class): node:22-bookworm + python3 + a
+        # project venv + frontend node_modules + Playwright/Chromium. The
+        # budget guards against the harness silently outgrowing its purpose
+        # (extra Playwright browsers, apt creep, dependency bloat — all of
+        # which cost CI minutes on every push). Soft budget warns on the run
+        # summary; the hard ceiling fails the job. Provisional calibration —
+        # the measured size prints here on every run and the budgets are
+        # tuned once the first measurement lands.
+        run: bash scripts/check-image-size.sh --image outpost-airgap-ci --budget-mb 2048 --fail-mb 2560
+
       - name: Run the air-gap bundle at production volume, network namespace empty
         # OUTPOST_OFFLINE_VOLUME=1 seeds a deterministic ~11k-event store
         # (scripts/seed_volume.py) so the guarantee is proven at production
