@@ -86,6 +86,8 @@ The size-gate budgets are grounded in real CI measurements, not guesses:
 | `outpost-web:ci` (caddy:2-alpine + dist only) | **60 MB** (63,742,559 B, commit `9e127aa`) | 100 MB | 150 MB |
 | `outpost-backend:ci` (python:3.12-slim + pip deps + app) | **191 MB** (200,772,677 B, commit `326f97c`) | 300 MB | 400 MB |
 
+> **Last measured:** web 60 MB / backend 191 MB — badge job @ `326f97c` (2026-08-14).
+
 **Calibrate-on-first-run procedure:** every run prints the measured size, so
 when a baseline legitimately shifts — a base-image major bump, a new runtime
 dependency, a new image — take the freshly measured number, adjust
