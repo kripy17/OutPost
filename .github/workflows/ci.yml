@@ -70,6 +70,13 @@ jobs:
         # doc-count step, so nothing is skipped, just failed earlier.
         run: bash scripts/refresh-badges.sh --check
 
+      - name: Fast-fail on image-budget drift (static gate)
+        # The docs/17 size table vs the ci.yml size-gate flags + stamp data
+        # — pure regex over source, no yaml, no docker, milliseconds. A
+        # budget changed in either file fails the push here (~1.5 min in)
+        # instead of after the full sweep; verify.sh re-checks it later.
+        run: .venv/bin/python scripts/gate_image_budget_docs.py
+
       - name: Run the full verification sweep
         run: bash verify.sh
 

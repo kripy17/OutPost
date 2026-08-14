@@ -70,8 +70,12 @@ interactive render exceeds a budget).
 2. **`bash scripts/refresh-badges.sh --check`** (~1.5 min in) — a stale badge
    or README count fails before the 3.5-min sweep. Collect-only
    (`pytest --collect-only` + `vitest list`), so it costs seconds.
-3. **`bash verify.sh`** — the full sweep (tests, soaks, layout sweep,
-   post-deploy walk, badge refresh gate).
+3. **`.venv/bin/python scripts/gate_image_budget_docs.py`** (same tier) — a
+   budget drifted between docs/17 and the ci.yml size-gate flags (or a
+   stamp/measured column out of sync) fails the push milliseconds later,
+   before the sweep.
+4. **`bash verify.sh`** — the full sweep (tests, soaks, layout sweep,
+   post-deploy walk, badge refresh gate, image-budget gate re-check).
 
 A dedicated `Refresh dynamic badges` job runs on the **weekly schedule and
 `workflow_dispatch` only** — it recomputes the four badge payloads from
