@@ -224,6 +224,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     permissions:
       contents: write
+      pull-requests: write  # gh pr create/merge --auto needs this scope
     steps:
       - uses: actions/checkout@v7
         with:
