@@ -39,6 +39,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Dependency-free health check — node slim images ship no curl.
+health() { "$PY" -c 'import sys, urllib.request; urllib.request.urlopen(sys.argv[1], timeout=2)' "$1" 2>/dev/null; }
+
 echo "── 1 · boot backend (loopback :$PORT) ──"
 # CORS_ORIGINS must match the frontend origin: the production build baked
 # VITE_API_URL=http://127.0.0.1:$PORT, and the browser at localhost:$WEB is
@@ -49,10 +52,10 @@ echo "── 1 · boot backend (loopback :$PORT) ──"
   "$PY" -m uvicorn app.main:app --host 127.0.0.1 --port "$PORT" >"$BACK_LOG" 2>&1) &
 BACK_PID=$!
 for _ in $(seq 1 30); do
-  curl -sf "http://127.0.0.1:$PORT/meta" >/dev/null 2>&1 && break
+  health "http://127.0.0.1:$PORT/meta" && break
   sleep 1
 done
-curl -sf "http://127.0.0.1:$PORT/meta" >/dev/null || {
+health "http://127.0.0.1:$PORT/meta" || {
   echo "ERROR: backend never answered"; cat "$BACK_LOG"; exit 1; }
 
 echo "── 2 · seed campaign + live-sourced run ──"
@@ -63,10 +66,10 @@ echo "── 3 · boot frontend preview (production build, :$WEB) ──"
 (cd "$ROOT/frontend" && npx vite preview --port "$WEB" --strictPort >"$WEB_LOG" 2>&1) &
 WEB_PID=$!
 for _ in $(seq 1 30); do
-  curl -sf "http://localhost:$WEB" >/dev/null 2>&1 && break
+  health "http://localhost:$WEB" && break
   sleep 1
 done
-curl -sf "http://localhost:$WEB" >/dev/null || {
+health "http://localhost:$WEB" || {
   echo "ERROR: preview never answered"; cat "$WEB_LOG"; exit 1; }
 
 echo "── 4 · four-gate bundle + cold-start latency budget ──"
