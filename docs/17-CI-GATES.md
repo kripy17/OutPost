@@ -109,7 +109,14 @@ defaults when a step passes no flags) must match its row here, the
 measured column must match `badges/image-sizes.json`, a row with no gate
 step is drift too, and **every table row must carry its own `Last
 measured` stamp line** — a fourth image can't be documented without its
-trend data. Changing a budget in either file fails the sweep.
+trend data. Changing a budget in either file fails the sweep. Every
+drift direction prints the exact `→ fix:` line that repairs it (a
+corrected row, the ci.yml step, the stamp line, or the
+`refresh-badges.sh --commit/--recover` command to regenerate
+`image-sizes.json`) — and `scripts/test_image_budget_hints.py` (a verify
+step, `Image-budget hints`) gates the gating: it mutates each of the nine
+drift directions in a throwaway fixture and asserts the gate exits 1 with
+the expected hint, so a refactor that drops a hint fails the sweep.
 
 **Calibrate-on-first-run procedure:** every run prints the measured size, so
 when a baseline legitimately shifts — a base-image major bump, a new runtime
