@@ -85,17 +85,21 @@ The size-gate budgets are grounded in real CI measurements, not guesses:
 |---|---|---|---|
 | `outpost-web:ci` (caddy:2-alpine + dist only) | **60 MB** (63,742,559 B, commit `9e127aa`) | 100 MB | 150 MB |
 | `outpost-backend:ci` (python:3.12-slim + pip deps + app) | **191 MB** (200,772,677 B, commit `326f97c`) | 300 MB | 400 MB |
+| `outpost-airgap-ci` (test harness: node:22 + python3 + venv + frontend deps + Playwright/Chromium) | **1724 MB** (1,807,945,795 B, commit `f4f4ddf`) | 2048 MB | 2560 MB |
 
-> **Last measured:** web 60 MB / backend 191 MB — badge job @ `326f97c` (2026-08-14).
+> **Last measured:** web 60 MB / backend 191 MB / airgap 1724 MB — badge job @ `f4f4ddf` (2026-08-14).
 
 **Calibrate-on-first-run procedure:** every run prints the measured size, so
 when a baseline legitimately shifts — a base-image major bump, a new runtime
 dependency, a new image — take the freshly measured number, adjust
-`--budget-mb`/`--fail-mb` in the Deploy job (and this table), and let the
-next run confirm. The headroom (≈ 1.6–1.7× the baseline) is deliberate: it
-absorbs legitimate growth while still catching a leak (node_modules / venv /
-test-fixtures scale adds hundreds of MB in one layer). A budget should only
-be raised with a measurement in hand — never pre-emptively.
+`--budget-mb`/`--fail-mb` in the Deploy/air-gap jobs (and this table), and
+let the next run confirm. The headroom is deliberate: the shipped images sit
+at ≈ 1.6–1.7× their baseline (absorbing legitimate growth while still
+catching a layer-scale leak — node_modules / venv / test fixtures add
+hundreds of MB in one step); the air-gap harness sits tighter at ≈ 1.19×
+because its growth sources are lockfile-pinned, so a >300 MB jump means
+something structural (a second Playwright browser, apt creep). A budget
+should only be raised with a measurement in hand — never pre-emptively.
 
 ## Branch protection on `main`
 

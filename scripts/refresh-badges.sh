@@ -54,12 +54,15 @@ SIZE_JSON="$ROOT/badges/image-sizes.json"
 DOCS_STAMP="$ROOT/docs/17-CI-GATES.md"
 WEB_MB=""
 BACKEND_MB=""
+AIRGAP_MB=""
 if command -v docker >/dev/null 2>&1 \
   && docker image inspect outpost-web:measure >/dev/null 2>&1 \
-  && docker image inspect outpost-backend:measure >/dev/null 2>&1; then
+  && docker image inspect outpost-backend:measure >/dev/null 2>&1 \
+  && docker image inspect outpost-airgap:measure >/dev/null 2>&1; then
   WEB_MB=$(( $(docker image inspect --format '{{.Size}}' outpost-web:measure) / 1024 / 1024 ))
   BACKEND_MB=$(( $(docker image inspect --format '{{.Size}}' outpost-backend:measure) / 1024 / 1024 ))
-  echo "image sizes measured: web=${WEB_MB} MB, backend=${BACKEND_MB} MB"
+  AIRGAP_MB=$(( $(docker image inspect --format '{{.Size}}' outpost-airgap:measure) / 1024 / 1024 ))
+  echo "image sizes measured: web=${WEB_MB} MB, backend=${BACKEND_MB} MB, airgap=${AIRGAP_MB} MB"
 else
   echo "image sizes not measured (docker + :measure images unavailable)"
 fi
@@ -74,7 +77,7 @@ size_date="$(date -u +%Y-%m-%d)"
 # Rebuild the stamp line exactly as it must appear in docs/17.
 stamp_line() {
   if [[ -n "$WEB_MB" ]]; then
-    echo "> **Last measured:** web ${WEB_MB} MB / backend ${BACKEND_MB} MB — badge job @ \`${size_commit}\` (${size_date})."
+    echo "> **Last measured:** web ${WEB_MB} MB / backend ${BACKEND_MB} MB / airgap ${AIRGAP_MB} MB — badge job @ \`${size_commit}\` (${size_date})."
   else
     echo ""
   fi
@@ -128,13 +131,18 @@ case "$MODE" in
     if [ -f "$SIZE_JSON" ]; then
       W=$(json_get "$SIZE_JSON" web_mb)
       B=$(json_get "$SIZE_JSON" backend_mb)
+      A=$(json_get "$SIZE_JSON" airgap_mb)
       grep -q '^> \*\*Last measured:\*\*' "$DOCS_STAMP" || { echo "  stale: docs/17 has no 'Last measured' stamp" >&2; stale=1; }
       if [[ -n "$W" && -n "$B" ]] && ! grep -q "web ${W} MB / backend ${B} MB" "$DOCS_STAMP"; then
         echo "  stale: docs/17 size stamp != badges/image-sizes.json (web ${W} / backend ${B})" >&2
         stale=1
       fi
-      if [[ -n "$WEB_MB" ]] && { [ "$WEB_MB" != "$W" ] || [ "$BACKEND_MB" != "$B" ]; }; then
-        echo "  stale: measured (web ${WEB_MB} / backend ${BACKEND_MB}) != committed image-sizes.json (web ${W} / backend ${B})" >&2
+      if [[ -n "$A" ]] && ! grep -q "airgap ${A} MB" "$DOCS_STAMP"; then
+        echo "  stale: docs/17 size stamp lacks the airgap size (${A} MB)" >&2
+        stale=1
+      fi
+      if [[ -n "$WEB_MB" ]] && { [ "$WEB_MB" != "$W" ] || [ "$BACKEND_MB" != "$B" ] || [ "$AIRGAP_MB" != "$A" ]; }; then
+        echo "  stale: measured (web ${WEB_MB} / backend ${BACKEND_MB} / airgap ${AIRGAP_MB}) != committed image-sizes.json (web ${W} / backend ${B} / airgap ${A})" >&2
         stale=1
       fi
     else
@@ -164,8 +172,8 @@ printf '%s\n' "$R_BADGE" > "$ROOT/badges/rules.json"
 printf '%s\n' "$CM_BADGE" > "$ROOT/badges/commands.json"
 printf '%s\n' "$CV_BADGE" > "$ROOT/badges/coverage.json"
 if [[ -n "$WEB_MB" ]]; then
-  printf '{"web_mb":%s,"backend_mb":%s,"commit":"%s","date":"%s"}\n' \
-    "$WEB_MB" "$BACKEND_MB" "$size_commit" "$size_date" > "$SIZE_JSON"
+  printf '{"web_mb":%s,"backend_mb":%s,"airgap_mb":%s,"commit":"%s","date":"%s"}\n' \
+    "$WEB_MB" "$BACKEND_MB" "$AIRGAP_MB" "$size_commit" "$size_date" > "$SIZE_JSON"
   write_size_stamp || { echo "  could not rewrite the docs/17 size stamp (script failed or anchor missing)" >&2; exit 2; }
 fi
 
@@ -174,7 +182,7 @@ if git diff --quiet -- badges/ docs/17-CI-GATES.md; then
   exit 0
 fi
 SIZE_NOTE=""
-[[ -n "$WEB_MB" ]] && SIZE_NOTE=" — sizes web ${WEB_MB} MB / backend ${BACKEND_MB} MB"
+[[ -n "$WEB_MB" ]] && SIZE_NOTE=" — sizes web ${WEB_MB} MB / backend ${BACKEND_MB} MB / airgap ${AIRGAP_MB} MB"
 TITLE="chore: refresh badges (tests $SUM, rules $RULES, tactics $COV, commands $CMDS)$SIZE_NOTE"
 git config user.name "${GIT_AUTHOR_NAME:-github-actions[bot]}"
 git config user.email "${GIT_AUTHOR_EMAIL:-41898282+github-actions[bot]@users.noreply.github.com}"
