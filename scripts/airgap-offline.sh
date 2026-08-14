@@ -17,6 +17,13 @@
 # Env:  OUTPOST_OFFLINE_PORT (default 8001), OUTPOST_OFFLINE_WEB (default
 # 5174), OUTPOST_ITERS (default 3). Names are prefix-scoped on purpose —
 # generic PORT/WEB collide with tooling that exports PORT=0.
+#
+# Volume mode (production-volume proof): the default run proves the guarantee
+# on a tiny seeded store. OUTPOST_OFFLINE_VOLUME=1 seeds a deterministic
+# ~11k-event synthetic store (scripts/seed_volume.py) and runs the whole
+# bundle against it; OUTPOST_OFFLINE_DB=<path> boots against a COPY of any
+# given DB (e.g. the real soak store) — the original is never touched. The
+# e2e gates always create their own fresh runs through the API on top.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -30,6 +37,11 @@ BACK_LOG="$(mktemp)"
 WEB_LOG="$(mktemp)"
 BACK_PID=""
 WEB_PID=""
+VOLUME_SRC="${OUTPOST_OFFLINE_DB:-}"
+if [ "${OUTPOST_OFFLINE_VOLUME:-0}" = "1" ] && [ -z "$VOLUME_SRC" ]; then
+  VOLUME_SRC="$(mktemp -u).db"
+  DATABASE_PATH="$VOLUME_SRC" "$PY" "$ROOT/scripts/seed_volume.py" >/dev/null
+fi
 
 cleanup() {
   [ -n "$BACK_PID" ] && kill "$BACK_PID" 2>/dev/null || true
@@ -58,8 +70,22 @@ done
 health "http://127.0.0.1:$PORT/meta" || {
   echo "ERROR: backend never answered"; cat "$BACK_LOG"; exit 1; }
 
-echo "── 2 · seed campaign + live-sourced run ──"
-(cd "$ROOT/backend" && DATABASE_PATH="$DB" "$PY" -m app.seed_campaign >/dev/null 2>&1)
+if [ -n "$VOLUME_SRC" ]; then
+  # Copy — the supplied DB is never opened in place.
+  cp "$VOLUME_SRC" "$DB"
+  VOL="$("$PY" -c '
+import sqlite3, sys
+db = sqlite3.connect(sys.argv[1])
+for t in ("events", "runs", "alerts"):
+    print(t, db.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0])
+' "$DB")"
+  echo "── 2 · volume DB loaded (real-soak/production scale) ──"
+  echo "     $VOL" | tr '\n' ' '
+  echo
+else
+  echo "── 2 · seed campaign + live-sourced run ──"
+  (cd "$ROOT/backend" && DATABASE_PATH="$DB" "$PY" -m app.seed_campaign >/dev/null 2>&1)
+fi
 "$PY" "$ROOT/scripts/seed_sweep_live.py" --api "http://127.0.0.1:$PORT" >/dev/null
 
 echo "── 3 · boot frontend preview (production build, :$WEB) ──"
@@ -73,8 +99,15 @@ health "http://localhost:$WEB" || {
   echo "ERROR: preview never answered"; cat "$WEB_LOG"; exit 1; }
 
 echo "── 4 · four-gate bundle + cold-start latency budget ──"
+# Small-store runs stay on the 1000ms budget (they measure ~300ms). At
+# production volume a cold store + fresh browser legitimately takes longer
+# on the first hit — the documented deployment budget (1500ms, see
+# airgap-verify.sh) is the honest limit there, and it is now actually
+# ENFORCED (airgap-verify.sh passes --max-interactive to the harness).
+MAX_BUDGET=1000
+[ -n "$VOLUME_SRC" ] && MAX_BUDGET=1500
 OUTPOST_ITERS="${OUTPOST_ITERS:-3}" \
-  bash "$ROOT/scripts/airgap-verify.sh" --web "http://localhost:$WEB" --max 1000
+  bash "$ROOT/scripts/airgap-verify.sh" --web "http://localhost:$WEB" --max "$MAX_BUDGET"
 
 echo "── 5 · e2e gates (real browser, loopback API) ──"
 (cd "$ROOT/demo" && node e2e-alert-lifecycle.mjs \
@@ -84,3 +117,6 @@ echo "── 5 · e2e gates (real browser, loopback API) ──"
 
 echo
 echo "✓ air-gap offline: all gates + e2es passed with the network namespace empty"
+if [ -n "$VOLUME_SRC" ]; then
+  echo "  production-volume proof: bundle ran against $(echo "$VOL" | tr '\n' ' ')"
+fi

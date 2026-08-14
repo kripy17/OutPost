@@ -59,4 +59,5 @@ if [ "$GATES_ONLY" = 1 ] || [ -z "$WEB" ]; then
 fi
 
 echo "── 5 · Cold-start latency (web=${WEB}, budget ${MAX}ms) ──"
-node "$ROOT/demo/measure-airgap-load.mjs" --web "$WEB" --iters "${OUTPOST_ITERS:-3}"
+node "$ROOT/demo/measure-airgap-load.mjs" --web "$WEB" --iters "${OUTPOST_ITERS:-3}" \
+  --max-interactive "$MAX"

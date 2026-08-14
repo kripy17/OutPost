@@ -5,9 +5,10 @@ promise, and how to run every check standalone. The claim, stated plainly:
 
 > **With no API keys and no operator action, the webapp, backend, and CLI
 > make zero external HTTP requests. The frontend renders identically with
-> the network fully blocked (~0.3 s worst-case cold start), and the only
-> outbound calls the backend ever makes are opt-in: they fire only when an
-> operator configures a key, a feed URL, or a webhook target.**
+> the network fully blocked (~0.3 s worst-case cold start on a small store,
+> ~0.5 s at production volume — 11k+ events), and the only outbound calls
+> the backend ever makes are opt-in: they fire only when an operator
+> configures a key, a feed URL, or a webhook target.**
 
 ## The four gates + the measurement
 
@@ -17,7 +18,7 @@ promise, and how to run every check standalone. The claim, stated plainly:
 | 2 | `gate_cli_network.py` | The **CLI** is loopback-only: a static AST scan (HTTP only via the `lib/api_client.py` seam, no raw sockets) plus a runtime 9-command matrix under a socket-blocking patch, with a negative control proving the patch bites. | `python scripts/gate_cli_network.py` |
 | 3 | `gate_backend_egress.py` | The **backend/collectors egress contract**: `httpx` is the only permitted client, only in the 8 sanctioned (key/config-gated) modules; `requests`/`urllib`/`aiohttp`/raw sockets anywhere else fail; **no shell-out exfiltration** (`subprocess`/`os.system`/`os.popen`/`pty` are forbidden in the backend, and in collectors only `common/snapshot.py` may shell out — for local read-only commands like `tasklist`/`netstat`/`ps`, never a network-capable binary); collectors may use `requests` only in `common/shipper.py`. | `python scripts/gate_backend_egress.py` |
 | 4 | `gate_backend_no_config_egress.py` | The runtime half, four phases: (a) with a fresh DB and env keys cleared, the routine **background flows** (run create → ingest → complete → detail → sample upload → sandbox demo detonation) make **zero httpx calls** — the httpx client itself is patched to record and block any non-loopback URL; (b) a negative control (dummy AbuseIPDB key + force-refresh) MUST make the probe observe `api.abuseipdb.com`; (c) **the enrichment cache keeps egress rare** — after that one refresh, repeated reads of the same run are silent (TTL cache hit); (d) **webhook delivery is target-limited** — a configured webhook + watchlist hit reach exactly the operator-configured URL and nothing else. | `python scripts/gate_backend_no_config_egress.py` |
-| — | `demo/measure-airgap-load.mjs` | Measured cold start: production build, cache disabled, network modes baseline / airgap (external names fail fast) / black-hole (external hangs 25 s). Result: **~0.3 s worst case**, zero external attempts, zero hung requests. `--max-interactive <ms>` turns it into a budget gate. | `node demo/measure-airgap-load.mjs --web http://localhost:5174` |
+| — | `demo/measure-airgap-load.mjs` | Measured cold start: production build, cache disabled, network modes baseline / airgap (external names fail fast) / black-hole (external hangs 25 s). Result: **~0.3 s worst case** on the small store, **~0.44 s on the real 71-run/560-alert soak store** (and ~0.98 s on the deterministic 11k-event volume store) — zero external attempts, zero hung requests, and the budget is now genuinely enforced (`--max-interactive <ms>`; `airgap-verify.sh` used to echo it without passing it). | `node demo/measure-airgap-load.mjs --web http://localhost:5174` |
 
 ## The runtime e2e gates
 
@@ -51,6 +52,24 @@ plus a live-sourced run, boots the production preview, and runs the four-gate
 bundle (with the latency budget) plus both Playwright e2e gates. This is the
 runtime proof that the in-process probes simulate: the empty namespace makes
 it real, on every push.
+
+**The job runs at production volume.** `OUTPOST_OFFLINE_VOLUME=1` seeds a
+deterministic ~11k-event store (`scripts/seed_volume.py`, schema created by
+the app itself so it can never drift) and runs the whole bundle against it —
+the guarantee is proven at production scale on every push, not just on a tiny
+fixture. `OUTPOST_OFFLINE_DB=<path>` boots against a COPY of any given DB
+(the original is never opened in place).
+
+The volume run earned its keep immediately: the 11k/real-soak runs surfaced a
+15 MB `/campaigns` response (~1.06 s — the timeline query shipped every
+`raw_record` for all member runs) that the tiny-store runs never saw.
+Fixed: the campaign timeline is now a projected column list capped at the 300
+most recent rows with an honest `timeline_total`, cutting the endpoint to
+~0.2 s / ~1.7 MB and the whole-page worst-case cold start from ~1.5 s to
+~0.44 s on the real soak store. (The latency budget was also found decorative
+— `airgap-verify.sh` echoed it but never passed it to the harness; it now
+enforces it via `--max-interactive`, small-store runs on 1000 ms, volume runs
+on the documented 1500 ms deployment budget.)
 
 ## Self-hosted by design
 

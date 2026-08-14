@@ -67,7 +67,8 @@ function IocChip({ ioc, tone }: { ioc: CampaignIoc; tone: "accent" | "suspicious
 
 function CampaignCard({ campaign }: { campaign: Campaign }) {
   const shown = campaign.timeline.slice(0, MAX_TIMELINE);
-  const hidden = campaign.timeline.length - shown.length;
+  const total = campaign.timeline_total ?? campaign.timeline.length;
+  const hidden = total - shown.length;
   const iconTone: Record<string, "accent" | "suspicious" | "clean" | "muted"> = {
     ips: "accent",
     registry_keys: "suspicious",
@@ -162,7 +163,7 @@ function CampaignCard({ campaign }: { campaign: Campaign }) {
           <h3 className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-text-muted">
             <Icon name="clock" size={12} className="text-signal" />
             Combined timeline
-            <span className="ml-1 font-normal normal-case text-text-faint/70">{campaign.timeline.length} events across all samples</span>
+            <span className="ml-1 font-normal normal-case text-text-faint/70">{total} events across all samples</span>
           </h3>
           <ol className="max-h-[28rem] space-y-0.5 overflow-y-auto pr-1">
             {shown.map((ev, i) => (
