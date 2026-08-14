@@ -131,8 +131,11 @@ hints`) mutates each of the four `refresh-badges.sh --check` drift
 directions (stale badge payload, missing `Last measured` stamp,
 measured-vs-committed size drift, missing `image-sizes.json`) and asserts
 the `→ fix:` line carries the exact corrected payload/stamp/JSON and
-repairs the fixture back to green (including the follow-on stamp update
-when a JSON rewrite cascades, as `--recover`/`--commit` would perform).
+repairs the fixture back to green. The measured-vs-committed direction
+goes further: it runs the REAL `refresh-badges.sh --recover` against the
+fixture (real ci.yml gates, fake-docker measurements) and asserts the
+regeneration converges to the same green state as fresh — so the
+recovery command itself is proven, not just a hand-rolled repair.
 
 **Calibrate-on-first-run procedure:** every run prints the measured size, so
 when a baseline legitimately shifts — a base-image major bump, a new runtime

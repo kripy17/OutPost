@@ -10,9 +10,11 @@ every direction:
   1. the gate exits 1 AND prints the `→ fix:` line carrying the exact
      corrected artifact (self-explaining), and
   2. applying the hinted fix makes the gate exit 0 (the hint actually
-     repairs — where one fix cascades into a follow-on hint, e.g.
-     rewriting image-sizes.json then updating the matching stamp line,
-     both are applied, exactly as --recover/--commit would).
+     repairs). The measured-vs-committed direction proves this with the
+     REAL recovery command: after the drift, `refresh-badges.sh --recover`
+     is run against the fixture (real gates from ci.yml, real docs/17,
+     fake-docker measurements) and must regenerate the JSON + stamp to the
+     measured value, converging back to the same green state as fresh.
 
 The badge gate computes real counts (pytest --collect-only + vitest list),
 so the fixture self-calibrates: it measures the real backend/collector/CLI
@@ -47,6 +49,7 @@ SRC_FILES = {
     "scripts/refresh-badges.sh": ROOT / "scripts/refresh-badges.sh",
     "scripts/check-image-size.sh": ROOT / "scripts/check-image-size.sh",
     "docs/17-CI-GATES.md": ROOT / "docs/17-CI-GATES.md",
+    ".github/workflows/ci.yml": ROOT / ".github/workflows/ci.yml",  # --recover parses its gates
 }
 
 FAILURES: list[str] = []
@@ -128,6 +131,34 @@ def run_check(tmp: Path, fakebin: Path) -> tuple[int, str]:
         cwd=tmp, env=env, capture_output=True, text=True,
     )
     return p.returncode, p.stdout + p.stderr
+
+
+def run_recover(tmp: Path, fakebin: Path) -> tuple[int, str]:
+    """Run the REAL `--recover` against the fixture.
+
+    Exits 1 at the landing tail (the fixture has no origin remote, so the
+    branch push fails by design) — the regeneration itself is what the
+    caller asserts, via the follow-up --check."""
+    env = dict(os.environ)
+    env["PATH"] = f"{fakebin}:{env['PATH']}"
+    env["PYTHON"] = str(VENV_PY)
+    p = subprocess.run(
+        ["bash", "scripts/refresh-badges.sh", "--recover"],
+        cwd=tmp, env=env, capture_output=True, text=True,
+    )
+    return p.returncode, p.stdout + p.stderr
+
+
+def init_git(tmp: Path) -> None:
+    """Make the fixture a git repo so --recover's diff/commit tail works
+    (and its `git config` stays repo-local instead of touching the global
+    config)."""
+    subprocess.run(["git", "init", "-q"], cwd=tmp, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=tmp, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=test", "-c", "user.email=test@test", "commit", "-qm", "baseline"],
+        cwd=tmp, check=True,
+    )
 
 
 def calibrate(tmp: Path) -> Path:
@@ -214,18 +245,17 @@ def main() -> int:
         expect_drift(tmp, "measured vs committed drift", "→ fix: rewrite badges/image-sizes.json with the measured values:", fakebin)
         rc, out = run_check(tmp, fakebin)
         check("measured hint carries corrected JSON", '"web_mb":70' in out)
-        def _repair_measured():
-            (tmp / "badges/image-sizes.json").write_text(
-                '{"web_mb":70,"backend_mb":191,"airgap_mb":1724,"commit":"repair","date":"2026-08-14"}'
-            )
-            docs = (tmp / "docs/17-CI-GATES.md").read_text()
-            docs = re.sub(
-                r"(?m)^> \*\*Last measured:\*\* `outpost-web:ci` 60 MB.*$",
-                "> **Last measured:** `outpost-web:ci` 70 MB — badge job @ `repair` (2026-08-14).",
-                docs,
-            )
-            (tmp / "docs/17-CI-GATES.md").write_text(docs)
-        expect_repair(tmp, "measured vs committed drift", _repair_measured, fakebin)
+        # Repair via the REAL --recover command (the hint's suggestion): it
+        # must regenerate image-sizes.json + the matching stamp to the
+        # measured 70 MB, and the follow-up --check must converge back to
+        # green — the same state the fresh fixture was in.
+        def _recover_roundtrip():
+            init_git(tmp)
+            rc, out = run_recover(tmp, fakebin)
+            # rc=1 is the no-remote push tail; the regeneration is what
+            # matters, and expect_repair's --check proves it converged.
+            check("recover ran (regenerated artifacts)", "recovered:" in out, f"rc={rc}")
+        expect_repair(tmp, "measured vs committed drift (via --recover)", _recover_roundtrip, fakebin)
 
         # 4. Missing image-sizes.json.
         #    Repair: restore the committed JSON (the hint's restore option).
