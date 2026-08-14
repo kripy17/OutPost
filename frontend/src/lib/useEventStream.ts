@@ -1,5 +1,8 @@
 // useEventStream — live push over Server-Sent Events, with a polling fallback.
 //
+// Thin wrapper over the shared stream hub: the whole app shares ONE
+// EventSource (see lib/streamHub.ts — N subscribers used to open N
+// connections, stealing HTTP/1.1 pool slots from the cold-start queries).
 // The backend /events/stream pushes fired alerts; EventSource reconnects
 // automatically on drop. If the endpoint is unreachable (backend down, or an
 // environment without SSE), the hook simply stops and the app's existing
@@ -7,49 +10,23 @@
 // dependency.
 
 import { useEffect, useRef } from "react";
-import { BASE_URL, getAuthToken } from "./api";
+import {
+  subscribeStream,
+  type StreamAlert,
+  type StreamFleetUpdate,
+  type StreamRunUpdate,
+  type StreamWatchlist,
+} from "./streamHub";
 
-export interface StreamAlert {
-  rule_id: string;
-  rule_name: string;
-  severity: "suspicious" | "malicious";
-  run_id: string;
-  details: string;
-  triggered_at: string;
-  // PIDs behind composite rules — lets the Monitor highlight the actors
-  // (recon sweep) immediately on the push, before the next poll.
-  related_pids?: number[];
-}
-
-export interface WatchlistMatch {
-  ioc_type: string;
-  ioc_value: string;
-  label: string;
-  event_type: string | null;
-  timestamp: string | null;
-}
-
-export interface StreamWatchlist {
-  run_id: string;
-  sample_name: string;
-  platform: string;
-  matches: WatchlistMatch[];
-}
-
-/** A run-level push — a batch of events landed, or the run completed. */
-export interface StreamRunUpdate {
-  run_id: string;
-  events: number;
-  completed?: boolean;
-}
-
-/** A fleet-status push — an agent heartbeated, or a host went silent. */
-export interface StreamFleetUpdate {
-  host_id: string;
-  online: boolean;
-  silent: boolean;
-  last_heartbeat?: string | null;
-}
+// Re-export the stream payload types so existing callers keep importing them
+// from the hook module (the declarations now live in the shared hub).
+export type {
+  StreamAlert,
+  StreamFleetUpdate,
+  StreamRunUpdate,
+  StreamWatchlist,
+  WatchlistMatch,
+} from "./streamHub";
 
 /**
  * Subscribe to live pushes. `onAlert` fires for every detection alert;
@@ -58,8 +35,8 @@ export interface StreamFleetUpdate {
  * `onFleetUpdate` (optional) fires when an agent heartbeats or a host goes
  * silent — live views use these to refresh instead of waiting for the next
  * poll tick (polling stays as the fallback).
- * Returns nothing (lifecycle is managed by React); EventSource auto-reconnects,
- * so no manual retry loop is needed.
+ * Returns nothing (lifecycle is managed by React; the hub's EventSource
+ * auto-reconnects, so no manual retry loop is needed).
  */
 export function useEventStream(
   onAlert: (a: StreamAlert) => void,
@@ -77,60 +54,11 @@ export function useEventStream(
   fleetUpdateRef.current = onFleetUpdate;
 
   useEffect(() => {
-    let es: EventSource | null = null;
-    try {
-      // EventSource can't set Authorization headers — when a token exists,
-      // pass it as ?token= (the backend's SSE fallback). With no token the
-      // URL is untouched, so the zero-config path stays identical.
-      const token = getAuthToken();
-      const url = token ? `${BASE_URL}/events/stream?token=${encodeURIComponent(token)}` : `${BASE_URL}/events/stream`;
-      es = new EventSource(url);
-    } catch {
-      return; // SSE unavailable (e.g. non-browser) — polling covers us
-    }
-
-    es.addEventListener("alert", (e) => {
-      try {
-        const data = JSON.parse((e as MessageEvent).data as string) as StreamAlert;
-        alertRef.current(data);
-      } catch {
-        /* malformed frame — ignore, keep the stream alive */
-      }
+    return subscribeStream({
+      onAlert: (a) => alertRef.current(a),
+      onWatchlist: (w) => watchlistRef.current?.(w),
+      onRunUpdate: (r) => runUpdateRef.current?.(r),
+      onFleetUpdate: (f) => fleetUpdateRef.current?.(f),
     });
-
-    if (watchlistRef.current) {
-      es.addEventListener("watchlist", (e) => {
-        try {
-          const data = JSON.parse((e as MessageEvent).data as string) as StreamWatchlist;
-          watchlistRef.current?.(data);
-        } catch {
-          /* malformed frame — ignore, keep the stream alive */
-        }
-      });
-    }
-
-    if (runUpdateRef.current) {
-      es.addEventListener("run-update", (e) => {
-        try {
-          const data = JSON.parse((e as MessageEvent).data as string) as StreamRunUpdate;
-          runUpdateRef.current?.(data);
-        } catch {
-          /* malformed frame — ignore, keep the stream alive */
-        }
-      });
-    }
-
-    if (fleetUpdateRef.current) {
-      es.addEventListener("fleet-update", (e) => {
-        try {
-          const data = JSON.parse((e as MessageEvent).data as string) as StreamFleetUpdate;
-          fleetUpdateRef.current?.(data);
-        } catch {
-          /* malformed frame — ignore, keep the stream alive */
-        }
-      });
-    }
-
-    return () => es?.close();
   }, []);
 }

@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import { Deferred } from "../components/Deferred/Deferred";
 import { Icon } from "../components/Icon";
 import { platformIconName } from "../components/iconMeta";
 import { RiskGauge, RiskTrendBars, SeverityDonut, type RiskTrendBar } from "../components/Posture/Posture";
@@ -819,10 +820,12 @@ export default function OverviewPage() {
       />
 
       <DemoBanner />
-      <HostMonitorPanel />
-      {/* Intel posture: configured keys + rotation age, and cache freshness. */}
-      <IntelKeyHealth />
-      <IntelFreshness />
+      <Deferred>
+        <HostMonitorPanel />
+        {/* Intel posture: configured keys + rotation age, and cache freshness. */}
+        <IntelKeyHealth />
+        <IntelFreshness />
+      </Deferred>
 
       {!isLoading && !isError && (
         <>
@@ -847,13 +850,19 @@ export default function OverviewPage() {
       )}
 
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[1.6fr_1fr]">
-        <FindingsFeed />
-        <CampaignSpotlight />
+        <Deferred>
+          <FindingsFeed />
+        </Deferred>
+        <Deferred>
+          <CampaignSpotlight />
+        </Deferred>
       </div>
 
       {/* Actions + environment, one compact strip. The dashboard is exactly:
           posture, live findings (+ hunt), and this action bar. */}
-      <ActionStrip />
+      <Deferred>
+        <ActionStrip />
+      </Deferred>
     </div>
   );
 }
