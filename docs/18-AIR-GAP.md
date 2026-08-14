@@ -39,6 +39,13 @@ bash scripts/airgap-verify.sh --web http://<host>:5174 --max 1000   # + latency 
 Runs gates 1–4 in sequence, then the cold-start harness against a live stack,
 failing if the worst interactive render exceeds the budget (default 1000 ms).
 
+The shipped-image smoke test runs standalone too:
+
+```bash
+bash scripts/smoke-web-image.sh --image outpost-web:ci   # container smoke (needs docker, CI-only)
+bash scripts/smoke-web-image.sh --dist frontend/dist     # offline artifact check (no docker)
+```
+
 ## Offline proof in CI (the strongest layer)
 
 The `Air-gap` CI job builds `deploy/Dockerfile.airgap-ci` (full stack: backend
@@ -59,6 +66,23 @@ the app itself so it can never drift) and runs the whole bundle against it —
 the guarantee is proven at production scale on every push, not just on a tiny
 fixture. `OUTPOST_OFFLINE_DB=<path>` boots against a COPY of any given DB
 (the original is never opened in place).
+
+**The shipped production image gets its own empty-namespace smoke test.**
+The air-gap job proves the full stack inside a *test-harness* image — but
+the harness is not what users run. The `Deploy` job's smoke step
+(`scripts/smoke-web-image.sh`) runs the **actual `deploy/Dockerfile.web`
+artifact** under `docker run --network none` and asserts, from inside the
+container via `docker exec` loopback (port publishing is impossible with an
+empty namespace, so probing must be in-namespace): the container boots
+without crash-looping, Caddy serves the SPA (`GET /` → 200 with the shell
+marker), every `/assets/*` chunk referenced by the served `index.html`
+returns 200, the `/api` proxy is live (502 — the sibling backend container
+isn't on this namespace, which is the honest isolated-state signal), TLS
+serves on 443 via Caddy's internal CA (`OUTPOST_HOST=localhost` skips
+ACME), and `/proc/net/route` inside the container is empty — the OS-level
+zero-egress assertion. If the entrypoint ever tries to reach out at boot
+(license ping, update check, ACME against a public CA), the empty namespace
+fails it immediately.
 
 The volume run earned its keep immediately: the 11k/real-soak runs surfaced a
 15 MB `/campaigns` response (~1.06 s — the timeline query shipped every

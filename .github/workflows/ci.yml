@@ -97,6 +97,15 @@ jobs:
         # fails here.
         run: docker build -f deploy/Dockerfile.web -t outpost-web:ci .
 
+      - name: Smoke-test the shipped image — boots and serves with zero egress
+        # Runs the ACTUAL production artifact (not the air-gap harness image)
+        # under --network none: the container has no interface besides
+        # loopback, so this proves the image that ships boots, serves the SPA
+        # + every referenced chunk, keeps the /api proxy live (502 with the
+        # sibling backend absent), serves TLS via the internal CA, and makes
+        # zero external reach possible (asserted from /proc/net/route).
+        run: bash scripts/smoke-web-image.sh --image outpost-web:ci
+
       - name: Validate the Caddyfile
         # caddy validate provisions the config without starting the server.
         # OUTPOST_HOST must be set or the {$OUTPOST_HOST} placeholder expands

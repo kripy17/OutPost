@@ -12,7 +12,7 @@ Every push to `main` and every pull request runs the `CI` workflow
 | Job | What it runs | Fails on |
 |---|---|---|
 | `verify.sh — backend · collectors · CLI · frontend` | Fast-fail ladder, then the full sweep | stale badges/README claims, tsc errors, failing pytest/vitest, collector FP-baseline soaks, layout overflow, post-deploy walk |
-| `Deploy — web image + Caddyfile + compose` | Production image build + config validation | Dockerfile/Caddyfile/compose drift |
+| `Deploy — web image + Caddyfile + compose` | Production image build + **smoke-test of the shipped image under `--network none`** (`scripts/smoke-web-image.sh` runs the actual `Dockerfile.web` artifact with an empty namespace: it must boot, serve the SPA + every referenced chunk, keep the `/api` proxy live, serve TLS via the internal CA, and show an empty `/proc/net/route` — the container has no interface besides loopback) + Caddyfile/compose config validation | Dockerfile/Caddyfile/compose drift; a shipped image that fails to boot or serves nothing |
 | `Air-gap — full bundle in a --network none container` | Builds `deploy/Dockerfile.airgap-ci`, then `docker run --network none` runs `scripts/airgap-offline.sh` **at production volume** (`OUTPOST_OFFLINE_VOLUME=1` seeds a deterministic ~11k-event store): the four-gate bundle + cold-start budget + both e2es with the network namespace EMPTY, against production-scale data | any external host reachable by any library or technique (OS-level proof, not a simulation); a >1000 ms (1500 ms at volume) cold start |
 
 Inside the verify job, three fast-fail tiers front-load the expensive checks
