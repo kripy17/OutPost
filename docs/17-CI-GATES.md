@@ -77,6 +77,24 @@ A dedicated `Refresh dynamic badges` job runs on the **weekly schedule and
 `workflow_dispatch` only** — it recomputes the four badge payloads from
 `main` and commits any change, so badges self-heal without a code push.
 
+### Image-size budgets — measured baselines
+
+The size-gate budgets are grounded in real CI measurements, not guesses:
+
+| Image | Measured (first run) | Soft budget (warn) | Hard ceiling (fail) |
+|---|---|---|---|
+| `outpost-web:ci` (caddy:2-alpine + dist only) | **60 MB** (63,742,559 B, commit `9e127aa`) | 100 MB | 150 MB |
+| `outpost-backend:ci` (python:3.12-slim + pip deps + app) | **191 MB** (200,772,677 B, commit `326f97c`) | 300 MB | 400 MB |
+
+**Calibrate-on-first-run procedure:** every run prints the measured size, so
+when a baseline legitimately shifts — a base-image major bump, a new runtime
+dependency, a new image — take the freshly measured number, adjust
+`--budget-mb`/`--fail-mb` in the Deploy job (and this table), and let the
+next run confirm. The headroom (≈ 1.6–1.7× the baseline) is deliberate: it
+absorbs legitimate growth while still catching a leak (node_modules / venv /
+test-fixtures scale adds hundreds of MB in one layer). A budget should only
+be raised with a measurement in hand — never pre-emptively.
+
 ## Branch protection on `main`
 
 `main` is protected with **required status checks**:
