@@ -47,6 +47,21 @@ def check(name: str, ok: bool, detail: str = "") -> None:
         FAILURES.append(name)
 
 
+def hint(text: str) -> None:
+    """Self-explaining fix suggestion, printed right after a FAIL."""
+    print(f"      → fix: {text}")
+
+
+def ci_line(img: str, soft: int, hard: int, defaults: tuple[int, int]) -> str:
+    """The canonical check-image-size.sh invocation for the given budgets.
+
+    Flags are omitted when they equal the script's own defaults (the web
+    gate's style), so the suggested line stays minimal."""
+    if (soft, hard) == defaults:
+        return f"bash scripts/check-image-size.sh --image {img}"
+    return f"bash scripts/check-image-size.sh --image {img} --budget-mb {soft} --fail-mb {hard}"
+
+
 def script_defaults() -> tuple[int, int]:
     """The effective budgets when a gate step passes no flags."""
     text = GATE.read_text()
@@ -73,16 +88,18 @@ def ci_budgets(defaults: tuple[int, int]) -> dict[str, tuple[int, int]]:
     return result
 
 
-def docs_table() -> dict[str, tuple[int, int, int]]:
-    """image -> (measured_mb, soft, hard) from the docs/17 table."""
-    result: dict[str, tuple[int, int, int]] = {}
+def docs_table() -> dict[str, tuple[int, int, int, str]]:
+    """image -> (measured_mb, soft, hard, raw_row) from the docs/17 table.
+
+    The raw row is kept so failures can print the exact corrected line."""
+    result: dict[str, tuple[int, int, int, str]] = {}
     row_re = re.compile(
         r"^\|\s*`([^`]+)`\s*\(.*?\)\s*\|\s*\*\*(\d+) MB\*\*.*?\|\s*(\d+) MB\s*\|\s*(\d+) MB\s*\|$"
     )
     for line in DOCS.read_text().splitlines():
         m = row_re.match(line)
         if m:
-            result[m.group(1)] = (int(m.group(2)), int(m.group(3)), int(m.group(4)))
+            result[m.group(1)] = (int(m.group(2)), int(m.group(3)), int(m.group(4)), line)
     return result
 
 
@@ -115,52 +132,68 @@ def main() -> int:
     for img, (soft, hard) in sorted(enforced.items()):
         if img not in table:
             check(f"docs row for {img}", False, f"gate enforces {soft}/{hard} MB but the table has no row")
+            hint(f"add a docs/17 row like:    | `{img}` (…) | **?? MB** | {soft} MB | {hard} MB |   (the measured cell fills from the first gate run)")
+            hint(f"and its stamp line:        > **Last measured:** `{img}` ?? MB — badge job @ `…` (…).")
             continue
-        d_soft, d_hard = table[img][1], table[img][2]
+        measured, d_soft, d_hard, raw = table[img]
         check(
             f"docs budgets match the gate for {img}",
             d_soft == soft and d_hard == hard,
             f"docs {d_soft}/{d_hard} MB vs gate {soft}/{hard} MB",
         )
+        if d_soft != soft or d_hard != hard:
+            corrected = re.sub(r"\| (\d+) MB \| (\d+) MB \|\s*$", f"| {soft} MB | {hard} MB |", raw)
+            hint(f"docs row should read:  {corrected}   (matching the gate)")
+            hint(f"or the ci.yml line should read:  {ci_line(img, d_soft, d_hard, defaults)}   (matching the docs)")
 
     # 2. The measured column must match the committed stamp data.
     if SIZES.exists():
         data = json.loads(SIZES.read_text())
-        for img, (measured, _s, _h) in sorted(table.items()):
+        for img, (measured, _s, _h, raw) in sorted(table.items()):
             key = JSON_KEY.get(img)
             if key is None:
                 check(f"stamp key for {img}", False, "no badges/image-sizes.json key mapped")
                 continue
             want = data.get(key)
+            ok = isinstance(want, int) and want == measured
             check(
                 f"docs measured matches stamp data for {img}",
-                isinstance(want, int) and want == measured,
+                ok,
                 f"docs {measured} MB vs image-sizes.json {want} MB",
             )
+            if not ok and isinstance(want, int):
+                corrected = re.sub(r"\*\*\d+ MB\*\*", f"**{want} MB**", raw)
+                hint(f"docs row should read:  {corrected}")
     else:
         check("badges/image-sizes.json present", False, "missing — measured column not checkable")
 
     # 3. A documented row with no gate is drift too.
     for img in sorted(table):
         if img not in enforced:
+            _m, d_soft, d_hard, _raw = table[img]
             check(f"gate step for {img}", False, "docs row has no check-image-size.sh invocation")
+            hint(f"add the ci.yml step:  {ci_line(img, d_soft, d_hard, defaults)}")
 
     # 4. Every table row must carry its own 'Last measured' stamp line with
     #    the measured value — a fourth image can't be documented without its
     #    trend data.
     stamps = docs_stamps()
-    for img, (measured, _s, _h) in sorted(table.items()):
+    for img, (measured, _s, _h, _raw) in sorted(table.items()):
         want = stamps.get(img)
+        ok = want is not None and want == measured
         check(
             f"stamp line for {img}",
-            want is not None and want == measured,
+            ok,
             f"stamp {want} MB vs measured {measured} MB" if want is not None else "no 'Last measured' stamp line",
         )
+        if not ok:
+            hint(f"stamp line should read:  > **Last measured:** `{img}` {measured} MB — badge job @ `…` (…).")
 
     # 5. A stamp with no table row is drift too.
     for img in sorted(stamps):
         if img not in table:
             check(f"table row for stamped {img}", False, "stamp line has no table row")
+            hint(f"remove that stamp line, or add a table row + gate step for `{img}`")
 
     print(f"Image-budget docs gate: {len(FAILURES)} failed" if FAILURES else "Image-budget docs gate: all tables, stamps, gates, and stamp data agree")
     return 1 if FAILURES else 0
