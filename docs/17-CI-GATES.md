@@ -89,6 +89,13 @@ The size-gate budgets are grounded in real CI measurements, not guesses:
 
 > **Last measured:** web 60 MB / backend 191 MB / airgap 1724 MB — badge job @ `f4f4ddf` (2026-08-14).
 
+**Enforced statically:** verify.sh's `Image budgets` step runs
+`scripts/gate_image_budget_docs.py` — every `check-image-size.sh`
+invocation in `.github/workflows/ci.yml` (resolving the script's own
+defaults when a step passes no flags) must match its row here, the
+measured column must match `badges/image-sizes.json`, and a row with no
+gate step is drift too. Changing a budget in either file fails the sweep.
+
 **Calibrate-on-first-run procedure:** every run prints the measured size, so
 when a baseline legitimately shifts — a base-image major bump, a new runtime
 dependency, a new image — take the freshly measured number, adjust
