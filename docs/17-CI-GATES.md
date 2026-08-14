@@ -151,6 +151,13 @@ Notes:
   rule was enforced): a locally-created bot commit never ran the checks, so
   the weekly job opens `chore/badges-*`, arms `--auto --squash`, and the
   gate merges it once verify + deploy + air-gap pass.
+- **One-time repo setting required** for the bot to create its PR: GitHub
+  disables Actions-created PRs by default. Enable *Settings → Actions →
+  General → Workflow permissions → Allow GitHub Actions to create and
+  approve pull requests* (UI-only; there is no REST API for it — the
+  refresh job fails with a clear message until it's on). The job also needs
+  `pull-requests: write` in its permissions block, which the workflow
+  already declares.
 - Admin bypass still applies: `enforce_admins` is false, so an admin can
   force-merge a red PR with `gh pr merge --admin` in an emergency.
 
