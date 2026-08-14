@@ -24,59 +24,65 @@ import sys
 
 SRC = os.path.join(os.path.dirname(__file__), "deck-demo.webm")
 
-# (start, end, speed) — keep windows in the original timeline.
+# (start, end, speed) — keep windows in the original timeline (2026-08-14
+# re-record, 269.4s: same acts, faster gate executions, Act 8 added).
 SEGMENTS: list[tuple[float, float, float]] = [
     # Act 1 — Overview (shots 01-06)
-    (0.0, 5.0, 1.0),     # intro + stat-strip pan
-    (5.0, 7.0, 1.0),     # shot 01 hold
-    (7.0, 12.0, 1.4),    # risk-timeline pan
-    (12.0, 14.0, 1.0),   # shot 02 hold
-    (14.0, 18.0, 1.4),   # detection-volume svg pan
-    (18.0, 22.0, 1.0),   # shot 03 chart
-    (22.0, 26.0, 1.4),   # scroll to findings
-    (26.0, 32.0, 1.4),   # findings + bottom (shots 04-05)
-    (32.0, 37.0, 1.4),   # quick actions (shot 06)
+    (0.0, 4.0, 1.0),     # intro + stat-strip pan
+    (4.0, 6.0, 1.0),     # shot 01 hold
+    (6.0, 10.0, 1.4),    # risk-timeline pan
+    (10.0, 12.0, 1.0),   # shot 02 hold
+    (12.0, 15.0, 1.4),   # detection-volume pan
+    (15.0, 18.0, 1.0),   # shot 03 hold
+    (18.0, 21.0, 1.4),   # scroll to findings
+    (21.0, 24.0, 1.0),   # findings pan (shot 04)
+    (24.0, 30.0, 1.4),   # bottom (shot 05) + quick actions
+    (30.0, 36.0, 1.4),   # quick actions (shot 06) + tail
+    (36.0, 46.0, 1.4),   # act tail
     # Act 2 — Vault (shots 07-10)
-    (37.0, 39.0, 1.0),   # vault load
-    (39.0, 41.0, 1.0),   # shot 07 hold
-    (41.0, 48.0, 1.4),   # table pan (shot 08)
-    (48.0, 52.0, 1.0),   # filter typing + result (shot 09)
-    (52.0, 56.0, 1.4),   # detail pan
-    (56.0, 58.0, 1.0),   # shot 10 hold
-    (58.0, 68.0, 1.4),   # detail pans tail
+    (46.0, 49.0, 1.0),   # vault load + subtitle
+    (49.0, 51.0, 1.0),   # shot 07 hold
+    (51.0, 54.5, 1.4),   # stats pan tail
+    (54.5, 58.5, 1.4),   # table pan (shot 08)
+    (58.5, 61.5, 1.4),   # table tail
+    (61.5, 66.5, 1.0),   # filter typing + result (shot 09)
+    (66.5, 70.0, 1.4),   # detail nav (shot 10)
     # Act 3 — Monitor (shots 11-12)
-    (68.0, 72.0, 1.0),   # vault tail → monitor
-    (72.0, 80.0, 1.4),   # monitor load + auto-detect pan + detonate click
-    (80.0, 88.0, 1.0),   # live analysis streaming (shot 11)
-    # [t=88-113 detonation wait CUT]
-    (113.0, 118.0, 1.0), # analysis complete (shot 12)
+    (70.0, 74.0, 1.0),   # monitor load + auto-detect pan + detonate click
+    (74.0, 78.0, 1.0),   # live analysis streaming (shot 11)
+    # [t=78-103 detonation wait CUT]
+    (103.0, 105.0, 1.0), # analysis complete (shot 12)
     # Act 4 — Run detail (shots 13-19)
-    (118.0, 127.0, 1.4), # load + shot 13 + killchain (shot 14)
-    (127.0, 129.0, 1.0), # process tree hold (shot 15)
-    (129.0, 133.0, 1.4), # network + timeline (shots 16-17)
-    (133.0, 136.0, 1.0), # notes typing + shot 18
-    (136.0, 141.0, 1.4), # rules gen (shot 19)
+    (105.0, 110.0, 1.4), # load + shot 13 + risk pan
+    (110.0, 117.0, 1.4), # killchain pan (shot 14)
+    (117.0, 121.5, 1.4), # killchain tail
+    (121.5, 127.25, 1.4),# scroll to process tree
+    (127.25, 131.25, 1.4),# process tree (shot 15)
+    (131.25, 136.0, 1.4),# network (shot 16)
+    (136.0, 141.0, 1.4), # timeline (shot 17)
+    (141.0, 146.0, 1.0), # notes typing (shot 18)
+    (146.0, 147.75, 1.4),# rules gen (shot 19)
     # Act 5 — Findings (shots 20-26)
-    (141.0, 144.0, 1.0), # load + search (shot 20)
-    (144.0, 146.0, 1.0), # select (shot 21)
-    (146.0, 149.0, 1.0), # ack (shot 22)
-    (149.0, 151.0, 1.0), # live badges (shot 23)
-    (151.0, 153.0, 1.0), # acknowledged tab (shot 24)
-    (153.0, 156.0, 1.0), # resolve (shot 25)
-    (156.0, 158.0, 1.0), # resolved tab (shot 26)
-    (158.0, 163.0, 1.4), # findings tail
+    (147.75, 151.5, 1.0),# load + search (shot 20)
+    (151.5, 153.5, 1.0), # select (shot 21)
+    (153.5, 158.25, 1.0),# ack (shot 22) + live badges (shot 23)
+    (158.25, 159.25, 1.0),# acknowledged tab (shot 24)
+    (159.25, 162.75, 1.0),# resolve (shot 25) + resolved tab (shot 26)
     # Act 6 — Quality gates (shots 27-28)
-    (163.0, 165.0, 1.0), # history @1280 load
-    (165.0, 167.0, 1.0), # shot 27 hold
-    (167.0, 170.0, 1.4), # pan
-    (170.0, 173.0, 1.0), # run detail @1280 load
-    (173.0, 181.0, 1.4), # shot 28 hold + pan (moment at ~177-181 this recording)
-    # Act 7 — the gates run (shot 29). The three gate scripts execute in the
-    # terminal for ~5.3 min while the page sits static (t=207-510) — CUT;
-    # keep the subtitle bridge and the results panel (shot 29's moment
-    # ~508-514).
-    (181.0, 190.0, 2.0), # gates act subtitle bridge
-    (508.0, 514.5, 1.0), # results panel + shot 29 hold
+    (162.75, 166.5, 1.0),# history @1280 load (shot 27)
+    (166.5, 174.25, 1.4),# charts pan
+    (174.25, 179.5, 1.0),# run detail @1280 load
+    (179.5, 189.75, 1.4),# pan tail (shot 28)
+    # Act 7 — the gates run (shot 29). The three gate scripts execute while
+    # the page sits static on /history (t~194-250, health-pulse twitches
+    # only) — CUT; keep the subtitle bridge and the results panel.
+    (189.75, 194.0, 2.0), # gates act subtitle bridge
+    (250.0, 252.5, 1.0),  # act-7 results panel + shot 29 hold
+    # Act 8 — the air-gap story (shot 30). The four gates + cold-start
+    # harness execute while the Overview sits static (t~256-261) — CUT;
+    # keep the subtitle bridge and the verdict panel.
+    (252.5, 256.25, 2.0), # overview goto + subtitle bridge
+    (261.25, 269.4, 1.0), # air-gap panel + shot 30 hold
 ]
 
 

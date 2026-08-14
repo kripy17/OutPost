@@ -93,13 +93,24 @@ host-status panel answers "is THIS host monitored?" against the live fleet.
   <img src="demo/screenshots/deck/14-detail-killchain.png" width="49%" alt="Run detail — kill chain" />
   <img src="demo/screenshots/deck/18-detail-notes.png" width="49%" alt="Run detail — analyst notes" />
 </p>
+<p align="center">
+  <img src="demo/screenshots/deck/29-gates-run.png" width="49%" alt="The verify.sh gates — 3/3 green" />
+  <img src="demo/screenshots/deck/30-airgap-gates.png" width="49%" alt="The air-gap story — four gates + measured cold start" />
+</p>
 
-A **~97-second tightened walkthrough** (`demo/deck-demo-trimmed.webm`, 5 acts:
-Overview → Sample vault → Monitor detonation → Run detail → Findings triage)
-plus looping **GIF previews** (`demo/deck-demo-preview.gif`, and the two hero
-GIFs above) are recorded automatically by
+A **~150-second tightened walkthrough** (`demo/deck-demo-trimmed.webm`, 8 acts:
+Overview → Sample vault → Monitor detonation → Run detail → Findings triage →
+quality gates → the verify.sh gates run → **the air-gap story**) plus looping
+**GIF previews** (`demo/deck-demo-preview.gif`, and the two hero GIFs above)
+are recorded automatically by
 [`demo/deck-demo.mjs`](demo/deck-demo.mjs) and edited with
 [`demo/trim-demo.py`](demo/trim-demo.py) / [`demo/make-gif-preview.py`](demo/make-gif-preview.py).
+
+The final frame is the air-gap guarantee, proven live: the offline job's four
+gates — static artifact scan, CLI network matrix, backend egress contract,
+no-config runtime egress — plus the measured cold-start harness (zero external
+request attempts, zero hung requests, ~0.3 s worst case) run against the deck
+and rendered as a verdict panel.
 
 ## 🏗️ Architecture
 
