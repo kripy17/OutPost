@@ -215,9 +215,11 @@ jobs:
         # budget guards against the harness silently outgrowing its purpose
         # (extra Playwright browsers, apt creep, dependency bloat — all of
         # which cost CI minutes on every push). Soft budget warns on the run
-        # summary; the hard ceiling fails the job. Provisional calibration —
-        # the measured size prints here on every run and the budgets are
-        # tuned once the first measurement lands.
+        # summary; the hard ceiling fails the job. Calibrated from the first
+        # measurement (1724 MB @ f4f4ddf): the tighter 1.19x headroom is
+        # deliberate — the harness's growth sources are lockfile-pinned, so a
+        # >300 MB jump means something structural (a second browser, apt
+        # creep).
         run: bash scripts/check-image-size.sh --image outpost-airgap-ci --budget-mb 2048 --fail-mb 2560
 
       - name: Run the air-gap bundle at production volume, network namespace empty
@@ -264,14 +266,15 @@ jobs:
 
       - name: Build the shipped images for the size stamp
         # The size stamp in docs/17 is only as fresh as its measurement. This
-        # job is the measurer: build the two shipped images with :measure tags
-        # (the same Dockerfiles the Deploy job ships), then refresh-badges.sh
-        # measures them, updates badges/image-sizes.json + the docs/17
-        # 'Last measured' stamp, and commits everything in one self-healing
-        # commit — the same weekly pattern as the badge payloads.
+        # job is the measurer: build the three images with :measure tags (the
+        # same Dockerfiles the Deploy + air-gap jobs ship), then
+        # refresh-badges.sh measures them, updates badges/image-sizes.json +
+        # the docs/17 'Last measured' stamp, and commits everything in one
+        # self-healing commit — the same weekly pattern as the badge payloads.
         run: |
           docker build -f deploy/Dockerfile.web -t outpost-web:measure .
           docker build -f backend/Dockerfile -t outpost-backend:measure backend
+          docker build -f deploy/Dockerfile.airgap-ci -t outpost-airgap:measure .
 
       - name: Refresh and publish badges
         # GH_TOKEN is required for `gh pr create` in a workflow (the git
