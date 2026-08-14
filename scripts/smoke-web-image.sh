@@ -8,21 +8,27 @@
 # — all with `--network none`, so the container has no interface besides
 # loopback and any external reach fails at the OS level.
 #
-#   bash scripts/smoke-web-image.sh [--image outpost-web:ci] [--host localhost]
+#   bash scripts/smoke-web-image.sh [--image outpost-web:ci]
 #   bash scripts/smoke-web-image.sh --dist frontend/dist   # offline artifact check (no docker)
+#
+# The container runs with OUTPOST_HOST=http://localhost — the http:// scheme
+# disables Caddy's automatic HTTPS for the smoke run. Caddy's auto-HTTPS
+# would otherwise 308-redirect every plain-HTTP request to https:// (the
+# production behavior), which makes loopback status assertions about the
+# redirect instead of about serving; ACME is also impossible inside an empty
+# namespace. Same image, same Caddyfile, one env knob — production TLS stays
+# covered by `caddy validate` in the same Deploy job.
 #
 # Assertions:
 #   1. The container starts and does not crash-loop (RestartCount == 0).
-#   2. Caddy answers on loopback: GET / -> 200 with the SPA shell (id="root").
-#   3. The built bundle serves: every /assets/* chunk referenced by
+#   2. ZERO EGRESS, asserted at the OS level: /proc/net/route inside the
+#      container is empty — no network devices besides loopback exist.
+#   3. Caddy answers on loopback: GET / -> 200 with the SPA shell (id="root").
+#   4. The built bundle serves: every /assets/* chunk referenced by
 #      index.html returns 200 (proves the static artifact is intact).
-#   4. The API proxy is live but the sibling backend is absent in isolation:
+#   5. The API proxy is live but the sibling backend is absent in isolation:
 #      GET /api/health -> 502 (Caddy's reverse_proxy reached, backend
 #      container not on this namespace — the honest isolated-state signal).
-#   5. TLS serves on 443 via Caddy's internal CA for localhost (no ACME):
-#      GET https://127.0.0.1/ -> 200 with --no-check-certificate.
-#   6. ZERO EGRESS, asserted at the OS level: /proc/net/route inside the
-#      container is empty — no network devices besides loopback exist.
 #
 # The image is built with VITE_API_URL=/api, so this runs the exact
 # artifact the compose stack ships. Docker is required for the container
@@ -31,12 +37,10 @@
 set -euo pipefail
 
 IMAGE="outpost-web:ci"
-HOST="localhost"
 DIST=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --image) IMAGE="$2"; shift 2 ;;
-    --host)  HOST="$2"; shift 2 ;;
     --dist)  DIST="$2"; shift 2 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
@@ -68,13 +72,14 @@ if ! command -v docker >/dev/null 2>&1; then
 fi
 
 NAME="outpost-web-smoke-$$"
+URL="http://localhost"
 echo "== smoke-testing $IMAGE with --network none (name $NAME) =="
 
 cleanup() { docker rm -f "$NAME" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
 docker run -d --network none --name "$NAME" \
-  -e "OUTPOST_HOST=$HOST" \
+  -e "OUTPOST_HOST=http://localhost" \
   "$IMAGE" >/dev/null
 
 # Assertion 1: no crash-loop.
@@ -82,8 +87,9 @@ RC=$(docker inspect --format '{{.RestartCount}}' "$NAME")
 [[ "$RC" == "0" ]] || { echo "  FAIL: container restarted ($RC times) — boot crash" >&2; docker logs "$NAME" 2>&1 | tail -20 >&2; exit 1; }
 echo "  OK: container started cleanly (RestartCount=0)"
 
-# Assertion 6 (early, cheap): the namespace really is empty.
-ROUTES=$(docker exec "$NAME" cat /proc/net/route 2>/dev/null | tail -n +2 | tr -d ' \t')
+# Assertion 2 (cheap, early): the namespace really is empty. Every stage is
+# guarded so a non-match reports FAIL instead of tripping set -e silently.
+ROUTES=$(docker exec "$NAME" cat /proc/net/route 2>/dev/null | tail -n +2 | tr -d ' \t' || true)
 if [[ -n "$ROUTES" ]]; then
   echo "  FAIL: unexpected route entries in empty namespace:" >&2
   echo "$ROUTES" >&2
@@ -91,43 +97,46 @@ if [[ -n "$ROUTES" ]]; then
 fi
 echo "  OK: /proc/net/route empty — no device besides loopback (zero egress)"
 
-# Helper: fetch a URL inside the container and print the HTTP status line.
-status() { # status <url> -> HTTP/1.1 200 OK (busybox wget -S prints headers to stderr)
-  docker exec "$NAME" wget -S -q -O /dev/null "$1" 2>&1 | grep -oE 'HTTP/[0-9.]+ [0-9]+' | tail -1
+# Fetch the HTTP status line for a URL inside the container (busybox wget -S
+# prints response headers to stderr). Always exits 0 — callers compare text.
+status() { # status <url> -> "HTTP/1.1 200 OK"
+  local url="$1" out
+  out=$(docker exec "$NAME" wget -S -q -O /dev/null "$url" 2>&1 || true)
+  printf '%s\n' "$out" | grep -oE 'HTTP/[0-9.]+ [0-9]+' | tail -1 || true
 }
 
-# Readiness: Caddy must answer on loopback before any assertion.
+# Readiness: Caddy must answer 200 on loopback before any assertion.
+READY=""
 for i in $(seq 1 30); do
-  if [[ "$(status "http://127.0.0.1/")" == *" 200"* ]]; then break; fi
+  S=$(status "$URL/")
+  if [[ "$S" == *" 200"* ]]; then READY=1; break; fi
   sleep 1
 done
-S=$(status "http://127.0.0.1/")
-[[ "$S" == *" 200"* ]] || { echo "  FAIL: Caddy never answered on loopback (got '$S')" >&2; docker logs "$NAME" 2>&1 | tail -20 >&2; exit 1; }
+if [[ -z "$READY" ]]; then
+  echo "  FAIL: Caddy never answered 200 on loopback (last: '$(status "$URL/")')" >&2
+  docker logs "$NAME" 2>&1 | tail -20 >&2
+  exit 1
+fi
 
-# Assertion 2: SPA shell.
-HTML=$(docker exec "$NAME" wget -q -O - "http://127.0.0.1/")
+# Assertion 3: SPA shell.
+HTML=$(docker exec "$NAME" wget -q -O - "$URL/" || true)
 echo "$HTML" | grep -q 'id="root"' || { echo "  FAIL: SPA shell marker missing from served index.html" >&2; exit 1; }
 echo "  OK: GET / -> 200, SPA shell present"
 
-# Assertion 3: every referenced chunk serves.
+# Assertion 4: every referenced chunk serves.
 ASSETS=$(echo "$HTML" | grep -oE '/assets/[A-Za-z0-9._-]+\.(js|css)' | sort -u)
 [[ -n "$ASSETS" ]] || { echo "  FAIL: no /assets/* chunks in served index.html" >&2; exit 1; }
 BAD=0
 while IFS= read -r a; do
-  S=$(status "http://127.0.0.1$a")
+  S=$(status "$URL$a")
   [[ "$S" == *" 200"* ]] || { echo "  FAIL: $a -> $S" >&2; BAD=1; }
 done <<< "$ASSETS"
 if [[ $BAD -eq 1 ]]; then exit 1; fi
 echo "  OK: all $(echo "$ASSETS" | wc -l | tr -d ' ') referenced chunks serve 200"
 
-# Assertion 4: the /api proxy is live; the sibling backend is absent here.
-S=$(status "http://127.0.0.1/api/health")
+# Assertion 5: the /api proxy is live; the sibling backend is absent here.
+S=$(status "$URL/api/health")
 [[ "$S" == *" 502"* ]] || { echo "  FAIL: expected 502 from /api (proxy live, backend absent) — got '$S'" >&2; exit 1; }
 echo "  OK: /api/health -> 502 (proxy wired, backend container not in this namespace)"
-
-# Assertion 5: TLS listener on 443 (internal CA for localhost, no ACME).
-S=$(status "https://127.0.0.1/") || true
-[[ "$S" == *" 200"* ]] || { echo "  FAIL: HTTPS did not serve 200 (got '$S')" >&2; exit 1; }
-echo "  OK: https://127.0.0.1/ -> 200 (TLS up, internal CA, no ACME)"
 
 echo "✓ smoke: $IMAGE boots and serves with the network namespace empty"
