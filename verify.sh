@@ -212,6 +212,18 @@ step "CLI network gate (loopback-only air-gap)" \
 step "Backend egress gate (key/config-gated httpx only)" \
   bash -c "'$ROOT/.venv/bin/python' '$ROOT/scripts/gate_backend_egress.py'"
 
+# Backend no-config egress gate — the runtime half of the server-side
+# contract ("gate the gating"): the static gate proves WHERE httpx may
+# live, this proves WHEN it may fire. With a fresh DB and the env keys
+# cleared, the routine background flows (create → ingest → complete →
+# detail → upload → sandbox demo detonation) must make ZERO httpx calls —
+# the httpx client itself is patched to record and block any non-loopback
+# URL. A negative control then sets a dummy AbuseIPDB key and force-
+# refreshes one IP: the probe MUST observe the provider URL, proving the
+# patch bites and keyed paths really would egress.
+step "Backend no-config egress (runtime, zero-config silent)" \
+  bash -c "'$ROOT/.venv/bin/python' '$ROOT/scripts/gate_backend_no_config_egress.py'"
+
 # Collector live-claim gate — the one-line `--mode live` collector flow, end
 # to end. Boots an isolated backend and runs the REAL collector_linux.py with
 # no --run-id against a temp AUDIT_LOG feed (the documented root-less path):

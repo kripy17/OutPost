@@ -223,9 +223,10 @@ typeface never depends on the Google Fonts CDN.
 - **No third-party calls** — no CDNs, telemetry, or icon services; the CLI is
 network-minimal too (every request goes through one `api_client` seam,
 loopback-only, enforced by a CI gate), and the backend's only outbound
-calls are key/config-gated (enrichment, sandbox, passive DNS, webhooks).
+calls are key/config-gated (enrichment, sandbox, passive DNS, webhooks) —
+proven at runtime: with zero keys, the background flows make zero requests.
 Run `bash scripts/airgap-verify.sh` for the one-shot verification of all
-three gates plus the cold-start latency budget.
+four gates plus the cold-start latency budget.
 - **Enforced in CI** — both Playwright e2e gates treat *any* non-localhost
 request as a console error, and a static gate scans the shipped build
 (`dist/index.html` + every asset chunk) for external dependency syntax

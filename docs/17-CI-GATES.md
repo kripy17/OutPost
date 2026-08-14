@@ -13,7 +13,7 @@ Every push to `main` and every pull request runs the `CI` workflow
 | `Deploy — web image + Caddyfile + compose` | Production image build + config validation | Dockerfile/Caddyfile/compose drift |
 
 Inside the verify job, three fast-fail tiers front-load the expensive checks
-so the cheapest signal fails first. The sweep itself is 18 steps; beyond the
+so the cheapest signal fails first. The sweep itself is 19 steps; beyond the
 suites it includes the **identity gate** (`scripts/gate_proc_identity.py`) —
 an AST scan of the detection/process-tree/baseline/CLI-rendering modules that
 fails if any event-level `process_name` read lacks an `exe_path` resolution,
@@ -39,13 +39,20 @@ while the static scan covers every chunk in milliseconds — and the
 backend *does* make outbound calls by design, but every one is opt-in — it
 fires only when an operator configures a key (enrichment / sandbox / passive
 DNS), a feed URL, or a webhook target. The gate asserts `httpx` is the only
-permitted client and only inside the 8 sanctioned modules; `requests` /
-`urllib` / `aiohttp` / raw `socket.socket` anywhere else fail the sweep, and
-in the collectors `requests` may appear only in `common/shipper.py` (the
-seam targeting the env-configured `OUTPOST_API_URL`). A one-shot bundle,
-`scripts/airgap-verify.sh`, runs all three static gates plus the cold-start
-latency harness against a live stack (failing if interactive render exceeds
-a budget).
+permitted client and only inside the 8 sanctioned modules;`requests` / `urllib` / `aiohttp` / raw `socket.socket` anywhere else fail the
+sweep, and in the collectors `requests` may appear only in `common/shipper.py`
+(the seam targeting the env-configured `OUTPOST_API_URL`). The static gate
+proves *where* httpx may live; the **backend no-config egress gate**
+(`scripts/gate_backend_no_config_egress.py`) proves *when* it may fire: it
+boots the app in-process with a fresh DB and the env keys cleared, patches the
+httpx client itself to record and block any non-loopback URL, and drives the
+routine background flows (run create → ingest → complete → detail → sample
+upload → sandbox demo detonation) — zero config must mean zero httpx calls.
+A negative control sets a dummy AbuseIPDB key and force-refreshes one IP:
+the probe MUST observe the provider URL, proving the patch bites and keyed
+paths really would egress. A one-shot bundle, `scripts/airgap-verify.sh`,
+runs all four gates plus the cold-start latency harness against a live stack
+(failing if interactive render exceeds a budget).
 
 1. **`npx tsc --noEmit`** (~1 min in) — frontend type errors fail before the
    Playwright download.

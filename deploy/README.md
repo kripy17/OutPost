@@ -134,7 +134,7 @@ To deploy on a firewalled host (no outbound egress):
 4. Verify after boot with egress disabled:
    - the [post-deploy checklist](#post-deploy-checklist) items above, and
    - `bash scripts/airgap-verify.sh --web http://<host>:5174` — the one-shot
-     bundle: all three static gates (frontend artifacts, CLI network,
-     backend egress) plus the cold-start latency budget (≈ 0.3 s worst
-     case on the production build; fails over 1 s). A clean run proves no
-     external request is being attempted.
+     bundle: all four gates (frontend artifacts, CLI network, backend
+     egress, backend no-config runtime) plus the cold-start latency budget
+     (≈ 0.3 s worst case on the production build; fails over 1 s). A clean
+     run proves no external request is being attempted.

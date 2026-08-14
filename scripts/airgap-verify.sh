@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # airgap-verify.sh — one-shot air-gap verification bundle.
 #
-# Runs the three static air-gap gates in sequence:
+# Runs the four air-gap gates in sequence:
 #   1. frontend artifacts  (scripts/gate_airgap_artifacts.py — shipped build)
 #   2. CLI network        (scripts/gate_cli_network.py — loopback-only)
 #   3. backend egress     (scripts/gate_backend_egress.py — key-gated httpx)
+#   4. backend no-config  (scripts/gate_backend_no_config_egress.py — runtime:
+#      background flows make zero httpx calls with zero config, keyed paths
+#      caught by a probe)
 #
 # Then, when a webapp is reachable, measures the cold-start latency with the
 # Playwright harness and FAILS if the worst-case interactive render exceeds
@@ -46,11 +49,14 @@ echo "── 2 · CLI network gate (loopback-only) ──"
 echo "── 3 · Backend egress gate (key/config-gated httpx) ──"
 "$PY" "$ROOT/scripts/gate_backend_egress.py"
 
+echo "── 4 · Backend no-config egress (runtime, zero-config silent) ──"
+"$PY" "$ROOT/scripts/gate_backend_no_config_egress.py"
+
 if [ "$GATES_ONLY" = 1 ] || [ -z "$WEB" ]; then
   echo
-  echo "gates-only: all three static air-gap gates passed."
+  echo "gates-only: all four air-gap gates passed."
   exit 0
 fi
 
-echo "── 4 · Cold-start latency (web=${WEB}, budget ${MAX}ms) ──"
+echo "── 5 · Cold-start latency (web=${WEB}, budget ${MAX}ms) ──"
 node "$ROOT/demo/measure-airgap-load.mjs" --web "$WEB" --iters "${OUTPOST_ITERS:-3}"
