@@ -38,6 +38,10 @@ const getArg = (name, def) => {
 const WEB = getArg("--web", process.env.WEBAPP_URL ?? "http://localhost:5174").replace(/\/$/, "");
 const ITER = Number(getArg("--iters", process.env.ITERS ?? "5"));
 const HANG_MS = 25_000;
+// Optional budget: when set, the harness exits 1 if the airgap mode's worst
+// interactive render exceeds it (the measured value is ~300ms; 1000ms is a
+// comfortable regression ceiling for a local, air-gapped deployment).
+const MAX_INTERACTIVE = Number(getArg("--max-interactive", process.env.MAX_INTERACTIVE ?? "0"));
 
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0"]);
 
@@ -192,3 +196,13 @@ console.log(`worst-case air-gapped cold start (browser boot + max interactive): 
 console.log(`worst-case interactive (max): ${fmt(a.summary.interactive[1])}  |  black-hole variant: ${fmt(w.summary.interactive[1])}`);
 console.log(`external request attempts across all modes: ${results.reduce((n, r) => n + r.externalAttempts, 0)}`);
 console.log(`external requests that would hang a black-holed network: ${w.hungRequests}`);
+
+if (MAX_INTERACTIVE > 0) {
+  const worst = a.summary.interactive[1];
+  const ok = worst <= MAX_INTERACTIVE;
+  console.log(`budget: airgap worst interactive ${fmt(worst)} vs limit ${MAX_INTERACTIVE}ms → ${ok ? "PASS" : "FAIL"}`);
+  if (!ok) {
+    console.error(`air-gap latency budget exceeded: ${fmt(worst)} > ${MAX_INTERACTIVE}ms`);
+    process.exit(1);
+  }
+}

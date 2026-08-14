@@ -10,7 +10,6 @@ import json
 import uuid
 from datetime import datetime, timezone
 
-import httpx
 from fastapi import APIRouter, HTTPException
 
 from ..core.db import db_session
