@@ -87,9 +87,15 @@ interactive render exceeds a budget).
    before the 3.5-min sweep: `scripts/test_image_budget_hints.py`
    (milliseconds, pure fixture regex) then
    `scripts/test_badge_hints.py` (seconds — real collect-only counts).
+   A **hint-coverage guard** (`scripts/gate_hint_coverage.py`, same tier,
+   milliseconds) makes the discipline structural: every gate under
+   `scripts/` that emits a `→ fix:` hint must be mapped to a self-test
+   with repair assertions that is actually invoked by verify.sh — so a
+   future gate that adds hints without a wired-in test fails the push
+   here.
 5. **`bash verify.sh`** — the full sweep (tests, soaks, layout sweep,
    post-deploy walk, badge refresh gate, image-budget gate + hint
-   self-tests re-check).
+   self-tests + hint-coverage guard re-check).
 
 A dedicated `Refresh dynamic badges` job runs on the **weekly schedule and
 `workflow_dispatch` only** — it recomputes the four badge payloads from
