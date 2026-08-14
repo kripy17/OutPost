@@ -123,12 +123,16 @@ corrected row, the ci.yml step, the stamp line, or the
 `image-sizes.json`) — and `scripts/test_image_budget_hints.py` (a verify
 step, `Image-budget hints`) gates the gating: it mutates each of the nine
 drift directions in a throwaway fixture and asserts the gate exits 1 with
-the expected hint, so a refactor that drops a hint fails the sweep. The
-badge gate gets the same treatment: `scripts/test_badge_hints.py` (verify
-step `Badge hints`) mutates each of the four `refresh-badges.sh --check`
-drift directions (stale badge payload, missing `Last measured` stamp,
+the expected hint — AND that applying that hint (the corrected
+row/stamp/ci.yml line) makes the gate exit 0 again, so a hint that no
+longer repairs what it claims to fails the sweep too. The badge gate gets
+the same treatment: `scripts/test_badge_hints.py` (verify step `Badge
+hints`) mutates each of the four `refresh-badges.sh --check` drift
+directions (stale badge payload, missing `Last measured` stamp,
 measured-vs-committed size drift, missing `image-sizes.json`) and asserts
-the `→ fix:` line carries the exact corrected payload/stamp/JSON.
+the `→ fix:` line carries the exact corrected payload/stamp/JSON and
+repairs the fixture back to green (including the follow-on stamp update
+when a JSON rewrite cascades, as `--recover`/`--commit` would perform).
 
 **Calibrate-on-first-run procedure:** every run prints the measured size, so
 when a baseline legitimately shifts — a base-image major bump, a new runtime

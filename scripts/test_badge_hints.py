@@ -4,8 +4,15 @@
 Runs `scripts/refresh-badges.sh --check` against a throwaway fixture tree
 (the real backend/collectors/cli/frontend source, badges payloads,
 docs/17, and the script itself copied into a temp dir so ROOT resolves
-there), mutates one drift direction at a time, and asserts the gate exits 1
-AND prints the `→ fix:` line carrying the exact corrected artifact.
+there), mutates one drift direction at a time, and asserts TWO things for
+every direction:
+
+  1. the gate exits 1 AND prints the `→ fix:` line carrying the exact
+     corrected artifact (self-explaining), and
+  2. applying the hinted fix makes the gate exit 0 (the hint actually
+     repairs — where one fix cascades into a follow-on hint, e.g.
+     rewriting image-sizes.json then updating the matching stamp line,
+     both are applied, exactly as --recover/--commit would).
 
 The badge gate computes real counts (pytest --collect-only + vitest list),
 so the fixture self-calibrates: it measures the real backend/collector/CLI
@@ -144,6 +151,13 @@ def expect_drift(tmp: Path, name: str, hint_needle: str, fakebin: Path) -> None:
     check(name, ok, f"rc={rc}, hint={hint_needle!r} in output" if not ok else f"rc={rc}, hint present")
 
 
+def expect_repair(tmp: Path, name: str, repair, fakebin: Path) -> None:
+    """Assert applying the hinted fix makes the gate go green."""
+    repair()
+    rc, out = run_check(tmp, fakebin)
+    check(f"{name} → repair green", rc == 0, f"rc={rc}\n{out}" if rc != 0 else "gate green after repair")
+
+
 def main() -> int:
     with tempfile.TemporaryDirectory(prefix="badge-hints-") as td:
         tmp = Path(td)
@@ -155,6 +169,7 @@ def main() -> int:
         check("fresh fixture passes", rc == 0 and "→ fix:" not in out and "badges fresh" in out, f"rc={rc}")
 
         # 1. Stale badge payload — the hint carries the corrected payload.
+        #    Repair: write the hinted payload back (the committed total).
         build_fixture(tmp)
         fakebin = calibrate(tmp)
         (tmp / "badges/tests.json").write_text('{"schemaVersion":1,"label":"tests","message":"0 passing","color":"2ea44f"}')
@@ -162,8 +177,14 @@ def main() -> int:
         rc, out = run_check(tmp, fakebin)
         total = json.loads((ROOT / "badges/tests.json").read_text())["message"]
         check("payload hint carries corrected payload", f'"message":"{total}' in out)
+        expect_repair(
+            tmp, "stale tests.json payload",
+            lambda: (tmp / "badges/tests.json").write_text(f'{{"schemaVersion":1,"label":"tests","message":"{total}","color":"2ea44f"}}'),
+            fakebin,
+        )
 
         # 2. Missing 'Last measured' stamp — the hint carries the stamp line.
+        #    Repair: re-add the stamp line with the JSON's own commit/date.
         build_fixture(tmp)
         fakebin = calibrate(tmp)
         docs = (tmp / "docs/17-CI-GATES.md").read_text()
@@ -171,24 +192,54 @@ def main() -> int:
         (tmp / "docs/17-CI-GATES.md").write_text(docs)
         expect_drift(tmp, "missing stamp line", "→ fix: add the line below to docs/17-CI-GATES.md:", fakebin)
         rc, out = run_check(tmp, fakebin)
-        airgap = json.loads((tmp / "badges/image-sizes.json").read_text())["airgap_mb"]
+        sizes = json.loads((tmp / "badges/image-sizes.json").read_text())
+        airgap = sizes["airgap_mb"]
         check("stamp hint carries corrected stamp", f"`outpost-airgap-ci` {airgap} MB" in out)
+        expect_repair(
+            tmp, "missing stamp line",
+            lambda: (tmp / "docs/17-CI-GATES.md").write_text(
+                (tmp / "docs/17-CI-GATES.md").read_text()
+                + f"\n> **Last measured:** `outpost-airgap-ci` {airgap} MB — badge job @ `{sizes['commit']}` ({sizes['date']}).\n"
+            ),
+            fakebin,
+        )
 
         # 3. Measured != committed JSON (docker present) — the hint carries the JSON.
+        #    Repair: rewrite the JSON with the measured value AND update the
+        #    matching docs stamp (the gate prints the stamp hint as the
+        #    follow-on — the same cascade --recover/--commit performs).
         build_fixture(tmp)
         fakebin = calibrate(tmp)
         fakebin = write_fake_docker(tmp, 73400320)  # web 70 MB vs committed 60
         expect_drift(tmp, "measured vs committed drift", "→ fix: rewrite badges/image-sizes.json with the measured values:", fakebin)
         rc, out = run_check(tmp, fakebin)
         check("measured hint carries corrected JSON", '"web_mb":70' in out)
+        def _repair_measured():
+            (tmp / "badges/image-sizes.json").write_text(
+                '{"web_mb":70,"backend_mb":191,"airgap_mb":1724,"commit":"repair","date":"2026-08-14"}'
+            )
+            docs = (tmp / "docs/17-CI-GATES.md").read_text()
+            docs = re.sub(
+                r"(?m)^> \*\*Last measured:\*\* `outpost-web:ci` 60 MB.*$",
+                "> **Last measured:** `outpost-web:ci` 70 MB — badge job @ `repair` (2026-08-14).",
+                docs,
+            )
+            (tmp / "docs/17-CI-GATES.md").write_text(docs)
+        expect_repair(tmp, "measured vs committed drift", _repair_measured, fakebin)
 
         # 4. Missing image-sizes.json.
+        #    Repair: restore the committed JSON (the hint's restore option).
         build_fixture(tmp)
         fakebin = calibrate(tmp)
         (tmp / "badges/image-sizes.json").unlink()
         expect_drift(tmp, "missing image-sizes.json", "→ fix: restore badges/image-sizes.json", fakebin)
+        expect_repair(
+            tmp, "missing image-sizes.json",
+            lambda: shutil.copy(ROOT / "badges/image-sizes.json", tmp / "badges/image-sizes.json"),
+            fakebin,
+        )
 
-    print(f"Badge hint self-test: {len(FAILURES)} failed" if FAILURES else "Badge hint self-test: all drift directions print the corrected payload/stamp")
+    print(f"Badge hint self-test: {len(FAILURES)} failed" if FAILURES else "Badge hint self-test: all drift directions print a hint that repairs")
     return 1 if FAILURES else 0
 
 
