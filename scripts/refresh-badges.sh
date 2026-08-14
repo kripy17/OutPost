@@ -74,36 +74,43 @@ json_get() { # json_get <file> <key>
 size_commit="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 size_date="$(date -u +%Y-%m-%d)"
 
-# Rebuild the stamp line exactly as it must appear in docs/17.
-stamp_line() {
-  if [[ -n "$WEB_MB" ]]; then
-    echo "> **Last measured:** web ${WEB_MB} MB / backend ${BACKEND_MB} MB / airgap ${AIRGAP_MB} MB — badge job @ \`${size_commit}\` (${size_date})."
-  else
-    echo ""
-  fi
+# Rebuild a per-image stamp line exactly as it must appear in docs/17. One
+# line per image (not one combined line) so the gate can require a stamp for
+# EVERY table row — a fourth image can't be documented without its trend
+# data.
+stamp_line() { # stamp_line <image> <measured_mb>
+  echo "> **Last measured:** \`$1\` $2 MB — badge job @ \`${size_commit}\` (${size_date})."
 }
 
-# Rewrite the docs/17 stamp (regex-sub if present, else insert after the
-# baseline table so a fresh checkout gets the stamp on the first run).
-write_size_stamp() {
-  [[ -n "$WEB_MB" ]] || return 0
-  local stamp; stamp=$(stamp_line)
-  # `python -` reads the script from stdin (the heredoc) with the stamp as
-  # argv[1] — `python "$stamp"` would treat the stamp as a script FILE.
-  "$PY" - "$stamp" <<'PYEOF'
+# Rewrite or insert the stamp line for ONE image (regex-sub if present, else
+# insert after the last stamp line — or after the baseline table on a fresh
+# checkout). Images the refresh doesn't measure are left untouched, so a
+# newer image's stamp survives a refresh that only measures web/backend/
+# airgap.
+#   `python -` reads the script from stdin (the heredoc) with args as
+#   argv[1..] — `python "$stamp"` would treat the stamp as a script FILE.
+ensure_size_stamp() { # ensure_size_stamp <image> <measured_mb>
+  local img=$1 mb=$2
+  [[ -n "$mb" ]] || return 0
+  local stamp; stamp=$(stamp_line "$img" "$mb")
+  "$PY" - "$img" "$stamp" <<'PYEOF'
 import re, sys
-stamp = sys.argv[1]
+img, stamp = sys.argv[1], sys.argv[2]
 path = "docs/17-CI-GATES.md"
 text = open(path).read()
-pattern = re.compile(r"^> \*\*Last measured:\*\*.*$", re.M)
-if pattern.search(text):
-    text = pattern.sub(lambda m: stamp, text)
+pat = re.compile(r"^> \*\*Last measured:\*\* `" + re.escape(img) + r"`\s+\d+ MB.*$", re.M)
+if pat.search(text):
+    text = pat.sub(lambda m: stamp, text)
 else:
-    anchor = "| `outpost-backend:ci` (python:3.12-slim + pip deps + app) |"
-    idx = text.find(anchor)
-    if idx == -1:
-        sys.exit(2)
-    nl = text.index("\n", idx)
+    stamps = list(re.finditer(r"^> \*\*Last measured:.*$", text, re.M))
+    if stamps:
+        nl = text.index("\n", stamps[-1].end())
+    else:
+        anchor = "| `outpost-airgap-ci`"
+        idx = text.find(anchor)
+        if idx == -1:
+            sys.exit(2)
+        nl = text.index("\n", idx)
     text = text[: nl + 1] + "\n" + stamp + "\n" + text[nl + 1 :]
 open(path, "w").write(text)
 PYEOF
@@ -129,18 +136,19 @@ case "$MODE" in
     # measurement must match the committed JSON — so the baseline table can't
     # silently drift from the data file or from reality.
     if [ -f "$SIZE_JSON" ]; then
-      W=$(json_get "$SIZE_JSON" web_mb)
-      B=$(json_get "$SIZE_JSON" backend_mb)
-      A=$(json_get "$SIZE_JSON" airgap_mb)
-      grep -q '^> \*\*Last measured:\*\*' "$DOCS_STAMP" || { echo "  stale: docs/17 has no 'Last measured' stamp" >&2; stale=1; }
-      if [[ -n "$W" && -n "$B" ]] && ! grep -q "web ${W} MB / backend ${B} MB" "$DOCS_STAMP"; then
-        echo "  stale: docs/17 size stamp != badges/image-sizes.json (web ${W} / backend ${B})" >&2
-        stale=1
-      fi
-      if [[ -n "$A" ]] && ! grep -q "airgap ${A} MB" "$DOCS_STAMP"; then
-        echo "  stale: docs/17 size stamp lacks the airgap size (${A} MB)" >&2
-        stale=1
-      fi
+      # Every measured image needs its own stamp line carrying the
+      # committed value (per-image lines — one combined line is no longer
+      # accepted, so a table row can never be documented without trend data).
+      for pair in "outpost-web:ci:web_mb" "outpost-backend:ci:backend_mb" "outpost-airgap-ci:airgap_mb"; do
+        img=${pair%%:*}
+        rest=${pair#*:}
+        key=${rest%%:*}
+        val=$(json_get "$SIZE_JSON" "$key")
+        if [[ -n "$val" ]] && ! grep -q "^> \*\*Last measured:\*\* \`${img}\` ${val} MB" "$DOCS_STAMP"; then
+          echo "  stale: docs/17 lacks the 'Last measured' stamp for ${img} (${val} MB)" >&2
+          stale=1
+        fi
+      done
       if [[ -n "$WEB_MB" ]] && { [ "$WEB_MB" != "$W" ] || [ "$BACKEND_MB" != "$B" ] || [ "$AIRGAP_MB" != "$A" ]; }; then
         echo "  stale: measured (web ${WEB_MB} / backend ${BACKEND_MB} / airgap ${AIRGAP_MB}) != committed image-sizes.json (web ${W} / backend ${B} / airgap ${A})" >&2
         stale=1
@@ -174,7 +182,9 @@ printf '%s\n' "$CV_BADGE" > "$ROOT/badges/coverage.json"
 if [[ -n "$WEB_MB" ]]; then
   printf '{"web_mb":%s,"backend_mb":%s,"airgap_mb":%s,"commit":"%s","date":"%s"}\n' \
     "$WEB_MB" "$BACKEND_MB" "$AIRGAP_MB" "$size_commit" "$size_date" > "$SIZE_JSON"
-  write_size_stamp || { echo "  could not rewrite the docs/17 size stamp (script failed or anchor missing)" >&2; exit 2; }
+  ensure_size_stamp outpost-web:ci "$WEB_MB" || { echo "  could not write the docs/17 stamp for outpost-web:ci" >&2; exit 2; }
+  ensure_size_stamp outpost-backend:ci "$BACKEND_MB" || { echo "  could not write the docs/17 stamp for outpost-backend:ci" >&2; exit 2; }
+  ensure_size_stamp outpost-airgap-ci "$AIRGAP_MB" || { echo "  could not write the docs/17 stamp for outpost-airgap-ci" >&2; exit 2; }
 fi
 
 if git diff --quiet -- badges/ docs/17-CI-GATES.md; then
