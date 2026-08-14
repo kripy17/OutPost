@@ -185,6 +185,17 @@ step "Doc counts     (stale-reference gate)" \
     echo "  badge=$sum (be=$BE + col=$COL + cli=$CLI + fe=$FE), rules=$RULES_ACT, tactics=$COV_C/$COV_T, commands=$CMDS_ACT — badge payloads + README claims match"
   '
 
+# Image-budget docs gate — docs/17's size table must not drift from the
+# actual CI configuration. Static cross-check (regex over source, no yaml
+# dependency, no docker): every check-image-size.sh invocation in ci.yml
+# — resolving the script's own defaults when a step passes no flags — must
+# match its docs/17 table row's soft/hard budgets; the table's measured
+# column must match badges/image-sizes.json; and a table row with no gate
+# step is drift too. A budget change in either file fails the sweep before
+# the slow gates, same as the doc-count gate.
+step "Image budgets  (docs/17 table vs ci.yml gates)" \
+  bash -c "'$ROOT/.venv/bin/python' '$ROOT/scripts/gate_image_budget_docs.py'"
+
 # Cross-platform collector soak baseline — the Windows (Sysmon) and Linux
 # (auditd) soaks run with --gate against ONE isolated backend (temp DB,
 # spare port) and print the FP/detection baseline as a compact table, so
