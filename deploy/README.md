@@ -133,6 +133,8 @@ To deploy on a firewalled host (no outbound egress):
    - Webhook notifications — only to targets *you* configure.
 4. Verify after boot with egress disabled:
    - the [post-deploy checklist](#post-deploy-checklist) items above, and
-   - `node demo/measure-airgap-load.mjs --web http://<host>:5174` for the
-     cold-start latency (≈ 0.3 s worst case on the production build) — a
-     clean run proves no external request is being attempted.
+   - `bash scripts/airgap-verify.sh --web http://<host>:5174` — the one-shot
+     bundle: all three static gates (frontend artifacts, CLI network,
+     backend egress) plus the cold-start latency budget (≈ 0.3 s worst
+     case on the production build; fails over 1 s). A clean run proves no
+     external request is being attempted.
