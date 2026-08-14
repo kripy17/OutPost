@@ -102,8 +102,12 @@ jobs:
         # under --network none: the container has no interface besides
         # loopback, so this proves the image that ships boots, serves the SPA
         # + every referenced chunk, keeps the /api proxy live (502 with the
-        # sibling backend absent), serves TLS via the internal CA, and makes
-        # zero external reach possible (asserted from /proc/net/route).
+        # sibling backend absent), and makes zero external reach possible
+        # (asserted from /proc/net/route). Runs with OUTPOST_HOST=http://localhost
+        # — the http:// scheme disables Caddy's auto-HTTPS redirect for the
+        # smoke (otherwise every request 308s to https:// and the assertions
+        # measure the redirect, not serving); TLS config stays covered by
+        # `caddy validate` in the step below.
         run: bash scripts/smoke-web-image.sh --image outpost-web:ci
 
       - name: Validate the Caddyfile

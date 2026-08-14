@@ -77,12 +77,20 @@ empty namespace, so probing must be in-namespace): the container boots
 without crash-looping, Caddy serves the SPA (`GET /` → 200 with the shell
 marker), every `/assets/*` chunk referenced by the served `index.html`
 returns 200, the `/api` proxy is live (502 — the sibling backend container
-isn't on this namespace, which is the honest isolated-state signal), TLS
-serves on 443 via Caddy's internal CA (`OUTPOST_HOST=localhost` skips
-ACME), and `/proc/net/route` inside the container is empty — the OS-level
-zero-egress assertion. If the entrypoint ever tries to reach out at boot
-(license ping, update check, ACME against a public CA), the empty namespace
-fails it immediately.
+isn't on this namespace, which is the honest isolated-state signal), and
+`/proc/net/route` inside the container is empty — the OS-level zero-egress
+assertion. If the entrypoint ever tries to reach out at boot (license ping,
+update check, ACME against a public CA), the empty namespace fails it
+immediately.
+
+The container runs with `OUTPOST_HOST=http://localhost` — the `http://`
+scheme disables Caddy's automatic HTTPS for the smoke run. Caddy's
+auto-HTTPS would otherwise 308-redirect every plain-HTTP request to
+`https://` (the production behavior, which the first CI run of this step
+proved live), turning loopback status assertions into assertions about the
+redirect instead of about serving; ACME is also impossible inside an empty
+namespace. Same image, same Caddyfile, one env knob — production TLS stays
+covered by `caddy validate` in the same Deploy job.
 
 The volume run earned its keep immediately: the 11k/real-soak runs surfaced a
 15 MB `/campaigns` response (~1.06 s — the timeline query shipped every
