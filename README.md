@@ -226,7 +226,9 @@ loopback-only, enforced by a CI gate), and the backend's only outbound
 calls are key/config-gated (enrichment, sandbox, passive DNS, webhooks) —
 proven at runtime: with zero keys, the background flows make zero requests.
 Run `bash scripts/airgap-verify.sh` for the one-shot verification of all
-four gates plus the cold-start latency budget.
+four gates plus the cold-start latency budget — see
+[`docs/18-AIR-GAP.md`](docs/18-AIR-GAP.md) for the full guarantees and how
+to run each gate standalone.
 - **Enforced in CI** — both Playwright e2e gates treat *any* non-localhost
 request as a console error, and a static gate scans the shipped build
 (`dist/index.html` + every asset chunk) for external dependency syntax

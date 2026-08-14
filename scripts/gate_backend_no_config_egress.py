@@ -64,7 +64,10 @@ class EgressProbe:
         # testserver = TestClient's in-process ASGI transport host.
         if host not in ("127.0.0.1", "::1", "localhost", "testserver"):
             self.recorded.append((host, str(url)[:120]))
-            raise ConnectionError(f"no-config egress gate: blocked {url}")
+            # httpx.ConnectError is an httpx.HTTPError: the app's own error
+            # handling (except httpx.HTTPError) swallows it, so keyed paths
+            # fail gracefully AND write their cache row — no real network.
+            raise httpx.ConnectError(f"no-config egress gate: blocked {url}")
 
     def __enter__(self) -> "EgressProbe":
         self._real_async = httpx.AsyncClient.request
@@ -170,13 +173,27 @@ def main() -> int:
                 try:
                     client.post(f"/runs/{run_id}/enrichment/refresh?ip=203.0.113.88")
                 except Exception:
-                    pass  # the probe raises inside the handler — recorded is what matters
+                    pass  # recorded is what matters; the refresh also writes the cache row
                 control_recorded = control.recorded
             if not any(host == "api.abuseipdb.com" for host, _ in control_recorded):
                 hosts = sorted({h for h, _ in control_recorded}) or ["<none>"]
                 failures.append(
                     "negative control FAILED: a keyed refresh made no provider "
                     f"contact (observed: {', '.join(hosts)}) — the probe may not bite")
+
+            # --- cache keeps egress rare: normal reads after a refresh are silent ---
+            # The refresh bypassed the TTL and re-queried (one egress, caught
+            # above). Now the row is cached: repeated reads must NOT egress.
+            with EgressProbe() as cache_probe:
+                r = client.get(f"/runs/{run_id}")
+                if r.status_code != 200:
+                    failures.append(f"GET /runs/{run_id} (cached) -> {r.status_code}")
+                r = client.get(f"/runs/{run_id}")
+                if r.status_code != 200:
+                    failures.append(f"GET /runs/{run_id} (cached, 2nd) -> {r.status_code}")
+            if cache_probe.recorded:
+                for host, url in sorted(set(cache_probe.recorded)):
+                    failures.append(f"cached read still egressed to {host}: {url}")
     finally:
         import shutil
         for p in (db_path,):
