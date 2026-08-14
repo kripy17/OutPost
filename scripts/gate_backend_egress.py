@@ -46,6 +46,17 @@ BACKEND_HTTPX_SANCTIONED = {
 
 FORBIDDEN_CLIENTS = ("requests", "aiohttp", "urllib.request", "http.client")
 
+# Shell-out exfiltration: a module could bypass httpx entirely by exec'ing
+# curl/wget/nc. The collectors legitimately shell out for LOCAL read-only
+# commands (tasklist / netstat / ps in common/snapshot.py); anything with a
+# network-capable binary, or any shell-out in the backend, fails.
+COLLECTOR_SHELL_SANCTIONED = {"common/snapshot.py"}
+NET_BINARIES = (
+    "curl", "wget", "nc", "ncat", "socat", "ssh", "telnet", "sftp", "scp",
+    "certutil", "powershell", "pwsh", "python", "python3", "bash", "sh",
+    "wsl", "mshta", "regsvr32", "bitsadmin", "ftp", "tftp", "smbclient",
+)
+
 
 def iter_py_files(root: Path) -> list[Path]:
     files = []
@@ -69,6 +80,48 @@ def module_imports(tree: ast.AST, mod: str) -> bool:
             if node.module and (node.module == mod or node.module.startswith(mod + ".")):
                 return True
     return False
+
+
+def shell_out_hits(tree: ast.AST, allow_snapshot: bool) -> list[str]:
+    """Find shell-out call sites (subprocess / os.system / os.popen / pty)
+    and, in the collectors' sanctioned snapshot module, flag any invocation
+    whose command names a network-capable binary."""
+    hits: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        f = node.func
+        kind = None
+        if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name):
+            if f.value.id == "subprocess" and f.attr in ("run", "Popen", "call", "check_call", "check_output", "getoutput"):
+                kind = f"subprocess.{f.attr}"
+            elif f.value.id == "os" and f.attr in ("system", "popen", "spawnl", "spawnv", "spawnle", "spawnve"):
+                kind = f"os.{f.attr}"
+            elif f.value.id == "pty" and f.attr == "spawn":
+                kind = "pty.spawn"
+        if not kind:
+            continue
+        if not allow_snapshot:
+            hits.append(f"shell-out via {kind}")
+            continue
+        # Sanctioned snapshot module: flag network-capable binaries only.
+        cmd = None
+        if node.args:
+            first = node.args[0]
+            if isinstance(first, ast.Constant) and isinstance(first.value, str):
+                cmd = first.value
+            elif isinstance(first, ast.List):
+                parts = []
+                for elt in first.elts:
+                    if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+                        parts.append(elt.value)
+                cmd = " ".join(parts)
+        if cmd:
+            words = [w.lower() for w in cmd.replace("\\", "/").split()]
+            base = words[0].split("/")[-1].split(".")[0] if words else ""
+            if base in NET_BINARIES or any(any(b in w for b in NET_BINARIES) for w in words):
+                hits.append(f"{kind} invokes network-capable binary: {cmd[:80]}")
+    return hits
 
 
 def uses_socket_socket(tree: ast.AST) -> bool:
@@ -104,6 +157,11 @@ def scan_backend(root: Path) -> list[str]:
             hits.append(f"{rel}: httpx outside the sanctioned egress modules ({rel})")
         if uses_socket_socket(tree):
             hits.append(f"{rel}: raw socket.socket client usage")
+        for mod in ("subprocess", "pty"):
+            if module_imports(tree, mod):
+                hits.append(f"{rel}: shell-out module `{mod}` — no shelling out in the backend")
+        for h in shell_out_hits(tree, allow_snapshot=False):
+            hits.append(f"{rel}: {h}")
     return hits
 
 
@@ -123,6 +181,12 @@ def scan_collectors(root: Path) -> list[str]:
                 hits.append(f"{rel}: HTTP client `{mod}` outside the shipper seam")
         if uses_socket_socket(tree):
             hits.append(f"{rel}: raw socket.socket client usage")
+        allow_snapshot = rel in COLLECTOR_SHELL_SANCTIONED
+        for mod in ("subprocess", "pty"):
+            if module_imports(tree, mod) and not allow_snapshot:
+                hits.append(f"{rel}: shell-out module `{mod}` outside {COLLECTOR_SHELL_SANCTIONED}")
+        for h in shell_out_hits(tree, allow_snapshot=allow_snapshot):
+            hits.append(f"{rel}: {h}")
     return hits
 
 

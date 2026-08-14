@@ -52,11 +52,17 @@ routine background flows (run create → ingest → complete → detail → samp
 upload → sandbox demo detonation) — zero config must mean zero httpx calls.
 A negative control sets a dummy AbuseIPDB key and force-refreshes one IP:
 the probe MUST observe the provider URL, proving the patch bites and keyed
-paths really would egress — and a third phase proves the **enrichment cache
-keeps egress rare**: after that single refresh, repeated reads of the same
-run are silent (TTL cache hit). A one-shot bundle, `scripts/airgap-verify.sh`,
-runs all four gates plus the cold-start latency harness against a live stack
-(failing if interactive render exceeds a budget).
+paths really would egress — a third phase proves the **enrichment cache
+keeps egress rare** (after that single refresh, repeated reads of the same
+run are silent), and a fourth proves **webhook delivery is target-limited**
+(a configured webhook + watchlist hit reach exactly the operator-configured
+URL and nothing else). The static egress gate also forbids **shell-out
+exfiltration**: `subprocess`/`os.system`/`os.popen`/`pty` are banned in the
+backend, and in collectors only `common/snapshot.py` may shell out — for
+local read-only commands (`tasklist`/`netstat`/`ps`), never a network-capable
+binary. A one-shot bundle, `scripts/airgap-verify.sh`, runs all four gates
+plus the cold-start latency harness against a live stack (failing if
+interactive render exceeds a budget).
 
 1. **`npx tsc --noEmit`** (~1 min in) — frontend type errors fail before the
    Playwright download.
