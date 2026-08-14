@@ -2,8 +2,10 @@
 # verify.sh — OutPost full verification sweep in one command.
 #
 #   backend pytest  →  coverage gate (14/14 ATT&CK)  →  collector pytest
-#   →  CLI pytest  →  frontend lint/tests/build  →  doc-count gate (fails
-#     FAST on stale badge/README claims — before the slow collector gates)
+#   →  CLI pytest  →  frontend lint/tests/build  →  air-gap artifact gate
+#     (static scan of the shipped bundle for external dependency syntax)
+#   →  doc-count gate (fails FAST on stale badge/README claims — before the
+#     slow collector gates)
 #   →  collector soak baseline (cross-platform FP table)  →  CLI network
 #     gate (loopback-only air-gap, static + runtime)  →  collector
 #     live-claim gate  →  sandbox provider gate (skips cleanly without a
@@ -90,6 +92,16 @@ step "Frontend tests  (vitest)" \
 
 step "Frontend build  (tsc --noEmit && vite build)" \
   bash -c "cd '$ROOT/frontend' && '$NPM' run build"
+
+# Air-gap artifact gate — static scan of the SHIPPED build (dist/index.html +
+# assets) for external dependency syntax: any external origin in src/href/
+# url()/@import (the class that once shipped fonts.gstatic.com links), and
+# fetch/EventSource/WebSocket/xhr.open/import( with an external literal in any
+# lazy-loaded chunk. Complements the e2e gates, which only exercise two flows:
+# this covers every chunk, statically, in milliseconds. Matches dependency
+# syntax, so demo data / doc links / webhook examples can't false-positive.
+step "Air-gap artifacts (static scan of shipped build)" \
+  bash -c "'$ROOT/.venv/bin/python' '$ROOT/scripts/gate_airgap_artifacts.py' --dist '$ROOT/frontend/dist'"
 
 # Doc-count gate — the shipped READMEs must not drift from the code they
 # describe. Two checks: (1) known-stale numeric patterns (old test counts,

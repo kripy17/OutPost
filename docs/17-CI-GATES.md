@@ -13,7 +13,7 @@ Every push to `main` and every pull request runs the `CI` workflow
 | `Deploy — web image + Caddyfile + compose` | Production image build + config validation | Dockerfile/Caddyfile/compose drift |
 
 Inside the verify job, three fast-fail tiers front-load the expensive checks
-so the cheapest signal fails first. The sweep itself is 16 steps; beyond the
+so the cheapest signal fails first. The sweep itself is 17 steps; beyond the
 suites it includes the **identity gate** (`scripts/gate_proc_identity.py`) —
 an AST scan of the detection/process-tree/baseline/CLI-rendering modules that
 fails if any event-level `process_name` read lacks an `exe_path` resolution,
@@ -24,7 +24,16 @@ through the env-configured api seam (`lib/api_client.py` + the two sanctioned
 callers), plus a runtime proof that boots an isolated backend, seeds it, and
 runs a 9-command CLI matrix under a loopback-only socket patch — any connect
 outside loopback fails the sweep, and a negative control (an external-base
-command that must be blocked) proves the patch can't go vacuously green.
+command that must be blocked) proves the patch can't go vacuously green —
+and the **air-gap artifact gate** (`scripts/gate_airgap_artifacts.py`): a
+static scan of the *shipped* build (`dist/index.html` + every asset chunk)
+for external dependency syntax — external origins in `src`/`href`/`url()`/
+`@import` (the class that once shipped `fonts.gstatic.com` links) and
+`fetch`/`EventSource`/`WebSocket`/`xhr.open`/`import(` with an external
+literal in any lazy-loaded chunk. It matches dependency syntax, not raw URL
+strings, so demo data, doc links, and webhook examples can't false-positive;
+this closes the gap where the Playwright e2e gates only exercise two flows
+while the static scan covers every chunk in milliseconds.
 
 1. **`npx tsc --noEmit`** (~1 min in) — frontend type errors fail before the
    Playwright download.
