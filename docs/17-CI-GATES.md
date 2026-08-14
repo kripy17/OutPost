@@ -145,8 +145,12 @@ for a solo-maintainer repo. (If fleet-scale concurrent merging is ever
 needed, enable the queue in the branch-protection UI and keep this policy.)
 
 Notes:
-- The badge-refresh bot commits directly to `main` (no PR), so auto-merge
-  never touches it.
+- The badge-refresh bot lands **via a PR with auto-merge armed**, like every
+  other change. A direct push would be rejected by the required checks
+  (GH006 — the refresh job proved this the first time it tried after the
+  rule was enforced): a locally-created bot commit never ran the checks, so
+  the weekly job opens `chore/badges-*`, arms `--auto --squash`, and the
+  gate merges it once verify + deploy + air-gap pass.
 - Admin bypass still applies: `enforce_admins` is false, so an admin can
   force-merge a red PR with `gh pr merge --admin` in an emergency.
 
