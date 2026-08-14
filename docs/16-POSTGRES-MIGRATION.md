@@ -7,11 +7,18 @@ choice, and it is also the scale ceiling: a real fleet (dozens of hosts ×
 plan — the schema inventory, the exact dialect mapping, what the runtime
 must change, and the migration runbook that already works today.
 
-Status: **export/import tooling shipped** (`outpost admin pg-migrate`,
-`scripts/migrate_to_postgres.py`, pure core in
-`backend/app/services/pg_migrate.py`, unit-tested). The live-Postgres
-runtime (a psycopg dialect for `core/db.py`) is the remaining piece —
-nothing in the app can run against Postgres yet.
+Status: **the full Tier-4 path is shipped.** Export/import tooling
+(`outpost admin pg-migrate`, `scripts/migrate_to_postgres.py`, pure core in
+`backend/app/services/pg_migrate.py`, unit-tested) **and** the live
+Postgres runtime: set `OUTPOST_DATABASE_URL` (psycopg3 URL) and install the
+backend's optional `pg` extra — `core/db.py` then routes through
+`core/db_pg.py`, a sqlite3-compatible shim over psycopg3 that translates
+placeholders, LIKE/ILIKE, `INSERT OR IGNORE`, `GROUP_CONCAT` and `lastrowid`
+(RETURNING) semantics with zero caller changes. The schema comes up
+automatically at startup from the translated DDL (the final runtime shape).
+Verified for real in CI by the `pg-runtime` job (postgres service container
+→ `scripts/gate_pg_runtime.py`); locally `verify.sh` includes the same gate
+and SKIPs cleanly when no URL is set.
 
 ## Why files, not a live connection
 
@@ -66,24 +73,42 @@ become `JSONB` with zero query changes — the backend only ever writes and
 reads them whole. Doing it later is a `ALTER TABLE … ALTER COLUMN TYPE
 JSONB USING value::jsonb` away.
 
-## What the runtime must change (the remaining piece)
+## How the live runtime works (what changed)
 
-`core/db.py` exposes a small, explicit surface — the natural seam for a
-Postgres dialect:
+`core/db.py` exposes a small, explicit surface — the seam the dialect lives
+behind. `get_connection()` / `init_db()` branch on `config.DATABASE_URL`:
+empty → the zero-config sqlite3 path; set → `core/db_pg.py`, a
+sqlite3-compatible shim over psycopg3 (lazy-imported, so the SQLite default
+keeps its dependency-light install — psycopg comes from the backend's
+optional `pg` extra). Every model and route goes through `db_session()`, so
+the wrapper contains the change with zero caller edits:
 
-| sqlite3 API used | Postgres equivalent |
+| sqlite3 API used | What the shim does |
 |---|---|
-| `sqlite3.connect(DATABASE_PATH)` | `psycopg.connect(DATABASE_URL)` (or pg8000) |
-| `conn.execute / executemany` (param style `?`) | same calls, `%s` placeholders |
-| `conn.row_factory = sqlite3.Row` | `dict_row` / `RealDictRow` |
-| `cur.lastrowid` | `cursor.returning` or `INSERT … RETURNING id` |
-| `PRAGMA foreign_keys = ON` | `SET session_replication_role` off (FKs are on by default) |
-| `PRAGMA journal_mode = WAL` / `busy_timeout` | drop (Postgres handles concurrency) |
-| `sqlite_master` introspection (migrations) | `information_schema.columns` — the idempotent `ALTER TABLE ADD COLUMN` guards already check `PRAGMA table_info`; swap for a `column_exists()` helper |
-| `config.DATABASE_PATH` | `config.DATABASE_URL` — one config switch; every call site goes through `db_session()` already |
+| `sqlite3.connect(DATABASE_PATH)` | `psycopg.connect(DATABASE_URL)` |
+| `conn.execute / executemany` (`?` style) | translates `?` → `%s` |
+| `conn.row_factory = sqlite3.Row` | rows wrapped in `PgRow` — `row["name"]`, `row[0]`, `dict(row)`, `keys()`, iteration |
+| `cur.lastrowid` | appends `INSERT … RETURNING id` for tables whose single-column PK is `id` (PG catalog lookup, cached per connection) |
+| `LIKE` (case-insensitive in SQLite) | `ILIKE` — identical search behavior |
+| `INSERT OR IGNORE` | `INSERT … ON CONFLICT DO NOTHING` — same rowcount contract (1 when inserted, 0 when ignored) |
+| `GROUP_CONCAT(x)` / `GROUP_CONCAT(DISTINCT x)` | `string_agg(x, ',')` / `string_agg(DISTINCT x, ',')` (balanced-paren scan handles nested subqueries) |
+| `PRAGMA foreign_keys = ON` | FKs are on by default in Postgres |
+| `PRAGMA journal_mode = WAL` / `busy_timeout` | dropped (Postgres handles concurrency) |
+| `sqlite_master` / `PRAGMA table_info` migrations | skipped — the translated DDL is the final runtime shape, so a fresh PG install starts correct |
+| `config.DATABASE_PATH` | `config.DATABASE_URL` — one config switch |
 
-The `db_session()` context manager is the single choke point — all models
-and routes use it, so a dialect wrapper behind it contains the change.
+Verified for real in CI: the `pg-runtime` job runs a postgres:16 service
+container and exercises the shim end to end through
+`scripts/gate_pg_runtime.py` (schema init, RETURNING-id lastrowid, upserts,
+OR-IGNORE rowcounts, the agents-page GROUP_CONCAT query verbatim, ILIKE
+search, LIMIT/OFFSET, executemany, FK enforcement). Locally `verify.sh`
+runs the same gate and SKIPs cleanly when no URL is set. The translation
+layer is additionally unit-tested without a server
+(`backend/app/tests/test_pg_runtime.py`).
+
+**Known SQLite-only surfaces on the PG runtime:** the Settings backup/restore
+endpoints return 400 with a pointer to `pg_dump`/`pg_restore`, and the seed
+demo/campaign scripts (dev tooling) still target SQLite.
 
 ## Migration runbook (works today)
 
@@ -101,6 +126,12 @@ createdb outpost
 
 # 3. Load — schema + all rows in one transaction (all-or-nothing)
 psql "$DATABASE_URL" -f pg-migrate/load.sql
+
+# 4. Point the backend at Postgres (psycopg comes from the `pg` extra)
+pip install -e "./backend[pg]"
+OUTPOST_DATABASE_URL="$DATABASE_URL" uvicorn app.main:app
+#    On boot, init_db() applies the translated DDL idempotently and the
+#    whole app — live monitoring, detonation, triage — runs against PG.
 
 # 4. Verify — every table's Postgres count must equal its SQLite count
 outpost admin pg-migrate --verify --psql-url "$DATABASE_URL"

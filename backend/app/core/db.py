@@ -1,9 +1,15 @@
-"""SQLite connection handling and schema initialization.
+"""Database connection handling and schema initialization.
 
-Raw `sqlite3` is used deliberately (AGENTS.md permits SQLAlchemy or raw
-sqlite3) to keep the backend dependency-light and the schema fully explicit.
-The schema below matches docs/02-BACKEND-SPEC.md exactly, including the
-standout-feature tables created up front so migrations stay simple.
+Default runtime is raw `sqlite3` (deliberate — dependency-light, schema fully
+explicit). The schema below matches docs/02-BACKEND-SPEC.md exactly,
+including the standout-feature tables created up front so migrations stay
+simple.
+
+When `OUTPOST_DATABASE_URL` is set (Tier 4, docs/16), `get_connection()` and
+`init_db()` route through `core/db_pg` instead — a sqlite3-compatible shim
+over psycopg3. Every caller keeps working unchanged: the shim translates
+placeholders, LIKE/ILIKE, INSERT OR IGNORE, GROUP_CONCAT and lastrowid
+semantics, and `db_session()` yields the same commit/rollback lifecycle.
 """
 
 import sqlite3
@@ -11,7 +17,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-from . import config
+from . import config, db_pg
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
@@ -512,12 +518,16 @@ def _migrate_samples_platform_unknown(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-def get_connection() -> sqlite3.Connection:
+def get_connection():
     """Open a connection with a Row factory and foreign keys on.
 
-    Reads config.DATABASE_PATH lazily so tests can point the app at a
-    throwaway DB by reassigning config.DATABASE_PATH.
+    Postgres runtime when `config.DATABASE_URL` is set (psycopg shim, FKs
+    always enforced); otherwise raw sqlite3. Reads config.DATABASE_PATH
+    lazily so tests can point the app at a throwaway DB by reassigning
+    config.DATABASE_PATH.
     """
+    if config.DATABASE_URL:
+        return db_pg.pg_connection()
     Path(config.DATABASE_PATH).parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(config.DATABASE_PATH)
     conn.row_factory = sqlite3.Row
@@ -526,7 +536,15 @@ def get_connection() -> sqlite3.Connection:
 
 
 def init_db() -> None:
-    """Create tables if they don't exist. Idempotent — safe on every boot."""
+    """Create tables if they don't exist. Idempotent — safe on every boot.
+
+    On the Postgres runtime the translated DDL (the final runtime shape) is
+    applied instead — fresh PG installs start correct and skip the SQLite
+    ALTER migrations entirely.
+    """
+    if config.DATABASE_URL:
+        db_pg.pg_init_db()
+        return
     with get_connection() as conn:
         conn.executescript(SCHEMA)
         _migrate_alerts_related_pids(conn)

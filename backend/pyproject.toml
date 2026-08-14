@@ -19,6 +19,9 @@ dev = [
     "ruff>=0.4",
     "black>=24.0",
 ]
+pg = [
+    "psycopg[binary]>=3.1",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["app/tests"]

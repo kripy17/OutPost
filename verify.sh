@@ -64,6 +64,13 @@ echo "${C_DIM}OutPost verification sweep — root: $ROOT${C_RESET}"
 step "Backend pytest  (backend/app/tests)" \
   bash -c "cd '$ROOT/backend' && '$PYTEST' -q"
 
+# Postgres runtime gate (Tier 4, docs/16) — the sqlite3-compat shim over
+# psycopg is exercised against a real server by CI's pg-runtime job; here it
+# SKIPs cleanly (exit 0) when OUTPOST_DATABASE_URL is unset, so the sweep
+# documents the capability on every machine without requiring a server.
+step "Postgres runtime (skips without OUTPOST_DATABASE_URL)" \
+  bash -c "'$ROOT/.venv/bin/python' '$ROOT/scripts/gate_pg_runtime.py'"
+
 # Process-identity gate — no event-level process_name read may exist without
 # an exe_path resolution (AST scan of detection/process_tree/baseline). Locks
 # the identity-fallback invariant so a future rule can't silently regress to

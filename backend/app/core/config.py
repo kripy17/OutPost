@@ -14,6 +14,13 @@ DATA_DIR = BASE_DIR / "data"
 
 DATABASE_PATH = os.getenv("DATABASE_PATH", str(DATA_DIR / "outpost.db"))
 
+# Tier 4 — live Postgres runtime (docs/16). Empty = SQLite (the zero-config
+# default). Set to a psycopg3 URL (e.g. postgresql://user:pass@host:5432/
+# outpost) and core/db.py routes through the Postgres dialect; requires
+# psycopg installed (the backend's optional `pg` extra). The schema comes up
+# automatically at startup via the translated DDL.
+DATABASE_URL = os.getenv("OUTPOST_DATABASE_URL", "").strip()
+
 # Stored sample bytes (static analysis + download). Each uploaded sample is
 # persisted as {sample_id}.bin here so triage can re-scan it without holding
 # the upload in memory. Tests override SAMPLES_DIR to a temp dir.
