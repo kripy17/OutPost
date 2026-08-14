@@ -1,6 +1,8 @@
 # CI Gates & Branch Protection
 
 How `main` stays green and why a stale badge — or any red check — cannot merge.
+See [18-AIR-GAP.md](18-AIR-GAP.md) for the consolidated air-gap guarantees
+(the four gates + the measurement, and how to run each standalone).
 
 ## The gate stack (in order)
 
@@ -50,7 +52,9 @@ routine background flows (run create → ingest → complete → detail → samp
 upload → sandbox demo detonation) — zero config must mean zero httpx calls.
 A negative control sets a dummy AbuseIPDB key and force-refreshes one IP:
 the probe MUST observe the provider URL, proving the patch bites and keyed
-paths really would egress. A one-shot bundle, `scripts/airgap-verify.sh`,
+paths really would egress — and a third phase proves the **enrichment cache
+keeps egress rare**: after that single refresh, repeated reads of the same
+run are silent (TTL cache hit). A one-shot bundle, `scripts/airgap-verify.sh`,
 runs all four gates plus the cold-start latency harness against a live stack
 (failing if interactive render exceeds a budget).
 
