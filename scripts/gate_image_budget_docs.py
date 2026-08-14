@@ -86,6 +86,17 @@ def docs_table() -> dict[str, tuple[int, int, int]]:
     return result
 
 
+def docs_stamps() -> dict[str, int]:
+    """image -> measured MB from the 'Last measured' stamp lines.
+
+    One line per image — the trend data every table row must carry."""
+    result: dict[str, int] = {}
+    pat = re.compile(r"^> \*\*Last measured:\*\* `([^`]+)`\s+(\d+) MB", re.M)
+    for m in pat.finditer(DOCS.read_text()):
+        result[m.group(1)] = int(m.group(2))
+    return result
+
+
 def main() -> int:
     if not CI.exists() or not DOCS.exists():
         print("  FAIL — missing ci.yml or docs/17-CI-GATES.md", file=sys.stderr)
@@ -134,7 +145,24 @@ def main() -> int:
         if img not in enforced:
             check(f"gate step for {img}", False, "docs row has no check-image-size.sh invocation")
 
-    print(f"Image-budget docs gate: {len(FAILURES)} failed" if FAILURES else "Image-budget docs gate: all tables match the enforced gates + stamp data")
+    # 4. Every table row must carry its own 'Last measured' stamp line with
+    #    the measured value — a fourth image can't be documented without its
+    #    trend data.
+    stamps = docs_stamps()
+    for img, (measured, _s, _h) in sorted(table.items()):
+        want = stamps.get(img)
+        check(
+            f"stamp line for {img}",
+            want is not None and want == measured,
+            f"stamp {want} MB vs measured {measured} MB" if want is not None else "no 'Last measured' stamp line",
+        )
+
+    # 5. A stamp with no table row is drift too.
+    for img in sorted(stamps):
+        if img not in table:
+            check(f"table row for stamped {img}", False, "stamp line has no table row")
+
+    print(f"Image-budget docs gate: {len(FAILURES)} failed" if FAILURES else "Image-budget docs gate: all tables, stamps, gates, and stamp data agree")
     return 1 if FAILURES else 0
 
 
