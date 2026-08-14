@@ -1,0 +1,22 @@
+# OutPost Docker build context — keep the image lean and reproducible.
+# Heavy dependencies and local state are installed INSIDE the image; only
+# source is copied.
+.git
+.github
+.freebuff
+.venv
+**/node_modules
+**/__pycache__
+**/.pytest_cache
+*.pyc
+*.pyo
+*.egg-info
+frontend/dist
+demo/screenshots
+demo/*.webm
+demo/*.gif
+*.db
+*.db-wal
+*.db-shm
+*.log
+.deck-video

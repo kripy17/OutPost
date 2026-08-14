@@ -77,6 +77,7 @@ async function runMode(mode) {
   const rows = [];
   let externalAttempts = 0;
   let hungRequests = 0;
+  let anchorTimeouts = 0;
 
   for (let i = 0; i < ITER; i++) {
     const context = await browser.newContext({ serviceWorkers: "block" });
@@ -109,14 +110,21 @@ async function runMode(mode) {
     }
 
     let interactiveMs = Date.now() - t0;
+    let anchorTimeout = false;
     if (!timedOut) {
       try {
-        await page.waitForSelector("text=/sessions/i", { timeout: 60_000 });
+        // Data-driven anchor: a NUMERIC session count only renders after the
+        // Overview's runs fetch resolves — static chrome text (the "sessions"
+        // word in the rail) must not count as interactive, or a dead API would
+        // measure as a fast load.
+        await page.waitForSelector("text=/[0-9]+\\s+sessions/i", { timeout: 60_000 });
         interactiveMs = Date.now() - t0;
       } catch {
-        interactiveMs = -1; // rendered without the sessions anchor
+        interactiveMs = -1; // anchor never appeared (dead API / page error)
+        anchorTimeout = true;
       }
     }
+    anchorTimeouts += anchorTimeout ? 1 : 0;
 
     const nav = await page
       .evaluate(() => {
@@ -145,6 +153,7 @@ async function runMode(mode) {
     bootMs,
     externalAttempts,
     hungRequests,
+    anchorTimeouts,
     rows,
     summary: {
       ttfb: [med(pick("ttfb")), Math.max(...pick("ttfb"))],
@@ -205,4 +214,9 @@ if (MAX_INTERACTIVE > 0) {
     console.error(`air-gap latency budget exceeded: ${fmt(worst)} > ${MAX_INTERACTIVE}ms`);
     process.exit(1);
   }
+}
+if (a.anchorTimeouts > 0) {
+  console.error(`interactive anchor never appeared in ${a.anchorTimeouts} airgap iteration(s) — ` +
+    "the page did not become data-interactive (dead API?); measurement FAILED");
+  process.exit(1);
 }

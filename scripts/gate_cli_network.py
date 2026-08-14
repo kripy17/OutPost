@@ -64,6 +64,46 @@ def _rel(path: Path) -> str:
     return str(path.relative_to(OUTPOST))
 
 
+# Network-capable binaries a shell-out must never invoke (local commands
+# like tasklist/pgrep/netstat, or launching a sample under analysis, are
+# legitimate — curl/wget/nc/ssh are not).
+NET_BINARIES = (
+    "curl", "wget", "nc", "ncat", "socat", "ssh", "telnet", "sftp", "scp",
+    "certutil", "powershell", "pwsh", "python", "python3", "bash", "sh",
+    "wsl", "mshta", "regsvr32", "bitsadmin", "ftp", "tftp", "smbclient",
+)
+
+
+def _shell_out_problem(node: ast.Call, rel: str) -> str | None:
+    """Flag a shell-out whose command names a network-capable binary."""
+    f = node.func
+    kind = None
+    if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name):
+        if f.value.id == "subprocess" and f.attr in ("run", "Popen", "call", "check_call", "check_output", "getoutput"):
+            kind = f"subprocess.{f.attr}"
+        elif f.value.id == "os" and f.attr in ("system", "popen", "spawnl", "spawnv"):
+            kind = f"os.{f.attr}"
+    if not kind or not node.args:
+        return None
+    first = node.args[0]
+    cmd: str | None = None
+    if isinstance(first, ast.Constant) and isinstance(first.value, str):
+        cmd = first.value
+    elif isinstance(first, ast.List):
+        parts = []
+        for elt in first.elts:
+            if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+                parts.append(elt.value)
+        cmd = " ".join(parts)
+    if not cmd:
+        return None  # dynamic (variable) commands — local by inspection
+    words = [w.lower() for w in cmd.replace("\\", "/").split()]
+    base = words[0].split("/")[-1].split(".")[0] if words else ""
+    if base in NET_BINARIES or any(any(b in w for b in NET_BINARIES) for w in words):
+        return f"{rel}:{node.lineno} {kind} invokes network-capable binary: {cmd[:80]}"
+    return None
+
+
 def _has_url_var(node: ast.AST) -> bool:
     """The expression builds its URL from BASE_URL/base/backend_url."""
     for sub in ast.walk(node):
@@ -126,6 +166,13 @@ def static_scan() -> list[str]:
                             f"{rel}:{node.lineno} requests.{node.func.attr}() URL is not "
                             "built from the OUTPOST_API_URL seam (BASE_URL/base)"
                         )
+
+            # Shell-out exfiltration: local commands are fine (sample launch,
+            # tasklist/pgrep), network binaries are not.
+            if isinstance(node, ast.Call):
+                problem = _shell_out_problem(node, rel)
+                if problem:
+                    problems.append(problem)
     return problems
 
 
