@@ -20,7 +20,11 @@
 
 services:
   backend:
-    build: ./backend
+    # Contexts resolve relative to THIS file's directory (deploy/), so
+    # ../backend is the repo-root backend/ — the same build the CI smoke uses.
+    # (The old `./backend` resolved to deploy/backend and the documented
+    # `docker compose -f deploy/... up --build` could never build.)
+    build: ../backend
     environment:
       DATABASE_PATH: /data/outpost.db
       # NOTE: double quotes are required — compose interpolates ${OUTPOST_HOST}
