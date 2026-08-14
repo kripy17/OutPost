@@ -77,6 +77,18 @@ jobs:
         # instead of after the full sweep; verify.sh re-checks it later.
         run: .venv/bin/python scripts/gate_image_budget_docs.py
 
+      - name: Fast-fail on hint regressions (image-budget + badge gates)
+        # Same self-explaining-hint discipline, front-loaded: if a refactor
+        # dropped a '→ fix:' hint from either gate (or a new failure path
+        # forgot one), the self-tests fail here (~2 min in) instead of after
+        # the 3.5-min sweep. The image-budget one is pure fixture regex
+        # (milliseconds); the badge one copies source + runs the real
+        # collect-only counts (seconds). verify.sh re-runs both inside its
+        # own steps, so nothing is skipped, just failed earlier.
+        run: |
+          .venv/bin/python scripts/test_image_budget_hints.py
+          .venv/bin/python scripts/test_badge_hints.py
+
       - name: Run the full verification sweep
         run: bash verify.sh
 

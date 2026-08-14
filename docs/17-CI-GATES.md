@@ -81,8 +81,15 @@ interactive render exceeds a budget).
    budget drifted between docs/17 and the ci.yml size-gate flags (or a
    stamp/measured column out of sync) fails the push milliseconds later,
    before the sweep.
-4. **`bash verify.sh`** — the full sweep (tests, soaks, layout sweep,
-   post-deploy walk, badge refresh gate, image-budget gate re-check).
+4. **Hint self-tests (image-budget + badge gates)** (~2 min in) — the two
+   self-tests that pin the `→ fix:` hints run here too, so a refactor that
+   drops a hint (or a new failure path that forgets one) fails the push
+   before the 3.5-min sweep: `scripts/test_image_budget_hints.py`
+   (milliseconds, pure fixture regex) then
+   `scripts/test_badge_hints.py` (seconds — real collect-only counts).
+5. **`bash verify.sh`** — the full sweep (tests, soaks, layout sweep,
+   post-deploy walk, badge refresh gate, image-budget gate + hint
+   self-tests re-check).
 
 A dedicated `Refresh dynamic badges` job runs on the **weekly schedule and
 `workflow_dispatch` only** — it recomputes the four badge payloads from
