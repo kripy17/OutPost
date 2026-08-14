@@ -137,4 +137,5 @@ To deploy on a firewalled host (no outbound egress):
      bundle: all four gates (frontend artifacts, CLI network, backend
      egress, backend no-config runtime) plus the cold-start latency budget
      (≈ 0.3 s worst case on the production build; fails over 1 s). A clean
-     run proves no external request is being attempted.
+     run proves no external request is being attempted — see
+     [`docs/18-AIR-GAP.md`](../docs/18-AIR-GAP.md) for the full guarantees.
