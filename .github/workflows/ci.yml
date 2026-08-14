@@ -220,7 +220,7 @@ jobs:
   refresh-badges:
     name: Refresh dynamic badges
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     permissions:
       contents: write
@@ -248,6 +248,17 @@ jobs:
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
+
+      - name: Build the shipped images for the size stamp
+        # The size stamp in docs/17 is only as fresh as its measurement. This
+        # job is the measurer: build the two shipped images with :measure tags
+        # (the same Dockerfiles the Deploy job ships), then refresh-badges.sh
+        # measures them, updates badges/image-sizes.json + the docs/17
+        # 'Last measured' stamp, and commits everything in one self-healing
+        # commit — the same weekly pattern as the badge payloads.
+        run: |
+          docker build -f deploy/Dockerfile.web -t outpost-web:measure .
+          docker build -f backend/Dockerfile -t outpost-backend:measure backend
 
       - name: Refresh and publish badges
         run: bash scripts/refresh-badges.sh --commit
