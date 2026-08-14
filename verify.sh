@@ -203,6 +203,15 @@ step "Soak baseline   (cross-platform FP table)" \
 step "CLI network gate (loopback-only air-gap)" \
   bash -c "'$ROOT/.venv/bin/python' '$ROOT/scripts/gate_cli_network.py'"
 
+# Backend/collector egress gate — the server half of the air-gap contract.
+# The backend DOES make outbound calls by design (enrichment, sandbox,
+# passive DNS, webhooks) but every one is opt-in: it fires only when an
+# operator configures a key/feed/webhook target. This AST gate locks that:
+# httpx is the only permitted client and only inside the 8 sanctioned
+# modules; requests/urllib/aiohttp/raw sockets anywhere else fail the sweep.
+step "Backend egress gate (key/config-gated httpx only)" \
+  bash -c "'$ROOT/.venv/bin/python' '$ROOT/scripts/gate_backend_egress.py'"
+
 # Collector live-claim gate — the one-line `--mode live` collector flow, end
 # to end. Boots an isolated backend and runs the REAL collector_linux.py with
 # no --run-id against a temp AUDIT_LOG feed (the documented root-less path):

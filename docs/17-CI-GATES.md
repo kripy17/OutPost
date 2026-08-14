@@ -13,7 +13,7 @@ Every push to `main` and every pull request runs the `CI` workflow
 | `Deploy — web image + Caddyfile + compose` | Production image build + config validation | Dockerfile/Caddyfile/compose drift |
 
 Inside the verify job, three fast-fail tiers front-load the expensive checks
-so the cheapest signal fails first. The sweep itself is 17 steps; beyond the
+so the cheapest signal fails first. The sweep itself is 18 steps; beyond the
 suites it includes the **identity gate** (`scripts/gate_proc_identity.py`) —
 an AST scan of the detection/process-tree/baseline/CLI-rendering modules that
 fails if any event-level `process_name` read lacks an `exe_path` resolution,
@@ -33,7 +33,19 @@ for external dependency syntax — external origins in `src`/`href`/`url()`/
 literal in any lazy-loaded chunk. It matches dependency syntax, not raw URL
 strings, so demo data, doc links, and webhook examples can't false-positive;
 this closes the gap where the Playwright e2e gates only exercise two flows
-while the static scan covers every chunk in milliseconds.
+while the static scan covers every chunk in milliseconds — and the
+**backend egress gate** (`scripts/gate_backend_egress.py`): an AST scan of
+`backend/app` + `collectors` locking the server-side egress contract. The
+backend *does* make outbound calls by design, but every one is opt-in — it
+fires only when an operator configures a key (enrichment / sandbox / passive
+DNS), a feed URL, or a webhook target. The gate asserts `httpx` is the only
+permitted client and only inside the 8 sanctioned modules; `requests` /
+`urllib` / `aiohttp` / raw `socket.socket` anywhere else fail the sweep, and
+in the collectors `requests` may appear only in `common/shipper.py` (the
+seam targeting the env-configured `OUTPOST_API_URL`). A one-shot bundle,
+`scripts/airgap-verify.sh`, runs all three static gates plus the cold-start
+latency harness against a live stack (failing if interactive render exceeds
+a budget).
 
 1. **`npx tsc --noEmit`** (~1 min in) — frontend type errors fail before the
    Playwright download.
