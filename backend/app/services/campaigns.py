@@ -128,17 +128,31 @@ def build_campaigns(conn, include_synthetic: bool = False) -> list[dict]:
             continue
         placeholders = ",".join("?" * len(run_ids))
 
+        # Projected timeline: only the columns the UI renders (eventDetail),
+        # capped at the 300 most recent rows. The full `e.*` here pulled every
+        # raw_record across all member runs — on a soak-scale store that was
+        # ~15MB of JSON per /campaigns call and >1s of serialization for a
+        # timeline the UI truncates to 40 rows anyway. The honest total is
+        # shipped separately as timeline_total for the "N events" label.
         timeline_rows = conn.execute(
             f"""
-            SELECT e.*, r.sample_name
+            SELECT e.id, e.timestamp, e.event_type, e.pid, e.ppid, e.process_name,
+                   e.command_line, e.dest_ip, e.dest_port, e.protocol, e.file_path,
+                   e.registry_key, e.run_id, r.sample_name
             FROM events e
             JOIN runs r ON r.run_id = e.run_id
             WHERE e.run_id IN ({placeholders})
-            ORDER BY e.timestamp ASC, e.id ASC
+            ORDER BY e.timestamp DESC, e.id DESC
+            LIMIT 300
             """,
             run_ids,
         ).fetchall()
+        timeline_rows.reverse()  # chronological again for display
         timeline = [dict(r) for r in timeline_rows]
+        timeline_total = conn.execute(
+            f"SELECT COUNT(*) AS n FROM events WHERE run_id IN ({placeholders})",
+            run_ids,
+        ).fetchone()["n"]
 
         # Roadmap 2.4 — correlated chain across the member runs: the union of
         # stage→stage links observed by any member, plus the most advanced
@@ -168,6 +182,7 @@ def build_campaigns(conn, include_synthetic: bool = False) -> list[dict]:
                     "processes": _evidence(conn, placeholders, run_ids, "process_name"),
                 },
                 "timeline": timeline,
+                "timeline_total": timeline_total,
                 "chain_links": chain_links,
                 "chain_label": killchain.chain_label(chain_links),
             }

@@ -484,6 +484,8 @@ export interface Campaign {
     processes: CampaignIoc[];
   };
   timeline: CampaignTimelineEvent[];
+  // Honest total — the backend caps `timeline` at the 300 most recent rows.
+  timeline_total?: number;
   // Roadmap 2.4 — correlated chain across members.
   chain_links?: KillChainLink[];
   chain_label?: string | null;
