@@ -224,8 +224,10 @@ typeface never depends on the Google Fonts CDN.
 network-minimal too (every request goes through one `api_client` seam,
 loopback-only, enforced by a CI gate).
 - **Enforced in CI** — both Playwright e2e gates treat *any* non-localhost
-request as a console error and fail the sweep, so an external dependency
-can never sneak back in unnoticed.
+request as a console error, and a static gate scans the shipped build
+(`dist/index.html` + every asset chunk) for external dependency syntax
+(`scripts/gate_airgap_artifacts.py`), so an external dependency can never
+sneak back in unnoticed.
 - **Measured** — worst-case air-gapped cold start (browser boot + first
 interactive render, production build, cache disabled): **≈ 0.3 s**
 (`demo/measure-airgap-load.mjs`).
