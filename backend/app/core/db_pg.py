@@ -123,6 +123,17 @@ def _insert_table(sql: str) -> Optional[str]:
     return m.group(1) if m else None
 
 
+def _split_statements(sql_script: str) -> list[str]:
+    """Split a multi-statement DDL script into individual statements.
+
+    SQL line comments are stripped first — the schema's comments contain
+    semicolons ("…count; the run-detail UI…"), so a naive ``split(';')``
+    would split mid-comment into a bogus statement (caught live in CI:
+    ``syntax error at or near "the"`` from a comment fragment)."""
+    cleaned = re.sub(r"--[^\n]*", "", sql_script)
+    return [s.strip() for s in cleaned.split(";") if s.strip()]
+
+
 # ---------------------------------------------------------------------------
 # sqlite3.Row-compatible result wrapper
 # ---------------------------------------------------------------------------
@@ -263,10 +274,12 @@ class _PgConnection:
 
     def executescript(self, sql_script: str) -> None:
         """Run a multi-statement DDL script (psycopg runs one statement per
-        execute). Splitting on ``;`` is safe here: the app's schema DDL has
-        no semicolons inside string literals."""
+        execute). Comment lines must be stripped before splitting on ``;``:
+        the app's schema comments contain semicolons of their own
+        ("…increments the rule's count; the run-detail UI reads these…"),
+        which would otherwise split mid-comment into a bogus statement."""
         cur = self._raw.cursor()
-        for stmt in (s.strip() for s in sql_script.split(";") if s.strip()):
+        for stmt in _split_statements(sql_script):
             cur.execute(stmt)
 
     # -- primary-key catalog lookup (RETURNING decision) ---------------------

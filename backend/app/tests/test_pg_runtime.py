@@ -167,3 +167,48 @@ def test_pgrow_dict_compat():
 
 def test_pgrow_equality():
     assert db_pg.PgRow(("x", 7), ["k", "v"]) == {"k": "x", "v": 7}
+
+
+# -- executescript statement splitting ---------------------------------------
+
+
+def test_split_statements_ignores_comment_semicolons():
+    """Regression: the schema's comments contain their own semicolons
+    ("…count; the run-detail UI reads these to…") — a naive split would
+    produce a bogus standalone statement and CI caught it live
+    (``syntax error at or near "the"``)."""
+    script = """
+-- False-positive feedback loop: per-rule FP counters. Every "mark as false
+-- positive" increments the rule's count; the run-detail UI reads these to
+-- suggest threshold nudges / suppressions for noisy rules.
+CREATE TABLE IF NOT EXISTS rule_fp (
+    rule_id TEXT PRIMARY KEY,
+    count INTEGER NOT NULL DEFAULT 1,
+    last_fp_at TEXT NOT NULL
+);
+
+-- Inline comment with; semicolon.
+CREATE INDEX IF NOT EXISTS idx_allowlist_run ON run_allowlist(run_id);
+"""
+    stmts = db_pg._split_statements(script)
+    assert len(stmts) == 2, stmts
+    assert stmts[0].startswith("CREATE TABLE IF NOT EXISTS rule_fp")
+    assert stmts[1].startswith("CREATE INDEX IF NOT EXISTS idx_allowlist_run")
+
+
+def test_split_statements_plain_script():
+    script = "CREATE TABLE a (id BIGSERIAL PRIMARY KEY);\nCREATE INDEX i1 ON a(id);\n"
+    assert db_pg._split_statements(script) == [
+        "CREATE TABLE a (id BIGSERIAL PRIMARY KEY)",
+        "CREATE INDEX i1 ON a(id)",
+    ]
+
+
+def test_split_statements_full_schema_starts_are_creates():
+    """The whole translated DDL must split into statements that all begin
+    with CREATE — a comment fragment leaking through would fail here."""
+    from app.core.db import SCHEMA
+    from app.services.pg_migrate import translate_schema
+
+    for stmt in db_pg._split_statements(translate_schema(SCHEMA)):
+        assert stmt.startswith("CREATE "), stmt[:60]
