@@ -97,6 +97,16 @@ jobs:
         # fails here.
         run: docker build -f deploy/Dockerfile.web -t outpost-web:ci .
 
+      - name: Gate the web image size
+        # The runtime image is a multi-stage slim (caddy:2-alpine + the dist
+        # only), so its size is a sharp bloat detector: a leaked build stage
+        # (node_modules, a COPY . . mistake, test fixtures) dwarfs the base
+        # in one step. Warns (soft budget, visible on the run summary) when
+        # the image grows past 100 MB and fails (hard ceiling) past 150 MB —
+        # budgets tunable via --budget-mb/--fail-mb; the measured size is
+        # printed on every run so they can be calibrated.
+        run: bash scripts/check-image-size.sh --image outpost-web:ci
+
       - name: Build the backend image
         # The API server container the compose stack ships (backend/Dockerfile,
         # context ./backend). Built before the smokes so the end-to-end phase
