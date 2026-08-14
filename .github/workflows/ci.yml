@@ -113,6 +113,15 @@ jobs:
         # can attach it. A separate step so its build failure is its own.
         run: docker build -f backend/Dockerfile -t outpost-backend:ci backend
 
+      - name: Gate the backend image size
+        # Same bloat gate as the web image, calibrated to the backend's base:
+        # python:3.12-slim + pip runtime deps + the app package only (~190-220
+        # MB class). Soft budget 300 MB warns (exit 0, run summary); hard
+        # ceiling 400 MB fails — catching a leaked build artifact (venv,
+        # node_modules, test fixtures) that would dwarf the base. Measured
+        # size prints every run for calibration.
+        run: bash scripts/check-image-size.sh --image outpost-backend:ci --budget-mb 300 --fail-mb 400
+
       - name: Smoke-test the shipped web image — boots and serves with zero egress
         # Runs the ACTUAL production artifact (not the air-gap harness image)
         # under --network none: the container has no interface besides
