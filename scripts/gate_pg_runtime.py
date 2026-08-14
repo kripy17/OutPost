@@ -146,7 +146,7 @@ def main() -> int:
             "INSERT INTO events (run_id, platform, event_type, timestamp, pid, ppid, process_name, "
             "command_line, exe_path, host_id, raw_record, log_source) "
             "VALUES (?, 'windows', 'process_create', ?, ?, 1, ?, ?, ?, 'host-b', ?, 'sysmon')",
-            (run_id, NOW, 200, "b.exe", "b.exe", '{"raw": true}'),
+            (run_id, NOW, 200, "b.exe", "b.exe", "b.exe", '{"raw": true}'),
         )
         rows = conn.execute(
             """
