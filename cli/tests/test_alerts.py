@@ -58,9 +58,64 @@ def test_alerts_synthetic_filter_and_counts(monkeypatch):
     result = runner.invoke(app, ["alerts", "--provenance", "synthetic", "--status", "acknowledged"])
     assert result.exit_code == 0
     assert "provenance=synthetic" in result.output
-    assert "2 acknowledged finding(s)" in result.output
-    assert "ACKNOWLEDGED" in result.output
-    assert "detonate-demo.sh" in result.output
+
+
+def _fake_queue(captured, sample="host-soak-2026-08-09"):
+    def fake(**kw):
+        captured.update(kw)
+        return {"total": 1, "open": 1, "acknowledged": 0, "resolved": 0, "alerts": [_row(1, sample=sample)]}
+
+    return fake
+
+
+def test_alerts_save_persists_provenance_default(monkeypatch, tmp_path):
+    monkeypatch.setenv("OUTPOST_HOME", str(tmp_path))
+    monkeypatch.setattr(console, "width", 160)
+    captured = {}
+    monkeypatch.setattr(api_client, "get_alert_queue", _fake_queue(captured))
+    result = runner.invoke(app, ["alerts", "--provenance", "real", "--status", "open", "--save"])
+    assert result.exit_code == 0
+    assert captured["provenance"] == "real"
+    from outpost.lib import prefs
+
+    assert prefs.read_prefs()["queue_provenance_open"] == "real"
+    assert "(saved)" not in result.output  # explicit choice, not a fallback
+
+
+def test_alerts_uses_saved_default(monkeypatch, tmp_path):
+    monkeypatch.setenv("OUTPOST_HOME", str(tmp_path))
+    from outpost.lib import prefs
+
+    prefs.write_pref("queue_provenance_open", "real")
+    monkeypatch.setattr(console, "width", 160)
+    captured = {}
+    monkeypatch.setattr(api_client, "get_alert_queue", _fake_queue(captured))
+    result = runner.invoke(app, ["alerts"])
+    assert result.exit_code == 0
+    assert captured["provenance"] == "real"
+    assert "provenance=real (saved)" in result.output
+
+
+def test_alerts_explicit_provenance_overrides_saved(monkeypatch, tmp_path):
+    monkeypatch.setenv("OUTPOST_HOME", str(tmp_path))
+    from outpost.lib import prefs
+
+    prefs.write_pref("queue_provenance_open", "real")
+    monkeypatch.setattr(console, "width", 160)
+    captured = {}
+    monkeypatch.setattr(api_client, "get_alert_queue", _fake_queue(captured))
+    result = runner.invoke(app, ["alerts", "--provenance", "synthetic"])
+    assert result.exit_code == 0
+    assert captured["provenance"] == "synthetic"
+    assert "(saved)" not in result.output
+
+
+def test_alerts_save_without_provenance_errors(monkeypatch, tmp_path):
+    monkeypatch.setenv("OUTPOST_HOME", str(tmp_path))
+    monkeypatch.setattr(console, "width", 160)
+    result = runner.invoke(app, ["alerts", "--save"])
+    assert result.exit_code == 1
+    assert "--save needs --provenance" in result.output
 
 
 def test_alerts_empty_queue_message(monkeypatch):

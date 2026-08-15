@@ -70,6 +70,34 @@ export function clearSavedProvenances(): void {
   }
 }
 
+/** Display label for a provenance value — the shared vocabulary used by the
+ *  Settings chips and the sweep's saved-split strip. */
+export function provenanceLabel(value: "" | "real" | "synthetic"): string {
+  if (value === "real") return "real hosts";
+  if (value === "synthetic") return "synthetic";
+  return "all";
+}
+
+export interface ProvenanceChip {
+  tab: "open" | "acknowledged" | "resolved" | "all";
+  label: string;
+  value: "" | "real" | "synthetic";
+  active: boolean;
+}
+
+/** The saved-split chips for the sweep header: the active tab shows its
+ *  effective split (an explicit ?provenance= wins over the saved value), the
+ *  other tabs show their remembered preference — one glance at what each tab
+ *  will display before you click it. Pure: `readSavedProvenance` never throws. */
+export function provenanceChips(activeStatus: string, effective: "" | "real" | "synthetic"): ProvenanceChip[] {
+  return STATUS_TABS.map((t) => ({
+    tab: t.v,
+    label: t.label,
+    value: t.v === activeStatus ? effective : readSavedProvenance(t.v),
+    active: t.v === activeStatus,
+  }));
+}
+
 /** Compact relative age: "12s" / "5m" / "3h" / "2d", "—" for unparseable
  *  timestamps. `now` is injectable so tests pin the clock. */
 export function ageLabel(ts: string, now: number = Date.now()): string {

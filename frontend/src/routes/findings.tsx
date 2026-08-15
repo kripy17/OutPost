@@ -7,7 +7,16 @@ import { addSuppression, bulkUpdateAlertStatus, getAlertQueue, getRuleMeta } fro
 import { SEVERITY_COLORS, SEVERITY_LABEL } from "../lib/constants";
 import { toneFill, toneForSeverity } from "../lib/fillPatterns";
 import type { AlertStatus, QueueAlert, Severity } from "../types";
-import { ageLabel, PAGE, readSavedProvenance, STATUS_TABS, statusTabCount, writeSavedProvenance } from "./findingsHelpers";
+import {
+  ageLabel,
+  PAGE,
+  provenanceChips,
+  provenanceLabel,
+  readSavedProvenance,
+  STATUS_TABS,
+  statusTabCount,
+  writeSavedProvenance,
+} from "./findingsHelpers";
 
 function FindingRow({
   a,
@@ -374,6 +383,30 @@ export default function FindingsPage() {
           </form>
         </div>
       </div>
+
+      {/* Saved-split chips — the same per-tab vocabulary as Settings, so an
+          analyst sees what each tab will show (and what the active tab IS
+          showing) without leaving the sweep. Hidden when nothing is saved
+          and the active tab has no explicit override. */}
+      {provenanceChips(status, provenance).some((c) => c.value) && (
+        <div className="mb-4 flex flex-wrap items-center gap-1.5" aria-label="Saved provenance split per status tab">
+          <span className="font-mono text-[10px] uppercase tracking-wide text-text-faint">Saved splits:</span>
+          {provenanceChips(status, provenance).map((c) => (
+            <span
+              key={c.tab}
+              className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 font-mono text-[10px] ${
+                c.active
+                  ? "border-accent/60 bg-accent/10 text-accent"
+                  : "border-border-subtle bg-bg-elevated/40 text-text-muted"
+              }`}
+              title={`${c.label} tab: ${provenanceLabel(c.value)}${c.active ? " (active view)" : " (saved)"}`}
+            >
+              <span className="uppercase tracking-wide">{c.label}</span>
+              <span>{provenanceLabel(c.value)}</span>
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* Bulk action bar */}
       {(selected.size > 0 || msg) && (

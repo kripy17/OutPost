@@ -25,7 +25,8 @@ import {
   testIntelKey,
 } from "../lib/api";
 import { lockedIpsText, rateLimitBadge, runResetFlow } from "./settingsHelpers";
-import { clearSavedProvenances, readSavedProvenance, STATUS_TABS } from "./findingsHelpers";
+import { anyClientState, readClientState, resetClientState, type ClientStateReport } from "./resetClientState";
+import { provenanceLabel, readSavedProvenance, STATUS_TABS } from "./findingsHelpers";
 import type { NotificationSettings, NotificationSettingsIn } from "../types";
 
 const inputCls =
@@ -624,71 +625,97 @@ function ChannelBadge({ active }: { active: boolean }) {
   );
 }
 
-/** Queue preferences — the per-status-tab provenance split the Open Findings
- *  sweep remembers ("real hosts first" etc.). Purely client-side (mirrors the
- *  search-draft clear pattern): a read-only chip per tab shows what's saved,
- *  and one click wipes them all back to the fresh-install defaults. */
-const PROVENANCE_LABELS: Record<string, string> = {
-  real: "real hosts",
-  synthetic: "synthetic",
-};
-
-function QueuePreferencesPanel() {
-  const read = () =>
-    Object.fromEntries(STATUS_TABS.map((t) => [t.v, readSavedProvenance(t.v)])) as Record<string, "" | "real" | "synthetic">;
-  const [saved, setSaved] = useState(read);
+/** Client-side state — the per-status-tab provenance split the sweep
+ *  remembers plus the IOC search / YARA / enum / log drafts. Purely
+ *  client-side: a read-only chip per category shows what's saved, and one
+ *  confirmed click wipes everything back to the fresh-install defaults. */
+function ClientStatePanel() {
+  const [state, setState] = useState<ClientStateReport>(readClientState);
   const [msg, setMsg] = useState<string | null>(null);
 
-  const clear = () => {
-    if (!window.confirm("Clear ALL saved queue preferences? Each status tab returns to showing all provenance, and the archive returns to real-telemetry-first.")) return;
-    clearSavedProvenances();
-    setSaved(read());
-    setMsg("Queue preferences cleared — every tab shows all provenance (real hosts first on the archive).");
-    setTimeout(() => setMsg(null), 4000);
+  const reset = () => {
+    if (
+      !window.confirm(
+        "Reset ALL client-side state? This clears the per-tab provenance split, the IOC search draft, and the YARA / enum / log-pattern drafts saved in this browser. Continue?",
+      )
+    )
+      return;
+    const cleared = resetClientState();
+    setState(readClientState());
+    const parts: string[] = [];
+    if (cleared.queueTabs) parts.push(`${cleared.queueTabs} provenance tab${cleared.queueTabs === 1 ? "" : "s"}`);
+    if (cleared.searchDraft) parts.push("the search draft");
+    if (cleared.yaraDraft) parts.push("the YARA draft");
+    if (cleared.enumPlatforms) parts.push(`${cleared.enumPlatforms} enum table${cleared.enumPlatforms === 1 ? "" : "s"}`);
+    if (cleared.logKinds) parts.push(`${cleared.logKinds} log-pattern table${cleared.logKinds === 1 ? "" : "s"}`);
+    setMsg(
+      parts.length ? `Client-side state reset — cleared ${parts.join(", ")}.` : "Client-side state reset — nothing was saved.",
+    );
+    setTimeout(() => setMsg(null), 5000);
   };
 
-  const anySaved = STATUS_TABS.some((t) => saved[t.v] !== "");
+  const customized = anyClientState(state);
+
+  const draftChip = (label: string, present: boolean, detail: string) => (
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 font-mono text-[10px] ${
+        present ? "border-accent/50 bg-accent/10 text-accent" : "border-border-subtle bg-bg-elevated/40 text-text-faint"
+      }`}
+    >
+      <span className="uppercase tracking-wide">{label}</span>
+      <span>{detail}</span>
+    </span>
+  );
 
   return (
     <Panel
       kicker="Triage · preferences"
-      title="Queue provenance split"
+      title="Client-side state"
       right={
         <span
           className={`rounded-full border px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide ${
-            anySaved ? "border-accent/50 text-accent" : "border-border-subtle text-text-faint"
+            customized ? "border-accent/50 text-accent" : "border-border-subtle text-text-faint"
           }`}
         >
-          {anySaved ? "customized" : "defaults"}
+          {customized ? "customized" : "defaults"}
         </span>
       }
     >
       <p className="mb-3 text-xs leading-relaxed text-text-muted">
-        The Open Findings sweep remembers a provenance split per status tab ("real hosts first", "synthetic only").
-        These are saved in this browser only — wipe them all in one click, mirroring the draft clears elsewhere.
+        The Open Findings sweep remembers a provenance split per status tab ("real hosts first", "synthetic only"),
+        and the search and rules pages keep in-progress drafts. All of it lives in this browser only — wipe it all in
+        one confirmed click.
       </p>
+      <p className="kicker mb-1.5">Queue provenance split</p>
       <div className="mb-3 flex flex-wrap items-center gap-1.5">
         {STATUS_TABS.map((t) => (
           <span
             key={t.v}
             className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 font-mono text-[10px] ${
-              saved[t.v] ? "border-accent/50 bg-accent/10 text-accent" : "border-border-subtle bg-bg-elevated/40 text-text-faint"
+              readSavedProvenance(t.v) ? "border-accent/50 bg-accent/10 text-accent" : "border-border-subtle bg-bg-elevated/40 text-text-faint"
             }`}
           >
             <span className="uppercase tracking-wide">{t.label}</span>
-            <span>{saved[t.v] ? PROVENANCE_LABELS[saved[t.v]] : "all"}</span>
+            <span>{provenanceLabel(readSavedProvenance(t.v))}</span>
           </span>
         ))}
       </div>
+      <p className="kicker mb-1.5">Drafts</p>
+      <div className="mb-3 flex flex-wrap items-center gap-1.5">
+        {draftChip("Search", state.searchDraft, state.searchDraft ? "draft" : "—")}
+        {draftChip("YARA", state.yaraDraft, state.yaraDraft ? "draft" : "—")}
+        {draftChip("Enum patterns", state.enumPlatforms > 0, state.enumPlatforms ? `${state.enumPlatforms} table${state.enumPlatforms === 1 ? "" : "s"}` : "—")}
+        {draftChip("Log patterns", state.logKinds > 0, state.logKinds ? `${state.logKinds} table${state.logKinds === 1 ? "" : "s"}` : "—")}
+      </div>
       <div className="flex flex-wrap items-center gap-2">
         <button
-          onClick={clear}
-          disabled={!anySaved}
+          onClick={reset}
+          disabled={!customized}
           className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-2 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-risk-malicious/50 hover:text-risk-malicious disabled:cursor-default disabled:opacity-40"
-          title="Remove every saved per-tab provenance choice (localStorage only)"
+          title="Reset every saved preference and draft in this browser (localStorage only)"
         >
           <Icon name="x" size={12} />
-          Clear queue preferences
+          Reset client-side state
         </button>
         {msg && <p className="text-xs text-accent">{msg}</p>}
       </div>
@@ -797,7 +824,7 @@ export default function SettingsPage() {
         <ThemePalettePanel />
       </div>
       <div className="mb-8">
-        <QueuePreferencesPanel />
+        <ClientStatePanel />
       </div>
 
       <SectionHeader n="02" title="Access & security" desc="Optional auth: one password gates the console; login rate limiting protects it." />
