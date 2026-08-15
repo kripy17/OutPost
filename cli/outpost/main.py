@@ -35,6 +35,7 @@ def _register_commands() -> None:
     from .commands.run import run
     from .commands.samples import samples
     from .commands.search import search
+    from .commands.settings import app as settings_app
     from .commands.show import show
     from .commands.watch import watch
     from .commands.watchlist import app as watchlist_app
@@ -61,6 +62,7 @@ def _register_commands() -> None:
     app.add_typer(agent_app, name="agent")
     app.add_typer(admin_app, name="admin")
     app.add_typer(auth_app, name="auth")
+    app.add_typer(settings_app, name="settings")
 
 
 @app.callback(invoke_without_command=True)

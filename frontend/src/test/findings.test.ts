@@ -8,6 +8,8 @@ import {
   clearSavedProvenances,
   PAGE,
   PROVENANCE_STORAGE_PREFIX,
+  provenanceChips,
+  provenanceLabel,
   readSavedProvenance,
   STATUS_TABS,
   statusTabCount,
@@ -120,6 +122,41 @@ describe("STATUS_TABS + statusTabCount", () => {
   it("returns null before data loads (the badge renders '…')", () => {
     expect(statusTabCount("open", undefined)).toBeNull();
     expect(statusTabCount("all", undefined)).toBeNull();
+  });
+});
+
+describe("provenanceLabel + provenanceChips (sweep saved-split strip)", () => {
+  beforeEach(() => localStorage.clear());
+
+  it("labels the three provenance values with the shared vocabulary", () => {
+    expect(provenanceLabel("real")).toBe("real hosts");
+    expect(provenanceLabel("synthetic")).toBe("synthetic");
+    expect(provenanceLabel("")).toBe("all");
+  });
+
+  it("shows the active tab's effective split and the others' saved values", () => {
+    writeSavedProvenance("open", "real");
+    writeSavedProvenance("acknowledged", "synthetic");
+    expect(provenanceChips("open", "real")).toEqual([
+      { tab: "open", label: "Open", value: "real", active: true },
+      { tab: "acknowledged", label: "Acknowledged", value: "synthetic", active: false },
+      { tab: "resolved", label: "Resolved", value: "", active: false },
+      { tab: "all", label: "All", value: "", active: false },
+    ]);
+  });
+
+  it("an explicit effective split overrides the active tab's saved value", () => {
+    writeSavedProvenance("open", "real");
+    const open = provenanceChips("open", "synthetic").find((c) => c.tab === "open");
+    expect(open?.value).toBe("synthetic"); // what the queue is actually showing
+    expect(open?.active).toBe(true);
+  });
+
+  it("other tabs stay independent of the active tab's choice", () => {
+    writeSavedProvenance("all", "real");
+    const chips = provenanceChips("open", "");
+    expect(chips.find((c) => c.tab === "all")?.value).toBe("real");
+    expect(chips.find((c) => c.tab === "open")?.value).toBe("");
   });
 });
 
