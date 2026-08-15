@@ -8,7 +8,9 @@ itself a gate, so the property can't silently regress:
 
   1. Every script under scripts/ that emits a `→ fix:` hint (a `hint(...)`
      call, an `echo "  → fix:` line, or an `→ fix:` literal) MUST appear in
-     COVERAGE below, mapped to the self-test that pins it.
+     the shared coverage map (scripts/hint_coverage_map.py:HINT_COVERAGE),
+     mapped to the self-test that pins it — the single source of truth the
+     two repair self-tests also import to resolve the gate they pin.
   2. Each mapped self-test must exist.
   3. Each mapped self-test must actually run inside verify.sh (a self-test
      nobody invokes is dead coverage — the sweep must fail if a gate grows
@@ -26,16 +28,11 @@ import re
 import sys
 from pathlib import Path
 
+from hint_coverage_map import HINT_COVERAGE
+
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = ROOT / "scripts"
 VERIFY = ROOT / "verify.sh"
-
-# gate (scripts/<file>) -> self-test (scripts/<file>) that pins its hints AND
-# proves they repair (exit-1 + hint presence + applied-fix-goes-green).
-COVERAGE = {
-    "gate_image_budget_docs.py": "test_image_budget_hints.py",
-    "refresh-badges.sh": "test_badge_hints.py",
-}
 
 FAILURES: list[str] = []
 
@@ -53,24 +50,25 @@ def main() -> int:
 
     # A gate EMITS a hint when it calls hint(...) or prints/echoes a '→ fix:'
     # line. Docstring/comment mentions ("prints a → fix: line") don't count.
-    # Self-tests and this guard are excluded: the tests deliberately mention
-    # the hints they pin, and this file describes its own job.
+    # Self-tests, this guard, and the coverage map module are excluded: the
+    # tests deliberately mention the hints they pin, this file describes its
+    # own job, and the map is data, not a gate.
     emit_re = re.compile(r"hint\(|echo\s+.*→ fix:|print\(.*→ fix:")
     emitting = sorted(
         p.name for p in SCRIPTS.iterdir()
         if p.is_file()
         and p.suffix in (".py", ".sh")
         and not p.name.startswith("test_")
-        and p.name != "gate_hint_coverage.py"
+        and p.name not in ("gate_hint_coverage.py", "hint_coverage_map.py")
         and emit_re.search(p.read_text())
     )
 
     # 1. Every hint-emitting gate must be covered.
     for name in emitting:
-        if name not in COVERAGE:
+        if name not in HINT_COVERAGE:
             check(f"hint-emitting gate covered: {name}", False, "prints '→ fix:' hints but has no self-test")
             continue
-        test_name = COVERAGE[name]
+        test_name = HINT_COVERAGE[name]
         test_path = SCRIPTS / test_name
         check(f"hint-emitting gate covered: {name}", True, f"pinned by {test_name}")
 
@@ -80,7 +78,7 @@ def main() -> int:
     # 3. Every mapped self-test must be wired into verify.sh — and, for the
     #    ones found emitting, the mapping must be complete.
     verify_text = VERIFY.read_text()
-    for gate, test_name in sorted(COVERAGE.items()):
+    for gate, test_name in sorted(HINT_COVERAGE.items()):
         wired = test_name in verify_text
         check(
             f"self-test wired into verify.sh: {test_name}",
@@ -88,8 +86,8 @@ def main() -> int:
             f"gate {gate} prints hints but {test_name} is not invoked by the sweep" if not wired else "",
         )
     for name in emitting:
-        if name in COVERAGE and COVERAGE[name] not in verify_text:
-            check(f"self-test actually invoked: {COVERAGE[name]}", False)
+        if name in HINT_COVERAGE and HINT_COVERAGE[name] not in verify_text:
+            check(f"self-test actually invoked: {HINT_COVERAGE[name]}", False)
 
     print(f"Hint-coverage guard: {len(FAILURES)} failed" if FAILURES else "Hint-coverage guard: every hint-emitting gate has a wired-in repair self-test")
     return 1 if FAILURES else 0
