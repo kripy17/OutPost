@@ -281,15 +281,65 @@ async def _rdap_lookup(ip: str) -> dict:
     return _parse_rdap(ip, doc)
 
 
-async def _crtsh_lookup(domain: str) -> dict:
+def _apex_of(domain: str) -> Optional[str]:
+    """The discovery apex of a hostname — strip the leftmost label.
+
+    `mail.example.com` → `example.com`; `a.b.example.com` → `b.example.com`
+    (a narrower namespace — still useful); `example.com` → None (stripping
+    one label leaves a bare TLD). IP literals / single labels → None. Pure
+    and conservative: a wrong guess only costs one crt.sh query that returns
+    nothing, and each fetch isolates its own failures.
+    """
+    name = (domain or "").strip().lower().rstrip(".")
+    if "." not in name:
+        return None
+    labels = name.split(".")
+    if all(part.isdigit() for part in labels):  # IP literal — no subdomains
+        return None
+    apex = ".".join(labels[1:])
+    return apex if "." in apex else None
+
+
+async def _crtsh_query(q: str) -> dict:
+    """One crt.sh lookup by raw query string — shared by the domain lookup
+    and the `%.<apex>` subdomain enumeration. Best-effort: callers isolate
+    their own failures."""
     url = "https://crt.sh/"
     async with httpx.AsyncClient(timeout=_CRTSH_TIMEOUT, headers={"User-Agent": _UA}) as client:
-        resp = await client.get(url, params={"q": domain, "output": "json"})
+        resp = await client.get(url, params={"q": q, "output": "json"})
         resp.raise_for_status()
     rows = resp.json()
     if not isinstance(rows, list):
         raise ValueError("bad crt.sh payload")
     return _parse_crtsh(rows)
+
+
+async def _crtsh_lookup(domain: str) -> dict:
+    return await _crtsh_query(domain)
+
+
+async def _crtsh_subdomains(apex: str) -> list[dict]:
+    """Subdomains of `apex` via crt.sh's `%.<apex>` wildcard-match query —
+    the classic CT-log subdomain enumeration, same free keyless provider as
+    the certificate/passive-DNS lookups.
+
+    crt.sh matches superstrings too, so each name is filtered to PROPER
+    subdomains of the apex (`name.endswith("." + apex)`, apex itself
+    excluded) — wildcards were already stripped by `_parse_crtsh`.
+    """
+    parsed = await _crtsh_query(f"%.{apex}")
+    out: list[dict] = []
+    for d in parsed.get("domains", []):
+        name = (d["domain"] or "").strip().lower()
+        while name.startswith("*."):  # defensive — raw rows may carry wildcards
+            name = name[2:]
+        if not name or name == apex or not name.endswith("." + apex):
+            continue
+        row = dict(d)
+        row["domain"] = name
+        row["apex"] = apex
+        out.append(row)
+    return out
 
 
 async def _fetch_ip_passive(seed: dict) -> dict:
@@ -301,7 +351,7 @@ async def _fetch_ip_passive(seed: dict) -> dict:
     ip = seed["ip"]
     ts0 = (seed.get("first_seen") or "")[:10]
     ts1 = (seed.get("last_seen") or "")[:10]
-    out = {"resolutions": [], "certificates": [], "passive_dns": [], "sibling_ips": [], "networks": []}
+    out = {"resolutions": [], "certificates": [], "passive_dns": [], "sibling_ips": [], "networks": [], "subdomains": []}
 
     # 1. Reverse DNS — the resolution signal (fast, reliable).
     ptr = _ptr_for_ip(ip)
@@ -367,6 +417,26 @@ async def _fetch_ip_passive(seed: dict) -> dict:
                 seen.add(d["domain"])
                 d["source_ip"] = sib["ip"]
                 out["passive_dns"].append(d)
+
+    # 3c. Subdomain discovery — crt.sh `%.<apex>` over the PTR-derived
+    # domain: the classic CT-log subdomain enumeration (same keyless
+    # provider). Deduped against the passive-DNS names already collected
+    # and tagged with the seed IP, so the card shows only NEW infra under
+    # the apex, never a repeat of the passive-DNS history.
+    if ptr:
+        apex = _apex_of(ptr)
+        if apex:
+            try:
+                subs = await _crtsh_subdomains(apex)
+            except Exception:
+                subs = []
+            seen = {d["domain"] for d in out["passive_dns"]}
+            for s in subs:
+                if s["domain"] in seen:
+                    continue
+                seen.add(s["domain"])
+                s["source_ip"] = ip
+                out["subdomains"].append(s)
 
     # 4. ASN / owner mapping — keyless ip-api.com (free tier, 45 req/min,
     # plenty for a footprint page). RDAP gives registration; this gives the
@@ -487,6 +557,29 @@ def _mock_passive_dns(seed: dict) -> list[dict]:
     ]
 
 
+def _mock_subdomains(seed: dict) -> list[dict]:
+    """Deterministic fake subdomain-discovery rows (synthetic)."""
+    digest = hashlib.sha256(seed["ip"].encode()).hexdigest()[:6]
+    return [
+        {
+            "domain": f"dev-{digest}.shelf.example",
+            "apex": "shelf.example",
+            "first_seen": seed["first_seen"],
+            "last_seen": seed["last_seen"],
+            "source_ip": seed["ip"],
+            "synthetic": True,
+        },
+        {
+            "domain": f"staging-{digest}.shelf.example",
+            "apex": "shelf.example",
+            "first_seen": seed["first_seen"],
+            "last_seen": seed["last_seen"],
+            "source_ip": seed["ip"],
+            "synthetic": True,
+        },
+    ]
+
+
 def _mock_sibling_ips(seed: dict) -> list[dict]:
     """Same-/24 neighbors, synthetically marked — 'shared host' hypothesis."""
     try:
@@ -526,12 +619,14 @@ async def _passive_layer(seeds: list[dict], mock: bool) -> dict:
         certificates = [c for s in seeds for c in _mock_certificates(s)]
         passive_dns = [d for s in seeds for d in _mock_passive_dns(s)]
         sibling_ips = [sib for s in seeds for sib in _mock_sibling_ips(s)]
+        subdomains = [d for s in seeds for d in _mock_subdomains(s)]
         return {
             "source": "synthetic_demo",
             "resolutions": resolutions,
             "certificates": certificates,
             "passive_dns": passive_dns,
             "sibling_ips": sibling_ips,
+            "subdomains": subdomains,
             "networks": [],
             "asn": [],
         }
@@ -546,6 +641,7 @@ async def _passive_layer(seeds: list[dict], mock: bool) -> dict:
     sibling_ips: list[dict] = []
     networks: list[dict] = []
     asn_rows: list[dict] = []
+    subdomains: list[dict] = []
     any_data = False
     for res in results:
         if not isinstance(res, dict):
@@ -555,9 +651,13 @@ async def _passive_layer(seeds: list[dict], mock: bool) -> dict:
         passive_dns += res.get("passive_dns", [])
         sibling_ips += res.get("sibling_ips", [])
         networks += res.get("networks", [])
+        subdomains += res.get("subdomains", [])
         if res.get("asn"):
             asn_rows.append(res["asn"])
-        if res.get("resolutions") or res.get("certificates") or res.get("passive_dns") or res.get("sibling_ips") or res.get("networks"):
+        if (
+            res.get("resolutions") or res.get("certificates") or res.get("passive_dns")
+            or res.get("sibling_ips") or res.get("networks") or res.get("subdomains")
+        ):
             any_data = True
 
     if not any_data:
@@ -570,6 +670,7 @@ async def _passive_layer(seeds: list[dict], mock: bool) -> dict:
             "sibling_ips": [],
             "networks": [],
             "asn": [],
+            "subdomains": [],
         }
 
     return {
@@ -580,6 +681,7 @@ async def _passive_layer(seeds: list[dict], mock: bool) -> dict:
         "sibling_ips": _dedupe(sibling_ips, "ip")[:24],
         "networks": _dedupe(networks, "ip")[:8],
         "asn": _dedupe(asn_rows, "ip")[:8],
+        "subdomains": _dedupe(subdomains, "domain")[:40],
     }
 
 

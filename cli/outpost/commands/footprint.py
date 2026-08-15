@@ -110,6 +110,24 @@ def show(
             )
         console.print(table)
 
+    subdomains = passive.get("subdomains") or []
+    if subdomains:
+        table = Table(title="Subdomains (CT-log discovery)", box=None)
+        table.add_column("Domain", style="bold")
+        table.add_column("Apex", style="dim")
+        table.add_column("IP", style="dim")
+        table.add_column("First", style="dim")
+        table.add_column("Last", style="dim")
+        for d in subdomains[:40]:
+            table.add_row(
+                d.get("domain") or "?",
+                d.get("apex") or "-",
+                d.get("source_ip") or "-",
+                (d.get("first_seen") or "")[:10],
+                (d.get("last_seen") or "")[:10],
+            )
+        console.print(table)
+
     asn_rows = passive.get("asn") or []
     if asn_rows:
         table = Table(title="ASN ownership", box=None)
