@@ -83,3 +83,17 @@ export function passiveNote(source: Footprint["passive"]["source"], provider: st
   if (source === "live") return `${provider} · live`;
   return "offline — not configured";
 }
+
+/** The WHOIS-style registration timeline for one RDAP network row: the
+ *  registrar + created/updated/expires dates, rendered as one readable
+ *  line. Pieces that RDAP didn't return are omitted — never "— · — · —". */
+export function regTimeline(
+  n: Footprint["passive"]["networks"][number],
+): string[] {
+  const parts: string[] = [];
+  if (n.registrar) parts.push(`registrar ${n.registrar}`);
+  if (n.created) parts.push(`created ${n.created}`);
+  if (n.updated) parts.push(`updated ${n.updated}`);
+  if (n.expires) parts.push(`expires ${n.expires}`);
+  return parts;
+}

@@ -9,6 +9,7 @@ import { PageHeader, Panel, Stat } from "../components/ui";
 import { TREND_WINDOWS, type TrendWindow } from "../lib/constants";
 import ComparePanel from "../components/ComparePanel/ComparePanel";
 import { BASE_URL, getRuns } from "../lib/api";
+import { archiveTotals } from "./runHistoryHelpers";
 
 export default function RunHistoryPage() {
   // ?q=<sample> pre-filters the archive to one binary (Overview risk bars),
@@ -86,9 +87,7 @@ export default function RunHistoryPage() {
     row?.scrollIntoView({ block: "nearest" });
   }, [selectedIdx]);
 
-  const totalAlerts = runs.reduce((n, r) => n + r.alert_count, 0);
-  const malicious = runs.filter((r) => r.highest_severity === "malicious").length;
-  const totalRisk = runs.reduce((n, r) => n + (r.risk_score ?? 0), 0);
+  const { totalAlerts, malicious, totalRisk } = archiveTotals(runs);
 
   return (
     <div className="mx-auto max-w-7xl px-6 py-10 lg:px-10">

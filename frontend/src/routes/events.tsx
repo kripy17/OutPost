@@ -6,23 +6,10 @@ import { EVENT_ICON, platformIconName } from "../components/iconMeta";
 import { PageHeader } from "../components/ui";
 import { exportEventsCsv, getEventChannelCounts, getEvents, saveBlob } from "../lib/api";
 import { useEventStream } from "../lib/useEventStream";
-import { resolveSavedFilters, type SavedFilters } from "./eventsHelpers";
+import { parsePids, resolveSavedFilters, type SavedFilters } from "./eventsHelpers";
 import type { EventFeedEvent, EventSource, EventType, Platform, Severity } from "../types";
 
 const PAGE = 60;
-
-/** Parse the `pid` URL/filter value — one integer or a comma-separated list
- *  (the recon-sweep jump: every enumerating PID at once). Invalid tokens are
- *  dropped silently; the backend 422s on genuinely bad input. */
-function parsePids(raw: string | null): number[] {
-  if (!raw) return [];
-  const out: number[] = [];
-  for (const token of raw.split(",")) {
-    const n = Number(token.trim());
-    if (Number.isInteger(n) && n > 0 && !out.includes(n)) out.push(n);
-  }
-  return out;
-}
 
 const CATEGORIES: { type: EventType | ""; label: string; icon: "list" | "process" | "network" | "file" | "registry" }[] = [
   { type: "", label: "All events", icon: "list" },
@@ -423,10 +410,11 @@ export default function EventsPage() {
   // chains (collapsible per-process nodes, Sysmon View's grouping trick).
   const [view, setView] = useState<"timeline" | "process">("timeline");
   const [collapsedPids, setCollapsedPids] = useState<Set<number>>(new Set());
-  // Live auto-scroll: while following (pinned to the bottom), new events
-  // scroll into view; scrolling up pauses the jump and accumulates a
-  // 'N new events' pill to get back to latest.
-  const [atBottom, setAtBottom] = useState(true);
+  // Live auto-scroll: the feed is newest-first (the backend orders by
+  // timestamp DESC), so 'latest' is the TOP of the page. While following
+  // (pinned to the top), new events scroll into view; scrolling down pauses
+  // the jump and accumulates a 'N new events' pill to get back to latest.
+  const [atTop, setAtTop] = useState(true);
   const [newCount, setNewCount] = useState(0);
   const lastTotalRef = useRef(0);
 
@@ -544,19 +532,19 @@ export default function EventsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [category, severity, platform, source, submittedQ, submittedPids.join(",")]);
 
-  // Follow-the-bottom: the window is the scroll container (desk tool, no
-  // inner panel scroll), so 'at the bottom' means within a hair of the end.
+  // Follow-the-top: the window is the scroll container (desk tool, no inner
+  // panel scroll), and the feed is newest-first — 'at the top' means within
+  // a hair of the newest events.
   useEffect(() => {
     const onScroll = () => {
-      const doc = document.documentElement;
-      setAtBottom(doc.scrollHeight - window.scrollY - window.innerHeight < 140);
+      setAtTop(window.scrollY < 140);
     };
     window.addEventListener("scroll", onScroll, { passive: true });
     onScroll();
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
 
-  // Live auto-scroll: new events while following scroll smoothly into view;
+  // Live auto-scroll: new events while following (at the top) stay in view;
   // new events while paused accumulate in the jump-back pill.
   useEffect(() => {
     if (!live) return;
@@ -564,13 +552,13 @@ export default function EventsPage() {
     lastTotalRef.current = total;
     if (prev <= 0 || total <= prev) return;
     const delta = total - prev;
-    if (atBottom) {
+    if (atTop) {
       setNewCount(0);
-      window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "smooth" });
+      window.scrollTo({ top: 0, behavior: "smooth" });
     } else {
       setNewCount((n) => n + delta);
     }
-  }, [total, live, atBottom]);
+  }, [total, live, atTop]);
 
   // Event-Viewer keyboard parity: ↑/↓ move the selection through the current
   // page, Enter expands the selected row, Escape collapses. While typing in a
@@ -1254,7 +1242,7 @@ export default function EventsPage() {
             <button
               onClick={() => {
                 setNewCount(0);
-                window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "smooth" });
+                window.scrollTo({ top: 0, behavior: "smooth" });
               }}
               className="press fixed bottom-6 right-6 z-30 inline-flex items-center gap-2 rounded-full border border-accent/60 bg-bg-surface px-4 py-2.5 font-mono text-xs font-medium text-accent shadow-[var(--shadow-raised)] transition-all duration-150 hover:shadow-[var(--glow-accent)] print:hidden"
               title="Jump back to the newest events"

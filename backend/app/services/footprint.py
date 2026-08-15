@@ -150,11 +150,65 @@ def _common_prefix_len(a: str, b: str) -> int:
     return n
 
 
+def _entity_org(ent: dict) -> Optional[str]:
+    """The vcard `fn` organization of one RDAP entity, if present."""
+    vcard = ent.get("vcardArray") if isinstance(ent, dict) else None
+    if not (isinstance(vcard, list) and len(vcard) > 1 and isinstance(vcard[1], list)):
+        return None
+    for item in vcard[1]:
+        if (
+            isinstance(item, list)
+            and len(item) >= 4
+            and item[0] == "fn"
+            and isinstance(item[3], str)
+            and item[3].strip()
+        ):
+            return item[3].strip()
+    return None
+
+
+def _rdap_registration(doc: dict) -> dict:
+    """The WHOIS-style registration timeline from an RDAP network doc.
+
+    Extracts the registrar (an entity carrying the `registrar` role) and the
+    event dates (`registration`, `last changed`, `expiration`) from the same
+    RDAP payload — a free registration-history slice. Any missing piece is
+    None; unknown event names are ignored. Pure and defensive.
+    """
+    registrar = None
+    for ent in doc.get("entities") or []:
+        roles = ent.get("roles") if isinstance(ent, dict) else None
+        if isinstance(roles, list) and "registrar" in roles:
+            registrar = _entity_org(ent) or registrar
+
+    dates: dict[str, str] = {}
+    for ev in doc.get("events") or []:
+        action = ev.get("eventAction") if isinstance(ev, dict) else None
+        date = ev.get("eventDate") if isinstance(ev, dict) else None
+        if not action or not date:
+            continue
+        if action == "registration":
+            dates["created"] = date[:10]
+        elif action == "last changed":
+            dates["updated"] = date[:10]
+        elif action == "expiration":
+            dates["expires"] = date[:10]
+    return {
+        "registrar": registrar,
+        "created": dates.get("created"),
+        "updated": dates.get("updated"),
+        "expires": dates.get("expires"),
+    }
+
+
 def _parse_rdap(ip: str, doc: dict) -> dict:
     """Extract registration info + sibling hosts from an RDAP network doc.
 
     Pure function — unit-testable without the network. Siblings come from the
     RDAP network when it's a /24 or smaller, else the /24 the IP sits in.
+    Also pulls the WHOIS-style registration timeline (registrar, created /
+    updated / expires) from the same RDAP payload — the free registration-
+    history slice, no extra provider call.
     """
     cidr = None
     for c in doc.get("cidr0_cidrs") or []:
@@ -173,20 +227,9 @@ def _parse_rdap(ip: str, doc: dict) -> dict:
     country = doc.get("country")
     org = None
     for ent in doc.get("entities") or []:
-        vcard = ent.get("vcardArray") if isinstance(ent, dict) else None
-        if isinstance(vcard, list) and len(vcard) > 1 and isinstance(vcard[1], list):
-            for item in vcard[1]:
-                if (
-                    isinstance(item, list)
-                    and len(item) >= 4
-                    and item[0] == "fn"
-                    and isinstance(item[3], str)
-                    and item[3].strip()
-                ):
-                    org = item[3].strip()
-                    break
-            if org:
-                break
+        org = _entity_org(ent)
+        if org:
+            break
 
     # Sibling hosts: when RDAP hands us a /24-or-tighter network, take the
     # neighbors from THAT net (the label then matches the hosts); for wider
@@ -221,6 +264,7 @@ def _parse_rdap(ip: str, doc: dict) -> dict:
         "org": org,
         "country": country,
         "siblings": siblings,
+        **_rdap_registration(doc),
     }
 
 
@@ -372,6 +416,10 @@ async def _fetch_ip_passive(seed: dict) -> dict:
                 "netname": reg.get("netname"),
                 "org": reg.get("org"),
                 "country": reg.get("country"),
+                "registrar": reg.get("registrar"),
+                "created": reg.get("created"),
+                "updated": reg.get("updated"),
+                "expires": reg.get("expires"),
                 "synthetic": False,
             }
         )
@@ -498,6 +546,88 @@ async def _cached_fetch(seed: dict) -> dict:
         return {}
     _CACHE[key] = (now, data)
     return data
+
+
+# ---------------------------------------------------------------------------
+# Cross-sample topology — infra shared between samples (roadmap 2.5)
+# ---------------------------------------------------------------------------
+
+def cross_sample_topology(conn, min_share: int = 2) -> dict:
+    """Correlate samples by the infrastructure they share.
+
+    Every distinct destination IP a sample's runs reached is its "seed
+    infrastructure" (same source as the per-sample footprint). Two or more
+    samples contacting the SAME IP are infrastructure-linked — the campaign
+    hypothesis: one C2 box, several binaries. Pure local SQL over the event
+    store — no new external calls, so this works offline and on synthetic
+    data alike.
+
+    Returns clusters keyed by shared IP, each naming the member samples with
+    their hit counts and the affected runs:
+
+        {
+          "clusters": [{
+            "ip": "203.0.113.88",
+            "sample_count": 2,
+            "members": [{"sample_name": "a.bin", "hits": 12, "run_ids": [...]}, ...],
+            "reputation": "malicious" | "unknown" | None,
+            "checked_at": "..." | None,
+          }],
+          "total_samples": 4,
+        }
+
+    `min_share` = how many distinct samples must touch an IP for it to count
+    as shared infrastructure (2 = the obvious campaign signal).
+    """
+    rows = conn.execute(
+        """
+        SELECT e.dest_ip,
+               r.sample_name,
+               COUNT(*) AS hits,
+               GROUP_CONCAT(DISTINCT e.run_id) AS run_ids
+        FROM events e
+        JOIN runs r ON r.run_id = e.run_id
+        WHERE e.dest_ip IS NOT NULL
+        GROUP BY e.dest_ip, r.sample_name
+        """,
+    ).fetchall()
+
+    by_ip: dict[str, list[dict]] = {}
+    for row in rows:
+        by_ip.setdefault(row["dest_ip"], []).append(
+            {
+                "sample_name": row["sample_name"],
+                "hits": row["hits"],
+                "run_ids": [r for r in (row["run_ids"] or "").split(",") if r],
+            }
+        )
+
+    clusters = []
+    for ip, members in by_ip.items():
+        if len(members) < min_share:
+            continue
+        members.sort(key=lambda m: (-m["hits"], m["sample_name"]))
+        cached = conn.execute(
+            "SELECT reputation, checked_at FROM enrichment_cache WHERE ip = ?",
+            (ip,),
+        ).fetchone()
+        clusters.append(
+            {
+                "ip": ip,
+                "sample_count": len(members),
+                "members": members,
+                "reputation": cached["reputation"] if cached else "unknown",
+                "checked_at": cached["checked_at"] if cached else None,
+            }
+        )
+
+    clusters.sort(key=lambda c: (-c["sample_count"], -len(c["members"]), c["ip"]))
+    total_samples = len(
+        conn.execute(
+            "SELECT DISTINCT r.sample_name FROM runs r WHERE r.sample_name IS NOT NULL"
+        ).fetchall()
+    )
+    return {"clusters": clusters, "total_samples": total_samples}
 
 
 # ---------------------------------------------------------------------------

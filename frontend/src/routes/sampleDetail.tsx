@@ -6,7 +6,7 @@ import { platformIconName } from "../components/iconMeta";
 import { Chip, PageHeader, Panel } from "../components/ui";
 import { downloadSample, getRuns, getSample, getSampleStatic, getSandboxProviders, getSandboxTask, sandboxDetonate, watchlistAdd } from "../lib/api";
 import type { Platform, RunSummary, SampleStatic, SandboxTask } from "../types";
-import { formatBytes } from "./samplesHelpers";
+import { filterStrings, formatBytes, iocTotal } from "./samplesHelpers";
 
 /* ── Static analysis (strings / IOCs / PE / ELF) ─────────────────────────── */
 
@@ -28,11 +28,7 @@ function StaticAnalysis({ sample }: { sample: { sample_id: string; sha256: strin
   // data — not from a fetch error.
   const unavailable = st !== undefined && st.available === false;
 
-  const filteredStrings = useMemo(() => {
-    if (!st) return [];
-    const q = stringsFilter.trim().toLowerCase();
-    return q ? st.strings.filter((s) => s.toLowerCase().includes(q)) : st.strings;
-  }, [st, stringsFilter]);
+  const filteredStrings = useMemo(() => (st ? filterStrings(st.strings, stringsFilter) : []), [st, stringsFilter]);
 
   const addToWatchlist = async (value: string) => {
     try {
@@ -46,7 +42,7 @@ function StaticAnalysis({ sample }: { sample: { sample_id: string; sha256: strin
   };
 
   const visibleStrings = showAll ? filteredStrings : filteredStrings.slice(0, 80);
-  const iocTotal = st ? st.iocs.urls.length + st.iocs.ips.length + st.iocs.domains.length + st.iocs.hashes.length + st.iocs.emails.length : 0;
+  const totalIocs = st ? iocTotal(st.iocs) : 0;
 
   return (
     <div className="mt-6 space-y-6">
@@ -56,7 +52,7 @@ function StaticAnalysis({ sample }: { sample: { sample_id: string; sha256: strin
         right={
           st && st.available ? (
             <span className="font-mono text-[10px] text-text-faint">
-              {st.strings.length} strings · {iocTotal} IOCs
+              {st.strings.length} strings · {totalIocs} IOCs
             </span>
           ) : undefined
         }
@@ -75,7 +71,7 @@ function StaticAnalysis({ sample }: { sample: { sample_id: string; sha256: strin
         {st && st.available && (
           <>
             {/* IOC buckets — each chip jumps to search (pre-filled) or watchlists. */}
-            {iocTotal > 0 ? (
+            {totalIocs > 0 ? (
               <div className="mb-5 space-y-3">
                 {(
                   [

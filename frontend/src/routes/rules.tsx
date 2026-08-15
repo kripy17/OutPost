@@ -23,7 +23,7 @@ import {
   setTuning,
   testYaraRule,
 } from "../lib/api";
-import { clearEnumDrafts, clearYaraDraft, readEnumDrafts, readYaraDraft, writeEnumDrafts, writeYaraDraft } from "./rulesDrafts";
+import { clearEnumDrafts, clearLogDrafts, clearYaraDraft, readEnumDrafts, readLogDrafts, readYaraDraft, writeEnumDrafts, writeLogDrafts, writeYaraDraft } from "./rulesDrafts";
 import type { CustomYaraRule, EnumPatternRow, FpDayPoint, LogPatternKind, RuleFpEntry, RulePack, TuningKnob, YaraTestResponse } from "../types";
 
 const PLATFORM_LABELS: Record<string, string> = {
@@ -244,49 +244,6 @@ const LOG_KIND_LABELS: Record<LogPatternKind, { title: string; tactic: string; b
     blurb: "The signatures behind log-clearing — wevtutil / Clear-EventLog, journal vacuuming, mass log deletion. Edits apply to the next ingested batch.",
   },
 };
-
-function readLogDrafts(): Record<LogPatternKind, Record<string, EnumPatternRow[]>> | null {
-  try {
-    const raw = localStorage.getItem("outpost-log-drafts");
-    if (!raw) return null;
-    const d: unknown = JSON.parse(raw);
-    if (!d || typeof d !== "object" || Array.isArray(d)) return null;
-    const out: Record<string, Record<string, EnumPatternRow[]>> = {};
-    for (const [kind, platforms] of Object.entries(d as Record<string, unknown>)) {
-      if (!platforms || typeof platforms !== "object" || Array.isArray(platforms)) continue;
-      const per: Record<string, EnumPatternRow[]> = {};
-      for (const [platform, rows] of Object.entries(platforms as Record<string, unknown>)) {
-        if (!Array.isArray(rows)) continue;
-        const clean = rows.filter(
-          (r): r is EnumPatternRow =>
-            !!r && typeof r === "object" && typeof (r as EnumPatternRow).pattern === "string" && typeof (r as EnumPatternRow).label === "string",
-        );
-        if (clean.length) per[platform] = clean;
-      }
-      if (Object.keys(per).length) out[kind] = per;
-    }
-    return Object.keys(out).length ? (out as Record<LogPatternKind, Record<string, EnumPatternRow[]>>) : null;
-  } catch {
-    return null;
-  }
-}
-
-function writeLogDrafts(drafts: Record<LogPatternKind, Record<string, EnumPatternRow[]>>) {
-  try {
-    if (Object.keys(drafts).length) localStorage.setItem("outpost-log-drafts", JSON.stringify(drafts));
-    else localStorage.removeItem("outpost-log-drafts");
-  } catch {
-    /* storage unavailable */
-  }
-}
-
-function clearLogDrafts() {
-  try {
-    localStorage.removeItem("outpost-log-drafts");
-  } catch {
-    /* ignore */
-  }
-}
 
 const EMPTY_LOG_DRAFTS = {} as Record<LogPatternKind, Record<string, EnumPatternRow[]>>;
 

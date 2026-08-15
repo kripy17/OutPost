@@ -5,7 +5,7 @@
 // (NOT a mount effect): a mirror effect would clobber the stored draft with
 // the empty default before the restore could read it back.
 
-import type { EnumPatternRow } from "../types";
+import type { EnumPatternRow, LogPatternKind } from "../types";
 
 export type YaraDraft = {
   ruleText: string;
@@ -80,6 +80,51 @@ export function writeEnumDrafts(drafts: Record<string, EnumPatternRow[]>) {
 export function clearEnumDrafts() {
   try {
     localStorage.removeItem("outpost-enum-drafts");
+  } catch {
+    /* ignore */
+  }
+}
+
+export type LogDrafts = Record<LogPatternKind, Record<string, EnumPatternRow[]>>;
+
+export function readLogDrafts(): LogDrafts | null {
+  try {
+    const raw = localStorage.getItem("outpost-log-drafts");
+    if (!raw) return null;
+    const d: unknown = JSON.parse(raw);
+    if (!d || typeof d !== "object" || Array.isArray(d)) return null;
+    const out: Record<string, Record<string, EnumPatternRow[]>> = {};
+    for (const [kind, platforms] of Object.entries(d as Record<string, unknown>)) {
+      if (!platforms || typeof platforms !== "object" || Array.isArray(platforms)) continue;
+      const per: Record<string, EnumPatternRow[]> = {};
+      for (const [platform, rows] of Object.entries(platforms as Record<string, unknown>)) {
+        if (!Array.isArray(rows)) continue;
+        const clean = rows.filter(
+          (r): r is EnumPatternRow =>
+            !!r && typeof r === "object" && typeof (r as EnumPatternRow).pattern === "string" && typeof (r as EnumPatternRow).label === "string",
+        );
+        if (clean.length) per[platform] = clean;
+      }
+      if (Object.keys(per).length) out[kind] = per;
+    }
+    return Object.keys(out).length ? (out as LogDrafts) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeLogDrafts(drafts: LogDrafts) {
+  try {
+    if (Object.keys(drafts).length) localStorage.setItem("outpost-log-drafts", JSON.stringify(drafts));
+    else localStorage.removeItem("outpost-log-drafts");
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+export function clearLogDrafts() {
+  try {
+    localStorage.removeItem("outpost-log-drafts");
   } catch {
     /* ignore */
   }

@@ -3,10 +3,10 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { Chip, PageHeader, Panel } from "../components/ui";
-import { exportFootprint, getFootprint, getSamples, refreshEnrichmentIp, saveBlob } from "../lib/api";
+import { exportFootprint, getFootprint, getFootprintTopology, getSamples, refreshEnrichmentIp, saveBlob } from "../lib/api";
 import { intelAgeLabel } from "../lib/constants";
 import type { Footprint, FootprintSeedIp } from "../types";
-import { buildTopology, MAP, passiveNote } from "./footprintHelpers";
+import { buildTopology, MAP, passiveNote, regTimeline } from "./footprintHelpers";
 
 // Radial footprint map — sample at the center, seed IPs on ring 1, passive
 // infrastructure (resolutions + sibling hosts) on ring 2, and the cohosted
@@ -177,7 +177,7 @@ function PassiveCard({
   title: string;
   note: string;
   empty: string;
-  nodes: { label: string; sub: string; synthetic?: boolean }[];
+  nodes: { label: string; sub: string; detail?: string[]; synthetic?: boolean }[];
 }) {
   return (
     <Panel title={title} kicker={note}>
@@ -186,16 +186,21 @@ function PassiveCard({
       ) : (
         <ul className="space-y-1.5">
           {nodes.map((n) => (
-            <li key={`${title}-${n.label}`} className="flex items-center justify-between gap-2 rounded-md border border-border-subtle bg-bg-elevated/40 px-2.5 py-1.5">
-              <span className="min-w-0 truncate font-mono text-[11px] text-text-primary">{n.label}</span>
-              <span className="flex shrink-0 items-center gap-1.5">
-                <span className="font-mono text-[10px] text-text-faint">{n.sub}</span>
-                {n.synthetic ? (
-                  <span className="rounded border border-accent/50 px-1 py-0.5 font-mono text-[9px] uppercase tracking-wide text-accent">synthetic</span>
-                ) : (
-                  <span className="rounded border border-risk-clean/50 px-1 py-0.5 font-mono text-[9px] uppercase tracking-wide text-risk-clean">live</span>
-                )}
-              </span>
+            <li key={`${title}-${n.label}`} className="rounded-md border border-border-subtle bg-bg-elevated/40 px-2.5 py-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="min-w-0 truncate font-mono text-[11px] text-text-primary">{n.label}</span>
+                <span className="flex shrink-0 items-center gap-1.5">
+                  <span className="font-mono text-[10px] text-text-faint">{n.sub}</span>
+                  {n.synthetic ? (
+                    <span className="rounded border border-accent/50 px-1 py-0.5 font-mono text-[9px] uppercase tracking-wide text-accent">synthetic</span>
+                  ) : (
+                    <span className="rounded border border-risk-clean/50 px-1 py-0.5 font-mono text-[9px] uppercase tracking-wide text-risk-clean">live</span>
+                  )}
+                </span>
+              </div>
+              {n.detail && n.detail.length > 0 && (
+                <p className="mt-1 truncate font-mono text-[10px] text-text-faint">{n.detail.join(" · ")}</p>
+              )}
             </li>
           ))}
         </ul>
@@ -229,6 +234,13 @@ export default function FootprintPage() {
     queryKey: ["footprint", sampleId, mock],
     queryFn: () => getFootprint(sampleId, mock),
     enabled: sampleId !== "",
+  });
+
+  // Cross-sample topology — independent of the selected sample (correlates
+  // ALL samples' observed infrastructure), so it fetches once per page load.
+  const { data: topology } = useQuery({
+    queryKey: ["footprint", "topology"],
+    queryFn: getFootprintTopology,
   });
 
   return (
@@ -408,9 +420,14 @@ export default function FootprintPage() {
             <PassiveCard
               title="Registration + ASN"
               note={passiveNote(footprint.passive.source, "RDAP · ip-api")}
-              empty="Registration info for the seed networks (name, CIDR, organization, country) and their ASN ownership will appear here."
+              empty="Registration info for the seed networks (name, CIDR, organization, country, registrar, registration timeline) and their ASN ownership will appear here."
               nodes={[
-                ...footprint.passive.networks.map((n) => ({ label: n.cidr, sub: [n.netname, n.org, n.country].filter(Boolean).join(" · ") || n.ip, synthetic: n.synthetic })),
+                ...footprint.passive.networks.map((n) => ({
+                  label: n.cidr,
+                  sub: [n.netname, n.org, n.country].filter(Boolean).join(" · ") || n.ip,
+                  detail: regTimeline(n),
+                  synthetic: n.synthetic,
+                })),
                 ...footprint.passive.asn.map((a) => ({
                   label: a.asn ?? a.ip,
                   sub: [a.as_name, a.org, a.country].filter(Boolean).join(" · ") || a.ip,
@@ -419,6 +436,66 @@ export default function FootprintPage() {
               ]}
             />
           </div>
+
+          {/* Cross-sample topology — roadmap 2.5: IPs shared by ≥2 samples are
+              the campaign-correlation signal (one C2 box, several binaries). */}
+          {topology && (
+            <Panel
+              kicker="Cross-sample · roadmap 2.5"
+              title={`Infrastructure shared across samples (${topology.clusters.length})`}
+              right={
+                <span className="font-mono text-[10px] text-text-faint">
+                  {topology.total_samples} samples correlated
+                </span>
+              }
+            >
+              {topology.clusters.length === 0 ? (
+                <p className="text-sm text-text-muted">
+                  No two samples in the vault share an observed destination IP yet — correlation needs at least two binaries touching the same host.
+                </p>
+              ) : (
+                <ul className="space-y-3">
+                  {topology.clusters.map((c) => (
+                    <li key={c.ip} className="rounded-lg border border-border-subtle bg-bg-elevated/30 p-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span
+                          className={`font-mono text-xs font-semibold ${
+                            c.reputation === "malicious"
+                              ? "text-risk-malicious"
+                              : c.reputation === "suspicious"
+                                ? "text-risk-suspicious"
+                                : "text-text-primary"
+                          }`}
+                        >
+                          {c.ip}
+                        </span>
+                        <Chip tone={c.reputation === "malicious" ? "malicious" : c.reputation === "suspicious" ? "suspicious" : "muted"} dot>
+                          {c.reputation}
+                        </Chip>
+                        <span className="font-mono text-[10px] text-text-faint">
+                          {c.sample_count} sample{c.sample_count === 1 ? "" : "s"} ·{" "}
+                          {c.checked_at ? `checked ${intelAgeLabel(c.checked_at)}` : "no reputation cache"}
+                        </span>
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {c.members.map((m) => (
+                          <Link
+                            key={`${c.ip}-${m.sample_name}`}
+                            to={`/footprint?sample=${encodeURIComponent(m.sample_name)}`}
+                            title={`${m.hits} connection${m.hits === 1 ? "" : "s"} across ${m.run_ids.length} run${m.run_ids.length === 1 ? "" : "s"}`}
+                            className="press inline-flex items-center gap-1 rounded border border-border-subtle bg-bg-base px-2 py-1 font-mono text-[11px] text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
+                          >
+                            {m.sample_name}
+                            <span className="text-text-faint">· {m.hits}</span>
+                          </Link>
+                        ))}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Panel>
+          )}
         </div>
       )}
     </div>

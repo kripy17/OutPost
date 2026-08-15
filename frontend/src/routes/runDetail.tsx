@@ -11,7 +11,7 @@ import { platformIconName } from "../components/iconMeta";
 import { killChainStats } from "../components/KillChain/killChain";
 import KillChainStepper from "../components/KillChain/KillChainStepper";
 import { Panel, SourceBadge } from "../components/ui";
-import { connectionSources } from "./runDetailHelpers";
+import { connectionSources, resolvePids } from "./runDetailHelpers";
 import NotesPanel from "../components/NotesPanel/NotesPanel";
 import ProcessTree from "../components/ProcessTree/ProcessTree";
 import { AllowlistPanel, QuickAllowlist, SuppressionPanel } from "../components/TriagePanels/TriagePanels";
@@ -233,28 +233,7 @@ function KillChainCard({ links }: { links: RunDetail["kill_chain"] }) {
 
 /* ── Recon actors — the processes behind a Discovery enumeration sweep ─── */
 
-interface ReconActor {
-  pid: number;
-  process_name: string | null;
-  command_line: string | null;
-}
-
 /** Flatten the process tree into a pid → {name, command} lookup. */
-function resolvePids(roots: RunDetail["process_tree"], pids: number[]): Map<number, ReconActor> {
-  const out = new Map<number, ReconActor>();
-  const walk = (ns: RunDetail["process_tree"]) => {
-    for (const n of ns) {
-      if (n.pid !== undefined) out.set(n.pid, { pid: n.pid, process_name: n.process_name, command_line: n.command_line });
-      walk(n.children);
-    }
-  };
-  walk(roots);
-  // Keep only the requested pids, preserving alert order.
-  const kept = new Map<number, ReconActor>();
-  for (const p of pids) if (out.has(p)) kept.set(p, out.get(p)!);
-  return kept;
-}
-
 function ReconActorsPanel({
   alerts,
   tree,
