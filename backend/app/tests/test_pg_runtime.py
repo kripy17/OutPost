@@ -214,3 +214,33 @@ def test_split_statements_full_schema_starts_are_creates():
 
     for stmt in db_pg._split_statements(translate_schema(SCHEMA)):
         assert stmt.startswith("CREATE "), stmt[:60]
+
+
+# -- executemany rowcount (psycopg3 keeps only the last statement's) --------
+
+
+def test_executemany_rowcount_sums():
+    """psycopg3 leaves rowcount at the LAST statement's count after
+    executemany; sqlite3's is undefined. The shim sums explicitly so a
+    DELETE-by-list consumer (routes_runs.py:57) gets the total affected.
+    No psycopg needed — a fake raw cursor records the calls."""
+
+    class _FakeRawCur:
+        rowcount = 1
+        description = None
+
+        def execute(self, sql, params=None):
+            pass
+
+        def fetchone(self):
+            return None
+
+    class _FakeRawConn:
+        def cursor(self):
+            return _FakeRawCur()
+
+    conn = db_pg._PgConnection(_FakeRawConn())
+    cur = conn.executemany(
+        "DELETE FROM enrichment_cache WHERE ip = ?", [("9.9.9.9",), ("8.8.8.8",)]
+    )
+    assert cur.rowcount == 2, cur.rowcount
