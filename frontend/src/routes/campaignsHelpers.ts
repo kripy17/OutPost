@@ -3,6 +3,7 @@
 // watchlisted infrastructure first; size = most member runs first; newest =
 // most recent span start first.
 
+import { toneFill, toneForReputation } from "../lib/fillPatterns";
 import type { Campaign, Reputation, TopologyCluster, TopologyClusterMember } from "../types";
 
 export type CampaignSort = "reputation" | "size" | "newest";
@@ -94,33 +95,15 @@ export function topMembers(
 }
 
 /** The bar fill for a reputation — pattern-encoded, not just color, so the
- *  chart stays readable for color-blind viewers: malicious is SOLID, suspicious
- *  is diagonal-hatched, clean is vertically-hatched, unknown is crosshatched.
- *  Opacity keeps the row text legible over the fill. Pure — no fetch. */
+ *  chart stays readable for color-blind viewers (the deck-wide vocabulary in
+ *  lib/fillPatterns.ts: solid = malicious, diagonal = suspicious, vertical =
+ *  clean, crosshatch = unknown). Opacity keeps the row text legible over the
+ *  fill. Pure — no fetch, no component. */
 export interface ReputationFill {
   background: string;
   opacity: number;
 }
 
 export function reputationFill(reputation: Reputation): ReputationFill {
-  switch (reputation) {
-    case "malicious":
-      return { background: "var(--risk-malicious)", opacity: 0.45 };
-    case "suspicious":
-      return {
-        background: "repeating-linear-gradient(45deg, var(--risk-suspicious) 0 4px, transparent 4px 8px)",
-        opacity: 0.6,
-      };
-    case "clean":
-      return {
-        background: "repeating-linear-gradient(90deg, var(--risk-clean) 0 2px, transparent 2px 7px)",
-        opacity: 0.6,
-      };
-    default: // unknown
-      return {
-        background:
-          "repeating-linear-gradient(45deg, var(--text-muted) 0 2px, transparent 2px 6px), repeating-linear-gradient(-45deg, var(--text-muted) 0 2px, transparent 2px 6px)",
-        opacity: 0.6,
-      };
-  }
+  return toneFill(toneForReputation(reputation));
 }

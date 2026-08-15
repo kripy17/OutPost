@@ -4,7 +4,8 @@ import { Link, useSearchParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { PageHeader, Panel } from "../components/ui";
 import { bulkUpdateAlertStatus, getAlertQueue, getRuleMeta } from "../lib/api";
-import { SEVERITY_BG, SEVERITY_COLORS, SEVERITY_LABEL } from "../lib/constants";
+import { SEVERITY_COLORS, SEVERITY_LABEL } from "../lib/constants";
+import { toneFill, toneForSeverity } from "../lib/fillPatterns";
 import type { AlertStatus, QueueAlert, Severity } from "../types";
 import { ageLabel, PAGE, STATUS_TABS, statusTabCount } from "./findingsHelpers";
 
@@ -33,7 +34,8 @@ function FindingRow({
         aria-label={`Select ${a.rule_name} finding`}
         className="mt-1 h-3.5 w-3.5 shrink-0 accent-[var(--accent)]"
       />
-      <span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${SEVERITY_BG[sev]}`} title={SEVERITY_LABEL[sev]} aria-hidden />
+      {/* Pattern-encoded severity dot (deck-wide fill language). */}
+      <span className="mt-1 h-2 w-2 shrink-0 rounded-full" style={toneFill(toneForSeverity(sev))} title={SEVERITY_LABEL[sev]} aria-hidden />
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
           <span className={`text-[13px] font-semibold ${SEVERITY_COLORS[sev]}`}>

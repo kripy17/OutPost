@@ -10,6 +10,7 @@ import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouse
 import { useNavigate } from "react-router-dom";
 import { Panel } from "../ui";
 import { fmtDayShort, riskBand, TREND_WINDOWS, type TrendWindow } from "../../lib/constants";
+import { toneFill, toneForRiskBand, type FillTone } from "../../lib/fillPatterns";
 import { useThemeColors, type ThemeColors } from "../../lib/theme";
 import type { RunSummary } from "../../types";
 
@@ -18,10 +19,15 @@ const HEIGHT = 200;
 const PAD = { top: 14, right: 12, bottom: 26, left: 34 };
 const BASELINE = 60; // risk ≥ 60 is critical (see lib/constants riskBand)
 
-function bandHex(band: { label: string }, colors: ThemeColors): string {
-  if (band.label === "elevated") return colors.suspicious;
-  if (band.label === "critical") return colors.malicious;
-  return colors.clean; // none / low
+// SVG fill for a risk band — pattern-encoded (the deck-wide vocabulary in
+// lib/fillPatterns.ts): critical is SOLID, elevated is a diagonal hatch,
+// none/low is a vertical hatch. The hatches reference SVG <pattern> defs
+// below, whose strokes resolve from the theme at render time.
+function bandFill(band: { label: string }, colors: ThemeColors): string {
+  const tone = toneForRiskBand(band.label);
+  if (tone === "critical") return colors.malicious;
+  if (tone === "elevated") return "url(#op-fill-diag)";
+  return "url(#op-fill-vert)"; // none / low
 }
 
 function fmtHour(ts: number): string {
@@ -170,6 +176,21 @@ export default function RiskTimeline({ runs, windowKey }: { runs: RunSummary[]; 
           <span title="Bars: individual sessions by risk band. Line: mean risk per bucket.">
             bars = sessions · line = {cfg.bucketMs >= DAY_MS ? "daily" : "24h"} mean
           </span>
+          {/* Fill-pattern key — risk bands are pattern-encoded for color-blind
+              viewers: solid = critical, diagonal hatch = elevated, vertical
+              hatch = none/low. */}
+          <span
+            className="hidden items-center gap-3 md:flex"
+            title="Fill key — solid = critical, diagonal hatch = elevated, vertical hatch = none/low"
+            aria-label="Fill key — solid = critical, diagonal hatch = elevated, vertical hatch = none/low"
+          >
+            {([["critical", "critical"], ["elevated", "elevated"], ["low", "low"]] as [FillTone, string][]).map(([tone, label]) => (
+              <span key={tone} className="inline-flex items-center gap-1">
+                <span className="h-2 w-3 rounded-sm" style={toneFill(tone)} />
+                {label}
+              </span>
+            ))}
+          </span>
         </div>
       }
     >
@@ -190,6 +211,16 @@ export default function RiskTimeline({ runs, windowKey }: { runs: RunSummary[]; 
             height={HEIGHT}
             className="block"
           >
+            {/* pattern defs — the deck's fill language for the band bars */}
+            <defs>
+              <pattern id="op-fill-diag" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                <line x1="0" y1="0" x2="0" y2="4" stroke={colors.suspicious} strokeWidth="1.4" />
+              </pattern>
+              <pattern id="op-fill-vert" width="4" height="7" patternUnits="userSpaceOnUse">
+                <line x1="0" y1="0" x2="0" y2="7" stroke={colors.clean} strokeWidth="1.4" />
+              </pattern>
+            </defs>
+
             {/* grid + baseline */}
             {yTicks.map((t) => (
               <g key={t}>
@@ -239,7 +270,7 @@ export default function RiskTimeline({ runs, windowKey }: { runs: RunSummary[]; 
 
             {/* session bars — hover for the tooltip, click to open the run */}
             {bars.map((b) => {
-              const hex = bandHex(b.band, colors);
+              const fill = bandFill(b.band, colors);
               const cx = x(b.start);
               const top = y(b.score);
               const isHovered = hover?.run.run_id === b.run.run_id;
@@ -273,7 +304,7 @@ export default function RiskTimeline({ runs, windowKey }: { runs: RunSummary[]; 
                     width={barW}
                     height={b.score > 0 ? Math.max(2, y(0) - top) : 3}
                     rx={1.5}
-                    fill={hex}
+                    fill={fill}
                     opacity={isHovered ? 1 : 0.85}
                     pointerEvents="none"
                     style={{ transition: "opacity 120ms ease-out" }}
@@ -311,7 +342,7 @@ export default function RiskTimeline({ runs, windowKey }: { runs: RunSummary[]; 
               <div className="mt-1.5 flex items-center gap-2">
                 <span
                   className="h-2 w-2 rounded-full"
-                  style={{ background: bandHex(riskBand(tip.run.risk_score ?? 0), colors) }}
+                  style={toneFill(toneForRiskBand(riskBand(tip.run.risk_score ?? 0).label))}
                 />
                 <span className={`font-mono text-sm font-semibold ${riskBand(tip.run.risk_score ?? 0).color}`}>
                   {tip.run.risk_score ?? 0}

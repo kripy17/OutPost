@@ -5,6 +5,7 @@
 
 import { useNavigate } from "react-router-dom";
 import { riskBand } from "../../lib/constants";
+import { toneFill } from "../../lib/fillPatterns";
 import type { RunSummary } from "../../types";
 
 /* ── Risk gauge — semicircular arc, colored by band ────────────────────── */
@@ -48,15 +49,26 @@ export function RiskGauge({ score }: { score: number }) {
 export function SeverityDonut({ malicious, suspicious, clean }: { malicious: number; suspicious: number; clean: number }) {
   const total = Math.max(1, malicious + suspicious + clean);
   const C = 2 * Math.PI * 44;
+  // Pattern-encoded segments (deck-wide fill language): malicious is SOLID,
+  // suspicious is a diagonal hatch, clean is a vertical hatch — so the mix
+  // stays readable for color-blind viewers, not just tinted.
   const segs = [
     { n: malicious, color: "var(--risk-malicious)" },
-    { n: suspicious, color: "var(--risk-suspicious)" },
-    { n: clean, color: "var(--risk-clean)" },
+    { n: suspicious, color: "url(#dp-fill-diag)" },
+    { n: clean, color: "url(#dp-fill-vert)" },
   ];
   let offset = 0;
   return (
     <div className="flex items-center gap-4">
-      <svg viewBox="0 0 120 120" className="h-[84px] w-[84px] shrink-0" role="img" aria-label="Severity mix across sessions">
+      <svg viewBox="0 0 120 120" className="h-[84px] w-[84px] shrink-0" role="img" aria-label="Severity mix across sessions — solid = malicious, hatched = suspicious, vertical = clean">
+        <defs>
+          <pattern id="dp-fill-diag" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+            <line x1="0" y1="0" x2="0" y2="4" stroke="var(--risk-suspicious)" strokeWidth="1.6" />
+          </pattern>
+          <pattern id="dp-fill-vert" width="4" height="7" patternUnits="userSpaceOnUse">
+            <line x1="0" y1="0" x2="0" y2="7" stroke="var(--risk-clean)" strokeWidth="1.6" />
+          </pattern>
+        </defs>
         <circle cx="60" cy="60" r="44" fill="none" stroke="var(--bg-elevated)" strokeWidth="13" />
         {segs.map((s, i) => {
           const frac = s.n / total;
@@ -88,12 +100,12 @@ export function SeverityDonut({ malicious, suspicious, clean }: { malicious: num
       </svg>
       <ul className="space-y-1.5 text-[12px]">
         {[
-          { label: "Malicious", n: malicious, color: "text-risk-malicious", dot: "bg-risk-malicious" },
-          { label: "Suspicious", n: suspicious, color: "text-risk-suspicious", dot: "bg-risk-suspicious" },
-          { label: "Clean / none", n: clean, color: "text-risk-clean", dot: "bg-risk-clean" },
+          { label: "Malicious", n: malicious, color: "text-risk-malicious", tone: "critical" as const },
+          { label: "Suspicious", n: suspicious, color: "text-risk-suspicious", tone: "elevated" as const },
+          { label: "Clean / none", n: clean, color: "text-risk-clean", tone: "low" as const },
         ].map((row) => (
           <li key={row.label} className="flex items-center gap-2">
-            <span className={`h-2 w-2 rounded-full ${row.dot}`} aria-hidden />
+            <span className="h-2 w-2 rounded-full" style={toneFill(row.tone)} aria-hidden />
             <span className="text-text-muted">{row.label}</span>
             <span className={`ml-auto font-mono tabular-nums ${row.color}`}>{row.n}</span>
           </li>

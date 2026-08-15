@@ -7,6 +7,7 @@
 // component renders the stepper row itself so the deck can frame it.
 
 import { KILL_CHAIN_ORDER, KILL_CHAIN_STAGE } from "../../lib/constants";
+import { toneFill } from "../../lib/fillPatterns";
 import type { Alert } from "../../types";
 
 export default function KillChainStepper({ alerts }: { alerts: Alert[] }) {
@@ -35,10 +36,11 @@ export default function KillChainStepper({ alerts }: { alerts: Alert[] }) {
                   className={`flex h-6 w-6 items-center justify-center rounded-full border font-mono text-[10px] transition-colors duration-200 ${
                     hit
                       ? isFullChain
-                        ? "border-risk-malicious/70 bg-risk-malicious/10 text-risk-malicious"
-                        : "border-accent/70 bg-accent/10 text-accent"
+                        ? "border-risk-malicious/70 text-risk-malicious"
+                        : "border-accent/70 text-accent"
                       : "border-border-subtle text-text-faint"
                   }`}
+                  style={hit ? (isFullChain ? toneFill("critical") : toneFill("elevated")) : undefined}
                   title={hit ? `${stage} — observed` : `${stage} — not observed`}
                 >
                   {hit ? (isFullChain ? "✸" : "✓") : "·"}
@@ -55,6 +57,11 @@ export default function KillChainStepper({ alerts }: { alerts: Alert[] }) {
           );
         })}
       </ol>
+      {/* Stage fills are pattern-encoded, not just tinted (deck-wide fill
+          language): solid = full chain, hatch = reached, hollow = not. */}
+      <p className="mt-2 font-mono text-[9px] uppercase tracking-wide text-text-faint" aria-label="Stage fill key">
+        solid = full chain · hatch = reached · hollow = not reached
+      </p>
     </>
   );
 }
