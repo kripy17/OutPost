@@ -6,7 +6,7 @@ import { Icon } from "../components/Icon";
 import { EVENT_ICON, platformIconName } from "../components/iconMeta";
 import { eventDetail, TYPE_STYLE } from "../components/TimelineView/timeline";
 import { PageHeader } from "../components/ui";
-import { CAMPAIGN_SORTS, sortCampaigns, topologyClusters, type CampaignSort } from "./campaignsHelpers";
+import { CAMPAIGN_SORTS, clusterBars, sortCampaigns, topologyClusters, type CampaignSort } from "./campaignsHelpers";
 import { getCampaigns, getCampaignStix, getFootprintTopology } from "../lib/api";
 import type { Campaign, CampaignIoc, Severity } from "../types";
 
@@ -314,6 +314,7 @@ export default function CampaignsPage() {
             </span>
             <span className="rounded border border-border-subtle px-1.5 py-0.5 font-mono text-[10px] text-text-faint">
               {strip.length} cluster{strip.length === 1 ? "" : "s"}
+              {strip.length > 10 ? " · top 10 by size" : ""}
             </span>
             <Link
               to="/footprint"
@@ -323,27 +324,35 @@ export default function CampaignsPage() {
               <Icon name="arrowRight" size={11} />
             </Link>
           </div>
-          <div className="flex flex-wrap gap-2">
-            {strip.slice(0, 10).map((c) => (
+          {/* Compact bar chart — one row per cluster, bar width ∝ sample count
+              (relative to the loudest), reputation-tinted, still deep-linking
+              to the Footprint topology panel for each IP. */}
+          <div className="space-y-1" role="list" aria-label="Shared-infrastructure clusters by size">
+            {clusterBars(strip).map((b) => (
               <Link
-                key={c.ip}
-                to={`/footprint?sample=${encodeURIComponent(c.members[0]?.sample_name ?? "")}`}
-                title={`${c.ip} — ${c.sample_count} sample${c.sample_count === 1 ? "" : "s"} · ${c.reputation}${c.inCampaign ? " · already a campaign" : " · not yet a campaign"}`}
-                className={`press inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 font-mono text-[11px] transition-colors duration-150 ${
-                  c.reputation === "malicious"
-                    ? "border-risk-malicious/50 bg-risk-malicious/10 text-risk-malicious"
-                    : c.reputation === "suspicious"
-                      ? "border-risk-suspicious/50 bg-risk-suspicious/10 text-risk-suspicious"
-                      : "border-border-subtle bg-bg-elevated/40 text-text-muted"
-                } hover:border-accent/60 hover:text-accent`}
+                key={b.ip}
+                to={`/footprint?sample=${encodeURIComponent(b.memberSample)}`}
+                title={`${b.ip} — ${b.sample_count} sample${b.sample_count === 1 ? "" : "s"} · ${b.reputation}${b.inCampaign ? " · already a campaign" : " · not yet a campaign"}`}
+                className="press relative flex items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 font-mono text-[11px] transition-colors hover:bg-bg-elevated/50"
               >
-                <Icon name="network" size={10} />
-                {c.ip}
-                <span className="text-text-faint">×{c.sample_count}</span>
-                {c.inCampaign ? (
-                  <span className="rounded bg-risk-clean/15 px-1 py-px text-[9px] uppercase tracking-wide text-risk-clean">campaign</span>
+                <span
+                  aria-hidden="true"
+                  className={`absolute inset-y-1 left-0 rounded-sm ${
+                    b.reputation === "malicious"
+                      ? "bg-risk-malicious/35"
+                      : b.reputation === "suspicious"
+                        ? "bg-risk-suspicious/35"
+                        : "bg-bg-elevated"
+                  }`}
+                  style={{ width: `${b.pct}%` }}
+                />
+                <Icon name="network" size={10} className="relative shrink-0 text-text-muted" />
+                <span className="relative truncate text-text-primary">{b.ip}</span>
+                <span className="relative shrink-0 text-text-faint">×{b.sample_count}</span>
+                {b.inCampaign ? (
+                  <span className="relative ml-auto shrink-0 rounded bg-risk-clean/15 px-1 py-px text-[9px] uppercase tracking-wide text-risk-clean">campaign</span>
                 ) : (
-                  <span className="rounded bg-bg-elevated/60 px-1 py-px text-[9px] uppercase tracking-wide text-text-faint">new</span>
+                  <span className="relative ml-auto shrink-0 rounded bg-bg-elevated/60 px-1 py-px text-[9px] uppercase tracking-wide text-text-faint">new</span>
                 )}
               </Link>
             ))}

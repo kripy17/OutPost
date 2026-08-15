@@ -4,7 +4,7 @@
 // first, newest = most recent span first.
 
 import { describe, expect, it } from "vitest";
-import { CAMPAIGN_SORTS, sortCampaigns, topologyClusters } from "../routes/campaignsHelpers";
+import { CAMPAIGN_SORTS, clusterBars, sortCampaigns, topologyClusters, type TopologyStripRow } from "../routes/campaignsHelpers";
 import type { Campaign } from "../types";
 
 function campaign(key: string, extra: Partial<Campaign> = {}): Campaign {
@@ -115,5 +115,52 @@ describe("topologyClusters", () => {
     );
     expect(rows[0].reputation).toBe("malicious");
     expect(rows[0].members[0].sample_name).toBe("a.bin");
+  });
+});
+
+describe("clusterBars", () => {
+  function row(ip: string, sample_count: number, extra: Partial<TopologyStripRow> = {}): TopologyStripRow {
+    return {
+      ip,
+      sample_count,
+      members: [],
+      reputation: "unknown",
+      checked_at: null,
+      inCampaign: false,
+      ...extra,
+    };
+  }
+
+  it("scales bar width to the loudest cluster (max = 100)", () => {
+    const bars = clusterBars([row("a", 10), row("b", 5), row("c", 2)]);
+    expect(bars.map((b) => b.pct)).toEqual([100, 50, 20]);
+  });
+
+  it("caps the rows shown and keeps the largest first", () => {
+    const rows = [row("a", 9), row("b", 8), row("c", 7), row("d", 6)];
+    expect(clusterBars(rows, 2).map((b) => b.ip)).toEqual(["a", "b"]);
+  });
+
+  it("is empty when there are no clusters", () => {
+    expect(clusterBars([])).toEqual([]);
+  });
+
+  it("carries reputation, campaign mark, and the member sample link", () => {
+    const bars = clusterBars([
+      row("203.0.113.88", 4, {
+        reputation: "malicious",
+        inCampaign: true,
+        members: [{ sample_name: "evil.bin", hits: 3, run_ids: ["r1"] }],
+      }),
+      row("10.0.0.1", 1),
+    ]);
+    expect(bars[0]).toMatchObject({
+      ip: "203.0.113.88",
+      sample_count: 4,
+      reputation: "malicious",
+      inCampaign: true,
+      memberSample: "evil.bin",
+    });
+    expect(bars[1].memberSample).toBe("");
   });
 });
