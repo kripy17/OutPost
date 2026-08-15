@@ -297,7 +297,10 @@ case "$MODE" in
       var=${spec#*:}
       want=${!var}
       file="$ROOT/badges/$name.json"
-      if [ ! -f "$file" ] || [ "$(cat "$file")" != "$want" ]; then
+      # Byte-exact against the canonical payload (printf '%s\n'): command
+      # substitution would strip the trailing newline and let a newline-only
+      # drift pass the gate while the --commit path still "finds" a change.
+      if [ ! -f "$file" ] || ! printf '%s\n' "$want" | cmp -s - "$file"; then
         echo "  stale: badges/$name.json" >&2
         echo "  → fix: write the payload below to badges/$name.json:" >&2
         echo "        $want" >&2
