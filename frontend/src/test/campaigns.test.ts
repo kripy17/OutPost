@@ -4,7 +4,8 @@
 // first, newest = most recent span first.
 
 import { describe, expect, it } from "vitest";
-import { CAMPAIGN_SORTS, clusterBars, sortCampaigns, topologyClusters, type TopologyStripRow } from "../routes/campaignsHelpers";
+import { CAMPAIGN_SORTS, clusterBars, reputationFill, sortCampaigns, topMembers, topologyClusters, type TopologyStripRow } from "../routes/campaignsHelpers";
+import type { Reputation } from "../types";
 import type { Campaign } from "../types";
 
 function campaign(key: string, extra: Partial<Campaign> = {}): Campaign {
@@ -162,5 +163,77 @@ describe("clusterBars", () => {
       memberSample: "evil.bin",
     });
     expect(bars[1].memberSample).toBe("");
+  });
+
+  it("keeps the full member list for the hover tooltip", () => {
+    const members = [{ sample_name: "a.bin", hits: 1, run_ids: ["r1"] }];
+    const bars = clusterBars([row("203.0.113.88", 2, { members })]);
+    expect(bars[0].members).toEqual(members);
+  });
+});
+
+describe("topMembers", () => {
+  function member(name: string, hits: number) {
+    return { sample_name: name, hits, run_ids: ["r1"] };
+  }
+
+  it("sorts by hit count descending with a name tiebreak", () => {
+    const { rows } = topMembers([member("b.bin", 2), member("a.bin", 2), member("c.bin", 9)]);
+    expect(rows.map((m) => m.sample_name)).toEqual(["c.bin", "a.bin", "b.bin"]);
+  });
+
+  it("caps the rows and counts the overflow", () => {
+    const all = Array.from({ length: 12 }, (_, i) => member(`s${i}.bin`, 1));
+    const { rows, more } = topMembers(all, 8);
+    expect(rows.length).toBe(8);
+    expect(more).toBe(4);
+  });
+
+  it("has no overflow when everything fits", () => {
+    const { rows, more } = topMembers([member("a.bin", 1)], 8);
+    expect(rows.length).toBe(1);
+    expect(more).toBe(0);
+  });
+});
+
+describe("reputationFill", () => {
+  const REPS: Reputation[] = ["malicious", "suspicious", "unknown", "clean"];
+
+  it("gives every reputation a distinct fill so pattern carries meaning", () => {
+    const fills = REPS.map((r) => reputationFill(r).background);
+    expect(new Set(fills).size).toBe(4);
+  });
+
+  it("malicious is solid (no hatch) with the risk token", () => {
+    const f = reputationFill("malicious");
+    expect(f.background).toBe("var(--risk-malicious)");
+    expect(f.background).not.toContain("repeating-linear-gradient");
+  });
+
+  it("suspicious is diagonal-hatched with the risk token", () => {
+    const f = reputationFill("suspicious");
+    expect(f.background).toContain("repeating-linear-gradient(45deg");
+    expect(f.background).toContain("var(--risk-suspicious)");
+  });
+
+  it("unknown is crosshatched (two directions) with the muted token", () => {
+    const f = reputationFill("unknown");
+    const matches = f.background.match(/repeating-linear-gradient/g) ?? [];
+    expect(matches.length).toBe(2);
+    expect(f.background).toContain("var(--text-muted)");
+  });
+
+  it("clean is vertically-hatched with the clean token", () => {
+    const f = reputationFill("clean");
+    expect(f.background).toContain("repeating-linear-gradient(90deg");
+    expect(f.background).toContain("var(--risk-clean)");
+  });
+
+  it("keeps opacity in (0, 1] for legibility over the fill", () => {
+    for (const r of REPS) {
+      const { opacity } = reputationFill(r);
+      expect(opacity).toBeGreaterThan(0);
+      expect(opacity).toBeLessThanOrEqual(1);
+    }
   });
 });

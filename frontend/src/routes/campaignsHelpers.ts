@@ -3,7 +3,7 @@
 // watchlisted infrastructure first; size = most member runs first; newest =
 // most recent span start first.
 
-import type { Campaign, TopologyCluster } from "../types";
+import type { Campaign, Reputation, TopologyCluster, TopologyClusterMember } from "../types";
 
 export type CampaignSort = "reputation" | "size" | "newest";
 
@@ -59,6 +59,8 @@ export interface ClusterBar {
   pct: number;
   /** Representative sample name for the footprint deep-link. */
   memberSample: string;
+  /** Full member list (kept for the hover tooltip's breakdown). */
+  members: TopologyClusterMember[];
 }
 
 /** Project strip rows into bar-chart rows: width scaled to the max count,
@@ -73,5 +75,52 @@ export function clusterBars(rows: TopologyStripRow[], limit = 10): ClusterBar[] 
     inCampaign: r.inCampaign,
     pct: Math.round((r.sample_count / max) * 100),
     memberSample: r.members[0]?.sample_name ?? "",
+    members: r.members,
   }));
+}
+
+/** The hover tooltip's member breakdown: sorted by hit count descending (name
+ *  tiebreak), capped at `limit` rows with the overflow counted — so a cluster
+ *  with 11 samples shows the loudest 8 plus "+3 more" instead of a wall of
+ *  text. Pure — no fetch, no component. */
+export function topMembers(
+  members: TopologyClusterMember[],
+  limit = 8,
+): { rows: TopologyClusterMember[]; more: number } {
+  const sorted = [...members].sort(
+    (a, b) => b.hits - a.hits || a.sample_name.localeCompare(b.sample_name),
+  );
+  return { rows: sorted.slice(0, limit), more: Math.max(0, sorted.length - limit) };
+}
+
+/** The bar fill for a reputation — pattern-encoded, not just color, so the
+ *  chart stays readable for color-blind viewers: malicious is SOLID, suspicious
+ *  is diagonal-hatched, clean is vertically-hatched, unknown is crosshatched.
+ *  Opacity keeps the row text legible over the fill. Pure — no fetch. */
+export interface ReputationFill {
+  background: string;
+  opacity: number;
+}
+
+export function reputationFill(reputation: Reputation): ReputationFill {
+  switch (reputation) {
+    case "malicious":
+      return { background: "var(--risk-malicious)", opacity: 0.45 };
+    case "suspicious":
+      return {
+        background: "repeating-linear-gradient(45deg, var(--risk-suspicious) 0 4px, transparent 4px 8px)",
+        opacity: 0.6,
+      };
+    case "clean":
+      return {
+        background: "repeating-linear-gradient(90deg, var(--risk-clean) 0 2px, transparent 2px 7px)",
+        opacity: 0.6,
+      };
+    default: // unknown
+      return {
+        background:
+          "repeating-linear-gradient(45deg, var(--text-muted) 0 2px, transparent 2px 6px), repeating-linear-gradient(-45deg, var(--text-muted) 0 2px, transparent 2px 6px)",
+        opacity: 0.6,
+      };
+  }
 }
