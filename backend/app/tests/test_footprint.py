@@ -219,9 +219,13 @@ def test_fetch_ip_passive_expands_sibling_passive_dns(monkeypatch):
     async def _fake_asn(ip):
         return {"asn": "AS123", "as_name": "Example AS", "org": "Example Org", "country": "US", "country_code": "US"}
 
+    async def _no_subdomains(apex):
+        return []
+
     monkeypatch.setattr(footprint_service, "_ptr_for_ip", lambda ip: "c2.example.com")
     monkeypatch.setattr(footprint_service, "_rdap_lookup", _fake_rdap)
     monkeypatch.setattr(footprint_service, "_crtsh_lookup", _fake_crtsh)
+    monkeypatch.setattr(footprint_service, "_crtsh_subdomains", _no_subdomains)
     monkeypatch.setattr(footprint_service, "_asn_lookup", _fake_asn)
 
     out = asyncio.run(footprint_service._fetch_ip_passive(seed))
@@ -241,6 +245,76 @@ def test_fetch_ip_passive_expands_sibling_passive_dns(monkeypatch):
     # Certificates stay apex-only; the sibling IP still reaches siblings list.
     assert out["certificates"][0]["cn"] == "*.example.com"
     assert out["sibling_ips"][0]["ip"] == "203.0.113.89"
+
+
+def test_apex_of():
+    """The discovery apex strips exactly one leftmost label and refuses
+    hosts with no discoverable subdomain namespace."""
+    assert footprint_service._apex_of("mail.example.com") == "example.com"
+    assert footprint_service._apex_of("a.b.example.com") == "b.example.com"
+    assert footprint_service._apex_of("example.com") is None      # strips to a bare TLD
+    assert footprint_service._apex_of("com") is None              # single label
+    assert footprint_service._apex_of("127.0.0.1") is None        # IP literal
+    assert footprint_service._apex_of("  MAIL.Example.COM. ") == "example.com"  # case/whitespace/dot
+
+
+def test_crtsh_subdomains_filters_proper_subdomains(monkeypatch):
+    """The `%.<apex>` enumeration keeps only PROPER subdomains of the apex
+    (crt.sh matches superstrings), strips wildcards, and tags the apex."""
+    async def _fake_query(q):
+        assert q == "%.example.com", f"expected the wildcard apex query, got {q!r}"
+        return {
+            "certificates": [],
+            "domains": [
+                {"domain": "web.example.com", "first_seen": "2026-01-01", "last_seen": "2026-08-01", "synthetic": False},
+                {"domain": "*.staging.example.com", "first_seen": "2026-02-01", "last_seen": "2026-07-01", "synthetic": False},  # wildcard stripped by the parser
+                {"domain": "example.com", "first_seen": "2026-01-01", "last_seen": "2026-08-01", "synthetic": False},  # apex itself — excluded
+                {"domain": "unrelated.net", "first_seen": "2026-01-01", "last_seen": "2026-01-01", "synthetic": False},  # superstring match — excluded
+            ],
+        }
+
+    monkeypatch.setattr(footprint_service, "_crtsh_query", _fake_query)
+    subs = asyncio.run(footprint_service._crtsh_subdomains("example.com"))
+    names = sorted(s["domain"] for s in subs)
+    assert names == ["staging.example.com", "web.example.com"], names
+    assert all(s["apex"] == "example.com" for s in subs)
+    assert all(s["synthetic"] is False for s in subs)
+
+
+def test_fetch_ip_passive_subdomain_enumeration(monkeypatch):
+    """Subdomain discovery — crt.sh `%.<apex>` over the PTR-derived domain
+    lands in its own collection, deduped against the passive-DNS history and
+    tagged with the seed IP."""
+    seed = {"ip": _C2, "first_seen": "2026-08-01T10:00:00Z", "last_seen": "2026-08-02T10:00:00Z"}
+
+    async def _fake_rdap(ip):
+        return {"cidr": "203.0.113.0/24", "netname": "TEST-NET-3", "org": "Example Org", "country": "US", "siblings": []}
+
+    async def _fake_crtsh_lookup(domain):
+        return {"certificates": [], "domains": [{"domain": "panel.example.com", "first_seen": "2026-01-01", "last_seen": "2026-08-01", "synthetic": False}]}
+
+    async def _fake_subdomains(apex):
+        assert apex == "example.com"
+        return [
+            {"domain": "dev.example.com", "apex": "example.com", "first_seen": "2026-03-01", "last_seen": "2026-08-01", "synthetic": False},
+            {"domain": "panel.example.com", "apex": "example.com", "first_seen": "2026-01-01", "last_seen": "2026-08-01", "synthetic": False},  # dup of passive DNS
+        ]
+
+    async def _fake_asn(ip):
+        return {}
+
+    monkeypatch.setattr(footprint_service, "_ptr_for_ip", lambda ip: "mail.example.com")
+    monkeypatch.setattr(footprint_service, "_rdap_lookup", _fake_rdap)
+    monkeypatch.setattr(footprint_service, "_crtsh_lookup", _fake_crtsh_lookup)
+    monkeypatch.setattr(footprint_service, "_crtsh_subdomains", _fake_subdomains)
+    monkeypatch.setattr(footprint_service, "_asn_lookup", _fake_asn)
+
+    out = asyncio.run(footprint_service._fetch_ip_passive(seed))
+    subs = out["subdomains"]
+    assert [s["domain"] for s in subs] == ["dev.example.com"], "the shared name dedupes against passive DNS"
+    assert subs[0]["source_ip"] == _C2
+    assert subs[0]["apex"] == "example.com"
+    assert "panel.example.com" in {d["domain"] for d in out["passive_dns"]}
 
 
 def test_parse_crtsh_rows_to_certs_and_domains():

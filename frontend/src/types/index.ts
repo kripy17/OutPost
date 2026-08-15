@@ -933,6 +933,10 @@ export interface FootprintPassive {
   // `source_ip` is the seed (or sibling) IP the name was observed from, so
   // infra beyond the apex domain is traceable back to its cohosted host.
   passive_dns: { domain: string; first_seen: string; last_seen: string; synthetic?: boolean; source_ip?: string }[];
+  // Subdomain discovery — crt.sh `%.<apex>` CT-log enumeration over the
+  // PTR-derived domain's apex, deduped against the passive-DNS history and
+  // tagged with the seed IP it was observed from.
+  subdomains?: { domain: string; apex?: string; first_seen: string; last_seen: string; synthetic?: boolean; source_ip?: string }[];
   certificates: { cn: string; issuer: string; not_before: string; not_after: string; synthetic?: boolean }[];
   sibling_ips: { ip: string; relation: string; synthetic?: boolean }[];
   // RDAP registration info per seed IP (live only): network name, CIDR,

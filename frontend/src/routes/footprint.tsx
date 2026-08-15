@@ -384,6 +384,16 @@ export default function FootprintPage() {
               }))}
             />
             <PassiveCard
+              title="Subdomains"
+              note={passiveNote(footprint.passive.source, "crt.sh")}
+              empty="No subdomains discovered under the seed domains' apex in Certificate Transparency logs — nothing indexed under the parent domain, or crt.sh is unreachable."
+              nodes={(footprint.passive.subdomains ?? []).map((d) => ({
+                label: d.domain,
+                sub: `${d.source_ip ? `${d.source_ip} · ` : ""}${d.first_seen.slice(0, 10)} → ${d.last_seen.slice(0, 10)}`,
+                synthetic: d.synthetic,
+              }))}
+            />
+            <PassiveCard
               title="Certificates"
               note={passiveNote(footprint.passive.source, "crt.sh")}
               empty="No TLS certificates indexed for the seed infrastructure — crt.sh may be unreachable, or none are registered."

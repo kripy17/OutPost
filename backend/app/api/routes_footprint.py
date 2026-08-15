@@ -68,6 +68,8 @@ def _flatten_rows(data: dict) -> list[tuple[str, str, str, str, str, str, str]]:
         rows.append(("resolution", r["domain"], "", "", r.get("first_seen", ""), r.get("last_seen", ""), str(bool(r.get("synthetic"))).lower()))
     for d in passive.get("passive_dns", []):
         rows.append(("passive_dns", d["domain"], d.get("source_ip", ""), "", d.get("first_seen", ""), d.get("last_seen", ""), str(bool(d.get("synthetic"))).lower()))
+    for d in passive.get("subdomains", []):
+        rows.append(("subdomain", d["domain"], d.get("source_ip", ""), f"subdomain of {d.get('apex', '')} (CT)", d.get("first_seen", ""), d.get("last_seen", ""), str(bool(d.get("synthetic"))).lower()))
     for c in passive.get("certificates", []):
         rows.append(
             ("certificate", c.get("cn", ""), "", c.get("issuer", ""), c.get("not_before", ""), c.get("not_after", ""), str(bool(c.get("synthetic"))).lower())
