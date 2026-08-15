@@ -23,6 +23,7 @@ import {
   watchHost,
 } from "../lib/api";
 import { enumKindsFromDetails } from "../lib/constants";
+import { reconciledKinds as reconcileKinds, reconciledReconPids } from "./monitorHelpers";
 import { useEventStream } from "../lib/useEventStream";
 import AlertRate from "../components/AlertRate/AlertRate";
 import { buildDetonationScenario, detonationSampleName } from "../lib/synthetic";
@@ -182,29 +183,12 @@ export default function MonitorPage() {
   );
 
   // Reconciliation: the run-detail poll is the source of truth for which
-  // enumeration pids exist (SSE may miss an alert if the tab was closed). A
-  // fresh fetch recomputes the highlight set from the alert's related_pids.
-  const reconciledRecon = useMemo(() => {
-    const set = new Set<number>();
-    for (const a of data?.alerts ?? []) {
-      if (a.rule_id === "enumeration-burst") {
-        (a.related_pids ?? []).forEach((p) => set.add(p));
-      }
-    }
-    return set.size > 0 ? set : null;
-  }, [data]);
-  // Same reconciliation for the kind badges: the poll is the source of truth
-  // for which enumeration kinds exist; the SSE capture only fills the
-  // sub-second window before the post-alert refetch lands.
-  const reconciledKinds = useMemo(() => {
-    const bursts = (data?.alerts ?? []).filter((a) => a.rule_id === "enumeration-burst");
-    if (bursts.length === 0) return null;
-    const kinds: string[] = [];
-    for (const a of bursts) {
-      for (const k of enumKindsFromDetails(a.details)) if (!kinds.includes(k)) kinds.push(k);
-    }
-    return kinds;
-  }, [data]);
+  // enumeration pids/kinds exist (SSE may miss an alert if the tab was
+  // closed). A fresh fetch recomputes the highlight set + kind badges from
+  // the alert's related_pids and details — pure derivations in
+  // monitorHelpers.ts.
+  const reconciledRecon = useMemo(() => reconciledReconPids(data?.alerts ?? []), [data]);
+  const reconciledKinds = useMemo(() => reconcileKinds(data?.alerts ?? []), [data]);
   const effectiveKinds = reconciledKinds ?? reconKinds;
   const effectiveRecon = reconciledRecon ?? reconPids;
 

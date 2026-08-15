@@ -8,24 +8,10 @@ import { Link } from "react-router-dom";
 import { PageHeader, Panel } from "../components/ui";
 import { getAudit } from "../lib/api";
 import type { AuditEntry } from "../types";
-
-const ACTION_META: Record<string, { label: string; cls: string }> = {
-  "alert.status": { label: "triage", cls: "border-accent/50 text-accent bg-accent/10" },
-  "alert.false-positive": { label: "false positive", cls: "border-risk-suspicious/50 text-risk-suspicious bg-risk-suspicious/10" },
-  "auth.login": { label: "login", cls: "border-risk-clean/50 text-risk-clean bg-risk-clean/10" },
-  "auth.login.failed": { label: "login failed", cls: "border-risk-malicious/50 text-risk-malicious bg-risk-malicious/10" },
-  "auth.password": { label: "password", cls: "border-risk-suspicious/50 text-risk-suspicious bg-risk-suspicious/10" },
-  "allowlist.add": { label: "allowlist", cls: "border-accent/50 text-accent bg-accent/10" },
-  "allowlist.remove": { label: "allowlist", cls: "border-border-subtle text-text-muted bg-bg-elevated/60" },
-  "suppression.add": { label: "suppress", cls: "border-accent/50 text-accent bg-accent/10" },
-  "suppression.remove": { label: "suppress", cls: "border-border-subtle text-text-muted bg-bg-elevated/60" },
-  "retention.prune": { label: "retention", cls: "border-risk-suspicious/50 text-risk-suspicious bg-risk-suspicious/10" },
-  "backup.create": { label: "backup", cls: "border-risk-clean/50 text-risk-clean bg-risk-clean/10" },
-  "restore.apply": { label: "restore", cls: "border-risk-malicious/50 text-risk-malicious bg-risk-malicious/10" },
-};
+import { actionMeta, auditActionKinds } from "./auditHelpers";
 
 function ActionChip({ action }: { action: string }) {
-  const meta = ACTION_META[action] ?? { label: action, cls: "border-border-subtle text-text-muted bg-bg-elevated/60" };
+  const meta = actionMeta(action);
   return (
     <span className={`inline-block rounded-full border px-2 py-0.5 font-mono text-[9px] uppercase tracking-wide ${meta.cls}`}>
       {meta.label}
@@ -66,7 +52,7 @@ export default function AuditPage() {
   });
 
   const events = data?.events ?? [];
-  const actions = ["", "alert.status", "alert.false-positive", "auth.login", "auth.login.failed", "auth.password", "allowlist.add", "suppression.add", "retention.prune", "backup.create"];
+  const actions = auditActionKinds();
 
   return (
     <div className="mx-auto max-w-[1100px] px-5 py-8 lg:px-8">

@@ -11,6 +11,19 @@ export type SavedFilters = {
   pids?: number[];
 };
 
+/** Parse the `pid` URL/filter value — one integer or a comma-separated list
+ *  (the recon-sweep jump: every enumerating PID at once). Invalid tokens are
+ *  dropped silently; the backend 422s on genuinely bad input. */
+export function parsePids(raw: string | null): number[] {
+  if (!raw) return [];
+  const out: number[] = [];
+  for (const token of raw.split(",")) {
+    const n = Number(token.trim());
+    if (Number.isInteger(n) && n > 0 && !out.includes(n)) out.push(n);
+  }
+  return out;
+}
+
 /** Resolve the persisted filter set for a fresh EventsPage mount. Returns null
  *  when the URL carries any filter param (deep links win), storage is empty,
  *  or the stored JSON is corrupt/unavailable. Callers feed the result into

@@ -7,7 +7,7 @@ pids + a sweep line), matching the webapp's visual language.
 Run from cli/:  ../.venv/bin/pytest
 """
 
-from outpost.rendering.terminal_views import _recon_summary, render_enum_kinds, render_process_tree, render_report, render_run_table, risk_gauge, risk_style
+from outpost.rendering.terminal_views import _recon_summary, intel_age, render_enum_kinds, render_process_tree, render_report, render_run_table, risk_gauge, risk_style
 
 
 def _run(risk: int = 0, sev: str | None = None) -> dict:
@@ -224,3 +224,24 @@ def test_render_report_without_meta_omits_chips():
 
     assert "C2-style beaconing" in out  # alert still renders without meta
     assert "T1071.001" not in out  # no chips when meta unavailable
+
+
+def test_intel_age_formats_cache_staleness():
+    """CLI parity for the enrichment-cache age label (webapp intelAgeLabel)."""
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+
+    assert intel_age(None) == "-"
+    assert intel_age("not-a-date") == "-"
+    # A future timestamp is treated as fresh.
+    assert intel_age((now + timedelta(minutes=5)).isoformat()) == "just now"
+    assert intel_age(now.isoformat()) == "just now"
+    # Minutes.
+    assert intel_age((now - timedelta(minutes=30)).isoformat()) == "30m ago"
+    # Hours.
+    assert intel_age((now - timedelta(hours=5)).isoformat()) == "5h ago"
+    # Days (hours ≥ 24 collapse to days).
+    assert intel_age((now - timedelta(hours=30)).isoformat()) == "1d ago"
+    # Z-suffixed ISO (the backend's serialized form) parses too.
+    assert intel_age((now - timedelta(hours=2)).isoformat().replace("+00:00", "Z")) == "2h ago"

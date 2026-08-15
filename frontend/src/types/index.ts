@@ -940,8 +940,20 @@ export interface FootprintPassive {
   certificates: { cn: string; issuer: string; not_before: string; not_after: string; synthetic?: boolean }[];
   sibling_ips: { ip: string; relation: string; synthetic?: boolean }[];
   // RDAP registration info per seed IP (live only): network name, CIDR,
-  // organization, country.
-  networks: { ip: string; cidr: string; netname: string | null; org: string | null; country: string | null; synthetic?: boolean }[];
+  // organization, country, plus the WHOIS-style registration timeline
+  // (registrar + created/updated/expires) from the same RDAP payload.
+  networks: {
+    ip: string;
+    cidr: string;
+    netname: string | null;
+    org: string | null;
+    country: string | null;
+    registrar?: string | null;
+    created?: string | null;
+    updated?: string | null;
+    expires?: string | null;
+    synthetic?: boolean;
+  }[];
   // ASN / owner mapping per seed IP (keyless ip-api.com, live only): the
   // autonomous-system identity the registration sits on.
   asn: { ip: string; asn: string | null; as_name: string | null; org: string | null; country: string | null; country_code: string | null }[];
@@ -953,4 +965,26 @@ export interface Footprint {
   seed_ips: FootprintSeedIp[];
   passive: FootprintPassive;
   status: { roadmap: boolean; generated: "mock" | null };
+}
+
+// Roadmap 2.5 — cross-sample infra topology: every IP that ≥2 samples
+// reached, with the member samples and run ids. The campaign-correlation
+// view: one C2 box, several binaries.
+export interface TopologyClusterMember {
+  sample_name: string;
+  hits: number;
+  run_ids: string[];
+}
+
+export interface TopologyCluster {
+  ip: string;
+  sample_count: number;
+  members: TopologyClusterMember[];
+  reputation: Reputation | "unknown";
+  checked_at: string | null;
+}
+
+export interface TopologyResponse {
+  clusters: TopologyCluster[];
+  total_samples: number;
 }

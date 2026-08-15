@@ -27,6 +27,15 @@ router = APIRouter(tags=["footprint"])
 _EXPORT_FILENAME = "outpost-footprint"
 
 
+@router.get("/footprint/topology", response_model=None)
+async def get_footprint_topology():
+    """Cross-sample infra topology — every IP that ≥2 samples reached, with
+    the member samples and run ids. The campaign-correlation view: one C2
+    box, several binaries. Pure local SQL, no external calls."""
+    with db_session() as conn:
+        return footprint_service.cross_sample_topology(conn)
+
+
 @router.get("/footprint/{sample_id}", response_model=None)
 async def get_footprint(
     sample_id: str,

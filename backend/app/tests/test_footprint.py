@@ -167,6 +167,43 @@ def test_parse_rdap_extracts_registration_and_siblings():
     assert out["siblings"][0]["synthetic"] is False
 
 
+def test_parse_rdap_extracts_registrar_and_registration_dates():
+    """The WHOIS-style registration timeline comes from the SAME RDAP
+    payload — registrar entity + registration / last changed / expiration
+    events, no extra provider call."""
+    doc = {
+        "name": "REG-NET",
+        "cidr0_cidrs": [{"v4prefix": "203.0.113.0", "length": 24}],
+        "startAddress": "203.0.113.0",
+        "endAddress": "203.0.113.255",
+        "entities": [
+            {"roles": ["registrar"], "vcardArray": ["vcard", [["fn", {}, "text", "Example Registrar LLC"]]]},
+            {"roles": ["abuse"], "vcardArray": ["vcard", [["fn", {}, "text", "noc@example.net"]]]},
+        ],
+        "events": [
+            {"eventAction": "registration", "eventDate": "2021-03-15T00:00:00Z"},
+            {"eventAction": "last changed", "eventDate": "2024-06-01T00:00:00Z"},
+            {"eventAction": "expiration", "eventDate": "2026-03-15T00:00:00Z"},
+            {"eventAction": "unknown action", "eventDate": "2030-01-01T00:00:00Z"},
+        ],
+    }
+    out = footprint_service._parse_rdap("203.0.113.88", doc)
+    assert out["registrar"] == "Example Registrar LLC"
+    assert out["created"] == "2021-03-15"
+    assert out["updated"] == "2024-06-01"
+    assert out["expires"] == "2026-03-15"
+
+
+def test_parse_rdap_registration_missing_pieces_are_none():
+    """No registrar role / no events → None fields, never a crash."""
+    doc = {"name": "BARE-NET", "cidr0_cidrs": [{"v4prefix": "203.0.113.0", "length": 24}]}
+    out = footprint_service._parse_rdap("203.0.113.88", doc)
+    assert out["registrar"] is None
+    assert out["created"] is None
+    assert out["updated"] is None
+    assert out["expires"] is None
+
+
 def test_parse_rdap_tight_network_uses_that_net_for_siblings():
     """A /30 RDAP net must yield siblings FROM that /30 — never /24 hosts
     mislabeled as the tighter network (regression from review)."""
@@ -414,3 +451,80 @@ def test_footprint_mock_fills_passive_layer_clearly_labeled(client):
         assert node["synthetic"] is True
     for node in data["passive"]["sibling_ips"]:
         assert node["synthetic"] is True
+
+
+# ---------------------------------------------------------------------------
+# Roadmap 2.5 — cross-sample infra topology
+# ---------------------------------------------------------------------------
+
+def _ingest_topology(client, run_id, dest_ip, ts):
+    client.post(
+        "/ingest/batch",
+        json=[{
+            "run_id": run_id, "platform": "windows", "event_type": "network_connection",
+            "timestamp": ts, "pid": 1, "dest_ip": dest_ip, "dest_port": 4444, "protocol": "TCP",
+        }],
+    )
+
+
+def test_cross_sample_topology_clusters_shared_infra(client):
+    """Two samples touching the same C2 IP cluster; a third touching only its
+    own IP stays out — the campaign-correlation hypothesis."""
+    shared = "203.0.113.111"
+    uniq_a = "198.51.100.11"
+    uniq_b = "198.51.100.22"
+    uniq_c = "198.51.100.33"
+
+    for name, uniq in (("topo-a.bin", uniq_a), ("topo-b.bin", uniq_b)):
+        rid = make_run(client, sample_name=name)
+        _ingest_topology(client, rid, shared, "2026-08-01T10:00:00Z")
+        _ingest_topology(client, rid, uniq, "2026-08-01T10:00:05Z")
+    rid_c = make_run(client, sample_name="topo-c.bin")
+    _ingest_topology(client, rid_c, uniq_c, "2026-08-03T10:00:00Z")
+
+    resp = client.get("/footprint/topology")
+    assert resp.status_code == 200
+    body = resp.json()
+    # The session DB carries other tests' samples too — assert on this test's
+    # own clusters, not the global total.
+    assert body["total_samples"] >= 3
+
+    ips = [c["ip"] for c in body["clusters"]]
+    assert shared in ips
+    assert uniq_a not in ips and uniq_b not in ips and uniq_c not in ips
+
+    cluster = next(c for c in body["clusters"] if c["ip"] == shared)
+    assert cluster["sample_count"] == 2
+    names = {m["sample_name"] for m in cluster["members"]}
+    assert names == {"topo-a.bin", "topo-b.bin"}
+    # Members sorted by hits desc; every member names its run ids.
+    for m in cluster["members"]:
+        assert m["hits"] >= 1
+        assert m["run_ids"]
+    assert cluster["reputation"] in ("unknown", "malicious", "clean", "suspicious")
+
+
+def test_cross_sample_topology_requires_two_distinct_samples(client):
+    """One sample alone on an IP is NOT shared infrastructure — the seed IP
+    of a single binary is its own footprint, not a cluster. (Asserted on this
+    test's unique IP; the session DB holds other tests' shared-IP samples.)"""
+    solo_ip = "203.0.113.222"
+    rid = make_run(client, sample_name="solo.bin")
+    _ingest_topology(client, rid, solo_ip, "2026-08-01T10:00:00Z")
+
+    resp = client.get("/footprint/topology")
+    body = resp.json()
+    assert body["total_samples"] >= 1
+    ips = [c["ip"] for c in body["clusters"]]
+    assert solo_ip not in ips
+
+
+def test_cross_sample_topology_response_shape(client):
+    """The endpoint always returns the cluster contract, even with no shared
+    infra in the shared session DB."""
+    resp = client.get("/footprint/topology")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "clusters" in body and "total_samples" in body
+    assert isinstance(body["clusters"], list)
+    assert isinstance(body["total_samples"], int)

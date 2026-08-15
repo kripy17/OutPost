@@ -23,6 +23,7 @@ import type {
   EventFeedParams,
   EventFeedResponse,
   Footprint,
+  TopologyResponse,
   RuleFpResponse,
   FpResponse,
   GlobalAlert,
@@ -742,6 +743,11 @@ export async function getSandboxTask(taskId: string): Promise<SandboxTask> {
 // -- Digital footprinting (roadmap scaffold) ---------------------------------
 export async function getFootprint(sampleId: string, mock = false): Promise<Footprint> {
   return get<Footprint>(`/footprint/${sampleId}${mock ? "?mock=1" : ""}`);
+}
+
+/** Cross-sample infra topology — IPs shared by ≥2 samples (campaign clusters). */
+export async function getFootprintTopology(): Promise<TopologyResponse> {
+  return get<TopologyResponse>("/footprint/topology");
 }
 
 // -- Global event feed / Event Viewer (roadmap 1.1) --------------------------

@@ -4,7 +4,7 @@
 // around the seed/sibling they were observed from, with honest provider notes.
 
 import { describe, expect, it } from "vitest";
-import { buildTopology, MAP, passiveNote } from "../routes/footprintHelpers";
+import { buildTopology, MAP, passiveNote, regTimeline } from "../routes/footprintHelpers";
 import type { Footprint } from "../types";
 
 function footprint(over: Partial<Footprint> = {}): Footprint {
@@ -99,5 +99,57 @@ describe("passiveNote", () => {
     expect(passiveNote("live", "crt.sh")).toBe("crt.sh · live");
     expect(passiveNote("synthetic_demo", "crt.sh")).toBe("synthetic preview");
     expect(passiveNote("not_configured", "crt.sh")).toBe("offline — not configured");
+  });
+});
+
+describe("regTimeline", () => {
+  it("renders the registrar + registration dates in order", () => {
+    expect(
+      regTimeline({
+        ip: "203.0.113.88",
+        cidr: "203.0.113.0/24",
+        netname: "TEST-NET",
+        org: null,
+        country: "US",
+        registrar: "Example Registrar LLC",
+        created: "2021-03-15",
+        updated: "2024-06-01",
+        expires: "2026-03-15",
+      }),
+    ).toEqual([
+      "registrar Example Registrar LLC",
+      "created 2021-03-15",
+      "updated 2024-06-01",
+      "expires 2026-03-15",
+    ]);
+  });
+
+  it("omits missing pieces instead of rendering empty separators", () => {
+    expect(
+      regTimeline({
+        ip: "203.0.113.88",
+        cidr: "203.0.113.0/24",
+        netname: null,
+        org: null,
+        country: null,
+        registrar: null,
+        created: null,
+        updated: null,
+        expires: null,
+      }),
+    ).toEqual([]);
+  });
+
+  it("handles a partial timeline (registrar only)", () => {
+    expect(
+      regTimeline({
+        ip: "203.0.113.88",
+        cidr: "203.0.113.0/24",
+        netname: null,
+        org: null,
+        country: null,
+        registrar: "R LLC",
+      }),
+    ).toEqual(["registrar R LLC"]);
   });
 });
