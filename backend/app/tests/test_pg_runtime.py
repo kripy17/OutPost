@@ -96,17 +96,19 @@ def test_group_concat_with_function_arg():
 
 
 def test_group_concat_nested_subquery():
-    """The agents-page shape: GROUP_CONCAT(run_id) over a DISTINCT subquery —
-    the balanced-paren scan must not swallow the FROM subquery."""
+    """The agents-page shape: GROUP_CONCAT(run_id) over a GROUP BY subquery —
+    the balanced-paren scan must not swallow the FROM subquery. The inner
+    query uses GROUP BY run_id ORDER BY MAX(timestamp) (not SELECT DISTINCT
+    + ORDER BY timestamp), which is legal on both SQLite and Postgres."""
     sql = (
         "SELECT (SELECT GROUP_CONCAT(run_id) FROM "
-        "(SELECT DISTINCT run_id FROM events WHERE host_id = e.host_id "
-        "ORDER BY timestamp DESC LIMIT 5)) AS recent_run_ids FROM events e"
+        "(SELECT run_id FROM events WHERE host_id = e.host_id "
+        "GROUP BY run_id ORDER BY MAX(timestamp) DESC LIMIT 5)) AS recent_run_ids FROM events e"
     )
     expected = (
         "SELECT (SELECT string_agg(run_id, ',') FROM "
-        "(SELECT DISTINCT run_id FROM events WHERE host_id = e.host_id "
-        "ORDER BY timestamp DESC LIMIT 5)) AS recent_run_ids FROM events e"
+        "(SELECT run_id FROM events WHERE host_id = e.host_id "
+        "GROUP BY run_id ORDER BY MAX(timestamp) DESC LIMIT 5)) AS recent_run_ids FROM events e"
     )
     assert db_pg._translate(sql) == expected
 

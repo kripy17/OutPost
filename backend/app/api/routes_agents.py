@@ -193,8 +193,8 @@ def list_agents(
                     WHERE r.run_id IN (SELECT DISTINCT run_id FROM events WHERE host_id = e.host_id))
                                                                     AS alert_count,
                    (SELECT GROUP_CONCAT(run_id) FROM
-                      (SELECT DISTINCT run_id FROM events WHERE host_id = e.host_id
-                       ORDER BY timestamp DESC LIMIT 5))             AS recent_run_ids
+                      (SELECT run_id FROM events WHERE host_id = e.host_id
+                       GROUP BY run_id ORDER BY MAX(timestamp) DESC LIMIT 5)) AS recent_run_ids
             FROM events e
             GROUP BY e.host_id
             ORDER BY last_seen DESC
