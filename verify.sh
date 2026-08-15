@@ -220,6 +220,21 @@ step "Image-budget hints  (every drift direction prints a fix)" \
 step "Badge hints  (every --check drift prints a fix)" \
   bash -c "'$ROOT/.venv/bin/python' '$ROOT/scripts/test_badge_hints.py'"
 
+# Size-gate hint self-test — check-image-size.sh's HARD-CEILING failure must
+# print an actionable '→ fix:' line in BOTH sub-branches (the docker layer
+# dump and the offline no-layer-data note), and a compliant size must go
+# green again. Fully offline via --size-bytes + HISTORY_SOURCE.
+step "Size-gate hints  (hard-ceiling failure prints a fix)" \
+  bash -c "'$ROOT/.venv/bin/python' '$ROOT/scripts/test_check_image_size_hints.py'"
+
+# Sandbox-provider hint self-test — every failure path of the sandbox
+# provider gate (backend down, unknown/not-configured provider, upload /
+# detonate / task / timeout / zero-events / run-source) must print an
+# actionable '→ fix:' line, and the hinted repair must turn the gate green.
+# Runs against a fake HTTP backend — no provider key needed.
+step "Sandbox hints  (every provider-gate failure prints a fix)" \
+  bash -c "'$ROOT/.venv/bin/python' '$ROOT/scripts/test_sandbox_provider_hints.py'"
+
 # Hint-coverage guard — the self-explaining discipline is structural: every
 # gate under scripts/ that emits a '→ fix:' hint must be mapped to a
 # self-test with repair assertions, and that self-test must actually run in

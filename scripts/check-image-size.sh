@@ -87,6 +87,7 @@ if [[ "$SIZE_MB" -gt "$FAIL_MB" ]]; then
   else
     echo "  (offline — no layer data; rerun on a docker host to see the offending layers)" >&2
   fi
+  echo "  → fix: rebuild the image lean — add a .dockerignore (node_modules, .venv, dist, *.db, tests, docs) and drop leaked build stages/COPYs, then confirm with: bash scripts/check-image-size.sh --image ${NAME}" >&2
   exit 1
 fi
 
