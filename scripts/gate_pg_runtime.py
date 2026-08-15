@@ -166,18 +166,30 @@ def main() -> int:
         ).fetchall()
         _check("agents query returns hosts", len(rows) == 2, f"got {len(rows)}")
         by_host = {r["host_id"]: r for r in rows}
-        _check("channels string_agg (host-a=auditd)", by_host.get("host-a", {}).get("channels") == "auditd")
-        _check("channels string_agg (host-b=sysmon)", by_host.get("host-b", {}).get("channels") == "sysmon")
+        # sqlite3.Row-compatible access (no dict .get on rows)
+        ha, hb = by_host.get("host-a"), by_host.get("host-b")
+        _check("channels string_agg (host-a=auditd)", ha is not None and ha["channels"] == "auditd")
+        _check("channels string_agg (host-b=sysmon)", hb is not None and hb["channels"] == "sysmon")
         _check("recent_run_ids string_agg (nested subquery)",
-               by_host.get("host-a", {}).get("recent_run_ids") == run_id)
+               ha is not None and ha["recent_run_ids"] == run_id)
 
     print("  ILIKE case-insensitive search (SQLite LIKE parity)")
     with db_session() as conn:
+        # Mixed-case value + lowercase pattern: SQLite's LIKE is case-
+        # insensitive, Postgres' LIKE is case-sensitive — the shim's ILIKE
+        # translation must make the two agree.
+        conn.execute(
+            "INSERT INTO events (run_id, platform, event_type, timestamp, pid, ppid, process_name, "
+            "command_line, exe_path, host_id, raw_record, log_source) "
+            "VALUES (?, 'windows', 'process_create', ?, ?, 1, ?, ?, ?, 'host-b', ?, 'sysmon')",
+            (run_id, NOW, 201, "PowerShell.exe", "PowerShell.exe", "PowerShell.exe", '{"raw": true}'),
+        )
         rows = conn.execute(
             "SELECT * FROM events WHERE process_name LIKE ? ESCAPE '\\' LIMIT ?",
-            ("%POWERSHELL%", 10),
+            ("%powershell%", 10),
         ).fetchall()
-        _check("lowercase pattern matches 'PowerShell.exe'", any(r["process_name"] == "evil.sh" for r in rows))
+        _check("lowercase pattern matches 'PowerShell.exe'",
+               any(r["process_name"] == "PowerShell.exe" for r in rows))
 
     print("  LIMIT/OFFSET pagination")
     with db_session() as conn:

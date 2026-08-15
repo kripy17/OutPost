@@ -201,10 +201,14 @@ class _Cursor:
         self._raw = raw
         self._names: list[str] = []
         self.lastrowid: Optional[int] = None
+        self._rowcount_override: Optional[int] = None
 
     @property
     def rowcount(self) -> int:
-        return self._raw.rowcount
+        # psycopg3 leaves rowcount at the LAST statement's count after
+        # executemany; sqlite3's is undefined. Sum explicitly so DELETE-by-
+        # list consumers (routes_runs.py:57) get the total affected.
+        return self._rowcount_override if self._rowcount_override is not None else self._raw.rowcount
 
     @property
     def description(self) -> Any:
@@ -267,8 +271,12 @@ class _PgConnection:
     def executemany(self, sql: str, seq_of_params: Any) -> _Cursor:
         translated = _translate(sql)
         cur = self._raw.cursor()
-        cur.executemany(translated, seq_of_params)
         pcur = _Cursor(self, cur)
+        total = 0
+        for params in seq_of_params:
+            cur.execute(translated, params)
+            total += cur.rowcount or 0
+        pcur._rowcount_override = total
         pcur._names = _column_names(cur.description)
         return pcur
 
