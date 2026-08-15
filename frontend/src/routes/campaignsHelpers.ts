@@ -46,3 +46,32 @@ export function topologyClusters(
     .map((c) => ({ ...c, inCampaign: keys.has(c.ip) }))
     .sort((a, b) => b.sample_count - a.sample_count || a.ip.localeCompare(b.ip));
 }
+
+/** One row of the strip's compact bar chart — bar width encodes the cluster's
+ *  sample count relative to the loudest cluster, so relative sizes read at a
+ *  glance instead of requiring a scan of the ×N counters. Pure — no fetch. */
+export interface ClusterBar {
+  ip: string;
+  sample_count: number;
+  reputation: TopologyCluster["reputation"];
+  inCampaign: boolean;
+  /** 0–100 bar width as a fraction of the largest cluster's sample count. */
+  pct: number;
+  /** Representative sample name for the footprint deep-link. */
+  memberSample: string;
+}
+
+/** Project strip rows into bar-chart rows: width scaled to the max count,
+ *  capped at `limit` rows (the loudest clusters first). The max cluster gets
+ *  pct 100; anything below is proportional. Pure — no fetch, no component. */
+export function clusterBars(rows: TopologyStripRow[], limit = 10): ClusterBar[] {
+  const max = Math.max(1, ...rows.map((r) => r.sample_count));
+  return rows.slice(0, limit).map((r) => ({
+    ip: r.ip,
+    sample_count: r.sample_count,
+    reputation: r.reputation,
+    inCampaign: r.inCampaign,
+    pct: Math.round((r.sample_count / max) * 100),
+    memberSample: r.members[0]?.sample_name ?? "",
+  }));
+}
