@@ -6,7 +6,6 @@ checked against every run's connections during enrichment.
 
 import sqlite3
 from datetime import datetime, timezone
-from typing import Optional
 
 
 def list_watchlist(conn: sqlite3.Connection) -> list[dict]:
@@ -16,7 +15,7 @@ def list_watchlist(conn: sqlite3.Connection) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def get_watchlist(conn: sqlite3.Connection, value: str) -> Optional[dict]:
+def get_watchlist(conn: sqlite3.Connection, value: str) -> dict | None:
     row = conn.execute("SELECT * FROM watchlist WHERE value = ?", (value,)).fetchone()
     return dict(row) if row else None
 

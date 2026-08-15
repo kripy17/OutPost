@@ -8,7 +8,6 @@ artifact — same data, same service.
 
 import io
 import json
-from typing import Optional
 
 from ..core.db import db_session
 from ..models import event as event_store
@@ -89,7 +88,7 @@ def build_json_report(run_id: str) -> dict:
     }
 
 
-def build_pdf_report(run_id: str) -> Optional[bytes]:
+def build_pdf_report(run_id: str) -> bytes | None:
     """Render a simple analyst-facing PDF of the run report."""
     try:
         from reportlab.lib import colors

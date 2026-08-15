@@ -24,7 +24,6 @@ import asyncio
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
@@ -72,7 +71,7 @@ def _auto_prune_schedule(conn) -> str:
     return schedule if schedule in _SCHEDULES else "off"
 
 
-def _setting(conn, key: str) -> Optional[str]:
+def _setting(conn, key: str) -> str | None:
     row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
     return row["value"] if row else None
 
@@ -145,7 +144,7 @@ def set_retention(body: RetentionIn, request: Request) -> dict:
 
 
 class PruneIn(BaseModel):
-    days: Optional[int] = None
+    days: int | None = None
 
 
 @router.post("/admin/backfill-channels", response_model=None)

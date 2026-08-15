@@ -12,7 +12,7 @@ so the welcome never reappears — new installs never silently show demo data
 as real.
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from ..core.db import db_session

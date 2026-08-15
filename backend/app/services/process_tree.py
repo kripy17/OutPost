@@ -11,7 +11,7 @@ reached (risk halo) plus the IP list itself.
 
 import os
 
-from ..core.schema import ProcessNode, Reputation
+from ..core.schema import ProcessNode
 
 
 def _node_name(ev: dict, pid: int) -> str:

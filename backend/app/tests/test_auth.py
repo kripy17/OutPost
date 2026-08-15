@@ -563,7 +563,9 @@ def test_successful_login_forgives_failed_attempts(auth_env, monkeypatch):
 def test_ratelimit_status_reports_knobs_and_live_state(auth_env, monkeypatch):
     """GET /auth/ratelimit exposes the tuned knobs read-only plus the live
     guard state (tracked + locked IPs) — what the Settings panel renders."""
-    limiter = _tight_limiter(monkeypatch, max_attempts=3, window=60, lockout=60)
+    # The helper monkeypatches the module singleton — its return value is
+    # not needed here, only the side effect.
+    _tight_limiter(monkeypatch, max_attempts=3, window=60, lockout=60)
     c = _client()
 
     # Clean state first: knobs reported, nothing tracked.

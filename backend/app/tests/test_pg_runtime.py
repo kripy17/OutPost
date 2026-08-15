@@ -9,7 +9,6 @@ service container and runs ``scripts/gate_pg_runtime.py`` against it.
 
 from app.core import db_pg
 
-
 # -- placeholders ------------------------------------------------------------
 
 

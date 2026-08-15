@@ -10,7 +10,7 @@ import { Icon } from "../components/Icon";
 import { platformIconName } from "../components/iconMeta";
 import { killChainStats } from "../components/KillChain/killChain";
 import KillChainStepper from "../components/KillChain/KillChainStepper";
-import { Panel, SourceBadge } from "../components/ui";
+import { Panel, ProvenanceBadge, SourceBadge } from "../components/ui";
 import { connectionSources, resolvePids } from "./runDetailHelpers";
 import NotesPanel from "../components/NotesPanel/NotesPanel";
 import ProcessTree from "../components/ProcessTree/ProcessTree";
@@ -500,6 +500,7 @@ export default function RunDetailPage() {
               {run.platform}
             </span>
             <SourceBadge source={run.source} />
+            <ProvenanceBadge source={run.source} />
             {(run.host_ids ?? []).map((h) => (
               <Link
                 key={h}
@@ -690,7 +691,7 @@ export default function RunDetailPage() {
           <ReconActorsPanel alerts={alerts} tree={process_tree} onLocate={onLocate} />
           <PersistencePanel alerts={alerts} events={timelineEvents} />
           <AllowlistPanel runId={runId} />
-          <SuppressionPanel runId={runId} alerts={alerts} />
+          <SuppressionPanel runId={runId} alerts={alerts} sampleName={run.sample_name} />
           <Panel
             id="network-panel"
             kicker="Network"

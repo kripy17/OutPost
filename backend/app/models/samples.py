@@ -6,7 +6,6 @@ can pre-fill a detonation and the hash is searchable via IOC search.
 
 import sqlite3
 from datetime import datetime, timezone
-from typing import Optional
 
 from .run import SYNTHETIC_SOURCES
 
@@ -18,7 +17,7 @@ def add_sample(
     sha256: str,
     detected_platform: str,
     size: int,
-    family: Optional[str] = None,
+    family: str | None = None,
 ) -> dict:
     created_at = datetime.now(timezone.utc).isoformat()
     conn.execute(
@@ -39,7 +38,7 @@ def add_sample(
     }
 
 
-def get_sample(conn: sqlite3.Connection, sample_id: str) -> Optional[dict]:
+def get_sample(conn: sqlite3.Connection, sample_id: str) -> dict | None:
     row = conn.execute("SELECT * FROM samples WHERE sample_id = ?", (sample_id,)).fetchone()
     return dict(row) if row else None
 
@@ -105,7 +104,7 @@ def count_samples(conn: sqlite3.Connection, q: str = "", include_synthetic: bool
     return conn.execute(base, params).fetchone()[0]
 
 
-def find_by_sha(conn: sqlite3.Connection, sha256: str) -> Optional[dict]:
+def find_by_sha(conn: sqlite3.Connection, sha256: str) -> dict | None:
     row = conn.execute("SELECT * FROM samples WHERE sha256 = ?", (sha256,)).fetchone()
     return dict(row) if row else None
 
@@ -119,7 +118,7 @@ def list_by_sha_prefix(conn: sqlite3.Connection, prefix: str, limit: int = 20) -
     return [dict(r) for r in rows]
 
 
-def set_family(conn: sqlite3.Connection, sample_id: str, family: Optional[str]) -> None:
+def set_family(conn: sqlite3.Connection, sample_id: str, family: str | None) -> None:
     """Persist the sniffed family label (the vault displays it per row)."""
     conn.execute("UPDATE samples SET family = ? WHERE sample_id = ?", (family, sample_id))
 
@@ -127,9 +126,9 @@ def set_family(conn: sqlite3.Connection, sample_id: str, family: Optional[str]) 
 def set_sample_reputation(
     conn: sqlite3.Connection,
     sample_id: str,
-    vt_detections: Optional[int],
-    malware_family: Optional[str],
-    yara_rules: Optional[str],  # JSON array of matched rule names
+    vt_detections: int | None,
+    malware_family: str | None,
+    yara_rules: str | None,  # JSON array of matched rule names
 ) -> None:
     """Attach roadmap-2.2 reputation evidence to an uploaded sample."""
     conn.execute(
@@ -139,7 +138,7 @@ def set_sample_reputation(
 
 
 # -- hash_cache (roadmap 2.2) ---------------------------------------------------
-def get_hash_cache(conn: sqlite3.Connection, sha256: str) -> Optional[dict]:
+def get_hash_cache(conn: sqlite3.Connection, sha256: str) -> dict | None:
     row = conn.execute("SELECT * FROM hash_cache WHERE sha256 = ?", (sha256,)).fetchone()
     return dict(row) if row else None
 
@@ -147,8 +146,8 @@ def get_hash_cache(conn: sqlite3.Connection, sha256: str) -> Optional[dict]:
 def upsert_hash_cache(
     conn: sqlite3.Connection,
     sha256: str,
-    vt_detections: Optional[int],
-    malware_family: Optional[str],
+    vt_detections: int | None,
+    malware_family: str | None,
 ) -> None:
     from datetime import datetime, timezone
 

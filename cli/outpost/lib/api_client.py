@@ -6,6 +6,7 @@ so a new backend endpoint is wired into both clients without redesign.
 
 import os
 from typing import Any
+from urllib.parse import quote
 
 import requests
 
@@ -83,6 +84,23 @@ def list_runs() -> list[dict]:
     # by default now, but the CLI is the parity mirror and should keep
     # showing everything.
     return _get("/runs?include_synthetic=true&include_soak=true")
+
+
+def get_alert_queue(
+    status: str = "open",
+    provenance: str | None = None,
+    q: str = "",
+    limit: int = 25,
+    offset: int = 0,
+) -> dict:
+    """The analyst triage queue — the webapp's Open Findings mirror, with the
+    same status / provenance (real vs synthetic) split."""
+    path = f"/alerts/queue?status={status}&limit={limit}&offset={offset}"
+    if provenance:
+        path += f"&provenance={provenance}"
+    if q:
+        path += f"&q={quote(q)}"
+    return _get(path)
 
 
 def get_run(run_id: str) -> dict:

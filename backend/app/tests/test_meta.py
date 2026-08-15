@@ -109,6 +109,7 @@ def test_reset_keeps_local_host_telemetry_only(client, conn):
     """
     import os
     import socket
+
     from ..core import config
 
     local_host = socket.gethostname().lower()

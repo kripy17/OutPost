@@ -12,7 +12,8 @@ browser don't drop idle connections; EventSource auto-reconnects on drop.
 
 import asyncio
 import json
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 _subscribers: set["asyncio.Queue[tuple[str, dict]]"] = set()
 _MAX_QUEUE = 128
@@ -33,7 +34,7 @@ def publish(event: str, data: dict) -> int:
 async def stream_events() -> AsyncIterator[str]:
     """SSE generator: one `event:`/`data:` frame per published alert, plus a
     keepalive comment every 15 s. Unsubscribes on disconnect."""
-    q: "asyncio.Queue[tuple[str, dict]]" = asyncio.Queue(maxsize=_MAX_QUEUE)
+    q: asyncio.Queue[tuple[str, dict]] = asyncio.Queue(maxsize=_MAX_QUEUE)
     _subscribers.add(q)
     try:
         yield "retry: 3000\n\n"

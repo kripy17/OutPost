@@ -21,7 +21,6 @@ import getpass
 import hashlib
 import os
 import secrets
-import sys
 
 import requests
 import typer
@@ -59,7 +58,6 @@ def hash(
         "\n[dim]Set OUTPOST_ADMIN_PASSWORD_HASH (or ANALYST) to this value, or POST it to "
         "/auth/password with an admin token to store it in the DB.[/dim]"
     )
-    return None
 
 @app.command()
 def rotate_agent_token(
@@ -122,7 +120,7 @@ def rotate_agent_token(
 
     try:
         unit, enable = _write_service_config(base, new)
-    except Exception as exc:  # noqa: BLE001 — report and still surface the token
+    except Exception as exc:
         console.print(f"[yellow]Local agent config re-embed failed: {exc}[/yellow]")
         console.print(f"[bold]New OUTPOST_AGENT_TOKEN:[/bold] {new}")
         raise typer.Exit(1)

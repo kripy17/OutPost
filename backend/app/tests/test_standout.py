@@ -49,7 +49,7 @@ def test_iocs_extraction(client):
         _net(run_id, "1.2.3.4", ts=1),
         _net(run_id, "1.2.3.4", ts=5),  # duplicate — must be deduplicated
         _net(run_id, "5.6.7.8", ts=9),
-        {**_proc(run_id, 10, 1, "evil.exe"), **{"event_type": "process_create"}},
+        {**_proc(run_id, 10, 1, "evil.exe"), "event_type": "process_create"},
         {**_proc(run_id, 10, 1, "evil.exe")},
         {"run_id": run_id, "platform": "windows", "event_type": "file_write",
          "timestamp": _ts(3), "pid": 10, "file_path": r"C:\temp\payload.dll"},
@@ -106,6 +106,33 @@ def test_cross_run_ioc_search(client):
     resp = client.get("/ioc/search", params={"value": "198.51.100.7"})
     assert resp.json()["count"] == 1
     assert resp.json()["matches"][0]["run_id"] == b
+
+
+def test_ioc_search_rides_along_cached_reputation(client, conn):
+    """An IP search carries its cached enrichment verdict with the matches —
+    the same abuse/vt/checked-age evidence the run-detail network table shows,
+    so "have I seen this?" answers "and is it bad?" in one pass."""
+    a = make_run(client, sample_name="rep-ride.bin")
+    _ingest(client, a, [_net(a, "203.0.113.66", ts=1)])
+    conn.execute(
+        "INSERT INTO enrichment_cache (ip, abuse_score, vt_malicious_count, reputation, checked_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        ("203.0.113.66", 87, 64, "malicious", "2026-08-09T10:00:00Z"),
+    )
+    conn.commit()
+
+    data = client.get("/ioc/search", params={"value": "203.0.113.66"}).json()
+    assert data["count"] == 1
+    assert data["reputation"] == {
+        "abuse_score": 87,
+        "vt_malicious_count": 64,
+        "reputation": "malicious",
+        "checked_at": "2026-08-09T10:00:00Z",
+    }
+
+    # An un-enriched value reports null — honest absence, not a fake verdict.
+    miss = client.get("/ioc/search", params={"value": "198.51.100.66"}).json()
+    assert miss["reputation"] is None
 
 
 def test_ioc_search_matches_process_names(client):

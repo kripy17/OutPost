@@ -8,7 +8,7 @@ CLI's `api_client.py` mirror these same shapes.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -26,44 +26,44 @@ class EventIn(BaseModel):
     platform: Platform
     event_type: EventType
     timestamp: datetime
-    pid: Optional[int] = None
-    ppid: Optional[int] = None
-    process_name: Optional[str] = None
-    command_line: Optional[str] = None
+    pid: int | None = None
+    ppid: int | None = None
+    process_name: str | None = None
+    command_line: str | None = None
     # Kernel-resolved executable path (auditd's `exe=`, symlinks followed) —
     # authoritative for masquerading and immune to argv[0] spoofing. NULL for
     # events that lack it (webapp/sandbox/seed, Sysmon without Image path).
-    exe_path: Optional[str] = None
-    dest_ip: Optional[str] = None
-    dest_port: Optional[int] = None
-    protocol: Optional[str] = None
-    file_path: Optional[str] = None
-    registry_key: Optional[str] = None
+    exe_path: str | None = None
+    dest_ip: str | None = None
+    dest_port: int | None = None
+    protocol: str | None = None
+    file_path: str | None = None
+    registry_key: str | None = None
     # Fleet identity — which agent/host the event came from. Omitted events
     # (webapp detonations, sandbox runs) default to 'local' at normalization.
-    host_id: Optional[str] = None
+    host_id: str | None = None
     # The exact log channel (auditd / sysmon) a collector stamped on the
     # event — the Event Log's source tabs split collectors by this. NULL for
     # webapp/sandbox/seed events.
-    log_source: Optional[str] = None
+    log_source: str | None = None
     # DNS query string (resolved name) — populated by Sysmon DNS events and
     # DNS-capable collectors. Feeds the DNS-channel rules (tunneling,
     # high-entropy labels, covert DNS ports).
-    query: Optional[str] = None
+    query: str | None = None
     # TLS Server Name Indication from the handshake (Sysmon Event ID 3
     # DestinationHostname). Feeds the TLS-SNI / DNS-over-HTTPS rules.
-    tls_sni: Optional[str] = None
+    tls_sni: str | None = None
     # The raw source record as shipped by a collector (the exact auditd
     # line / Sysmon event) — the Event Viewer's "raw record" pane pivots a
     # normalized row back to its source. NULL for webapp/sandbox/seed events.
-    raw_record: Optional[str] = None
+    raw_record: str | None = None
 
 
 class EventOut(EventIn):
-    id: Optional[int] = None
+    id: int | None = None
     # The raw record as shipped by the collector (JSON) — the Event Viewer's
     # "raw record" pane. Null for rows ingested before the column existed.
-    raw_record: Optional[str] = None
+    raw_record: str | None = None
 
 
 class RunSummary(BaseModel):
@@ -79,23 +79,23 @@ class RunSummary(BaseModel):
     # which machines contributed, and the fleet link back to its runs.
     host_ids: list[str] = []
     started_at: datetime
-    completed_at: Optional[datetime] = None
+    completed_at: datetime | None = None
     process_count: int = 0
     unique_ips: int = 0
     alert_count: int = 0
-    highest_severity: Optional[Severity] = None
+    highest_severity: Severity | None = None
     risk_score: int = 0
 
 
 class Alert(BaseModel):
-    id: Optional[int] = None
+    id: int | None = None
     run_id: str
     rule_id: str
     rule_name: str
     severity: Severity
     triggered_at: datetime
-    related_pid: Optional[int] = None
-    related_ip: Optional[str] = None
+    related_pid: int | None = None
+    related_ip: str | None = None
     # PIDs of the processes behind a composite rule (e.g. the enumerating
     # commands of enumeration-burst) — lets the live Monitor highlight the
     # actual actors in the process tree the moment the rule fires.
@@ -104,19 +104,19 @@ class Alert(BaseModel):
     # Triage (analyst workflow): open → acknowledged → resolved, with the
     # optional analyst comment recorded at the transition.
     status: AlertStatus = "open"
-    status_comment: Optional[str] = None
-    status_at: Optional[datetime] = None
+    status_comment: str | None = None
+    status_at: datetime | None = None
 
 
 class AlertStatusIn(BaseModel):
     status: AlertStatus
-    comment: Optional[str] = None
+    comment: str | None = None
 
 
 class AllowlistIn(BaseModel):
     kind: AllowlistKind = "ip"
     value: str = Field(min_length=1, max_length=500)
-    note: Optional[str] = None
+    note: str | None = None
 
 
 class AllowlistEntry(BaseModel):
@@ -124,7 +124,7 @@ class AllowlistEntry(BaseModel):
     run_id: str
     kind: AllowlistKind
     value: str
-    note: Optional[str] = None
+    note: str | None = None
     created_at: datetime
     # How many already-open matching alerts the POST auto-acknowledged (0 on
     # GET list — only the create response carries a meaningful value).
@@ -134,46 +134,53 @@ class AllowlistEntry(BaseModel):
 class SuppressionIn(BaseModel):
     rule_id: str
     # None = global (every run); set = only that run. 422 on unknown rule_id.
-    run_id: Optional[str] = None
-    reason: Optional[str] = None
+    run_id: str | None = None
+    # Optional value scope — a sample name, related IP, or detail substring.
+    # Set = only alerts whose run/context matches are suppressed (e.g.
+    # beaconing → "detonate-demo.sh" so future runs of that sample stay
+    # quiet); None = the whole rule scope. Combined with run_id (set = a
+    # specific run's matching alerts; None = every run's matching alerts).
+    value: str | None = None
+    reason: str | None = None
 
 
 class Suppression(BaseModel):
     id: int
     rule_id: str
-    run_id: Optional[str] = None
-    reason: Optional[str] = None
+    run_id: str | None = None
+    value: str | None = None
+    reason: str | None = None
     created_at: datetime
 
 
 class ProcessNode(BaseModel):
     pid: int
-    ppid: Optional[int] = None
+    ppid: int | None = None
     process_name: str
-    command_line: Optional[str] = None
+    command_line: str | None = None
     # Network risk annotation (docs/07 signature visual): the worst reputation
     # of any destination this pid connected to, and the distinct IPs behind it.
     # Null / empty for processes with no outbound connections.
-    flagged_reputation: Optional[Reputation] = None
+    flagged_reputation: Reputation | None = None
     network_ips: list[str] = []
     children: list[ProcessNode] = []
 
 
 class NetworkConnection(BaseModel):
     dest_ip: str
-    dest_port: Optional[int] = None
-    protocol: Optional[str] = None
+    dest_port: int | None = None
+    protocol: str | None = None
     first_seen: datetime
-    reputation: Optional[Reputation] = None
-    abuse_score: Optional[int] = None
-    vt_malicious_count: Optional[int] = None
-    malware_family: Optional[str] = None
+    reputation: Reputation | None = None
+    abuse_score: int | None = None
+    vt_malicious_count: int | None = None
+    malware_family: str | None = None
     # Personal watchlist match (Task 26) — independent of external feeds.
-    watchlist: Optional[bool] = None
-    watchlist_label: Optional[str] = None
+    watchlist: bool | None = None
+    watchlist_label: str | None = None
     # When the reputation verdict was last fetched from an external feed
     # (cache age) — None when the IP was never checked.
-    checked_at: Optional[str] = None
+    checked_at: str | None = None
 
 
 class NoteIn(BaseModel):
@@ -202,7 +209,7 @@ class RunDetail(BaseModel):
     kill_chain: list[dict] = []
     # Roadmap 2.2 — uploaded-sample reputation evidence, when the run's
     # sample_name matches an uploaded binary (YARA + VirusTotal).
-    sample_reputation: Optional[dict] = None
+    sample_reputation: dict | None = None
     # Explainability: the tuning knobs that deviated from stock while this
     # run was evaluated (captured once, immutable) — "scored under" context.
     effective_tuning: dict[str, object] = {}
@@ -231,8 +238,8 @@ class SandboxDetonateIn(BaseModel):
 
     sample_id: str = Field(min_length=1, max_length=64)
     provider: str = Field(default="auto", max_length=16)
-    platform: Optional[Platform] = None
-    note: Optional[str] = Field(default=None, max_length=500)
+    platform: Platform | None = None
+    note: str | None = Field(default=None, max_length=500)
 
 
 class SandboxTaskOut(BaseModel):
@@ -249,7 +256,7 @@ class SandboxTaskOut(BaseModel):
     events: int = 0
     alerts: int = 0
     risk_score: int = 0
-    highest_severity: Optional[Severity] = None
-    error: Optional[str] = None
+    highest_severity: Severity | None = None
+    error: str | None = None
     started_at: str
-    finished_at: Optional[str] = None
+    finished_at: str | None = None

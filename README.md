@@ -70,10 +70,10 @@ host-status panel answers "is THIS host monitored?" against the live fleet.
 | 🔎 **Footprint + intel** | Passive DNS / CT certificates / RDAP per sample (crt.sh, real when online, synthetic fallback), enrichment cache with force-refresh and stale sweeps, JSON/CSV footprint export |
 | 🚀 **Sandbox detonation** | Push vault samples to Any.Run / Hatching Triage / Joe Sandbox and stream the report through the real detection pipeline — `scripts/validate_sandbox_provider.py` runs the live end-to-end gate when a provider key is configured |
 | 📡 **SSE live push** | Fired alerts broadcast over `/events/stream` — StatusBar pulse, Monitor toasts, sparklines update instantly |
-| 🖇️ **Correlation & triage** | IOC extraction/export, cross-run search, run comparison, watchlist (with live webhook/desktop alerts), alert triage lifecycle (open/ack/resolved + allowlists + suppressions), STIX 2.1 + JSON + PDF export |
+| 🖇️ **Correlation & triage** | IOC extraction/export, cross-run search, run comparison, watchlist (with live webhook/desktop alerts), alert triage lifecycle (open/ack/resolved + allowlists + suppressions, including rule+sample/IP value scopes from the findings sweep), STIX 2.1 + JSON + PDF export |
 | 🧪 **Real-collector live mode** | `outpost agent run/install` — auditd/Sysmon telemetry streams into live sessions; heartbeat fleet with last-seen/uptime and silent-host flags |
 | 🎨 **SOC deck UI** | Dark/light themes, collapsible rail, risk-over-time + detection-volume charts, kill chain, process tree with reputation halos, live monitor, browser notifications |
-| ⌨️ **Terminal mirror** | The `outpost` CLI reaches the same API — **20 commands**, Rich tables, colorized risk, recon markers, rule knobs |
+| ⌨️ **Terminal mirror** | The `outpost` CLI reaches the same API — **21 commands**, Rich tables, colorized risk, recon markers, rule knobs, alert-queue mirror (`outpost alerts --provenance real|synthetic`) |
 
 ## 📸 Screenshots
 
@@ -135,7 +135,7 @@ and rendered as a verdict panel.
         ┌────────────────────┐                ┌────────────────────┐
         │   React webapp     │                │   CLI (outpost)   │
         │   SOC deck UI      │                │   Rich terminal   │
-        │   19 pages         │                │   20 commands     │
+        │   19 pages         │                │   21 commands     │
         └────────────────────┘                └────────────────────┘
 ```
 
@@ -314,10 +314,10 @@ One command runs the whole sweep:
 
 | Suite | Count | Covers |
 |---|---|---|
-| Backend pytest | **508** | ingestion, OS-aware rules (win/linux/macOS), risk + ATT&CK, campaigns, events search + channel-counts + log_source backfill, samples vault, SSE broadcast, notes, storm caps, triage, footprint (cross-sample infra topology + RDAP registrar/registration timeline + domain WHOIS record + keyless breach exposure), YARA, auth (fail-closed OUTPOST_AUTH_REQUIRED + agent token + rotation), fleet auth context + per-channel volume, Postgres migration core **+ live Postgres runtime dialect** (sqlite3-compat psycopg shim + translation layer + executescript statement-splitting tests), collector-fidelity fixes (exe-path masquerading authority on Linux AND Windows Image, per-channel beaconing, DNS/DoH exclusions incl. v6 resolvers), event-normalizer schema/coercion contract + report-export event-detail rendering |
+| Backend pytest | **583** | ingestion, OS-aware rules (win/linux/macOS), risk + ATT&CK, campaigns, events search + channel-counts + log_source backfill, samples vault, SSE broadcast, notes, storm caps, triage (incl. rule+sample/IP value-scoped suppressions), footprint (cross-sample infra topology + RDAP registrar/registration timeline + domain WHOIS record + keyless breach exposure + live-provider HTTP wrappers + cache positive/negative branches), YARA, auth (fail-closed OUTPOST_AUTH_REQUIRED + agent token + rotation), fleet auth context + per-channel volume, Postgres migration core **+ live Postgres runtime dialect** (sqlite3-compat psycopg shim + translation layer + executescript statement-splitting tests), collector-fidelity fixes (exe-path masquerading authority on Linux AND Windows Image, per-channel beaconing, DNS/DoH exclusions incl. v6 resolvers), event-normalizer schema/coercion contract, report-export event-detail rendering + PDF artifact + JSON robustness branches, enrichment provider-path/cache-freshness/hash-reputation internals, sandbox live-provider adapters (anyrun/triage/joe submit→poll→fetch + failure/timeout/vanished-run/watchlist paths) |
 | Collector pytest | **29** | Sysmon + auditd shipping, normalization, agent-token auth, comm=/exe= attribution fallback + family-aware IPv6 saddr parsing, SYSCALL+SOCKADDR connect merge + ppid-first pid fix |
-| CLI pytest | **68** | rendering regressions (incl. intel-age staleness label), campaigns output, risk columns, YARA + footprint mirrors + exports, rules knobs, agent install (token embed + Windows bats), module entry, rotate-agent-token, fleet auth context in status, admin backfill-channels + pg-migrate wiring |
-| Frontend | **229** | vitest unit tests (page-contract suites for the coverage matrix, footprint topology + registration timeline + WHOIS timeline + breach note + shared-infra clusters + cluster-bar scaling + member-breakdown tooltip + deck-wide fill-pattern language (bars · timeline · kill chain · donut · severity dots), campaign sorts, sample vault, agents fleet, IOC search, watchlist, findings triage, chart + triage components, run-detail recon/attribution, log-pattern drafts, monitor reconciliation, static-analysis derivations, audit action chips, history archive totals, browser-baseline check) + clean `tsc --noEmit` + Vite build |
+| CLI pytest | **73** | rendering regressions (incl. intel-age staleness label), campaigns output, risk columns, YARA + footprint mirrors + exports, rules knobs, agent install (token embed + Windows bats), module entry, rotate-agent-token, fleet auth context in status, admin backfill-channels + pg-migrate wiring, alert-queue mirror (`outpost alerts` with status + provenance filters) |
+| Frontend | **267** | vitest unit tests (page-contract suites for the coverage matrix, footprint topology + registration timeline + WHOIS timeline + breach note + shared-infra clusters + cluster-bar scaling + member-breakdown tooltip + deck-wide fill-pattern language (bars · timeline · kill chain · donut · severity dots) + synthetic detonation scenarios + clipboard fallback + SSE stream-hub fan-out + useEventStream ref pattern + theme-token reads, campaign sorts, sample vault, agents fleet, IOC search, watchlist, findings triage, chart + triage components, run-detail recon/attribution, log-pattern drafts, monitor reconciliation, static-analysis derivations, audit action chips, history archive totals, shared real-first preference (archive ↔ queue), queue-preferences wipe contract, browser-baseline check) + clean `tsc --noEmit` + Vite build |
 
 Beyond the suites: the 14/14 ATT&CK coverage gate, both collector FP-baseline
 soaks, the **sandbox provider gate** (`scripts/validate_sandbox_provider.py` —

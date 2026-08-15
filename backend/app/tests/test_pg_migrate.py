@@ -15,7 +15,6 @@ import sqlite3
 from app.core.db import SCHEMA
 from app.services import pg_migrate
 
-
 # ---------------------------------------------------------------------------
 # Schema translation
 # ---------------------------------------------------------------------------

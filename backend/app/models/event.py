@@ -2,7 +2,6 @@
 
 import json
 import sqlite3
-from typing import Optional
 
 from ..core.schema import Alert
 
@@ -94,7 +93,7 @@ def _parse_related_pids(d: dict) -> None:
         d["related_pids"] = []
 
 
-def get_cache(conn: sqlite3.Connection, ip: str) -> Optional[dict]:
+def get_cache(conn: sqlite3.Connection, ip: str) -> dict | None:
     row = conn.execute("SELECT * FROM enrichment_cache WHERE ip = ?", (ip,)).fetchone()
     return dict(row) if row else None
 

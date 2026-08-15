@@ -18,13 +18,16 @@ app = typer.Typer(
 
 
 def _register_commands() -> None:
-    from .commands.agent import app as agent_app
     from .commands.admin import app as admin_app
+    from .commands.agent import app as agent_app
+    from .commands.alerts import alerts
     from .commands.auth import app as auth_app
     from .commands.campaigns import campaigns
     from .commands.compare import compare
     from .commands.coverage import coverage
     from .commands.export import export
+    from .commands.footprint import app as footprint_app
+    from .commands.intel import app as intel_app
     from .commands.list_runs import list_runs
     from .commands.notes import app as notes_app
     from .commands.refresh import refresh
@@ -34,12 +37,11 @@ def _register_commands() -> None:
     from .commands.search import search
     from .commands.show import show
     from .commands.watch import watch
-    from .commands.intel import app as intel_app
     from .commands.watchlist import app as watchlist_app
     from .commands.yara import app as yara_app
-    from .commands.footprint import app as footprint_app
 
     app.command("list")(list_runs)
+    app.command("alerts")(alerts)
     app.command()(show)
     app.command()(export)
     app.command()(run)

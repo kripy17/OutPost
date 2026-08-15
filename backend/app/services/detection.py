@@ -14,12 +14,8 @@ import ipaddress
 import json
 import os
 import re
-import statistics
 import sqlite3
-from datetime import datetime, timedelta, timezone
-from typing import Optional
-
-from ..core.schema import Alert
+import statistics
 
 # ---------------------------------------------------------------------------
 # Process-map cache (bounded per-batch reads on long sessions)
@@ -30,6 +26,9 @@ from ..core.schema import Alert
 # an hours-old parent; incremental + LRU-capped keeps O(batch) per ingest
 # with no semantic change. Evicted on run completion.
 from collections import OrderedDict
+from datetime import datetime, timedelta, timezone
+
+from ..core.schema import Alert
 
 _PROCESS_MAP_CACHE: OrderedDict[tuple[str, str], tuple[int, dict[int, dict]]] = OrderedDict()
 _PROCESS_MAP_CACHE_MAX = 64
@@ -52,8 +51,7 @@ def _load_process_map(conn: sqlite3.Connection, run_id: str) -> tuple[dict[int, 
             pid = r["pid"]
             if pid is not None and pid not in process_map:
                 process_map[pid] = {"pid": pid, "ppid": r["ppid"], "process_name": _proc_name(dict(r)) or "unknown"}
-            if r["id"] > max_id:
-                max_id = r["id"]
+            max_id = max(max_id, r["id"])
         _PROCESS_MAP_CACHE[key] = (max_id, process_map)
         return process_map, max_id
 
@@ -83,8 +81,7 @@ def _load_process_map(conn: sqlite3.Connection, run_id: str) -> tuple[dict[int, 
             pid = r["pid"]
             if pid is not None and pid not in process_map:
                 process_map[pid] = {"pid": pid, "ppid": r["ppid"], "process_name": _proc_name(dict(r)) or "unknown"}
-            if r["id"] > max_id:
-                max_id = r["id"]
+            max_id = max(max_id, r["id"])
         _PROCESS_MAP_CACHE[key] = (max_id, process_map)
         return process_map, max_id
 
@@ -99,8 +96,7 @@ def _load_process_map(conn: sqlite3.Connection, run_id: str) -> tuple[dict[int, 
         pid = r["pid"]
         if pid is not None and pid not in process_map:
             process_map[pid] = {"pid": pid, "ppid": r["ppid"], "process_name": _proc_name(dict(r)) or "unknown"}
-        if r["id"] > max_id:
-            max_id = r["id"]
+        max_id = max(max_id, r["id"])
     _PROCESS_MAP_CACHE[key] = (max_id, process_map)
     while len(_PROCESS_MAP_CACHE) > _PROCESS_MAP_CACHE_MAX:
         _PROCESS_MAP_CACHE.popitem(last=False)
@@ -520,7 +516,7 @@ SYSTEMD_INIT_ALIASES = {"/sbin/init", "/usr/sbin/init"}
 _BASH_SH_ALIASES = {"/usr/bin/sh", "/bin/sh"}
 
 
-def check_masquerading(event: dict) -> Optional[Alert]:
+def check_masquerading(event: dict) -> Alert | None:
     r"""A known system binary running from an unexpected absolute path.
 
     Only absolute-path invocations are judged: a bare `bash -c …` command line
@@ -584,7 +580,7 @@ def check_masquerading(event: dict) -> Optional[Alert]:
 # ---------------------------------------------------------------------------
 # Rule 2 — Suspicious Parent-Child
 # ---------------------------------------------------------------------------
-def check_parent_child(event: dict, process_map: dict) -> Optional[Alert]:
+def check_parent_child(event: dict, process_map: dict) -> Alert | None:
     if event.get("event_type") != "process_create":
         return None
     parent = process_map.get(event.get("ppid"))
@@ -604,7 +600,7 @@ def check_parent_child(event: dict, process_map: dict) -> Optional[Alert]:
 # ---------------------------------------------------------------------------
 # Rule 3 — LOLBin Abuse
 # ---------------------------------------------------------------------------
-def check_lolbin_abuse(event: dict) -> Optional[Alert]:
+def check_lolbin_abuse(event: dict) -> Alert | None:
     if event.get("event_type") != "process_create":
         return None
     platform = _platform(event)
@@ -621,7 +617,7 @@ def check_lolbin_abuse(event: dict) -> Optional[Alert]:
 # ---------------------------------------------------------------------------
 # Rule 8 — Uncommon C2-style Port
 # ---------------------------------------------------------------------------
-def check_unusual_port(event: dict) -> Optional[Alert]:
+def check_unusual_port(event: dict) -> Alert | None:
     """Connection to a port commonly used by C2 frameworks / reverse shells.
 
     A plant that hasn't beaconed yet still shows up as a quiet connection to
@@ -654,7 +650,7 @@ def check_unusual_port(event: dict) -> Optional[Alert]:
 # ---------------------------------------------------------------------------
 # Rule 4 — C2-Style Beaconing
 # ---------------------------------------------------------------------------
-def _parse_ts(value) -> Optional[datetime]:
+def _parse_ts(value) -> datetime | None:
     """Accept ISO strings (with or without Z) or already-parsed datetimes."""
     if isinstance(value, datetime):
         return value
@@ -688,7 +684,7 @@ def _recent_connection_times(
     run_id: str,
     dest_ip: str,
     cutoff: datetime,
-    dest_port: Optional[int] = None,
+    dest_port: int | None = None,
 ) -> list[datetime]:
     """Connection timestamps to one destination CHANNEL (ip + port).
 
@@ -723,8 +719,8 @@ def check_beaconing(
     min_conn: int = BEACON_MIN_CONNECTIONS,
     variance: float = BEACON_VARIANCE_THRESHOLD,
     min_interval: float = BEACON_MIN_INTERVAL_SECONDS,
-    dest_port: Optional[int] = None,
-) -> Optional[Alert]:
+    dest_port: int | None = None,
+) -> Alert | None:
     """Regular low-variance connections to one destination CHANNEL.
 
     Two protocol-level exclusions keep real hosts quiet (both soak-discovered
@@ -773,7 +769,7 @@ def check_beaconing(
 # Rule 5 — Persistence (registry Run keys on Windows, autostart files on
 # Linux; roadmap 1.2)
 # ---------------------------------------------------------------------------
-def check_registry_persistence(event: dict) -> Optional[Alert]:
+def check_registry_persistence(event: dict) -> Alert | None:
     """Windows: write to an autorun registry key."""
     if event.get("event_type") != "registry_write":
         return None
@@ -789,7 +785,7 @@ def check_registry_persistence(event: dict) -> Optional[Alert]:
     return None
 
 
-def check_autostart_persistence(event: dict) -> Optional[Alert]:
+def check_autostart_persistence(event: dict) -> Alert | None:
     r"""Linux/macOS: write to a shell profile / cron / systemd / autostart path.
 
     Gated on the platform so a Windows event writing a path that merely
@@ -816,7 +812,7 @@ def check_autostart_persistence(event: dict) -> Optional[Alert]:
 # ---------------------------------------------------------------------------
 # Rule 7 — First-Seen Process (novelty detection, docs/11)
 # ---------------------------------------------------------------------------
-def check_first_seen(conn: sqlite3.Connection, run_id: str, event: dict, seen_names: set, process_map: dict) -> Optional[Alert]:
+def check_first_seen(conn: sqlite3.Connection, run_id: str, event: dict, seen_names: set, process_map: dict) -> Alert | None:
     """A process name never observed in any *prior* run — when the novelty is
     *meaningful*: it must be spawned by a script host / LOLBin parent
     (FIRST_SEEN_SCRIPT_HOSTS). A first-seen binary launched by a normal parent
@@ -853,7 +849,7 @@ def check_first_seen(conn: sqlite3.Connection, run_id: str, event: dict, seen_na
 # ---------------------------------------------------------------------------
 # Rule 9 — SSH authorized_keys tampering (persistent backdoor, T1098.004)
 # ---------------------------------------------------------------------------
-def check_ssh_authorized_keys(event: dict) -> Optional[Alert]:
+def check_ssh_authorized_keys(event: dict) -> Alert | None:
     """A write to ~/.ssh/authorized_keys — an attacker dropping a public key
     for persistent passwordless login. Linux/macOS only."""
     if event.get("event_type") != "file_write":
@@ -881,7 +877,7 @@ _SUID_RE = re.compile(
 )
 
 
-def check_suid_set(event: dict) -> Optional[Alert]:
+def check_suid_set(event: dict) -> Alert | None:
     """chmod +s / 4755 / 6755 — making a binary run with elevated privileges.
     Classic linux/macOS privilege-escalation step. `chmod +x` never matches."""
     if event.get("event_type") != "process_create":
@@ -906,7 +902,7 @@ def check_suid_set(event: dict) -> Optional[Alert]:
 _SCHTASKS_RE = re.compile(r"schtasks[^\n]*/\s?create", re.IGNORECASE)
 
 
-def check_scheduled_task(event: dict) -> Optional[Alert]:
+def check_scheduled_task(event: dict) -> Alert | None:
     """Windows: `schtasks /create` on the command line, or a registry write
     into the scheduled-task TaskCache — persistence that survives reboot."""
     if _platform(event) != "windows":
@@ -964,7 +960,7 @@ CRED_DUMP_PATTERNS = [
 ]
 
 
-def check_credential_dump(event: dict) -> Optional[Alert]:
+def check_credential_dump(event: dict) -> Alert | None:
     """Windows: a tool/flag combination that extracts credentials from lsass,
     the SAM hive, or the machine's password cache. Windows-only — the same
     command lines on Linux are either impossible (comsvcs) or a different
@@ -1002,7 +998,7 @@ _DOUBLE_EXT_RE = re.compile(
 )
 
 
-def check_suspicious_extension(event: dict) -> Optional[Alert]:
+def check_suspicious_extension(event: dict) -> Alert | None:
     """A benign-looking extension *followed by* an executable one — the classic
     `invoice.pdf.exe` masquerade. Checks both process names and written file
     paths, cross-platform. The checked value is chosen by event type, NOT a
@@ -1044,7 +1040,7 @@ _HISTORY_WIPE_PATTERNS = [
 ]
 
 
-def check_shell_history_wipe(event: dict) -> Optional[Alert]:
+def check_shell_history_wipe(event: dict) -> Alert | None:
     """linux/macOS: anti-forensics — history cleared, disabled, or deleted."""
     if event.get("event_type") != "process_create":
         return None
@@ -1152,9 +1148,9 @@ def check_enumeration_burst(
     conn: sqlite3.Connection,
     run_id: str,
     cutoff: datetime,
-    patterns: Optional[dict[str, list[tuple[str, str]]]] = None,
+    patterns: dict[str, list[tuple[str, str]]] | None = None,
     min_distinct: int = ENUM_BURST_THRESHOLD,
-) -> Optional[Alert]:
+) -> Alert | None:
     """Discovery — a burst of *distinct* enumeration commands in the window.
 
     Queries process_create events (this batch is already persisted before
@@ -1280,7 +1276,7 @@ def _cmdline_has_private_ip(cmdline: str) -> bool:
     return False
 
 
-def check_data_staging(conn: sqlite3.Connection, run_id: str, event: dict, cutoff: datetime) -> Optional[Alert]:
+def check_data_staging(conn: sqlite3.Connection, run_id: str, event: dict, cutoff: datetime) -> Alert | None:
     """Exfiltration — an archive created in the window *plus* an upload signal.
 
     Fires on either the upload command (process_create) or a connection to a
@@ -1338,7 +1334,7 @@ def check_rename_burst(
     event: dict,
     cutoff: datetime,
     threshold: int = RENAME_BURST_THRESHOLD,
-) -> Optional[Alert]:
+) -> Alert | None:
     pid = event.get("pid")
     if event.get("event_type") != "file_write" or pid is None:
         return None
@@ -1363,7 +1359,7 @@ def check_network_scan(
     event: dict,
     cutoff: datetime,
     min_targets: int = SCAN_DISTINCT_TARGETS,
-) -> Optional[Alert]:
+) -> Alert | None:
     """Reconnaissance (T1595) — a process sweeping many hosts on one port.
 
     One pid contacting >= `min_targets` distinct destinations on the same port
@@ -1425,7 +1421,7 @@ def _target_is_clean(conn: sqlite3.Connection, ip: str) -> bool:
     return row is not None and row["reputation"] == "clean"
 
 
-def check_toolchain_build(event: dict) -> Optional[Alert]:
+def check_toolchain_build(event: dict) -> Alert | None:
     """Resource Development (T1587.001) — compiling into a writable location."""
     if event.get("event_type") != "process_create":
         return None
@@ -1449,7 +1445,7 @@ def check_toolchain_build(event: dict) -> Optional[Alert]:
     )
 
 
-def check_document_dropper(event: dict, process_map: dict) -> Optional[Alert]:
+def check_document_dropper(event: dict, process_map: dict) -> Alert | None:
     """Initial Access (T1566.002) — a document viewer spawned a script host.
 
     The attachment→code pivot: winword/soffice/outlook executing a shell or
@@ -1475,7 +1471,7 @@ def check_document_dropper(event: dict, process_map: dict) -> Optional[Alert]:
     )
 
 
-def check_lateral_rdp_smb(event: dict) -> Optional[Alert]:
+def check_lateral_rdp_smb(event: dict) -> Alert | None:
     """Lateral Movement (T1021.001) — outbound RDP (3389) / SMB (445).
 
     Highest-FP rule of the late tactics on a real host (corporate admins RDP
@@ -1527,7 +1523,7 @@ CAPTURE_PROCESS_NAMES = {
 }
 
 
-def check_screen_capture(event: dict) -> Optional[Alert]:
+def check_screen_capture(event: dict) -> Alert | None:
     """Collection (T1113) — screen-capture / clipboard-theft tools."""
     if event.get("event_type") != "process_create":
         return None
@@ -1609,7 +1605,7 @@ def _command_match(patterns: dict[str, list[tuple[str, str]]], event: dict):
     return None
 
 
-def check_lateral_psexec_smb(event: dict) -> Optional[Alert]:
+def check_lateral_psexec_smb(event: dict) -> Alert | None:
     """Lateral Movement (T1021.002) — PsExec / SMB-admin remote tooling."""
     desc = _command_match(PSEXEC_SMB_PATTERNS, event)
     if desc is None:
@@ -1621,7 +1617,7 @@ def check_lateral_psexec_smb(event: dict) -> Optional[Alert]:
     )
 
 
-def check_lateral_winrm_wmi(event: dict) -> Optional[Alert]:
+def check_lateral_winrm_wmi(event: dict) -> Alert | None:
     """Lateral Movement (T1021.006) — WinRM / WMI remote execution."""
     desc = _command_match(WINRM_WMI_PATTERNS, event)
     if desc is None:
@@ -1633,7 +1629,7 @@ def check_lateral_winrm_wmi(event: dict) -> Optional[Alert]:
     )
 
 
-def check_lateral_smb_share(event: dict) -> Optional[Alert]:
+def check_lateral_smb_share(event: dict) -> Alert | None:
     """Lateral Movement (T1021.001) — remote SMB share enumeration."""
     desc = _command_match(SMB_SHARE_PATTERNS, event)
     if desc is None:
@@ -1651,7 +1647,7 @@ def check_rdp_brute_force(
     event: dict,
     cutoff: datetime,
     min_connections: int = RDP_BRUTE_MIN_CONNECTIONS,
-) -> Optional[Alert]:
+) -> Alert | None:
     """Lateral Movement (T1021.001) — RDP connection burst (spray/brute).
 
     A single process slamming port 3389 repeatedly inside the window is the
@@ -1763,8 +1759,8 @@ def load_log_patterns(conn: sqlite3.Connection) -> dict[str, dict[str, list[tupl
 
 
 def check_log_service_stop(
-    event: dict, patterns: Optional[dict[str, list[tuple[str, str]]]] = None
-) -> Optional[Alert]:
+    event: dict, patterns: dict[str, list[tuple[str, str]]] | None = None
+) -> Alert | None:
     """Defense Evasion (T1070.001) — the logging stack itself being silenced."""
     if patterns is None:
         patterns = LOG_SERVICE_STOP_PATTERNS
@@ -1779,8 +1775,8 @@ def check_log_service_stop(
 
 
 def check_log_clearing(
-    event: dict, patterns: Optional[dict[str, list[tuple[str, str]]]] = None
-) -> Optional[Alert]:
+    event: dict, patterns: dict[str, list[tuple[str, str]]] | None = None
+) -> Alert | None:
     """Defense Evasion (T1070.001) — log stores being purged."""
     if patterns is None:
         patterns = LOG_CLEAR_PATTERNS
@@ -1833,7 +1829,7 @@ def check_dns_tunneling(
     min_distinct: int = DNS_TUNNEL_MIN_DISTINCT,
     label_entropy: float = DNS_LABEL_ENTROPY,
     label_len: int = DNS_LABEL_LEN,
-) -> Optional[Alert]:
+) -> Alert | None:
     """C2 (T1071.004) — a burst of distinct suspicious DNS labels.
 
     Run-wide over the window: distinct query labels that are long or
@@ -1880,7 +1876,7 @@ def check_dns_long_label(
     event: dict,
     long_len: int = DNS_LONG_LABEL_LEN,
     long_entropy: float = DNS_LONG_LABEL_ENTROPY,
-) -> Optional[Alert]:
+) -> Alert | None:
     """C2 (T1568.002) — a single absurd DNS label (DGA / one-shot tunnel).
 
     Length/entropy thresholds are tunable from the Rules page; the defaults
@@ -1905,7 +1901,7 @@ def check_dns_long_label(
     return None
 
 
-def check_dns_unusual_port(event: dict) -> Optional[Alert]:
+def check_dns_unusual_port(event: dict) -> Alert | None:
     """C2 (T1071.004) — DNS on a non-standard port (covert channel)."""
     if event.get("event_type") != "network_connection":
         return None
@@ -1987,7 +1983,7 @@ FANOUT_MAX_ALERTS = 10
 _IP_LITERAL_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
 
 
-def check_tls_sni_suspicious(event: dict) -> Optional[Alert]:
+def check_tls_sni_suspicious(event: dict) -> Alert | None:
     """C2 (T1071.001) — TLS SNI that no legitimate client sends.
 
     RFC 6066 forbids IP-literal SNIs, so an SNI that IS an IP is a covert
@@ -2018,7 +2014,7 @@ def check_tls_sni_suspicious(event: dict) -> Optional[Alert]:
     return None
 
 
-def check_doh_resolver_use(event: dict) -> Optional[Alert]:
+def check_doh_resolver_use(event: dict) -> Alert | None:
     """C2 (T1071.004) — a script host / LOLBin talking to a known DoH resolver.
 
     DoH itself is normal (browsers use it); a *script host* pointed at a
@@ -2097,7 +2093,7 @@ def check_fanout_recurring(
     run_id: str,
     min_processes: int = FANOUT_MIN_PROCESSES,
     min_windows: int = FANOUT_RECUR_MIN_WINDOWS,
-    cutoff: Optional[datetime] = None,
+    cutoff: datetime | None = None,
 ) -> list[Alert]:
     """C2 (T1071.001) — the SAME destination fanning out across MANY windows.
 
@@ -2251,21 +2247,53 @@ def _load_tunables(conn: sqlite3.Connection) -> dict[str, object]:
 # ---------------------------------------------------------------------------
 # Analyst triage: rule suppressions + per-run IOC allowlists
 # ---------------------------------------------------------------------------
-# Suppression: rule_id + optional run_id (None = global). The run-detail page
-# suppresses noisy rules for a single run; the Rules page can extend this to
-# global scope. Loaded once per batch so edits apply to the next batch with no
-# restart — same contract as rule tuning and enum patterns.
+# Suppression: rule_id + optional run_id (None = global) + optional value
+# scope (a sample name, related IP, or detail substring — the queue sweep's
+# one-click "suppress this rule for this sample/C2" action). The run-detail
+# page suppresses noisy rules for a single run; the Rules page can extend
+# this to global scope. Loaded once per batch so edits apply to the next
+# batch with no restart — same contract as rule tuning and enum patterns.
 def load_suppressions(conn: sqlite3.Connection) -> list[dict]:
-    rows = conn.execute("SELECT rule_id, run_id, reason FROM rule_suppressions").fetchall()
+    rows = conn.execute(
+        "SELECT rule_id, run_id, value, reason FROM rule_suppressions"
+    ).fetchall()
     return [dict(r) for r in rows]
 
 
-def _rule_suppressed(suppressions: list[dict], rule_id: str, run_id: str) -> bool:
+def _suppression_matches(s: dict, alert: Alert, run_sample_name: str | None) -> bool:
+    """Does a suppression's value scope cover this alert?
+
+    Deliberately loose so one entry covers the same surface an analyst sees
+    in the queue sweep: matches the alert's related IP exactly, the run's
+    sample name exactly (case-insensitive), or as a substring of the alert
+    details (where file paths / registry keys / command fragments state
+    exactly what was observed). No value = whole rule scope.
+    """
+    value = (s.get("value") or "").strip().lower()
+    if not value:
+        return True
+    if alert.related_ip and value == str(alert.related_ip).lower():
+        return True
+    if run_sample_name and value == run_sample_name.lower():
+        return True
+    return value in (alert.details or "").lower()
+
+
+def _rule_suppressed(
+    suppressions: list[dict],
+    rule_id: str,
+    run_id: str,
+    alert: Alert | None = None,
+    run_sample_name: str | None = None,
+) -> bool:
     for s in suppressions:
         if s["rule_id"] != rule_id:
             continue
-        if s["run_id"] is None or s["run_id"] == run_id:
-            return True
+        if s["run_id"] is not None and s["run_id"] != run_id:
+            continue
+        if alert is not None and not _suppression_matches(s, alert, run_sample_name):
+            continue
+        return True
     return False
 
 
@@ -2276,7 +2304,7 @@ def load_run_allowlist(conn: sqlite3.Connection, run_id: str) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def allowlist_matches(kind: str, value: str, related_ip, details: str, sample_sha256: Optional[str] = None) -> bool:
+def allowlist_matches(kind: str, value: str, related_ip, details: str, sample_sha256: str | None = None) -> bool:
     """Does one allowlist entry cover this alert?
 
     - `ip` matches the alert's related_ip exactly.
@@ -2297,7 +2325,7 @@ def allowlist_matches(kind: str, value: str, related_ip, details: str, sample_sh
     return value.lower() in (details or "").lower()
 
 
-def load_run_sample_sha256(conn: sqlite3.Connection, run_id: str) -> Optional[str]:
+def load_run_sample_sha256(conn: sqlite3.Connection, run_id: str) -> str | None:
     """The SHA-256 of the uploaded sample this run was detonated against, if
     any (runs link to samples by matching sample_name). Enables hash-kind
     allowlisting — a hash only has meaning in the sample-vault context."""
@@ -2309,7 +2337,7 @@ def load_run_sample_sha256(conn: sqlite3.Connection, run_id: str) -> Optional[st
     return row["sha256"] if row else None
 
 
-def _allowlist_blocks(allowlist: list[dict], alert: Alert, sample_sha256: Optional[str] = None) -> bool:
+def _allowlist_blocks(allowlist: list[dict], alert: Alert, sample_sha256: str | None = None) -> bool:
     for entry in allowlist:
         if allowlist_matches(entry["kind"], entry["value"], alert.related_ip, alert.details, sample_sha256):
             return True
@@ -2331,6 +2359,12 @@ def evaluate_batch(conn: sqlite3.Connection, run_id: str, events: list[dict]) ->
     suppressions = load_suppressions(conn)
     allowlist = load_run_allowlist(conn, run_id)
     sample_sha256 = load_run_sample_sha256(conn, run_id)
+    # The run's sample name — the value scope a queue-sweep suppression
+    # matches against (suppress beaconing for "detonate-demo.sh" etc.).
+    row = conn.execute(
+        "SELECT sample_name FROM runs WHERE run_id = ?", (run_id,)
+    ).fetchone()
+    run_sample_name = row["sample_name"] if row else None
     # Anti-forensics pattern tables (operator-editable via /rules/log-patterns)
     # loaded once per batch so a Rules-page edit applies to the next ingest.
     log_patterns = load_log_patterns(conn)
@@ -2358,7 +2392,7 @@ def evaluate_batch(conn: sqlite3.Connection, run_id: str, events: list[dict]) ->
         runs keep their most representative findings and record what was
         held back.
         """
-        if _rule_suppressed(suppressions, alert.rule_id, run_id):
+        if _rule_suppressed(suppressions, alert.rule_id, run_id, alert, run_sample_name):
             return False
         if _allowlist_blocks(allowlist, alert, sample_sha256):
             return False
@@ -2433,7 +2467,7 @@ def evaluate_batch(conn: sqlite3.Connection, run_id: str, events: list[dict]) ->
     fanout_cutoff = _window_cutoff(events, int(t["FANOUT_WINDOW_SECONDS"]))
 
     for event in events:
-        candidates: list[Optional[Alert]] = [
+        candidates: list[Alert | None] = [
             check_masquerading(event),
             check_parent_child(event, process_map),
             check_lolbin_abuse(event),

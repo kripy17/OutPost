@@ -13,7 +13,6 @@ partial header yields `None` for that format, never an exception.
 """
 
 import re
-from typing import Optional
 
 # ---------------------------------------------------------------------------
 # Strings
@@ -161,7 +160,7 @@ _SECTION_CHARS = {
 }
 
 
-def _rva_to_offset(sections: list[dict], rva: int) -> Optional[int]:
+def _rva_to_offset(sections: list[dict], rva: int) -> int | None:
     """Map an RVA to a file offset using the section table (virtual addr +
     raw pointer window). Returns None when the RVA falls outside any section."""
     for s in sections:
@@ -175,7 +174,7 @@ def _rva_to_offset(sections: list[dict], rva: int) -> Optional[int]:
     return None
 
 
-def parse_pe(data: bytes) -> Optional[dict]:
+def parse_pe(data: bytes) -> dict | None:
     """Parse a PE (MZ…) into machine / sections / imports metadata.
 
     Returns None for anything that isn't a well-formed PE — truncated MZ
@@ -277,7 +276,7 @@ _ELF_MACHINES = {
 _ELF_TYPES = {0: "NONE", 1: "REL", 2: "EXEC", 3: "DYN", 4: "CORE"}
 
 
-def parse_elf(data: bytes) -> Optional[dict]:
+def parse_elf(data: bytes) -> dict | None:
     """Parse an ELF header + section table into metadata.
 
     Reads the fixed 64-byte header (class/endian/machine/type/entry), then the
@@ -314,7 +313,7 @@ def parse_elf(data: bytes) -> Optional[dict]:
     if sh_entsize < shdr or sh_off <= 0 or sh_num <= 0:
         return None
 
-    def _read_sh(i: int) -> Optional[dict]:
+    def _read_sh(i: int) -> dict | None:
         off = sh_off + i * sh_entsize
         if off + shdr > len(data):
             return None

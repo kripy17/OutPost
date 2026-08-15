@@ -15,22 +15,21 @@ report "unknown" — the pipeline still works for dev/demo (AGENTS.md rule 5).
 """
 
 from datetime import datetime, timedelta, timezone
-from typing import Optional
 
 import httpx
 
 from ..core import config
 from ..core.api_keys import get_api_key
 from ..models.event import get_cache, upsert_cache
-from ..models.watchlist import get_watchlist
 from ..models.samples import get_hash_cache, upsert_hash_cache
+from ..models.watchlist import get_watchlist
 
 # Rate-limit friendly: both APIs accept one key per request.
 ABUSEIPDB_URL = "https://api.abuseipdb.com/api/v2/check"
 VIRUSTOTAL_URL = "https://www.virustotal.com/api/v3/ip_addresses"
 
 
-def _reputation_from_scores(abuse_score: Optional[int], vt_count: Optional[int]) -> str:
+def _reputation_from_scores(abuse_score: int | None, vt_count: int | None) -> str:
     """Derive a reputation label per docs/02 guidance.
 
     abuse > 50 or vt > 3  -> malicious
@@ -54,7 +53,7 @@ def _cache_fresh(cached: dict) -> bool:
     return datetime.now(timezone.utc) - checked < timedelta(days=config.ENRICHMENT_TTL_DAYS)
 
 
-async def _query_abuseipdb(client: httpx.AsyncClient, ip: str, key: str) -> Optional[int]:
+async def _query_abuseipdb(client: httpx.AsyncClient, ip: str, key: str) -> int | None:
     if not key:
         return None
     try:
@@ -70,7 +69,7 @@ async def _query_abuseipdb(client: httpx.AsyncClient, ip: str, key: str) -> Opti
         return None
 
 
-async def _query_virustotal(client: httpx.AsyncClient, ip: str, key: str) -> Optional[int]:
+async def _query_virustotal(client: httpx.AsyncClient, ip: str, key: str) -> int | None:
     if not key:
         return None
     try:
@@ -107,8 +106,8 @@ async def enrich_hash(client: httpx.AsyncClient, conn, sha256: str) -> dict:
     # Effective key: DB-stored (Settings UI) if set, else the env fallback.
     vt_key = get_api_key(conn, "virustotal")
 
-    vt_detections: Optional[int] = None
-    family: Optional[str] = None
+    vt_detections: int | None = None
+    family: str | None = None
     if vt_key:
         try:
             resp = await client.get(

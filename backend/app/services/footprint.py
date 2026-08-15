@@ -40,7 +40,7 @@ import hashlib
 import ipaddress
 import socket
 import time
-from typing import Any, Optional
+from typing import Any
 
 import httpx
 
@@ -120,7 +120,7 @@ def _seed_ips(conn, sample_name: str) -> list[dict]:
 # Passive layer — real, keyless providers (PTR → crt.sh + RDAP)
 # ---------------------------------------------------------------------------
 
-def _ptr_for_ip(ip: str) -> Optional[str]:
+def _ptr_for_ip(ip: str) -> str | None:
     """Reverse-DNS hostname for an IP (the passive-DNS resolution signal)."""
     try:
         return socket.gethostbyaddr(ip)[0]
@@ -160,7 +160,7 @@ def _common_prefix_len(a: str, b: str) -> int:
     return n
 
 
-def _entity_org(ent: dict) -> Optional[str]:
+def _entity_org(ent: dict) -> str | None:
     """The vcard `fn` organization of one RDAP entity, if present."""
     vcard = ent.get("vcardArray") if isinstance(ent, dict) else None
     if not (isinstance(vcard, list) and len(vcard) > 1 and isinstance(vcard[1], list)):
@@ -395,7 +395,7 @@ async def _rdap_lookup(ip: str) -> dict:
     return _parse_rdap(ip, doc)
 
 
-def _apex_of(domain: str) -> Optional[str]:
+def _apex_of(domain: str) -> str | None:
     """The discovery apex of a hostname — strip the leftmost label.
 
     `mail.example.com` → `example.com`; `a.b.example.com` → `b.example.com`
@@ -1076,7 +1076,7 @@ async def _passive_layer(seeds: list[dict], mock: bool) -> dict:
 # Public entrypoint
 # ---------------------------------------------------------------------------
 
-async def build_footprint(conn, sample_id: str, mock: bool = False) -> Optional[dict]:
+async def build_footprint(conn, sample_id: str, mock: bool = False) -> dict | None:
     """Build the footprint for an uploaded sample, or None if unknown."""
     sample = samples_store.get_sample(conn, sample_id)
     if not sample:

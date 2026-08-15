@@ -63,6 +63,7 @@ def _auth_env(monkeypatch):
 
 def test_failed_login_lands_in_audit(_auth_env):
     from fastapi.testclient import TestClient
+
     from ..main import app
 
     c = TestClient(app)

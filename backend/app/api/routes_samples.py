@@ -15,10 +15,8 @@ import hashlib
 import io
 import json
 import uuid
-from typing import Optional
 
 import httpx
-
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse
 
@@ -26,7 +24,8 @@ from ..core import config
 from ..core.db import db_session
 from ..models import samples as samples_store
 from ..models.run import SYNTHETIC_SOURCES
-from ..services import enrichment, static_analysis, yara as yara_service
+from ..services import enrichment, static_analysis
+from ..services import yara as yara_service
 
 router = APIRouter(tags=["samples"])
 
@@ -92,7 +91,7 @@ def _guess_zip_platform(data: bytes) -> tuple[str, str]:
     return "unknown", "ZIP archive (untyped)"
 
 
-def _guess_shebang(data: bytes) -> Optional[tuple[str, str]]:
+def _guess_shebang(data: bytes) -> tuple[str, str] | None:
     """Map a `#!` first line to a platform guess, else None (bare shebang)."""
     line = data.split(b"\n", 1)[0][:200].decode("utf-8", errors="replace").strip()
     parts = line[2:].strip().split()
@@ -125,7 +124,7 @@ def _store_bytes(sample_id: str, body: bytes) -> None:
         pass
 
 
-def _load_bytes(sample_id: str) -> Optional[bytes]:
+def _load_bytes(sample_id: str) -> bytes | None:
     """Read a stored sample's raw bytes; None when absent (pre-persistence
     uploads, or a failed write)."""
     try:
@@ -134,7 +133,7 @@ def _load_bytes(sample_id: str) -> Optional[bytes]:
         return None
 
 
-def sniff_platform(data: bytes) -> Optional[tuple[str, str]]:
+def sniff_platform(data: bytes) -> tuple[str, str] | None:
     """Return (platform, family) for a recognized signature, else None.
 
     Fixed magic bytes first, then ZIP and shebang content peeks. `unknown` is a

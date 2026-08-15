@@ -42,7 +42,8 @@ CI by the ``pg-runtime`` job (postgres service container →
 from __future__ import annotations
 
 import re
-from typing import Any, Iterator, Optional
+from collections.abc import Iterator
+from typing import Any
 
 from . import config
 
@@ -117,7 +118,7 @@ def _translate(sql: str) -> str:
 _INSERT_INTO = re.compile(r"\bINSERT\s+(?:OR\s+IGNORE\s+)?INTO\s+(\w+)", re.IGNORECASE)
 
 
-def _insert_table(sql: str) -> Optional[str]:
+def _insert_table(sql: str) -> str | None:
     """The target table of an INSERT statement (None for anything else)."""
     m = _INSERT_INTO.search(sql)
     return m.group(1) if m else None
@@ -146,7 +147,7 @@ class PgRow:
     over values — the ``sqlite3.Row`` surface the app and tests use.
     """
 
-    __slots__ = ("_values", "_names")
+    __slots__ = ("_names", "_values")
 
     def __init__(self, values: tuple, names: list[str]):
         self._values = tuple(values)
@@ -196,12 +197,12 @@ def _column_names(description: Any) -> list[str]:
 class _Cursor:
     """sqlite3.Cursor-compatible wrapper over one psycopg cursor."""
 
-    def __init__(self, conn: "_PgConnection", raw: Any):
+    def __init__(self, conn: _PgConnection, raw: Any):
         self._conn = conn
         self._raw = raw
         self._names: list[str] = []
-        self.lastrowid: Optional[int] = None
-        self._rowcount_override: Optional[int] = None
+        self.lastrowid: int | None = None
+        self._rowcount_override: int | None = None
 
     @property
     def rowcount(self) -> int:
@@ -217,7 +218,7 @@ class _Cursor:
     def _wrap(self, row: Any) -> PgRow:
         return PgRow(row, self._names)
 
-    def fetchone(self) -> Optional[PgRow]:
+    def fetchone(self) -> PgRow | None:
         row = self._raw.fetchone()
         return self._wrap(row) if row is not None else None
 
@@ -243,7 +244,7 @@ class _PgConnection:
 
     def __init__(self, raw: Any):
         self._raw = raw
-        self._pk_cache: dict[str, Optional[str]] = {}
+        self._pk_cache: dict[str, str | None] = {}
 
     # -- the shim's core -----------------------------------------------------
 
@@ -292,7 +293,7 @@ class _PgConnection:
 
     # -- primary-key catalog lookup (RETURNING decision) ---------------------
 
-    def _primary_key(self, table: str) -> Optional[str]:
+    def _primary_key(self, table: str) -> str | None:
         """The single-column primary key of `table`, cached per connection.
 
         Only a single-column PK named exactly ``id`` triggers a ``RETURNING
@@ -301,7 +302,7 @@ class _PgConnection:
         """
         if table in self._pk_cache:
             return self._pk_cache[table]
-        pk: Optional[str] = None
+        pk: str | None = None
         try:
             cur = self._raw.cursor()
             cur.execute(
@@ -333,7 +334,7 @@ class _PgConnection:
     def close(self) -> None:
         self._raw.close()
 
-    def __enter__(self) -> "_PgConnection":
+    def __enter__(self) -> _PgConnection:
         return self
 
     def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:

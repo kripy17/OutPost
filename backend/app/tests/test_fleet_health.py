@@ -11,8 +11,6 @@ import asyncio
 import time
 from datetime import datetime, timedelta, timezone
 
-import pytest
-
 from .conftest import make_run
 
 SILENT_WINDOW = 600

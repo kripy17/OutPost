@@ -3,22 +3,26 @@ import { useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { PageHeader, Panel } from "../components/ui";
-import { bulkUpdateAlertStatus, getAlertQueue, getRuleMeta } from "../lib/api";
+import { addSuppression, bulkUpdateAlertStatus, getAlertQueue, getRuleMeta } from "../lib/api";
 import { SEVERITY_COLORS, SEVERITY_LABEL } from "../lib/constants";
 import { toneFill, toneForSeverity } from "../lib/fillPatterns";
 import type { AlertStatus, QueueAlert, Severity } from "../types";
-import { ageLabel, PAGE, STATUS_TABS, statusTabCount } from "./findingsHelpers";
+import { ageLabel, PAGE, readSavedProvenance, STATUS_TABS, statusTabCount, writeSavedProvenance } from "./findingsHelpers";
 
 function FindingRow({
   a,
   selected,
   onToggle,
   ruleNames,
+  onSuppress,
+  suppressing,
 }: {
   a: QueueAlert;
   selected: boolean;
   onToggle: (id: number) => void;
   ruleNames: Map<string, string>;
+  onSuppress: (a: QueueAlert) => void;
+  suppressing: boolean;
 }) {
   const sev = a.severity as Severity;
   return (
@@ -82,6 +86,16 @@ function FindingRow({
               {a.status_comment ? ` — ${a.status_comment}` : ""}
             </span>
           )}
+          {(a.sample_name || a.related_ip) && (
+            <button
+              onClick={() => onSuppress(a)}
+              disabled={suppressing}
+              className="press ml-auto font-mono text-[9px] uppercase tracking-wide text-text-faint transition-colors hover:text-risk-malicious disabled:opacity-40"
+              title={`Suppress ${a.rule_id} for ${a.sample_name || a.related_ip} — future runs of this sample/C2 stop firing it`}
+            >
+              {suppressing ? "…" : "suppress"}
+            </button>
+          )}
         </div>
       </div>
     </li>
@@ -94,6 +108,14 @@ export default function FindingsPage() {
   const status = (searchParams.get("status") as "open" | "acknowledged" | "resolved" | "all") ?? "open";
   const sort = (searchParams.get("sort") as "aging" | "newest") ?? "aging";
   const sev = (searchParams.get("severity") as Severity | "") ?? "";
+  // Provenance split (real hosts vs synthetic/demo) — mirrors the History
+  // archive's default hide-synthetic behavior, so demo noise can be hidden
+  // or selected for a bulk ack without hand-picking sample names. An explicit
+  // ?provenance= wins; otherwise each status tab's saved preference applies
+  // ("real hosts first" survives navigation like the search draft).
+  const provParam = searchParams.get("provenance");
+  const provenance: "" | "real" | "synthetic" =
+    provParam === "real" || provParam === "synthetic" ? provParam : readSavedProvenance(status);
   const q = searchParams.get("q") ?? "";
   const [submittedQ, setSubmittedQ] = useState(q);
   const [offset, setOffset] = useState(0);
@@ -109,12 +131,31 @@ export default function FindingsPage() {
     setSearchParams(next, { replace: true });
   };
 
+  // Changing provenance updates the URL AND remembers it for the active tab.
+  const setProvenance = (v: string) => {
+    writeSavedProvenance(status, (v === "real" || v === "synthetic" ? v : "") as "" | "real" | "synthetic");
+    setParam("provenance", v);
+  };
+
+  // Switching tabs applies THAT tab's saved preference (each status keeps its
+  // own split), folding it into one navigation so nothing gets lost.
+  const switchStatus = (v: string) => {
+    const saved = readSavedProvenance(v);
+    const next = new URLSearchParams(searchParams);
+    if (saved) next.set("provenance", saved);
+    else next.delete("provenance");
+    next.set("status", v === "open" ? "" : v);
+    next.delete("offset");
+    setSearchParams(next, { replace: true });
+  };
+
   const { data, isLoading, isError } = useQuery({
-    queryKey: ["alerts", "queue", status, sort, sev, submittedQ, offset],
+    queryKey: ["alerts", "queue", status, sort, sev, provenance, submittedQ, offset],
     queryFn: () =>
       getAlertQueue({
         status,
         severity: sev || undefined,
+        provenance: provenance || undefined,
         q: submittedQ || undefined,
         sort,
         limit: PAGE,
@@ -138,6 +179,91 @@ export default function FindingsPage() {
       else n.add(id);
       return n;
     });
+
+  // Select EVERY alert matching the active filters (across pages) — the
+  // bulk-ack lever for a provenance-filtered demo sweep: filter to synthetic,
+  // "Select all N matching", Ack. The queue API caps at 200/page, so this
+  // walks offsets until it has collected the whole filtered set.
+  const selectAllMatching = async () => {
+    setBusy(true);
+    try {
+      const ids = new Set<number>();
+      const limit = 200;
+      let offset = 0;
+      let total = Infinity;
+      while (offset < total) {
+        const page = await getAlertQueue({
+          status,
+          severity: sev || undefined,
+          provenance: provenance || undefined,
+          q: submittedQ || undefined,
+          sort,
+          limit,
+          offset,
+        });
+        total = page.total;
+        for (const a of page.alerts) ids.add(a.id);
+        if (page.alerts.length === 0) break;
+        offset += limit;
+      }
+      setSelected(ids);
+      setMsg({ ok: true, text: `Selected all ${ids.size} matching finding(s).` });
+    } catch {
+      setMsg({ ok: false, text: "Couldn't select all matching — is the backend running?" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // The value scope a suppression targets from the sweep: the run's sample
+  // name (detonate-demo.sh etc.) when present, else the alert's related IP
+  // (the C2). This is what makes the suppression future-proof — it applies
+  // to every subsequent run of that sample / touch of that IP, not just the
+  // alerts on screen.
+  const suppressScope = (a: QueueAlert): string | null => {
+    const sample = (a.sample_name || "").trim();
+    if (sample) return sample;
+    const ip = (a.related_ip || "").trim();
+    return ip || null;
+  };
+
+  const [suppressingId, setSuppressingId] = useState<number | null>(null);
+
+  const suppress = async (targets: QueueAlert[]) => {
+    const seen = new Set<string>();
+    const plans: { ruleId: string; scope: string }[] = [];
+    for (const a of targets) {
+      const scope = suppressScope(a);
+      if (!scope) continue;
+      const key = `${a.rule_id}\u0000${scope}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      plans.push({ ruleId: a.rule_id, scope });
+    }
+    if (plans.length === 0) {
+      setMsg({ ok: false, text: "None of the selected findings have a sample name or IP to scope a suppression to." });
+      return;
+    }
+    setBusy(true);
+    setMsg(null);
+    try {
+      for (const p of plans) {
+        await addSuppression(p.ruleId, "suppressed from queue sweep", undefined, p.scope);
+      }
+      setMsg({
+        ok: true,
+        text: `Suppressed ${plans.length} rule scope(s) — future matching runs stop firing (${plans.map((p) => p.ruleId).join(", ")}).`,
+      });
+      setSelected(new Set());
+      await queryClient.invalidateQueries({ queryKey: ["alerts", "queue"] });
+      await queryClient.invalidateQueries({ queryKey: ["suppressions"] });
+    } catch {
+      setMsg({ ok: false, text: "Suppression failed — is the backend running?" });
+    } finally {
+      setBusy(false);
+      setSuppressingId(null);
+    }
+  };
 
   const bulk = async (nextStatus: AlertStatus) => {
     const ids = [...selected];
@@ -179,7 +305,7 @@ export default function FindingsPage() {
           return (
             <button
               key={t.v}
-              onClick={() => setParam("status", t.v === "open" ? "" : t.v)}
+              onClick={() => switchStatus(t.v)}
               aria-pressed={status === t.v}
               className={`press inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 font-mono text-[11px] transition-colors duration-150 ${
                 status === t.v ? "border-accent/50 bg-accent/10 font-medium text-accent" : "border-border-subtle text-text-muted hover:bg-bg-elevated hover:text-text-primary"
@@ -194,6 +320,17 @@ export default function FindingsPage() {
         })}
 
         <div className="ml-auto flex items-center gap-2">
+          <select
+            value={provenance}
+            onChange={(e) => setProvenance(e.target.value)}
+            className="rounded-lg border border-border-subtle bg-bg-surface px-2.5 py-1.5 font-mono text-xs text-text-primary outline-none transition-colors focus:border-accent/60"
+            aria-label="Filter by provenance"
+            title="Real = host/sandbox telemetry · Synthetic = seed/webapp-demo runs — demo noise can be hidden or acked in bulk"
+          >
+            <option value="">All provenance</option>
+            <option value="real">Real hosts</option>
+            <option value="synthetic">Synthetic / demo</option>
+          </select>
           <select
             value={sev}
             onChange={(e) => setParam("severity", e.target.value)}
@@ -256,6 +393,14 @@ export default function FindingsPage() {
           >
             Resolve
           </button>
+          <button
+            onClick={() => void suppress(alerts.filter((a) => selected.has(a.id)))}
+            disabled={busy || selected.size === 0}
+            className="press rounded-md border border-border-subtle bg-bg-surface px-2.5 py-1 font-mono text-[11px] text-text-muted transition-colors hover:border-risk-malicious/60 hover:text-risk-malicious disabled:opacity-40"
+            title="Suppress each selected rule for its sample or C2 — future matching runs stop firing it"
+          >
+            Suppress
+          </button>
           {selected.size > 0 && (
             <button onClick={() => setSelected(new Set())} className="press ml-auto font-mono text-[10px] text-text-faint hover:text-text-primary" title="Clear selection">
               clear
@@ -316,13 +461,34 @@ export default function FindingsPage() {
               >
                 {onPage.length > 0 && onPage.every((id) => selected.has(id)) ? "Clear page selection" : "Select this page"}
               </button>
+              {(data?.total ?? 0) > onPage.length && selected.size < (data?.total ?? 0) && (
+                <button
+                  onClick={() => void selectAllMatching()}
+                  disabled={busy}
+                  className="press font-mono text-[10px] text-text-faint transition-colors hover:text-accent disabled:opacity-40"
+                  title="Select every alert matching the active filters (across all pages) — one step before a bulk ack"
+                >
+                  Select all {data?.total ?? 0} matching
+                </button>
+              )}
               {selected.size > onPage.length && (
                 <span className="font-mono text-[10px] text-text-faint">+{selected.size - onPage.length} from other pages</span>
               )}
             </div>
             <ul className="space-y-2">
               {alerts.map((a) => (
-                <FindingRow key={a.id} a={a} selected={selected.has(a.id)} onToggle={toggle} ruleNames={ruleNames} />
+                <FindingRow
+                  key={a.id}
+                  a={a}
+                  selected={selected.has(a.id)}
+                  onToggle={toggle}
+                  ruleNames={ruleNames}
+                  onSuppress={(target) => {
+                    setSuppressingId(target.id);
+                    void suppress([target]);
+                  }}
+                  suppressing={suppressingId === a.id}
+                />
               ))}
             </ul>
             {(data?.total ?? 0) > PAGE && (

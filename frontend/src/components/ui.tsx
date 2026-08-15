@@ -150,6 +150,28 @@ export function SourceBadge({ source }: { source?: string }) {
   );
 }
 
+// The synthetic provenance split — same set the History archive hides by
+// default and the Findings queue's provenance filter uses (seed / webapp-demo
+// / legacy monitor / sandbox:demo). Sandbox detonations (anyrun/triage/joe)
+// are real external runs, so they read REAL.
+const SYNTHETIC_SOURCES = new Set(["seed", "webapp-demo", "monitor", "sandbox:demo"]);
+
+export function ProvenanceBadge({ source }: { source?: string }) {
+  const synthetic = SYNTHETIC_SOURCES.has(source ?? "monitor");
+  return (
+    <Chip
+      tone={synthetic ? "accent" : "clean"}
+      title={
+        synthetic
+          ? "Synthetic/demo provenance — treat this run's alerts accordingly"
+          : "Real host or sandbox telemetry"
+      }
+    >
+      {synthetic ? "synthetic" : "real"}
+    </Chip>
+  );
+}
+
 /** Deck stat — dt/dd pair (label above a tabular value). Must sit inside a
     `<dl>` (optionally wrapped in a `<div>` per the HTML spec) so screen
     readers keep the label ↔ value pairing. */

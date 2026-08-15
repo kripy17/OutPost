@@ -145,4 +145,3 @@ def delete_rule(name: str) -> None:
     with db_session() as conn:
         if not yara_service.delete_custom_rule(conn, name):
             raise HTTPException(status_code=404, detail=f"Unknown custom rule: {name}")
-    return None

@@ -241,6 +241,48 @@ def test_suppression_scoped_to_run(client):
         client.delete(f"/rules/suppressions/{sid}")
 
 
+def test_suppression_scoped_to_sample_value(client):
+    """Value scope = sample name (the queue sweep's suppress-for-this-sample
+    action): a suppression for `lolbin-abuse → supp-sample.bin` silences that
+    sample's future runs but leaves other samples firing — the exact shape
+    that keeps detonate-demo.sh from regenerating 48 open alerts per C2."""
+    run_id = make_run(client, sample_name="supp-sample.bin")
+    other = make_run(client, sample_name="supp-other.bin")
+    resp = client.post(
+        "/rules/suppressions",
+        json={"rule_id": "lolbin-abuse", "value": "supp-sample.bin", "reason": "demo sample noise"},
+    )
+    assert resp.status_code == 201
+    assert resp.json()["value"] == "supp-sample.bin"
+    sid = resp.json()["id"]
+    try:
+        client.post("/ingest/batch", json=[_lolbin(run_id)])
+        client.post("/ingest/batch", json=[_lolbin(other)])
+        assert client.get(f"/runs/{run_id}/alerts").json() == []
+        assert any(a["rule_id"] == "lolbin-abuse" for a in client.get(f"/runs/{other}/alerts").json())
+    finally:
+        client.delete(f"/rules/suppressions/{sid}")
+
+
+def test_suppression_scoped_to_ip_value(client):
+    """Value scope = related IP (the queue sweep's suppress-for-this-C2
+    action): that destination's alerts stop firing while other destinations
+    of the same rule still surface."""
+    run_id = make_run(client, sample_name="supp-ip.bin")
+    resp = client.post(
+        "/rules/suppressions",
+        json={"rule_id": "unusual-port", "value": "203.0.113.77", "reason": "known C2 under watch"},
+    )
+    sid = resp.json()["id"]
+    try:
+        client.post("/ingest/batch", json=[_conn(run_id, "203.0.113.77"), _conn(run_id, "198.51.100.9", pid=2)])
+        alerts = client.get(f"/runs/{run_id}/alerts").json()
+        assert not any(a["rule_id"] == "unusual-port" and a["related_ip"] == "203.0.113.77" for a in alerts)
+        assert any(a["rule_id"] == "unusual-port" and a["related_ip"] == "198.51.100.9" for a in alerts)
+    finally:
+        client.delete(f"/rules/suppressions/{sid}")
+
+
 # -- Triage queue (the analyst work list) -------------------------------------
 
 
@@ -316,6 +358,26 @@ def test_queue_tab_badges_stay_live_under_status_filter(client):
     assert allv["total"] == allv["open"] + allv["acknowledged"] + allv["resolved"]
 
 
+def test_queue_provenance_filter_splits_real_from_synthetic(client):
+    """provenance=real excludes seed/webapp-demo runs; provenance=synthetic
+    isolates them — the queue-side mirror of the History archive's default
+    hide-synthetic split, so demo noise can be acked in bulk without
+    hand-picking sample names."""
+    real = make_run(client, sample_name="prov-real.bin", source="cli")
+    synth = make_run(client, sample_name="prov-synth.bin", source="webapp-demo")
+    client.post("/ingest/batch", json=[_conn(real, "203.0.113.79")])
+    client.post("/ingest/batch", json=[_conn(synth, "203.0.113.80")])
+
+    real_only = client.get("/alerts/queue", params={"status": "all", "provenance": "real", "q": "prov-"}).json()
+    assert {a["run_id"] for a in real_only["alerts"]} == {real}
+    synth_only = client.get("/alerts/queue", params={"status": "all", "provenance": "synthetic", "q": "prov-"}).json()
+    assert {a["run_id"] for a in synth_only["alerts"]} == {synth}
+    # No filter → both (the default triage view is unfiltered).
+    both = client.get("/alerts/queue", params={"status": "all", "q": "prov-"}).json()
+    assert {a["run_id"] for a in both["alerts"]} == {real, synth}
+    assert client.get("/alerts/queue", params={"provenance": "banana"}).status_code == 422
+
+
 def test_queue_aging_sort_surfaces_oldest_open_first(client):
     """sort=aging (the default) puts the longest-open alert first — the SLA
     pressure the queue exists to surface."""
@@ -359,11 +421,18 @@ def test_suppression_validation_and_dedupe(client):
     # Same (rule, scope) twice → one active row (the later replaces the earlier).
     a = client.post("/rules/suppressions", json={"rule_id": "beaconing"}).json()
     b = client.post("/rules/suppressions", json={"rule_id": "beaconing", "reason": "replaced"}).json()
+    # A value-scoped entry is a DIFFERENT scope — it coexists with the global one.
+    c = client.post("/rules/suppressions", json={"rule_id": "beaconing", "value": "detonate-demo.sh"}).json()
+    assert c["value"] == "detonate-demo.sh"
     try:
         rows = client.get("/rules/suppressions").json()
         mine = [r for r in rows if r["rule_id"] == "beaconing" and r["run_id"] is None]
-        assert len(mine) == 1 and mine[0]["reason"] == "replaced"
+        assert len(mine) == 2, "the value scope is a distinct suppression row"
+        global_row = next(r for r in mine if not r.get("value"))
+        assert global_row["reason"] == "replaced"
+        assert any(r.get("value") == "detonate-demo.sh" for r in mine)
     finally:
         client.delete(f"/rules/suppressions/{a['id']}")
         client.delete(f"/rules/suppressions/{b['id']}")
+        client.delete(f"/rules/suppressions/{c['id']}")
     assert client.delete("/rules/suppressions/999").status_code == 404

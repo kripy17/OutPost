@@ -2,8 +2,17 @@
 // age labels (what "oldest first" renders) and the live status-tab badges
 // (the "All" badge must sum the three status buckets).
 
-import { describe, expect, it } from "vitest";
-import { ageLabel, PAGE, STATUS_TABS, statusTabCount } from "../routes/findingsHelpers";
+import { beforeEach, describe, expect, it } from "vitest";
+import {
+  ageLabel,
+  clearSavedProvenances,
+  PAGE,
+  PROVENANCE_STORAGE_PREFIX,
+  readSavedProvenance,
+  STATUS_TABS,
+  statusTabCount,
+  writeSavedProvenance,
+} from "../routes/findingsHelpers";
 import type { QueueResponse } from "../types";
 
 const NOW = new Date("2026-08-11T12:00:00Z").getTime();
@@ -23,6 +32,72 @@ describe("ageLabel", () => {
   it("clamps future timestamps to 0s and flags unparseable ones", () => {
     expect(ageLabel("2026-08-11T12:00:30Z", NOW)).toBe("0s");
     expect(ageLabel("not-a-date", NOW)).toBe("—");
+  });
+});
+
+describe("provenance persistence (per status tab)", () => {
+  beforeEach(() => localStorage.clear());
+
+  it("saves and restores the choice per status tab, independently", () => {
+    expect(readSavedProvenance("open")).toBe("");
+    writeSavedProvenance("open", "real");
+    expect(readSavedProvenance("open")).toBe("real");
+    // The other tabs keep their own (empty) preference.
+    expect(readSavedProvenance("acknowledged")).toBe("");
+    writeSavedProvenance("acknowledged", "synthetic");
+    expect(readSavedProvenance("open")).toBe("real");
+    expect(readSavedProvenance("acknowledged")).toBe("synthetic");
+    expect(localStorage.getItem(`${PROVENANCE_STORAGE_PREFIX}open`)).toBe("real");
+  });
+
+  it("clearing removes the preference so the tab falls back to all", () => {
+    writeSavedProvenance("open", "real");
+    writeSavedProvenance("open", "");
+    expect(readSavedProvenance("open")).toBe("");
+    expect(localStorage.getItem(`${PROVENANCE_STORAGE_PREFIX}open`)).toBeNull();
+  });
+
+  it("ignores corrupted values and reads empty when never saved", () => {
+    writeSavedProvenance("open", "");
+    expect(readSavedProvenance("open")).toBe("");
+    localStorage.setItem(`${PROVENANCE_STORAGE_PREFIX}open`, "banana");
+    expect(readSavedProvenance("open")).toBe("");
+  });
+});
+
+describe("clearSavedProvenances (Settings one-click wipe)", () => {
+  beforeEach(() => localStorage.clear());
+
+  it("wipes every per-tab choice plus the archive's legacy key", () => {
+    writeSavedProvenance("open", "real");
+    writeSavedProvenance("acknowledged", "synthetic");
+    writeSavedProvenance("all", "real");
+    localStorage.setItem("outpost-history-synthetic", "1");
+    clearSavedProvenances();
+    for (const t of STATUS_TABS.map((s) => s.v)) {
+      expect(readSavedProvenance(t)).toBe("");
+      expect(localStorage.getItem(`${PROVENANCE_STORAGE_PREFIX}${t}`)).toBeNull();
+    }
+    expect(localStorage.getItem("outpost-history-synthetic")).toBeNull();
+  });
+
+  it("sweeps stray prefixed keys beyond the four known tabs", () => {
+    localStorage.setItem(`${PROVENANCE_STORAGE_PREFIX}legacy-tab`, "real");
+    clearSavedProvenances();
+    expect(localStorage.getItem(`${PROVENANCE_STORAGE_PREFIX}legacy-tab`)).toBeNull();
+  });
+
+  it("leaves unrelated preferences untouched", () => {
+    localStorage.setItem("outpost-palette", "teal");
+    localStorage.setItem("outpost-theme-v2", "dark");
+    clearSavedProvenances();
+    expect(localStorage.getItem("outpost-palette")).toBe("teal");
+    expect(localStorage.getItem("outpost-theme-v2")).toBe("dark");
+  });
+
+  it("is a no-op when nothing is saved", () => {
+    expect(() => clearSavedProvenances()).not.toThrow();
+    expect(readSavedProvenance("open")).toBe("");
   });
 });
 

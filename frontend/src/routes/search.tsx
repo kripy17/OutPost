@@ -3,8 +3,10 @@ import { Link, useSearchParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { EVENT_ICON, platformIconName } from "../components/iconMeta";
 import { PageHeader } from "../components/ui";
+import { intelAgeLabel, RISK_COLORS } from "../lib/constants";
+import { toneFill, toneForReputation } from "../lib/fillPatterns";
 import { searchIocs } from "../lib/api";
-import type { IocSearchResponse } from "../types";
+import type { IocSearchResponse, Reputation } from "../types";
 import { platformTone, readSavedQuery, writeSavedQuery } from "./searchHelpers";
 
 export default function SearchPage() {
@@ -97,6 +99,45 @@ export default function SearchPage() {
             {result.count} match{result.count === 1 ? "" : "es"} for <span className="font-mono text-text-primary">{result.value}</span>
             {result.returned < result.count && ` — showing first ${result.returned}`}
           </p>
+
+          {/* Reputation ride-along: the cached enrichment verdict for an IP
+              search surfaces with the matches — same evidence the run-detail
+              network table shows (abuse score, VT positives, checked age). */}
+          {result.reputation && (
+            <section className="rounded-2xl border border-border-subtle bg-bg-surface px-4 py-3">
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+                <span className="font-mono text-xs text-text-faint" title="Cached enrichment verdict">reputation</span>
+                <span
+                  className={`inline-flex items-center gap-1.5 font-mono text-[11px] font-semibold uppercase tracking-wide ${RISK_COLORS[(result.reputation.reputation ?? "unknown") as Reputation]}`}
+                >
+                  <span
+                    className="h-2 w-2 rounded-full"
+                    style={toneFill(toneForReputation((result.reputation.reputation ?? "unknown") as Reputation))}
+                    aria-hidden
+                  />
+                  {result.reputation.reputation ?? "unknown"}
+                </span>
+                {result.reputation.abuse_score !== null && result.reputation.abuse_score !== undefined && (
+                  <span className="font-mono text-[11px] text-text-muted" title="AbuseIPDB abuse score">
+                    abuse {result.reputation.abuse_score}
+                  </span>
+                )}
+                {result.reputation.vt_malicious_count !== null && result.reputation.vt_malicious_count !== undefined && (
+                  <span
+                    className={`font-mono text-[11px] ${result.reputation.vt_malicious_count > 0 ? "text-risk-malicious" : "text-text-muted"}`}
+                    title="VirusTotal positives"
+                  >
+                    vt {result.reputation.vt_malicious_count}
+                  </span>
+                )}
+                {result.reputation.checked_at && (
+                  <span className="font-mono text-[10px] text-text-faint" title={`Reputation fetched ${result.reputation.checked_at} UTC`}>
+                    {intelAgeLabel(result.reputation.checked_at)}
+                  </span>
+                )}
+              </div>
+            </section>
+          )}
 
           {loading && (
             <div className="space-y-2">

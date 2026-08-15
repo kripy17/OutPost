@@ -2,7 +2,6 @@
 
 import sqlite3
 from datetime import datetime, timezone
-from typing import Optional
 
 from ..core.schema import RunSummary
 from ..services.risk import compute_risk_score
@@ -38,7 +37,7 @@ def complete_run(conn: sqlite3.Connection, run_id: str) -> bool:
     return cur.rowcount > 0
 
 
-def get_run(conn: sqlite3.Connection, run_id: str) -> Optional[dict]:
+def get_run(conn: sqlite3.Connection, run_id: str) -> dict | None:
     row = conn.execute("SELECT * FROM runs WHERE run_id = ?", (run_id,)).fetchone()
     return dict(row) if row else None
 
@@ -118,7 +117,7 @@ def _count_unique_ips(conn: sqlite3.Connection, run_id: str) -> int:
     return row["n"] if row else 0
 
 
-def _alert_stats(conn: sqlite3.Connection, run_id: str) -> tuple[int, Optional[str]]:
+def _alert_stats(conn: sqlite3.Connection, run_id: str) -> tuple[int, str | None]:
     row = conn.execute(
         """
         SELECT COUNT(*) AS n,

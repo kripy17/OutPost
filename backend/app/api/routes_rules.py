@@ -107,7 +107,6 @@ def reset_tuning(param: str) -> None:
     rule_id = TUNABLE_DEFAULTS[param][0]
     with db_session() as conn:
         conn.execute("DELETE FROM rule_tuning WHERE rule_id = ? AND param = ?", (rule_id, param))
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -243,7 +242,6 @@ def reset_fp_threshold(request: Request) -> None:
     with db_session() as conn:
         conn.execute("DELETE FROM settings WHERE key = ?", (FP_THRESHOLD_KEY,))
         audit.log(conn, actor, "rules.fp-threshold", target_type="settings", target_id=FP_THRESHOLD_KEY, detail="FP suggestion threshold → default")
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -317,7 +315,6 @@ def reset_enum_patterns() -> None:
     """Restore stock enumeration patterns for every platform."""
     with db_session() as conn:
         conn.execute("DELETE FROM settings WHERE key = 'enum_patterns'")
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -397,7 +394,6 @@ def reset_log_patterns() -> None:
     """Restore stock anti-forensics patterns for every kind/platform."""
     with db_session() as conn:
         conn.execute("DELETE FROM settings WHERE key = 'log_patterns'")
-    return None
 
 
 @router.delete("/rules/reset", response_model=None)
@@ -445,25 +441,28 @@ def list_suppressions() -> list[Suppression]:
 
 @router.post("/rules/suppressions", status_code=201, response_model=Suppression)
 def add_suppression(body: SuppressionIn, request: Request) -> Suppression:
-    """Suppress a rule — globally (run_id omitted) or for one run. Adding the
-    same (rule_id, scope) twice replaces the earlier row; unknown rules 422."""
+    """Suppress a rule — globally (run_id omitted), for one run, and/or for
+    one value scope (a sample name, related IP, or detail substring — the
+    queue sweep's one-click suppress). Adding the same (rule_id, scope)
+    twice replaces the earlier row; unknown rules 422."""
     if body.rule_id not in _KNOWN_RULES:
         raise HTTPException(status_code=422, detail=f"Unknown rule_id: {body.rule_id}")
     if body.run_id is not None and not body.run_id.strip():
         raise HTTPException(status_code=422, detail="run_id must be non-empty when set")
     now = datetime.now(timezone.utc).isoformat()
     run_id = body.run_id.strip() if body.run_id else None
+    value = (body.value or "").strip() or None
     with db_session() as conn:
         # `IS` (not `=`) is deliberate: with a NULL bound it becomes `IS NULL`,
-        # matching the global row; with a string it behaves like `=`. Either
+        # matching the unscoped row; with a string it behaves like `=`. Either
         # way the same (rule, scope) can only ever have one active row.
         conn.execute(
-            "DELETE FROM rule_suppressions WHERE rule_id = ? AND run_id IS ?",
-            (body.rule_id, run_id),
+            "DELETE FROM rule_suppressions WHERE rule_id = ? AND run_id IS ? AND value IS ?",
+            (body.rule_id, run_id, value),
         )
         cur = conn.execute(
-            "INSERT INTO rule_suppressions (rule_id, run_id, reason, created_at) VALUES (?, ?, ?, ?)",
-            (body.rule_id, run_id, (body.reason or "").strip() or None, now),
+            "INSERT INTO rule_suppressions (rule_id, run_id, value, reason, created_at) VALUES (?, ?, ?, ?, ?)",
+            (body.rule_id, run_id, value, (body.reason or "").strip() or None, now),
         )
         row = conn.execute(
             "SELECT * FROM rule_suppressions WHERE id = ?", (cur.lastrowid,)
@@ -471,7 +470,9 @@ def add_suppression(body: SuppressionIn, request: Request) -> Suppression:
         audit.log(
             conn, auth.role_from_request(request), "suppression.add",
             target_type="suppression", target_id=str(cur.lastrowid),
-            detail=f"{body.rule_id}" + (f" on run {run_id}" if run_id else " (global)"),
+            detail=f"{body.rule_id}"
+            + (f" → {value}" if value else "")
+            + (f" on run {run_id}" if run_id else " (global)"),
         )
     return Suppression(**dict(row))
 
@@ -489,7 +490,6 @@ def delete_suppression(entry_id: int, request: Request) -> None:
             conn, auth.role_from_request(request), "suppression.remove",
             target_type="suppression", target_id=str(entry_id),
         )
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -614,17 +614,18 @@ def import_rule_pack(body: RulePackIn, request: Request) -> dict:
         if rule_id not in _KNOWN_RULES:
             raise HTTPException(status_code=422, detail=f"Unknown rule_id: {rule_id}")
         run_id = s.get("run_id") or None
+        value = (s.get("value") or "").strip() or None
         with db_session() as conn:
             existing = conn.execute(
-                "SELECT id FROM rule_suppressions WHERE rule_id = ? AND run_id IS ?",
-                (rule_id, run_id),
+                "SELECT id FROM rule_suppressions WHERE rule_id = ? AND run_id IS ? AND value IS ?",
+                (rule_id, run_id, value),
             ).fetchone()
             if existing:
                 skipped += 1
                 continue
             conn.execute(
-                "INSERT INTO rule_suppressions (rule_id, run_id, reason, created_at) VALUES (?, ?, ?, ?)",
-                (rule_id, run_id, (s.get("reason") or "").strip() or None, now),
+                "INSERT INTO rule_suppressions (rule_id, run_id, value, reason, created_at) VALUES (?, ?, ?, ?, ?)",
+                (rule_id, run_id, value, (s.get("reason") or "").strip() or None, now),
             )
         added += 1
 

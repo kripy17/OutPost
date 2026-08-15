@@ -6,17 +6,16 @@
 - GET /runs/{id}/export — JSON report or PDF (Task 21)
 """
 
+from datetime import datetime, timezone
+
 import httpx
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 
-from datetime import datetime, timezone
-
 from ..core import auth
 from ..core.db import db_session
-from ..models import audit
 from ..core.schema import (
-    AllowlistEntry,
     Alert,
+    AllowlistEntry,
     AllowlistIn,
     EventOut,
     NetworkConnection,
@@ -25,10 +24,10 @@ from ..core.schema import (
     RunNote,
     RunSummary,
 )
+from ..models import audit
 from ..models import event as event_store
 from ..models import run as run_store
 from ..models import run_notes as notes_store
-from ..models import samples as samples_store
 from ..services import enrichment, killchain, process_tree
 from ..services.detection import allowlist_matches, load_run_sample_sha256
 
@@ -589,4 +588,3 @@ def delete_run_allowlist(run_id: str, entry_id: int, request: Request) -> None:
             target_type="allowlist", target_id=str(entry_id),
             detail=f"run {run_id}",
         )
-    return None
