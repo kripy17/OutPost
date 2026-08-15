@@ -6,8 +6,8 @@ import { Icon } from "../components/Icon";
 import { EVENT_ICON, platformIconName } from "../components/iconMeta";
 import { eventDetail, TYPE_STYLE } from "../components/TimelineView/timeline";
 import { PageHeader } from "../components/ui";
-import { CAMPAIGN_SORTS, sortCampaigns, type CampaignSort } from "./campaignsHelpers";
-import { getCampaigns, getCampaignStix } from "../lib/api";
+import { CAMPAIGN_SORTS, sortCampaigns, topologyClusters, type CampaignSort } from "./campaignsHelpers";
+import { getCampaigns, getCampaignStix, getFootprintTopology } from "../lib/api";
 import type { Campaign, CampaignIoc, Severity } from "../types";
 
 const MAX_TIMELINE = 40;
@@ -214,6 +214,17 @@ export default function CampaignsPage() {
     queryKey: ["campaigns", showSynthetic],
     queryFn: () => getCampaigns({ include_synthetic: showSynthetic || undefined }),
   });
+  // Cross-sample infra topology — the same correlation signal the Footprint
+  // page surfaces, projected onto the campaign list so shared-infra clusters
+  // are visible here too (including IPs that haven't formed a campaign yet).
+  const { data: topology } = useQuery({
+    queryKey: ["footprint", "topology"],
+    queryFn: getFootprintTopology,
+  });
+  const strip = useMemo(
+    () => (topology ? topologyClusters(topology.clusters, campaigns) : []),
+    [topology, campaigns],
+  );
   // Sort mode persists so the analyst's preferred ordering survives reloads.
   const [sort, setSort] = useState<CampaignSort>(() => {
     const saved = localStorage.getItem("outpost-campaigns-sort");
@@ -288,6 +299,55 @@ export default function CampaignsPage() {
           >
             {showSynthetic ? "Show synthetic · on" : "Show synthetic"}
           </button>
+        </div>
+      )}
+
+      {/* Shared-infrastructure strip — the cross-sample topology projected
+          onto the campaign list. Each cluster is an IP ≥2 samples reached;
+          the mark shows whether a campaign already tracks it, and every
+          row deep-links to the Footprint page's topology panel. */}
+      {strip.length > 0 && (
+        <div className="mt-6 rounded-2xl border border-border-subtle bg-bg-surface/60 p-4">
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <span className="font-mono text-[10px] uppercase tracking-wide text-text-faint">
+              Shared infrastructure
+            </span>
+            <span className="rounded border border-border-subtle px-1.5 py-0.5 font-mono text-[10px] text-text-faint">
+              {strip.length} cluster{strip.length === 1 ? "" : "s"}
+            </span>
+            <Link
+              to="/footprint"
+              className="press ml-auto inline-flex items-center gap-1 font-mono text-[11px] text-accent transition-colors hover:underline"
+            >
+              footprint topology
+              <Icon name="arrowRight" size={11} />
+            </Link>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {strip.slice(0, 10).map((c) => (
+              <Link
+                key={c.ip}
+                to={`/footprint?sample=${encodeURIComponent(c.members[0]?.sample_name ?? "")}`}
+                title={`${c.ip} — ${c.sample_count} sample${c.sample_count === 1 ? "" : "s"} · ${c.reputation}${c.inCampaign ? " · already a campaign" : " · not yet a campaign"}`}
+                className={`press inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 font-mono text-[11px] transition-colors duration-150 ${
+                  c.reputation === "malicious"
+                    ? "border-risk-malicious/50 bg-risk-malicious/10 text-risk-malicious"
+                    : c.reputation === "suspicious"
+                      ? "border-risk-suspicious/50 bg-risk-suspicious/10 text-risk-suspicious"
+                      : "border-border-subtle bg-bg-elevated/40 text-text-muted"
+                } hover:border-accent/60 hover:text-accent`}
+              >
+                <Icon name="network" size={10} />
+                {c.ip}
+                <span className="text-text-faint">×{c.sample_count}</span>
+                {c.inCampaign ? (
+                  <span className="rounded bg-risk-clean/15 px-1 py-px text-[9px] uppercase tracking-wide text-risk-clean">campaign</span>
+                ) : (
+                  <span className="rounded bg-bg-elevated/60 px-1 py-px text-[9px] uppercase tracking-wide text-text-faint">new</span>
+                )}
+              </Link>
+            ))}
+          </div>
         </div>
       )}
 

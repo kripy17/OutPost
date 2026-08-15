@@ -49,6 +49,12 @@ from ..models import samples as samples_store
 # In-memory caches (no schema migration needed): positive 24 h, negative 1 h.
 _CACHE: dict[str, tuple[float, dict]] = {}
 _FAIL_CACHE: dict[str, float] = {}
+# WHOIS domain-RDAP records + breach checks get their own key spaces so the
+# per-IP passive cache never collides with a domain/email key.
+_DOMAIN_CACHE: dict[str, tuple[float, dict]] = {}
+_DOMAIN_FAIL_CACHE: dict[str, float] = {}
+_BREACH_CACHE: dict[str, tuple[float, list[str]]] = {}
+_BREACH_FAIL_CACHE: dict[str, float] = {}
 _CACHE_TTL = 24 * 3600
 _FAIL_TTL = 3600
 _CRTSH_TIMEOUT = 20.0
@@ -60,6 +66,10 @@ def clear_cache() -> None:
     """Reset the in-memory footprint cache (tests + manual refresh)."""
     _CACHE.clear()
     _FAIL_CACHE.clear()
+    _DOMAIN_CACHE.clear()
+    _DOMAIN_FAIL_CACHE.clear()
+    _BREACH_CACHE.clear()
+    _BREACH_FAIL_CACHE.clear()
 
 
 def _seed_ips(conn, sample_name: str) -> list[dict]:
@@ -312,6 +322,66 @@ def _parse_crtsh(rows: list[dict]) -> dict:
     }
 
 
+def _parse_rdap_domain(doc: dict) -> dict:
+    """WHOIS-style registration for a DOMAIN from an RDAP domain doc.
+
+    Same keyless rdap.org provider as the IP network lookup — this is the
+    WHOIS record for the domain itself (registrar, created/updated/expires,
+    status, nameservers). Pure and defensive: any missing piece is None / [].
+    """
+    registrar = None
+    for ent in doc.get("entities") or []:
+        roles = ent.get("roles") if isinstance(ent, dict) else None
+        if isinstance(roles, list) and "registrar" in roles:
+            registrar = _entity_org(ent) or registrar
+
+    dates: dict[str, str] = {}
+    for ev in doc.get("events") or []:
+        action = ev.get("eventAction") if isinstance(ev, dict) else None
+        date = ev.get("eventDate") if isinstance(ev, dict) else None
+        if not action or not date:
+            continue
+        if action == "registration":
+            dates["created"] = date[:10]
+        elif action == "last changed":
+            dates["updated"] = date[:10]
+        elif action == "expiration":
+            dates["expires"] = date[:10]
+
+    status = [s for s in (doc.get("status") or []) if isinstance(s, str)]
+    nameservers = [
+        n.get("ldhName") for n in (doc.get("nameservers") or [])
+        if isinstance(n, dict) and n.get("ldhName")
+    ]
+    return {
+        "registrar": registrar,
+        "created": dates.get("created"),
+        "updated": dates.get("updated"),
+        "expires": dates.get("expires"),
+        "status": status,
+        "nameservers": nameservers,
+    }
+
+
+async def _rdap_domain_lookup(domain: str) -> dict:
+    """WHOIS record for a domain via rdap.org's domain RDAP (keyless).
+
+    rdap.org 302-redirects to the owning registry (Verisign for .com etc.)
+    — the same follow-redirects pattern as the IP lookup. Best-effort:
+    callers isolate their own failures.
+    """
+    url = f"https://rdap.org/domain/{domain}"
+    async with httpx.AsyncClient(
+        timeout=_RDAP_TIMEOUT, follow_redirects=True, headers={"User-Agent": _UA}
+    ) as client:
+        resp = await client.get(url)
+        resp.raise_for_status()
+    doc = resp.json()
+    if not isinstance(doc, dict):
+        raise ValueError("bad RDAP domain payload")
+    return _parse_rdap_domain(doc)
+
+
 async def _rdap_lookup(ip: str) -> dict:
     url = f"https://rdap.org/ip/{ip}"
     async with httpx.AsyncClient(
@@ -395,7 +465,7 @@ async def _fetch_ip_passive(seed: dict) -> dict:
     ip = seed["ip"]
     ts0 = (seed.get("first_seen") or "")[:10]
     ts1 = (seed.get("last_seen") or "")[:10]
-    out = {"resolutions": [], "certificates": [], "passive_dns": [], "sibling_ips": [], "networks": [], "subdomains": []}
+    out = {"resolutions": [], "certificates": [], "passive_dns": [], "sibling_ips": [], "networks": [], "subdomains": [], "whois": []}
 
     # 1. Reverse DNS — the resolution signal (fast, reliable).
     ptr = _ptr_for_ip(ip)
@@ -486,6 +556,31 @@ async def _fetch_ip_passive(seed: dict) -> dict:
                 s["source_ip"] = ip
                 out["subdomains"].append(s)
 
+    # 3d. WHOIS record for the PTR-derived domain — the domain-level RDAP
+    # (registrar, created/updated/expires, status, nameservers) via the same
+    # keyless rdap.org provider as the IP registration. The apex is the most
+    # stable label to look up (the PTR hostname itself is often a random
+    # `host-N` under the registrar's own namespace).
+    if ptr:
+        whois_domain = _apex_of(ptr) or ptr
+        try:
+            whois = await _cached_domain_fetch(whois_domain)
+        except Exception:
+            whois = {}
+        if whois.get("registrar") or whois.get("created") or whois.get("nameservers"):
+            out["whois"].append(
+                {
+                    "domain": whois_domain,
+                    "registrar": whois.get("registrar"),
+                    "created": whois.get("created"),
+                    "updated": whois.get("updated"),
+                    "expires": whois.get("expires"),
+                    "status": whois.get("status", []),
+                    "nameservers": whois.get("nameservers", []),
+                    "synthetic": False,
+                }
+            )
+
     # 4. ASN / owner mapping — keyless ip-api.com (free tier, 45 req/min,
     # plenty for a footprint page). RDAP gives registration; this gives the
     # autonomous-system identity that registration sits on.
@@ -498,6 +593,49 @@ async def _fetch_ip_passive(seed: dict) -> dict:
     if asn and reg.get("org") and not asn.get("org"):
         asn["org"] = reg["org"]
     return out
+
+
+def _parse_breach_response(doc: dict) -> list[str]:
+    """XposedOrNot email-breach payload → the breach-name list.
+
+    The keyless free tier returns `{"breaches": [[name, ...]], "status":
+    "success"}` on a hit and `{"Error": "Not found", "email": null}` on a
+    clean email. Pure function — any shape other than a populated breach
+    list yields [] (honest "no known breach exposure").
+    """
+    if not isinstance(doc, dict):
+        return []
+    if doc.get("Error") or doc.get("status") not in (None, "success"):
+        return []
+    breaches = doc.get("breaches")
+    if not isinstance(breaches, list):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for bucket in breaches:
+        if isinstance(bucket, list):
+            for name in bucket:
+                if isinstance(name, str) and name and name not in seen:
+                    seen.add(name)
+                    out.append(name)
+        elif isinstance(bucket, str) and bucket and bucket not in seen:
+            seen.add(bucket)
+            out.append(bucket)
+    return out[:40]
+
+
+async def _breach_lookup(email: str) -> list[str]:
+    """Breach exposure for one email via XposedOrNot's free keyless tier
+    (`/v1/check-email/<email>`). Returns the breach names or [] — never
+    raises: callers treat an empty list as "no known exposure" and the
+    provider-isolation wraps failures as [] too."""
+    url = f"https://api.xposedornot.com/v1/check-email/{email}"
+    async with httpx.AsyncClient(timeout=_RDAP_TIMEOUT, headers={"User-Agent": _UA}) as client:
+        resp = await client.get(url)
+        if resp.status_code != 200:
+            raise ValueError("bad breach payload")
+        doc = resp.json()
+    return _parse_breach_response(doc)
 
 
 async def _asn_lookup(ip: str) -> dict:
@@ -545,6 +683,40 @@ async def _cached_fetch(seed: dict) -> dict:
         _FAIL_CACHE[key] = now
         return {}
     _CACHE[key] = (now, data)
+    return data
+
+
+async def _cached_domain_fetch(domain: str) -> dict:
+    """`_rdap_domain_lookup` behind the domain cache (positive 24 h / neg 1 h)."""
+    now = time.monotonic()
+    hit = _DOMAIN_CACHE.get(domain)
+    if hit and now - hit[0] < _CACHE_TTL:
+        return hit[1]
+    if domain in _DOMAIN_FAIL_CACHE and now - _DOMAIN_FAIL_CACHE[domain] < _FAIL_TTL:
+        return {}
+    try:
+        data = await _rdap_domain_lookup(domain)
+    except Exception:
+        _DOMAIN_FAIL_CACHE[domain] = now
+        return {}
+    _DOMAIN_CACHE[domain] = (now, data)
+    return data
+
+
+async def _cached_breach_fetch(email: str) -> list[str]:
+    """`_breach_lookup` behind the breach cache (positive 24 h / neg 1 h)."""
+    now = time.monotonic()
+    hit = _BREACH_CACHE.get(email)
+    if hit and now - hit[0] < _CACHE_TTL:
+        return hit[1]
+    if email in _BREACH_FAIL_CACHE and now - _BREACH_FAIL_CACHE[email] < _FAIL_TTL:
+        return []
+    try:
+        data = await _breach_lookup(email)
+    except Exception:
+        _BREACH_FAIL_CACHE[email] = now
+        return []
+    _BREACH_CACHE[email] = (now, data)
     return data
 
 
@@ -628,6 +800,67 @@ def cross_sample_topology(conn, min_share: int = 2) -> dict:
         ).fetchall()
     )
     return {"clusters": clusters, "total_samples": total_samples}
+
+
+# ---------------------------------------------------------------------------
+# Breach exposure — embedded emails checked against a keyless breach index
+# ---------------------------------------------------------------------------
+
+def _embedded_emails(sample_id: str) -> list[str]:
+    """Emails embedded in the sample's stored bytes (static-analysis IOCs).
+
+    Reads `SAMPLES_DIR/{sample_id}.bin`; samples uploaded before byte
+    persistence (no .bin) yield [] — the honest "nothing to check" state.
+    Lazy-imports config + static_analysis to avoid a circular import at
+    module load.
+    """
+    try:
+        from ..core.config import SAMPLES_DIR
+        from ..services.static_analysis import extract_iocs
+    except Exception:
+        return []
+    path = SAMPLES_DIR / f"{sample_id}.bin"
+    if not path.exists():
+        return []
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return []
+    return extract_iocs(data)["emails"][:3]
+
+
+def _mock_breaches(sample_id: str) -> list[dict]:
+    """Deterministic fake breach rows for the demo (synthetic)."""
+    digest = hashlib.sha256(sample_id.encode()).hexdigest()[:6]
+    return [
+        {
+            "email": f"victim-{digest}@shelf.example",
+            "breaches": ["SyntheticLeak2024", "DemoCorp"] * 3,
+            "synthetic": True,
+        }
+    ]
+
+
+async def _breach_layer(sample_id: str, mock: bool) -> dict:
+    """Breach exposure for the sample: its embedded emails vs the keyless
+    XposedOrNot index. Honest empty state: no embedded emails, no stored
+    bytes, or the provider unreachable → empty rows (never fake intel).
+    """
+    if mock:
+        return {"source": "synthetic_demo", "rows": _mock_breaches(sample_id)}
+
+    emails = _embedded_emails(sample_id)
+    if not emails:
+        return {"source": "no_emails", "rows": []}
+
+    results = await asyncio.gather(
+        *[_cached_breach_fetch(e) for e in emails], return_exceptions=True
+    )
+    rows: list[dict] = []
+    for email, res in zip(emails, results):
+        breaches = res if isinstance(res, list) else []
+        rows.append({"email": email, "breaches": breaches, "synthetic": False})
+    return {"source": "live", "rows": rows}
 
 
 # ---------------------------------------------------------------------------
@@ -725,6 +958,23 @@ def _mock_sibling_ips(seed: dict) -> list[dict]:
     ]
 
 
+def _mock_whois(seed: dict) -> list[dict]:
+    """Deterministic fake WHOIS record for the demo (synthetic)."""
+    digest = hashlib.sha256(seed["ip"].encode()).hexdigest()[:6]
+    return [
+        {
+            "domain": f"shelf-{digest}.example",
+            "registrar": "Synthetic Registrar LLC",
+            "created": (seed.get("first_seen") or "2026-01-01")[:10],
+            "updated": (seed.get("last_seen") or "2026-06-01")[:10],
+            "expires": "2027-01-01",
+            "status": ["client transfer prohibited"],
+            "nameservers": [f"ns1.shelf-{digest}.example"],
+            "synthetic": True,
+        }
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Passive layer orchestration
 # ---------------------------------------------------------------------------
@@ -750,6 +1000,7 @@ async def _passive_layer(seeds: list[dict], mock: bool) -> dict:
         passive_dns = [d for s in seeds for d in _mock_passive_dns(s)]
         sibling_ips = [sib for s in seeds for sib in _mock_sibling_ips(s)]
         subdomains = [d for s in seeds for d in _mock_subdomains(s)]
+        whois = [w for s in seeds for w in _mock_whois(s)]
         return {
             "source": "synthetic_demo",
             "resolutions": resolutions,
@@ -757,6 +1008,7 @@ async def _passive_layer(seeds: list[dict], mock: bool) -> dict:
             "passive_dns": passive_dns,
             "sibling_ips": sibling_ips,
             "subdomains": subdomains,
+            "whois": whois,
             "networks": [],
             "asn": [],
         }
@@ -772,6 +1024,7 @@ async def _passive_layer(seeds: list[dict], mock: bool) -> dict:
     networks: list[dict] = []
     asn_rows: list[dict] = []
     subdomains: list[dict] = []
+    whois: list[dict] = []
     any_data = False
     for res in results:
         if not isinstance(res, dict):
@@ -782,11 +1035,13 @@ async def _passive_layer(seeds: list[dict], mock: bool) -> dict:
         sibling_ips += res.get("sibling_ips", [])
         networks += res.get("networks", [])
         subdomains += res.get("subdomains", [])
+        whois += res.get("whois", [])
         if res.get("asn"):
             asn_rows.append(res["asn"])
         if (
             res.get("resolutions") or res.get("certificates") or res.get("passive_dns")
             or res.get("sibling_ips") or res.get("networks") or res.get("subdomains")
+            or res.get("whois")
         ):
             any_data = True
 
@@ -801,6 +1056,7 @@ async def _passive_layer(seeds: list[dict], mock: bool) -> dict:
             "networks": [],
             "asn": [],
             "subdomains": [],
+            "whois": [],
         }
 
     return {
@@ -812,6 +1068,7 @@ async def _passive_layer(seeds: list[dict], mock: bool) -> dict:
         "networks": _dedupe(networks, "ip")[:8],
         "asn": _dedupe(asn_rows, "ip")[:8],
         "subdomains": _dedupe(subdomains, "domain")[:40],
+        "whois": _dedupe(whois, "domain")[:8],
     }
 
 
@@ -827,6 +1084,7 @@ async def build_footprint(conn, sample_id: str, mock: bool = False) -> Optional[
 
     seeds = _seed_ips(conn, sample["original_name"])
     passive = await _passive_layer(seeds, mock)
+    breach = await _breach_layer(sample["sample_id"], mock)
 
     return {
         "sample": {
@@ -845,6 +1103,7 @@ async def build_footprint(conn, sample_id: str, mock: bool = False) -> Optional[
         ],
         "seed_ips": seeds,
         "passive": passive,
+        "breach": breach,
         "status": {
             "roadmap": passive["source"] != "live",
             "generated": "mock" if mock else None,

@@ -957,6 +957,24 @@ export interface FootprintPassive {
   // ASN / owner mapping per seed IP (keyless ip-api.com, live only): the
   // autonomous-system identity the registration sits on.
   asn: { ip: string; asn: string | null; as_name: string | null; org: string | null; country: string | null; country_code: string | null }[];
+  // WHOIS record for the PTR-derived domain's apex (domain-level RDAP, same
+  // keyless provider): registrar, created/updated/expires, status, nameservers.
+  whois?: {
+    domain: string;
+    registrar: string | null;
+    created: string | null;
+    updated: string | null;
+    expires: string | null;
+    status: string[];
+    nameservers: string[];
+    synthetic?: boolean;
+  }[];
+}
+
+export interface FootprintBreachRow {
+  email: string;
+  breaches: string[];
+  synthetic?: boolean;
 }
 
 export interface Footprint {
@@ -964,6 +982,7 @@ export interface Footprint {
   runs: { run_id: string; sample_name: string; started_at: string; completed_at: string | null }[];
   seed_ips: FootprintSeedIp[];
   passive: FootprintPassive;
+  breach: { source: "live" | "no_emails" | "synthetic_demo"; rows: FootprintBreachRow[] };
   status: { roadmap: boolean; generated: "mock" | null };
 }
 

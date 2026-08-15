@@ -91,6 +91,18 @@ def _flatten_rows(data: dict) -> list[tuple[str, str, str, str, str, str, str]]:
     for a in passive.get("asn", []):
         detail = " · ".join(x for x in (a.get("as_name"), a.get("org"), a.get("country")) if x)
         rows.append(("asn", a.get("asn") or a.get("ip", ""), "", detail, "", "", "false"))
+    for w in passive.get("whois", []):
+        detail = " · ".join(
+            x for x in (
+                f"registrar {w['registrar']}" if w.get("registrar") else "",
+                f"created {w['created']}" if w.get("created") else "",
+                f"expires {w['expires']}" if w.get("expires") else "",
+                "ns " + ",".join(w.get("nameservers", [])) if w.get("nameservers") else "",
+            ) if x
+        )
+        rows.append(("whois", w.get("domain", ""), "", detail, w.get("created", ""), w.get("expires", ""), str(bool(w.get("synthetic"))).lower()))
+    for b in (data.get("breach") or {}).get("rows", []):
+        rows.append(("breach", b.get("email", ""), "", ",".join(b.get("breaches", [])), "", "", str(bool(b.get("synthetic"))).lower()))
 
     return rows
 
@@ -122,6 +134,7 @@ async def export_footprint(
             "status": data["status"],
             "seed_ips": data["seed_ips"],
             "passive": data["passive"],
+            "breach": data.get("breach"),
         }
         return Response(
             content=json.dumps(payload, indent=2),

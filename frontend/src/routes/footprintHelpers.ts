@@ -97,3 +97,25 @@ export function regTimeline(
   if (n.expires) parts.push(`expires ${n.expires}`);
   return parts;
 }
+
+/** The WHOIS record for one domain-RDAP row: registrar, created/updated/
+ *  expires dates, and the nameserver list, as readable lines. Missing
+ *  pieces are omitted — never empty separators. */
+export function whoisTimeline(
+  w: NonNullable<Footprint["passive"]["whois"]>[number],
+): string[] {
+  const parts: string[] = [];
+  if (w.registrar) parts.push(`registrar ${w.registrar}`);
+  if (w.created) parts.push(`created ${w.created}`);
+  if (w.updated) parts.push(`updated ${w.updated}`);
+  if (w.expires) parts.push(`expires ${w.expires}`);
+  if (w.nameservers.length > 0) parts.push(`ns ${w.nameservers.join(", ")}`);
+  return parts;
+}
+
+/** Breach-card note — honest about where the exposure check came from. */
+export function breachNote(source: Footprint["breach"]["source"]): string {
+  if (source === "synthetic_demo") return "synthetic preview";
+  if (source === "live") return "XposedOrNot · live";
+  return "no embedded emails — nothing to check";
+}
