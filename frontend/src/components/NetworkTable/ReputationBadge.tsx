@@ -1,4 +1,5 @@
-import { RISK_BG, RISK_COLORS, intelAgeLabel } from "../../lib/constants";
+import { RISK_COLORS, intelAgeLabel } from "../../lib/constants";
+import { toneFill, toneForReputation } from "../../lib/fillPatterns";
 import { Icon } from "../Icon";
 import type { Reputation } from "../../types";
 
@@ -40,7 +41,9 @@ export default function ReputationBadge({
           <Icon name="star" size={11} />
         </span>
       )}
-      <span className={`inline-block h-2 w-2 rounded-full ${RISK_BG[label]}`} />
+      {/* Pattern-encoded dot (deck-wide fill language) — the label text
+          carries the verdict; the pattern adds the color-blind channel. */}
+      <span className="inline-block h-2 w-2 rounded-full" style={toneFill(toneForReputation(label))} aria-hidden />
       {label}
       {sources.length > 0 && (
         <Icon name="eye" size={10} className="ml-0.5 opacity-50" aria-label="Reputation sources" />

@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { Icon } from "../Icon";
-import { SEVERITY_BG } from "../../lib/constants";
+import { toneFill, toneForSeverity } from "../../lib/fillPatterns";
 import { addSuppression, getRuleMeta, setTuning } from "../../lib/api";
 import type { Alert, AlertStatus, FpResponse, FpSuggestion } from "../../types";
 import { openDuration, sortAlertsForTriage, type TriageSort } from "./triage";
@@ -224,7 +224,8 @@ export default function AlertBanner({
                   <IconCheckMini />
                 </button>
               )}
-              <span className={`h-2 w-2 rounded-full ${SEVERITY_BG[alert.severity]}`} />
+              {/* Pattern-encoded severity dot (deck-wide fill language). */}
+              <span className="h-2 w-2 rounded-full" style={toneFill(toneForSeverity(alert.severity))} aria-hidden />
               <span className="text-sm font-medium text-text-primary">{alert.rule_name}</span>
               <span className="font-mono text-xs text-text-faint">{alert.rule_id}</span>
               {rule && (
