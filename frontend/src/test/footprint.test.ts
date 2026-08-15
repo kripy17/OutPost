@@ -4,7 +4,7 @@
 // around the seed/sibling they were observed from, with honest provider notes.
 
 import { describe, expect, it } from "vitest";
-import { buildTopology, MAP, passiveNote, regTimeline } from "../routes/footprintHelpers";
+import { breachNote, buildTopology, MAP, passiveNote, regTimeline, whoisTimeline } from "../routes/footprintHelpers";
 import type { Footprint } from "../types";
 
 function footprint(over: Partial<Footprint> = {}): Footprint {
@@ -30,6 +30,7 @@ function footprint(over: Partial<Footprint> = {}): Footprint {
       networks: [],
       asn: [],
     },
+    breach: { source: "no_emails", rows: [] },
     status: { roadmap: true, generated: null },
     ...over,
   };
@@ -151,5 +152,49 @@ describe("regTimeline", () => {
         registrar: "R LLC",
       }),
     ).toEqual(["registrar R LLC"]);
+  });
+});
+
+describe("whoisTimeline", () => {
+  it("renders registrar + dates + nameservers in order", () => {
+    expect(
+      whoisTimeline({
+        domain: "example.com",
+        registrar: "Example Registrar Inc",
+        created: "1995-08-14",
+        updated: "2026-08-14",
+        expires: "2027-08-13",
+        status: ["client transfer prohibited"],
+        nameservers: ["NS1.EXAMPLE.COM", "NS2.EXAMPLE.COM"],
+      }),
+    ).toEqual([
+      "registrar Example Registrar Inc",
+      "created 1995-08-14",
+      "updated 2026-08-14",
+      "expires 2027-08-13",
+      "ns NS1.EXAMPLE.COM, NS2.EXAMPLE.COM",
+    ]);
+  });
+
+  it("omits missing pieces", () => {
+    expect(
+      whoisTimeline({
+        domain: "example.com",
+        registrar: null,
+        created: null,
+        updated: null,
+        expires: null,
+        status: [],
+        nameservers: [],
+      }),
+    ).toEqual([]);
+  });
+});
+
+describe("breachNote", () => {
+  it("is honest per breach source", () => {
+    expect(breachNote("live")).toBe("XposedOrNot · live");
+    expect(breachNote("synthetic_demo")).toBe("synthetic preview");
+    expect(breachNote("no_emails")).toBe("no embedded emails — nothing to check");
   });
 });

@@ -6,7 +6,7 @@ import { Chip, PageHeader, Panel } from "../components/ui";
 import { exportFootprint, getFootprint, getFootprintTopology, getSamples, refreshEnrichmentIp, saveBlob } from "../lib/api";
 import { intelAgeLabel } from "../lib/constants";
 import type { Footprint, FootprintSeedIp } from "../types";
-import { buildTopology, MAP, passiveNote, regTimeline } from "./footprintHelpers";
+import { breachNote, buildTopology, MAP, passiveNote, regTimeline, whoisTimeline } from "./footprintHelpers";
 
 // Radial footprint map — sample at the center, seed IPs on ring 1, passive
 // infrastructure (resolutions + sibling hosts) on ring 2, and the cohosted
@@ -434,6 +434,28 @@ export default function FootprintPage() {
                   synthetic: false,
                 })),
               ]}
+            />
+            <PassiveCard
+              title="WHOIS"
+              note={passiveNote(footprint.passive.source, "rdap.org · domain")}
+              empty="No WHOIS record for the seed domains — the domain-level RDAP lookup returned nothing (registrar / registration dates / nameservers)."
+              nodes={(footprint.passive.whois ?? []).map((w) => ({
+                label: w.domain,
+                sub: [w.status.slice(0, 2).join(", ")].filter(Boolean).join(" · ") || "whois",
+                detail: whoisTimeline(w),
+                synthetic: w.synthetic,
+              }))}
+            />
+            <PassiveCard
+              title="Breach exposure"
+              note={breachNote(footprint.breach.source)}
+              empty="No breach exposure found — the sample embeds no emails (or they're not in any indexed breach). Checked against XposedOrNot's keyless index."
+              nodes={footprint.breach.rows.map((b) => ({
+                label: b.email,
+                sub: `${b.breaches.length} breach${b.breaches.length === 1 ? "" : "es"}`,
+                detail: b.breaches.slice(0, 6),
+                synthetic: b.synthetic,
+              }))}
             />
           </div>
 

@@ -204,6 +204,50 @@ def test_parse_rdap_registration_missing_pieces_are_none():
     assert out["expires"] is None
 
 
+def test_parse_rdap_domain_whois_record():
+    """The domain-level RDAP (WHOIS) slice: registrar, created/updated/
+    expires, status, and nameservers from the same keyless provider."""
+    doc = {
+        "handle": "2336799_DOMAIN_COM-VRSN",
+        "status": ["client delete prohibited", "client transfer prohibited"],
+        "events": [
+            {"eventAction": "registration", "eventDate": "1995-08-14T00:00:00Z"},
+            {"eventAction": "expiration", "eventDate": "2027-08-13T00:00:00Z"},
+            {"eventAction": "last changed", "eventDate": "2026-08-14T00:00:00Z"},
+        ],
+        "entities": [{"roles": ["registrar"], "vcardArray": ["vcard", [["fn", {}, "text", "Example Registrar Inc"]]]}],
+        "nameservers": [{"ldhName": "NS1.EXAMPLE.COM"}, {"ldhName": "NS2.EXAMPLE.COM"}],
+    }
+    out = footprint_service._parse_rdap_domain(doc)
+    assert out["registrar"] == "Example Registrar Inc"
+    assert out["created"] == "1995-08-14"
+    assert out["updated"] == "2026-08-14"
+    assert out["expires"] == "2027-08-13"
+    assert "client delete prohibited" in out["status"]
+    assert out["nameservers"] == ["NS1.EXAMPLE.COM", "NS2.EXAMPLE.COM"]
+
+
+def test_parse_rdap_domain_missing_pieces_are_empty():
+    doc = {"handle": "BARE"}
+    out = footprint_service._parse_rdap_domain(doc)
+    assert out["registrar"] is None
+    assert out["created"] is None and out["updated"] is None and out["expires"] is None
+    assert out["status"] == [] and out["nameservers"] == []
+
+
+def test_parse_breach_response_extracts_names():
+    assert footprint_service._parse_breach_response(
+        {"breaches": [["XKCD", "LinkedIn", "LinkedIn"], "Zomato", "Alcon"], "status": "success"}
+    ) == ["XKCD", "LinkedIn", "Zomato", "Alcon"]
+
+
+def test_parse_breach_response_clean_email_is_empty():
+    assert footprint_service._parse_breach_response({"Error": "Not found", "email": None}) == []
+    assert footprint_service._parse_breach_response({"status": "error"}) == []
+    assert footprint_service._parse_breach_response({}) == []
+    assert footprint_service._parse_breach_response([]) == []
+
+
 def test_parse_rdap_tight_network_uses_that_net_for_siblings():
     """A /30 RDAP net must yield siblings FROM that /30 — never /24 hosts
     mislabeled as the tighter network (regression from review)."""
@@ -528,3 +572,72 @@ def test_cross_sample_topology_response_shape(client):
     assert "clusters" in body and "total_samples" in body
     assert isinstance(body["clusters"], list)
     assert isinstance(body["total_samples"], int)
+
+
+# ---------------------------------------------------------------------------
+# Roadmap 2.6 — WHOIS record + breach exposure (keyless slices)
+# ---------------------------------------------------------------------------
+
+def test_fetch_ip_passive_collects_whois_record(monkeypatch):
+    """The PTR-derived domain's RDAP (WHOIS) record rides the same keyless
+    provider — registrar, dates, status, nameservers, marked non-synthetic."""
+    seed = {"ip": "203.0.113.77", "first_seen": "2026-08-01T10:00:00Z", "last_seen": "2026-08-02T10:00:00Z"}
+
+    async def fake_domain(domain: str):
+        return {
+            "registrar": "Example Registrar Inc",
+            "created": "1995-08-14",
+            "updated": "2026-08-14",
+            "expires": "2027-08-13",
+            "status": ["client transfer prohibited"],
+            "nameservers": ["NS1.EXAMPLE.COM"],
+        }
+
+    monkeypatch.setattr(footprint_service, "_ptr_for_ip", lambda ip: "srv.example.com")
+    monkeypatch.setattr(footprint_service, "_cached_domain_fetch", fake_domain)
+    monkeypatch.setattr(footprint_service, "_rdap_lookup", lambda ip: asyncio.coroutine(lambda: {})())
+    monkeypatch.setattr(footprint_service, "_asn_lookup", lambda ip: asyncio.coroutine(lambda: {})())
+    monkeypatch.setattr(footprint_service, "_crtsh_lookup", lambda d: asyncio.coroutine(lambda: {"certificates": [], "domains": []})())
+    monkeypatch.setattr(footprint_service, "_crtsh_subdomains", lambda d: asyncio.coroutine(lambda: [])())
+
+    out = asyncio.run(footprint_service._fetch_ip_passive(seed))
+    whois = out["whois"]
+    assert len(whois) == 1
+    row = whois[0]
+    assert row["domain"] == "example.com"  # apex of srv.example.com
+    assert row["registrar"] == "Example Registrar Inc"
+    assert row["created"] == "1995-08-14" and row["expires"] == "2027-08-13"
+    assert "client transfer prohibited" in row["status"]
+    assert row["nameservers"] == ["NS1.EXAMPLE.COM"]
+    assert row["synthetic"] is False
+
+
+def test_breach_layer_checks_embedded_emails(monkeypatch):
+    """Embedded emails from the sample's bytes are checked against the
+    keyless breach index; each row carries its breach list, non-synthetic."""
+    sample_id = "breach-sample-0001"
+
+    monkeypatch.setattr(footprint_service, "_embedded_emails", lambda sid: ["victim@example.com", "ceo@example.org"])
+    async def fake_breach(email: str):
+        return ["XKCD", "LinkedIn"] if email == "victim@example.com" else []
+    monkeypatch.setattr(footprint_service, "_cached_breach_fetch", fake_breach)
+
+    out = asyncio.run(footprint_service._breach_layer(sample_id, mock=False))
+    assert out["source"] == "live"
+    rows = {r["email"]: r["breaches"] for r in out["rows"]}
+    assert rows["victim@example.com"] == ["XKCD", "LinkedIn"]
+    assert rows["ceo@example.org"] == []  # clean email → honest empty
+    assert all(r["synthetic"] is False for r in out["rows"])
+
+
+def test_breach_layer_no_emails_is_honest_empty(monkeypatch):
+    monkeypatch.setattr(footprint_service, "_embedded_emails", lambda sid: [])
+    out = asyncio.run(footprint_service._breach_layer("sample", mock=False))
+    assert out["source"] == "no_emails"
+    assert out["rows"] == []
+
+
+def test_breach_layer_mock_is_labeled_synthetic():
+    out = asyncio.run(footprint_service._breach_layer("mock-sample", mock=True))
+    assert out["source"] == "synthetic_demo"
+    assert out["rows"] and out["rows"][0]["synthetic"] is True

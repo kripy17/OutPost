@@ -4,7 +4,7 @@
 // first, newest = most recent span first.
 
 import { describe, expect, it } from "vitest";
-import { CAMPAIGN_SORTS, sortCampaigns } from "../routes/campaignsHelpers";
+import { CAMPAIGN_SORTS, sortCampaigns, topologyClusters } from "../routes/campaignsHelpers";
 import type { Campaign } from "../types";
 
 function campaign(key: string, extra: Partial<Campaign> = {}): Campaign {
@@ -71,5 +71,49 @@ describe("sortCampaigns", () => {
     const input = [...BASE];
     sortCampaigns(input, "newest");
     expect(input.map((c) => c.key)).toEqual(BASE.map((c) => c.key));
+  });
+});
+
+describe("topologyClusters", () => {
+  function cluster(ip: string, sample_count: number, extra: Partial<Parameters<typeof topologyClusters>[0][number]> = {}): Parameters<typeof topologyClusters>[0][number] {
+    return {
+      ip,
+      sample_count,
+      members: [],
+      reputation: "unknown",
+      checked_at: null,
+      ...extra,
+    };
+  }
+
+  it("marks clusters that already have a campaign by IP", () => {
+    const rows = topologyClusters(
+      [cluster("203.0.113.88", 3), cluster("198.51.100.7", 2)],
+      [{ key: "203.0.113.88" } as never],
+    );
+    const byIp = Object.fromEntries(rows.map((r) => [r.ip, r.inCampaign]));
+    expect(byIp["203.0.113.88"]).toBe(true);
+    expect(byIp["198.51.100.7"]).toBe(false);
+  });
+
+  it("sorts by shared-sample count descending, IP tiebreak", () => {
+    const rows = topologyClusters(
+      [cluster("10.0.0.1", 2), cluster("10.0.0.9", 2), cluster("10.0.0.3", 5), cluster("10.0.0.4", 1)],
+      [],
+    );
+    expect(rows.map((r) => r.ip)).toEqual(["10.0.0.3", "10.0.0.1", "10.0.0.9", "10.0.0.4"]);
+  });
+
+  it("is empty when the topology has no clusters", () => {
+    expect(topologyClusters([], [])).toEqual([]);
+  });
+
+  it("keeps cluster reputation and member data intact", () => {
+    const rows = topologyClusters(
+      [cluster("203.0.113.88", 2, { reputation: "malicious", members: [{ sample_name: "a.bin", hits: 3, run_ids: ["r1"] }] })],
+      [],
+    );
+    expect(rows[0].reputation).toBe("malicious");
+    expect(rows[0].members[0].sample_name).toBe("a.bin");
   });
 });
