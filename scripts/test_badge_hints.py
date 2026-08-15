@@ -213,9 +213,12 @@ def main() -> int:
         rc, out = run_check(tmp, fakebin)
         total = json.loads((ROOT / "badges/tests.json").read_text())["message"]
         check("payload hint carries corrected payload", f'"message":"{total}' in out)
+        # The canonical payload ends with a newline (the --commit write path
+        # uses printf '%s\n'), so the repair must write it byte-exactly — the
+        # gate compares with cmp now, not stripped command substitution.
         expect_repair(
             tmp, "stale tests.json payload",
-            lambda: (tmp / "badges/tests.json").write_text(f'{{"schemaVersion":1,"label":"tests","message":"{total}","color":"2ea44f"}}'),
+            lambda: (tmp / "badges/tests.json").write_text(f'{{"schemaVersion":1,"label":"tests","message":"{total}","color":"2ea44f"}}\n'),
             fakebin,
         )
 
