@@ -47,7 +47,6 @@ def remove_entry(value: str) -> None:
     with db_session() as conn:
         if not watchlist_store.remove_watchlist(conn, value):
             raise HTTPException(status_code=404, detail=f"Not in watchlist: {value}")
-    return None
 
 
 # ---------------------------------------------------------------------------

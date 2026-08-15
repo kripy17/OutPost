@@ -81,7 +81,8 @@ def pg_migrate(
         cmd.append("--verify")
 
     console.print(f"[bold]OutPost → Postgres migration[/bold] (sqlite: {sqlite})")
-    res = subprocess.run(cmd)
+    # The migration tool's own exit code is propagated to the CLI caller.
+    res = subprocess.run(cmd, check=False)
     raise typer.Exit(res.returncode)
 
 
@@ -131,4 +132,3 @@ def backfill_channels(
             "[#3FA796]✓ Channel data already complete — no legacy events to backfill "
             "(0 updated).[/#3FA796]"
         )
-    return None

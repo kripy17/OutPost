@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
-from typing import Iterable, Iterator, Optional
+from collections.abc import Iterable, Iterator
 
 from ..core.db import SCHEMA
 
@@ -103,7 +103,7 @@ def copy_format(value: object) -> str:
     )
 
 
-def export_table(conn: sqlite3.Connection, table: str, columns: Optional[Iterable[str]] = None) -> Iterator[str]:
+def export_table(conn: sqlite3.Connection, table: str, columns: Iterable[str] | None = None) -> Iterator[str]:
     """Yield every row of `table` as one COPY-format line.
 
     Column order is the cursor's (``SELECT *`` order == CREATE order), which

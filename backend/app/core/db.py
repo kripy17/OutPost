@@ -13,9 +13,9 @@ semantics, and `db_session()` yields the same commit/rollback lifecycle.
 """
 
 import sqlite3
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
 
 from . import config, db_pg
 
@@ -263,6 +263,10 @@ CREATE TABLE IF NOT EXISTS rule_suppressions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     rule_id TEXT NOT NULL,
     run_id TEXT,
+    -- Optional value scope: a sample name, related IP, or detail substring.
+    -- Set = only alerts whose run/context match it are suppressed (e.g.
+    -- beaconing → 'detonate-demo.sh'); NULL = the whole rule scope.
+    value TEXT,
     reason TEXT,
     created_at TEXT NOT NULL
 );
@@ -445,6 +449,15 @@ def _migrate_runs_suppressed_alerts(conn: sqlite3.Connection) -> None:
         conn.commit()
 
 
+def _migrate_rule_suppressions_value(conn: sqlite3.Connection) -> None:
+    """Idempotent: add the `value` scope column (rule + sample/IP suppression)
+    to pre-existing DBs. Fresh DBs get it from SCHEMA; older installs need
+    the ALTER. Existing rows stay NULL = whole-rule scope (unchanged)."""
+    if "value" not in _column_names(conn, "rule_suppressions"):
+        conn.execute("ALTER TABLE rule_suppressions ADD COLUMN value TEXT")
+        conn.commit()
+
+
 def _migrate_events_raw_record(conn: sqlite3.Connection) -> None:
     """Idempotent: add the `raw_record` column (the collector's original JSON
     payload) to pre-existing DBs. Fresh DBs get it from SCHEMA; older installs
@@ -562,6 +575,7 @@ def init_db() -> None:
         _migrate_events_query(conn)
         _migrate_events_tls_sni(conn)
         _migrate_runs_suppressed_alerts(conn)
+        _migrate_rule_suppressions_value(conn)
 
 
 @contextmanager

@@ -13,9 +13,9 @@ import asyncio
 
 import pytest
 
+from ..services import footprint as footprint_service
 from .conftest import make_run
 from .test_samples import _upload
-from ..services import footprint as footprint_service
 
 
 @pytest.fixture(autouse=True)
@@ -595,10 +595,10 @@ def test_fetch_ip_passive_collects_whois_record(monkeypatch):
 
     monkeypatch.setattr(footprint_service, "_ptr_for_ip", lambda ip: "srv.example.com")
     monkeypatch.setattr(footprint_service, "_cached_domain_fetch", fake_domain)
-    monkeypatch.setattr(footprint_service, "_rdap_lookup", lambda ip: asyncio.coroutine(lambda: {})())
-    monkeypatch.setattr(footprint_service, "_asn_lookup", lambda ip: asyncio.coroutine(lambda: {})())
+    monkeypatch.setattr(footprint_service, "_rdap_lookup", lambda ip: asyncio.coroutine(dict)())
+    monkeypatch.setattr(footprint_service, "_asn_lookup", lambda ip: asyncio.coroutine(dict)())
     monkeypatch.setattr(footprint_service, "_crtsh_lookup", lambda d: asyncio.coroutine(lambda: {"certificates": [], "domains": []})())
-    monkeypatch.setattr(footprint_service, "_crtsh_subdomains", lambda d: asyncio.coroutine(lambda: [])())
+    monkeypatch.setattr(footprint_service, "_crtsh_subdomains", lambda d: asyncio.coroutine(list)())
 
     out = asyncio.run(footprint_service._fetch_ip_passive(seed))
     whois = out["whois"]
@@ -641,3 +641,397 @@ def test_breach_layer_mock_is_labeled_synthetic():
     out = asyncio.run(footprint_service._breach_layer("mock-sample", mock=True))
     assert out["source"] == "synthetic_demo"
     assert out["rows"] and out["rows"][0]["synthetic"] is True
+
+
+# ---------------------------------------------------------------------------
+# Defensive branches + live HTTP wrappers (fake httpx client — no network)
+# ---------------------------------------------------------------------------
+
+
+def test_ptr_for_ip_real_socket_and_failure(monkeypatch):
+    """The reverse-DNS probe itself: resolves via the real socket call, and
+    degrades to None when the lookup fails."""
+    monkeypatch.setattr(footprint_service.socket, "gethostbyaddr", lambda ip: ("host.example.com", [], [ip]))
+    assert footprint_service._ptr_for_ip("203.0.113.88") == "host.example.com"
+
+    def _boom(ip):
+        raise OSError("no PTR")
+
+    monkeypatch.setattr(footprint_service.socket, "gethostbyaddr", _boom)
+    assert footprint_service._ptr_for_ip("203.0.113.88") is None
+
+
+def test_ipv4_neighbors_defensive_branches():
+    """Bad input (ValueError) and an IP that isn't a host in its own net
+    (StopIteration) both return [] — never crash."""
+    assert footprint_service._ipv4_neighbors("999.999.1.1") == []
+    assert footprint_service._ipv4_neighbors("not-an-ip") == []
+    # 203.0.113.0 is the network address — hosts() starts at .1
+    assert footprint_service._ipv4_neighbors("203.0.113.0") == []
+
+
+def test_common_prefix_len():
+    assert footprint_service._common_prefix_len("203.0.113.0", "203.0.113.255") == 24
+    assert footprint_service._common_prefix_len("203.0.113.4", "203.0.113.7") == 30
+    assert footprint_service._common_prefix_len("1.1.1.1", "1.1.1.1") == 32
+    assert footprint_service._common_prefix_len("10.0.0.1", "11.0.0.1") == 7
+
+
+def test_entity_org_defensive_branches():
+    """A non-list vcard and a vcard without an `fn` entry both return None."""
+    assert footprint_service._entity_org({"vcardArray": "not-a-list"}) is None
+    assert footprint_service._entity_org({}) is None
+    assert footprint_service._entity_org(
+        {"vcardArray": ["vcard", [["email", {}, "text", "noc@example.net"]]]}
+    ) is None
+
+
+def test_parse_rdap_synthesizes_cidr_from_start_end():
+    """No cidr0_cidrs → the CIDR is synthesized from startAddress/endAddress
+    via `_common_prefix_len`."""
+    doc = {"startAddress": "203.0.113.0", "endAddress": "203.0.113.255", "name": "SYNTH-NET"}
+    out = footprint_service._parse_rdap("203.0.113.5", doc)
+    assert out["cidr"] == "203.0.113.0/24"
+    assert out["siblings"]
+
+
+def test_parse_rdap_bad_start_address_keeps_cidr_none():
+    """The IPv4Address(start) ValueError branch → cidr stays None and the
+    sibling fallback still runs."""
+    doc = {"startAddress": "999.999.1.0", "endAddress": "203.0.113.255", "name": "BAD-NET"}
+    out = footprint_service._parse_rdap("203.0.113.5", doc)
+    assert out["cidr"] is None
+    assert out["siblings"]
+
+
+def test_parse_rdap_invalid_cidr_uses_neighbor_fallback():
+    """ip_network(cidr) raises → net is None → siblings come from the /24
+    neighbors (never a crash)."""
+    doc = {"cidr0_cidrs": [{"v4prefix": "999.999.1.0", "length": 24}], "name": "JUNK-NET"}
+    out = footprint_service._parse_rdap("203.0.113.5", doc)
+    assert out["siblings"] and out["siblings"][0]["relation"] == "same /24"
+
+
+def test_parse_rdap_ip_not_in_net_uses_offsets():
+    """The hosts.index(ip) ValueError branch (ip is the network address, not
+    a host) → idx=-1 → the +1..+3 offsets are still picked."""
+    doc = {"cidr0_cidrs": [{"v4prefix": "203.0.113.0", "length": 24}], "name": "NET"}
+    out = footprint_service._parse_rdap("203.0.113.0", doc)
+    ips = [s["ip"] for s in out["siblings"]]
+    assert ips and all(ip.startswith("203.0.113.") for ip in ips)
+
+
+def test_parse_rdap_wide_net_uses_24_neighbors():
+    """A /16 RDAP net → prefixlen < 24 → siblings from the /24 the IP sits
+    in, labeled `same /24` (never the whole /16)."""
+    doc = {"cidr0_cidrs": [{"v4prefix": "10.0.0.0", "length": 16}], "name": "BIG-ISP"}
+    out = footprint_service._parse_rdap("10.0.0.5", doc)
+    assert out["cidr"] == "10.0.0.0/16"
+    assert all(s["relation"] == "same /24" for s in out["siblings"])
+    assert all(s["ip"].startswith("10.0.0.") for s in out["siblings"])
+
+
+def test_parse_crtsh_skips_non_dict_rows():
+    """Malformed crt.sh rows (strings, None) are skipped without crashing."""
+    rows = ["junk", None, {"common_name": "x.example.com", "issuer_name": "CA", "name_value": "x.example.com", "not_before": "2026-01-01T00:00:00", "not_after": "2026-12-01T00:00:00"}]
+    out = footprint_service._parse_crtsh(rows)
+    assert len(out["certificates"]) == 1
+    assert out["certificates"][0]["cn"] == "x.example.com"
+
+
+def test_parse_rdap_domain_skips_events_without_action_or_date():
+    doc = {"events": [{"eventAction": "registration"}, {"eventDate": "2026-01-01T00:00:00Z"}]}
+    out = footprint_service._parse_rdap_domain(doc)
+    assert out["created"] is None and out["updated"] is None
+
+
+def test_rdap_registration_skips_malformed_events():
+    """`_rdap_registration`'s own skip branch: an event missing its action OR
+    its date is ignored (network-doc registration timeline)."""
+    out = footprint_service._rdap_registration(
+        {"events": [{"eventAction": "registration"}, {"eventDate": "2026-01-01T00:00:00Z"}, "junk"]}
+    )
+    assert out["created"] is None and out["updated"] is None and out["expires"] is None
+
+
+def test_parse_crtsh_skips_empty_names():
+    """A name_value that strips to nothing is skipped, never added to the
+    domain list."""
+    rows = [{"common_name": "x.example.com", "issuer_name": "CA", "name_value": "  \n\n", "not_before": "2026-01-01T00:00:00", "not_after": "2026-12-01T00:00:00"}]
+    out = footprint_service._parse_crtsh(rows)
+    assert out["certificates"]  # the cert still lands
+    assert out["domains"] == []  # but the blank names are dropped
+
+
+def test_crtsh_lookup_wrapper(monkeypatch):
+    """`_crtsh_lookup` delegates to `_crtsh_query` (the thin wrapper)."""
+    calls = []
+
+    async def _fake(q):
+        calls.append(q)
+        return {"certificates": [], "domains": []}
+
+    monkeypatch.setattr(footprint_service, "_crtsh_query", _fake)
+    assert asyncio.run(footprint_service._crtsh_lookup("example.com")) == {"certificates": [], "domains": []}
+    assert calls == ["example.com"]
+
+
+def test_embedded_emails_unreadable_bytes_is_empty(monkeypatch, tmp_path):
+    """The OSError branch: a stored entry that can't be read (a directory in
+    place of the .bin) yields [] — never a crash."""
+    from ..core import config as app_config
+
+    monkeypatch.setattr(app_config, "SAMPLES_DIR", tmp_path)
+    # A directory where the .bin should be: exists() passes, read_bytes()
+    # raises IsADirectoryError (an OSError) → the guard returns [].
+    (tmp_path / "dir-as-bin.bin").mkdir()
+    assert footprint_service._embedded_emails("dir-as-bin") == []
+
+
+def test_embedded_emails_lazy_import_failure_is_empty(monkeypatch):
+    """The lazy-import guard: if the static-analysis module can't be imported
+    (broken install), the embedded-email read degrades to [] instead of
+    crashing the whole footprint page."""
+    import builtins
+
+    real_import = builtins.__import__
+
+    def _broken_import(name, *args, **kw):
+        if name == "app.services.static_analysis" or name.endswith(".static_analysis"):
+            raise ImportError("simulated broken install")
+        return real_import(name, *args, **kw)
+
+    monkeypatch.setattr(builtins, "__import__", _broken_import)
+    assert footprint_service._embedded_emails("anything") == []
+
+
+class _FakeResp:
+    def __init__(self, payload, status=200):
+        self._payload = payload
+        self.status_code = status
+
+    def json(self):
+        return self._payload
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+
+class _FakeAClient:
+    def __init__(self, handler, **kw):
+        self._handler = handler
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def get(self, url, **kw):
+        return self._handler(url)
+
+
+def _patch_httpx(monkeypatch, handler):
+    monkeypatch.setattr(footprint_service.httpx, "AsyncClient", lambda **kw: _FakeAClient(handler))
+
+
+def test_rdap_lookup_http_and_bad_payload(monkeypatch):
+    """The live RDAP HTTP wrapper: parses a real payload, and raises on a
+    non-dict response."""
+    _patch_httpx(
+        monkeypatch,
+        lambda url: _FakeResp({"name": "HTTP-NET", "cidr0_cidrs": [{"v4prefix": "203.0.113.0", "length": 24}]}),
+    )
+    out = asyncio.run(footprint_service._rdap_lookup("203.0.113.88"))
+    assert out["netname"] == "HTTP-NET"
+
+    _patch_httpx(monkeypatch, lambda url: _FakeResp(["not", "a", "dict"]))
+    with pytest.raises(ValueError, match="bad RDAP payload"):
+        asyncio.run(footprint_service._rdap_lookup("203.0.113.88"))
+
+
+def test_rdap_domain_lookup_http_and_bad_payload(monkeypatch):
+    _patch_httpx(monkeypatch, lambda url: _FakeResp({"handle": "H", "status": []}))
+    out = asyncio.run(footprint_service._rdap_domain_lookup("example.com"))
+    assert out["status"] == []
+
+    _patch_httpx(monkeypatch, lambda url: _FakeResp(["not", "a", "dict"]))
+    with pytest.raises(ValueError, match="bad RDAP domain payload"):
+        asyncio.run(footprint_service._rdap_domain_lookup("example.com"))
+
+
+def test_crtsh_query_http_and_bad_payload(monkeypatch):
+    _patch_httpx(monkeypatch, lambda url: _FakeResp([{"common_name": "x.example.com", "issuer_name": "CA", "name_value": "x.example.com", "not_before": "2026-01-01T00:00:00", "not_after": "2026-12-01T00:00:00"}]))
+    out = asyncio.run(footprint_service._crtsh_query("example.com"))
+    assert out["certificates"]
+
+    _patch_httpx(monkeypatch, lambda url: _FakeResp({"not": "a list"}))
+    with pytest.raises(ValueError, match="bad crt.sh payload"):
+        asyncio.run(footprint_service._crtsh_query("example.com"))
+
+
+def test_breach_lookup_http_success_and_errors(monkeypatch):
+    _patch_httpx(monkeypatch, lambda url: _FakeResp({"breaches": [["XKCD", "LinkedIn"]], "status": "success"}))
+    assert asyncio.run(footprint_service._breach_lookup("victim@example.com")) == ["XKCD", "LinkedIn"]
+
+    _patch_httpx(monkeypatch, lambda url: _FakeResp({}, status=500))
+    with pytest.raises(ValueError, match="bad breach payload"):
+        asyncio.run(footprint_service._breach_lookup("victim@example.com"))
+
+
+def test_asn_lookup_http_success_and_errors(monkeypatch):
+    _patch_httpx(
+        monkeypatch,
+        lambda url: _FakeResp({"status": "success", "as": "AS15169 Google LLC", "asname": "GOOGLE", "org": "Google", "isp": "Google", "country": "US", "countryCode": "US"}),
+    )
+    out = asyncio.run(footprint_service._asn_lookup("8.8.8.8"))
+    assert out["asn"] == "AS15169" and out["org"] == "Google"
+
+    _patch_httpx(monkeypatch, lambda url: _FakeResp({"status": "fail"}))
+    with pytest.raises(ValueError, match="ip-api lookup failed"):
+        asyncio.run(footprint_service._asn_lookup("8.8.8.8"))
+
+    _patch_httpx(monkeypatch, lambda url: _FakeResp({}, status=500))
+    with pytest.raises(ValueError, match="bad ip-api payload"):
+        asyncio.run(footprint_service._asn_lookup("8.8.8.8"))
+
+
+# -- Cache layers: positive hit / fail cache / exception ---------------------------
+
+
+def test_cached_fetch_positive_cache_serves_second_call(monkeypatch):
+    calls = []
+
+    async def _fake(seed):
+        calls.append(seed["ip"])
+        return {"resolutions": [{"domain": "x.example.com"}]}
+
+    monkeypatch.setattr(footprint_service, "_fetch_ip_passive", _fake)
+    seed = {"ip": "203.0.113.90", "first_seen": "2026-08-01T00:00:00Z"}
+    first = asyncio.run(footprint_service._cached_fetch(seed))
+    second = asyncio.run(footprint_service._cached_fetch(seed))
+    assert first == second
+    assert len(calls) == 1, "the second call must hit the cache, not re-fetch"
+
+
+def test_cached_fetch_fail_cache_skips_repeat_attempts(monkeypatch):
+    calls = []
+
+    async def _boom(seed):
+        calls.append(seed["ip"])
+        raise ConnectionError("simulated outage")
+
+    monkeypatch.setattr(footprint_service, "_fetch_ip_passive", _boom)
+    seed = {"ip": "203.0.113.91", "first_seen": "2026-08-01T00:00:00Z"}
+    assert asyncio.run(footprint_service._cached_fetch(seed)) == {}
+    assert asyncio.run(footprint_service._cached_fetch(seed)) == {}
+    assert len(calls) == 1, "the fail cache must absorb the second call"
+
+
+def test_cached_domain_fetch_positive_and_fail(monkeypatch):
+    calls = []
+
+    async def _fake(domain):
+        calls.append(domain)
+        return {"registrar": "R", "created": "2020-01-01"}
+
+    monkeypatch.setattr(footprint_service, "_rdap_domain_lookup", _fake)
+    a = asyncio.run(footprint_service._cached_domain_fetch("example.com"))
+    b = asyncio.run(footprint_service._cached_domain_fetch("example.com"))
+    assert a == b and len(calls) == 1
+
+    async def _boom(domain):
+        raise ConnectionError("down")
+
+    monkeypatch.setattr(footprint_service, "_rdap_domain_lookup", _boom)
+    assert asyncio.run(footprint_service._cached_domain_fetch("broken.example")) == {}
+    assert asyncio.run(footprint_service._cached_domain_fetch("broken.example")) == {}
+
+
+def test_cached_breach_fetch_positive_and_fail(monkeypatch):
+    calls = []
+
+    async def _fake(email):
+        calls.append(email)
+        return ["XKCD"]
+
+    monkeypatch.setattr(footprint_service, "_breach_lookup", _fake)
+    a = asyncio.run(footprint_service._cached_breach_fetch("a@example.com"))
+    b = asyncio.run(footprint_service._cached_breach_fetch("a@example.com"))
+    assert a == b == ["XKCD"] and len(calls) == 1
+
+    async def _boom(email):
+        raise ConnectionError("down")
+
+    monkeypatch.setattr(footprint_service, "_breach_lookup", _boom)
+    assert asyncio.run(footprint_service._cached_breach_fetch("b@example.com")) == []
+    assert asyncio.run(footprint_service._cached_breach_fetch("b@example.com")) == []
+
+
+def test_fetch_ip_passive_isolates_sibling_and_subdomain_failures(monkeypatch):
+    """A failing sibling crt.sh lookup is skipped (continue), and a raising
+    subdomain enumeration degrades to [] — each provider isolated."""
+    seed = {"ip": "203.0.113.77", "first_seen": "2026-08-01T10:00:00Z", "last_seen": "2026-08-02T10:00:00Z"}
+
+    async def _rdap(ip):
+        return {"cidr": "203.0.113.0/24", "netname": "T", "org": "O", "country": "US", "siblings": []}
+
+    async def _crtsh_apex(q):
+        return {"certificates": [], "domains": [{"domain": "c2.example.com"}]}
+
+    async def _crtsh_sibling(q):
+        raise ConnectionError("sibling lookup down")
+
+    async def _subs(apex):
+        raise ConnectionError("subdomain query down")
+
+    monkeypatch.setattr(footprint_service, "_ptr_for_ip", lambda ip: "c2.example.com")
+    monkeypatch.setattr(footprint_service, "_rdap_lookup", _rdap)
+    monkeypatch.setattr(footprint_service, "_crtsh_lookup", lambda q: _crtsh_sibling(q) if q != "c2.example.com" else _crtsh_apex(q))
+    monkeypatch.setattr(footprint_service, "_crtsh_subdomains", _subs)
+    monkeypatch.setattr(footprint_service, "_asn_lookup", lambda ip: asyncio.coroutine(dict)())
+    monkeypatch.setattr(footprint_service, "_cached_domain_fetch", lambda d: asyncio.coroutine(dict)())
+
+    out = asyncio.run(footprint_service._fetch_ip_passive(seed))
+    assert out["passive_dns"] == []
+    assert out["subdomains"] == []
+    assert out["certificates"] == []
+
+
+def test_embedded_emails_reads_stored_bytes(monkeypatch, tmp_path):
+    """The real SAMPLES_DIR read: emails embedded in the stored .bin surface
+    (extract_iocs runs on the actual bytes)."""
+    from ..core import config as app_config
+
+    monkeypatch.setattr(app_config, "SAMPLES_DIR", tmp_path)
+    (tmp_path / "abc123.bin").write_bytes(b"contact support@example.com for details")
+    emails = footprint_service._embedded_emails("abc123")
+    assert emails and emails[0] == "support@example.com"
+    assert footprint_service._embedded_emails("missing000") == []
+
+
+def test_mock_sibling_ips_bad_ip_returns_empty():
+    assert footprint_service._mock_sibling_ips({"ip": "999.999.1.1"}) == []
+
+
+def test_passive_layer_collects_asn_and_skips_errored_fetches(monkeypatch):
+    """`_passive_layer` runs the seeds concurrently: an errored fetch is
+    skipped (continue) while successful ones contribute asn rows."""
+    async def _cached(seed):
+        if seed["ip"] == "198.51.100.1":
+            raise ConnectionError("boom")
+        return {
+            "resolutions": [{"domain": f"h-{seed['ip']}.example.net", "first_seen": "2026-08-01", "last_seen": "2026-08-02", "synthetic": False}],
+            "asn": {"ip": seed["ip"], "asn": "AS1"},
+        }
+
+    monkeypatch.setattr(footprint_service, "_cached_fetch", _cached)
+    seeds = [
+        {"ip": "203.0.113.10", "hits": 5, "first_seen": "2026-08-01", "last_seen": "2026-08-02"},
+        {"ip": "198.51.100.1", "hits": 4, "first_seen": "2026-08-01", "last_seen": "2026-08-02"},
+    ]
+    out = asyncio.run(footprint_service._passive_layer(seeds, mock=False))
+    assert out["source"] == "live"
+    assert len(out["resolutions"]) == 1
+    assert [a["asn"] for a in out["asn"]] == ["AS1"]

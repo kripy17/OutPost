@@ -18,9 +18,8 @@ sys.path.insert(0, str(_COMMON))
 sys.path.insert(0, str(_LINUX))
 sys.path.insert(0, str(_WINDOWS))
 
-from shipper import Shipper, _default_host_id, agent_run_name, claim_active_live_run, resolve_live_run_id  # noqa: E402
-from collector_linux import _parse_saddr, parse_audit_line  # noqa: E402
-
+from collector_linux import _parse_saddr, parse_audit_line
+from shipper import Shipper, _default_host_id, agent_run_name, claim_active_live_run, resolve_live_run_id
 
 # ---------------------------------------------------------------------------
 # Linux (auditd) parser

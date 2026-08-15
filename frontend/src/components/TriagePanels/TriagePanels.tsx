@@ -209,7 +209,7 @@ export function AllowlistPanel({ runId }: { runId: string }) {
   );
 }
 
-export function SuppressionPanel({ runId, alerts }: { runId: string; alerts: Alert[] }) {
+export function SuppressionPanel({ runId, alerts, sampleName }: { runId: string; alerts: Alert[]; sampleName?: string | null }) {
   const queryClient = useQueryClient();
   const [reason, setReason] = useState("");
 
@@ -217,7 +217,15 @@ export function SuppressionPanel({ runId, alerts }: { runId: string; alerts: Ale
     queryKey: ["suppressions"],
     queryFn: getSuppressions,
   });
-  const active = all.filter((s) => s.run_id === runId);
+  // Run-scoped suppressions always apply here; global whole-rule ones are
+  // managed on the Rules page; global VALUE-scoped ones apply to this run
+  // when the value matches its sample (e.g. beaconing → detonate-demo.sh).
+  const active = all.filter((s) => {
+    if (s.run_id === runId) return true;
+    if (s.run_id != null) return false;
+    if (!s.value) return false;
+    return !!sampleName && s.value.toLowerCase() === sampleName.toLowerCase();
+  });
   const activeRules = new Set(active.map((s) => s.rule_id));
 
   // The rules that fired in this run — the ones worth suppressing here.
@@ -280,6 +288,11 @@ export function SuppressionPanel({ runId, alerts }: { runId: string; alerts: Ale
             <li key={s.id} className="flex items-center gap-2 py-1.5">
               <Chip tone="clean">suppressed</Chip>
               <span className="font-mono text-xs text-text-primary">{s.rule_id}</span>
+              {s.value && (
+                <span className="rounded border border-border-subtle px-1 font-mono text-[9px] text-text-faint" title="Value scope — only matching alerts are suppressed">
+                  → {s.value}
+                </span>
+              )}
               {s.reason && <span className="truncate text-[10px] text-text-faint">{s.reason}</span>}
               <button
                 onClick={() => remove.mutate(s.id)}

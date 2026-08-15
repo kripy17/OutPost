@@ -21,7 +21,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
 
-from shipper import Shipper, resolve_live_run_id  # noqa: E402
+from shipper import Shipper, resolve_live_run_id
 
 AUDIT_LOG = "/var/log/audit/audit.log"
 # AUDIT_LOG env override — lets the collector tail a test/simulated feed

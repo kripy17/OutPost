@@ -22,8 +22,9 @@ from ..core.db import db_session
 from ..core.schema import Alert, AlertStatusIn
 from ..models import audit
 from ..models import event as event_store
-from ..models.event import _parse_related_pids
 from ..models import run as run_store
+from ..models.event import _parse_related_pids
+from ..models.run import SYNTHETIC_SOURCES
 
 router = APIRouter(tags=["alerts"])
 
@@ -271,6 +272,7 @@ def list_alert_queue(
     host_id: str | None = None,
     assignee: str | None = None,
     campaign: str | None = None,
+    provenance: str | None = None,
     q: str | None = None,
     sort: str = "aging",
     limit: int = 50,
@@ -279,15 +281,19 @@ def list_alert_queue(
     """The analyst triage queue — alerts across every run with run context.
 
     Filters: status (open/acknowledged/resolved/all), rule, severity, host,
-    assignee, campaign (a shared IOC value), and free text across sample /
-    rule / details. `sort=aging` surfaces open-oldest-first (SLA pressure);
-    `sort=newest` flips it. Returns the envelope the queue page renders:
-    totals per status plus the page of rows.
+    assignee, campaign (a shared IOC value), provenance (real = host/sandbox
+    telemetry, synthetic = seed / webapp-demo / sandbox:demo runs — the same
+    SYNTHETIC_SOURCES split the History archive uses), and free text across
+    sample / rule / details. `sort=aging` surfaces open-oldest-first (SLA
+    pressure); `sort=newest` flips it. Returns the envelope the queue page
+    renders: totals per status plus the page of rows.
     """
     if status not in ("open", "acknowledged", "resolved", "all"):
         raise HTTPException(status_code=422, detail="status must be open, acknowledged, resolved, or all")
     if severity not in ("suspicious", "malicious", None):
         raise HTTPException(status_code=422, detail="severity must be suspicious or malicious")
+    if provenance not in ("real", "synthetic", None):
+        raise HTTPException(status_code=422, detail="provenance must be real or synthetic")
     if sort not in ("aging", "newest"):
         raise HTTPException(status_code=422, detail="sort must be aging or newest")
     limit = max(1, min(limit, 200))
@@ -317,6 +323,13 @@ def list_alert_queue(
             "a.run_id IN (SELECT DISTINCT run_id FROM events WHERE dest_ip = ? OR file_path = ? OR registry_key = ? OR process_name = ?)"
         )
         params.extend([campaign] * 4)
+    if provenance:
+        # The same synthetic split the History archive hides by default — the
+        # queue can isolate (or exclude) demo/seed noise in one click.
+        marks = ",".join("?" for _ in SYNTHETIC_SOURCES)
+        op = "IN" if provenance == "synthetic" else "NOT IN"
+        where.append(f"r.source {op} ({marks})")
+        params += list(SYNTHETIC_SOURCES)
     if q:
         like = f"%{q}%"
         where.append("(r.sample_name LIKE ? OR a.rule_id LIKE ? OR a.rule_name LIKE ? OR a.details LIKE ? OR a.related_ip LIKE ?)")

@@ -20,10 +20,8 @@ operator runs as admin. Honest bootstrap, no hidden privilege escalation.
 """
 
 import os
-import shutil
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 import typer
@@ -71,7 +69,6 @@ def run(
     backend_url: str = typer.Option(_backend_url, envvar="OUTPOST_API_URL", help="Backend base URL"),
 ):
     """Run the local collector in live mode now (claims the open live session)."""
-    from ..lib import api_client
     from ..rendering.banners import show_banner
 
     show_banner(primary=False)
@@ -84,7 +81,9 @@ def run(
     console.print("[dim]It auto-claims the newest open live session. Open the Live Monitor in the webapp and click 'Start live monitoring' if nothing is streaming.[/dim]")
     cmd = [sys.executable, str(script), "--backend-url", backend_url, "--mode", "live"]
     try:
-        subprocess.run(cmd)
+        # Foreground child — the collector runs until Ctrl-C; its exit code
+        # is not meaningful to this wrapper.
+        subprocess.run(cmd, check=False)
     except KeyboardInterrupt:
         console.print("[dim]Collector stopped.[/dim]")
 
@@ -422,9 +421,10 @@ def _is_collector_running() -> bool:
     any probe failure (honest "can't tell", not a crash)."""
     try:
         if os.name == "nt":
-            out = subprocess.run(["tasklist", "/FO", "CSV"], capture_output=True, text=True, timeout=10).stdout
+            # Best-effort probe: a non-zero exit just means "not running".
+            out = subprocess.run(["tasklist", "/FO", "CSV"], capture_output=True, text=True, timeout=10, check=False).stdout
             return "python" in out.lower()  # coarse; scheduled task wraps python
-        out = subprocess.run(["pgrep", "-f", "collector_"], capture_output=True, text=True, timeout=10).stdout
+        out = subprocess.run(["pgrep", "-f", "collector_"], capture_output=True, text=True, timeout=10, check=False).stdout
         return "collector_" in out
     except Exception:
         return False
@@ -490,14 +490,14 @@ def status():
         me = next((a for a in fleet.get("agents", []) if a.get("host_id") == host_id), None)
     except Exception as exc:  # dead backend / auth — honest "can't tell"
         console.print(f"[dim]Fleet:[/dim] backend unreachable ({type(exc).__name__}) — local checks only")
-        return None
+        return
 
     if me is None:
         console.print(
             "[dim]Fleet:[/dim] this host has no row on the backend yet — "
             "start the collector (`outpost agent run`) and it will appear on the Agents page"
         )
-        return None
+        return
 
     identity = me.get("identity")
     role = me.get("last_auth_role")
@@ -525,4 +525,4 @@ def status():
             f"[dim] · events: {me.get('event_count', 0)} · alerts: {me.get('alert_count', 0)}"
             f" · runs: {me.get('run_count', 0)}[/dim]"
         )
-    return None
+    return

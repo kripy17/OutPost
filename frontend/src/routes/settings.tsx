@@ -25,6 +25,7 @@ import {
   testIntelKey,
 } from "../lib/api";
 import { lockedIpsText, rateLimitBadge, runResetFlow } from "./settingsHelpers";
+import { clearSavedProvenances, readSavedProvenance, STATUS_TABS } from "./findingsHelpers";
 import type { NotificationSettings, NotificationSettingsIn } from "../types";
 
 const inputCls =
@@ -623,6 +624,78 @@ function ChannelBadge({ active }: { active: boolean }) {
   );
 }
 
+/** Queue preferences — the per-status-tab provenance split the Open Findings
+ *  sweep remembers ("real hosts first" etc.). Purely client-side (mirrors the
+ *  search-draft clear pattern): a read-only chip per tab shows what's saved,
+ *  and one click wipes them all back to the fresh-install defaults. */
+const PROVENANCE_LABELS: Record<string, string> = {
+  real: "real hosts",
+  synthetic: "synthetic",
+};
+
+function QueuePreferencesPanel() {
+  const read = () =>
+    Object.fromEntries(STATUS_TABS.map((t) => [t.v, readSavedProvenance(t.v)])) as Record<string, "" | "real" | "synthetic">;
+  const [saved, setSaved] = useState(read);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const clear = () => {
+    if (!window.confirm("Clear ALL saved queue preferences? Each status tab returns to showing all provenance, and the archive returns to real-telemetry-first.")) return;
+    clearSavedProvenances();
+    setSaved(read());
+    setMsg("Queue preferences cleared — every tab shows all provenance (real hosts first on the archive).");
+    setTimeout(() => setMsg(null), 4000);
+  };
+
+  const anySaved = STATUS_TABS.some((t) => saved[t.v] !== "");
+
+  return (
+    <Panel
+      kicker="Triage · preferences"
+      title="Queue provenance split"
+      right={
+        <span
+          className={`rounded-full border px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide ${
+            anySaved ? "border-accent/50 text-accent" : "border-border-subtle text-text-faint"
+          }`}
+        >
+          {anySaved ? "customized" : "defaults"}
+        </span>
+      }
+    >
+      <p className="mb-3 text-xs leading-relaxed text-text-muted">
+        The Open Findings sweep remembers a provenance split per status tab ("real hosts first", "synthetic only").
+        These are saved in this browser only — wipe them all in one click, mirroring the draft clears elsewhere.
+      </p>
+      <div className="mb-3 flex flex-wrap items-center gap-1.5">
+        {STATUS_TABS.map((t) => (
+          <span
+            key={t.v}
+            className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 font-mono text-[10px] ${
+              saved[t.v] ? "border-accent/50 bg-accent/10 text-accent" : "border-border-subtle bg-bg-elevated/40 text-text-faint"
+            }`}
+          >
+            <span className="uppercase tracking-wide">{t.label}</span>
+            <span>{saved[t.v] ? PROVENANCE_LABELS[saved[t.v]] : "all"}</span>
+          </span>
+        ))}
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          onClick={clear}
+          disabled={!anySaved}
+          className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-2 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-risk-malicious/50 hover:text-risk-malicious disabled:cursor-default disabled:opacity-40"
+          title="Remove every saved per-tab provenance choice (localStorage only)"
+        >
+          <Icon name="x" size={12} />
+          Clear queue preferences
+        </button>
+        {msg && <p className="text-xs text-accent">{msg}</p>}
+      </div>
+    </Panel>
+  );
+}
+
 export default function SettingsPage() {
   const queryClient = useQueryClient();
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: getMe, staleTime: 30_000 });
@@ -719,9 +792,12 @@ export default function SettingsPage() {
         lede="Tune the console: theme, access & passwords, data retention and intel keys, and where findings are routed. Everything here is optional — the zero-config default just works."
       />
 
-      <SectionHeader n="01" title="Look & feel" desc="Theme and palette — the instrument-panel look." />
-      <div className="mb-8">
+      <SectionHeader n="01" title="Look & feel" desc="Theme, palette, and client-side triage preferences — the instrument-panel look." />
+      <div className="mb-6">
         <ThemePalettePanel />
+      </div>
+      <div className="mb-8">
+        <QueuePreferencesPanel />
       </div>
 
       <SectionHeader n="02" title="Access & security" desc="Optional auth: one password gates the console; login rate limiting protects it." />

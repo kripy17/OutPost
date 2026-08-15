@@ -20,7 +20,6 @@ feeds the run-detail page ("chain diagram") and campaign clustering, which
 now prefers members with correlated chains.
 """
 
-from typing import Optional
 
 # Canonical attack progression — the order analysts read a chain in. Stages
 # that don't map to a rule (e.g. initial-access-only rule sets) are absent;
@@ -39,10 +38,10 @@ _CANONICAL_ORDER = [
 ]
 
 # rule_id → stage (single source, imported from detection to stay in lockstep).
-from ..services.detection import _KILL_CHAIN_STAGE  # noqa: E402
+from ..services.detection import _KILL_CHAIN_STAGE
 
 
-def _stage_of(rule_id: str) -> Optional[str]:
+def _stage_of(rule_id: str) -> str | None:
     return _KILL_CHAIN_STAGE.get(rule_id)
 
 
@@ -81,7 +80,7 @@ def correlate_chain(alerts: list[dict]) -> list[dict]:
     return links
 
 
-def chain_label(links: list[dict]) -> Optional[str]:
+def chain_label(links: list[dict]) -> str | None:
     """Human label for a chain, e.g. \"dropper → C2 → persistence\".
 
     Returns None for no chain. Used by the webapp chain card and campaign

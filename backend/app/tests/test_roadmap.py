@@ -3,9 +3,8 @@
 
 from datetime import datetime, timedelta, timezone
 
-from .conftest import make_run
 from ..core.schema import Alert
-from ..services import detection, stix as stix_service
+from .conftest import make_run
 
 
 def _ts(offset_seconds: int) -> str:
@@ -311,7 +310,6 @@ def test_webhook_fires_on_malicious_alert(client, monkeypatch):
     monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
     client.put("/notifications/settings", json={"webhook_url": "http://hook.test/alert"})
 
-    from ..services.notifications import _payload
 
     alerts = [
         Alert(
@@ -448,16 +446,13 @@ def test_multi_channel_fanout_fires_each_configured_channel(client, monkeypatch)
 def test_smtp_fires_via_thread_when_configured(client, monkeypatch):
     """SMTP channel triggers the blocking send in a thread (captured calls)."""
     import asyncio
-    import threading
 
     from ..services import notifications as notify
 
     calls: list[dict] = []
-    orig = notify.asyncio.to_thread
 
     def fake_to_thread(fn, *args, **kwargs):
         fn(*args, **kwargs)
-        return None
 
     monkeypatch.setattr(notify.asyncio, "to_thread", fake_to_thread)
     monkeypatch.setattr(

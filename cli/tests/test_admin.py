@@ -103,7 +103,7 @@ def test_pg_migrate_runs_the_exporter_subprocess(monkeypatch, tmp_path):
     monkeypatch.setattr(admin_mod, "_MIGRATE_SCRIPT", fake_script)
     captured: list[list[str]] = []
 
-    def fake_run(cmd):
+    def fake_run(cmd, check=False):
         captured.append(cmd)
         return sp.CompletedProcess(cmd, 0)
 

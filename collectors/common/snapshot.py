@@ -137,7 +137,7 @@ def _windows(host_id: str) -> dict:
     out = _base(host_id, "windows")
     try:
         procs = subprocess.run(
-            ["tasklist", "/FO", "CSV", "/NH"], capture_output=True, text=True, timeout=15
+            ["tasklist", "/FO", "CSV", "/NH"], capture_output=True, text=True, timeout=15, check=False
         ).stdout
         for line in procs.splitlines():
             m = re.match(r'"([^"]*)","(\d+)"', line.strip())
@@ -146,7 +146,7 @@ def _windows(host_id: str) -> dict:
     except (OSError, subprocess.SubprocessError):
         pass
     try:
-        net = subprocess.run(["netstat", "-ano"], capture_output=True, text=True, timeout=15).stdout
+        net = subprocess.run(["netstat", "-ano"], capture_output=True, text=True, timeout=15, check=False).stdout
         for line in net.splitlines():
             parts = line.split()
             if len(parts) >= 5 and "LISTENING" in parts:
@@ -161,7 +161,7 @@ def _windows(host_id: str) -> dict:
 def _macos(host_id: str) -> dict:
     out = _base(host_id, "macos")
     try:
-        ps = subprocess.run(["ps", "-axo", "pid=,comm="], capture_output=True, text=True, timeout=15).stdout
+        ps = subprocess.run(["ps", "-axo", "pid=,comm="], capture_output=True, text=True, timeout=15, check=False).stdout
         for line in ps.splitlines():
             parts = line.strip().split(None, 1)
             if len(parts) == 2:
@@ -169,7 +169,7 @@ def _macos(host_id: str) -> dict:
     except (OSError, subprocess.SubprocessError, ValueError):
         pass
     try:
-        net = subprocess.run(["netstat", "-anv", "-p", "tcp"], capture_output=True, text=True, timeout=15).stdout
+        net = subprocess.run(["netstat", "-anv", "-p", "tcp"], capture_output=True, text=True, timeout=15, check=False).stdout
         for line in net.splitlines():
             if "LISTEN" not in line:
                 continue

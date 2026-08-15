@@ -2,7 +2,8 @@
 # verify.sh — OutPost full verification sweep in one command.
 #
 #   backend pytest  →  coverage gate (14/14 ATT&CK)  →  collector pytest
-#   →  CLI pytest  →  frontend lint/tests/build  →  air-gap artifact gate
+#   →  CLI pytest  →  backend lint (curated ruff)  →  frontend lint/tests/build
+#     →  air-gap artifact gate
 #     (static scan of the shipped bundle for external dependency syntax)
 #   →  doc-count gate (fails FAST on stale badge/README claims — before the
 #     slow collector gates)
@@ -93,6 +94,15 @@ step "CLI pytest      (cli/tests)" \
 
 step "Frontend lint   (eslint)" \
   bash -c "cd '$ROOT/frontend' && '$NPM' run lint"
+
+# Backend lint — curated ruff over backend/, cli/, collectors/ (ruff.toml at
+# the repo root: correctness E/F + import sorting I; the deck's intentional
+# idioms are excluded: Typer Option() defaults (B008), collector env-setup
+# imports (E402), best-effort exception swallows (S110/S112/BLE001), and the
+# nitpick/preview families). This closes the lint gap the frontend eslint
+# gate already covers — the Python trees were drifting un-gated.
+step "Backend lint   (ruff — curated)" \
+  bash -c "'$ROOT/.venv/bin/python' '$ROOT/scripts/gate_ruff.py'"
 
 step "Frontend tests  (vitest)" \
   bash -c "cd '$ROOT/frontend' && '$NPM' run test"
@@ -234,6 +244,13 @@ step "Size-gate hints  (hard-ceiling failure prints a fix)" \
 # Runs against a fake HTTP backend — no provider key needed.
 step "Sandbox hints  (every provider-gate failure prints a fix)" \
   bash -c "'$ROOT/.venv/bin/python' '$ROOT/scripts/test_sandbox_provider_hints.py'"
+
+# Ruff-gate hint self-test — a lint drift (unused import) must fail the
+# backend-lint gate WITH its '→ fix:' line, and applying that fix must turn
+# the gate green again. Gates the gate: a refactor that drops the hint or
+# misses a drift direction fails the sweep here.
+step "Ruff hints  (lint drift prints a fix, fix goes green)" \
+  bash -c "'$ROOT/.venv/bin/python' '$ROOT/scripts/test_ruff_hints.py'"
 
 # Hint-coverage guard — the self-explaining discipline is structural: every
 # gate under scripts/ that emits a '→ fix:' hint must be mapped to a

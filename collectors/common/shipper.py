@@ -182,7 +182,7 @@ class Shipper:
                 timeout=5,
             )
             resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001 — heartbeat is best-effort
+        except Exception as exc:
             log.warning("Heartbeat failed: %s", exc)
 
     def ship_snapshot(self, platform: str | None = None) -> dict | None:
@@ -204,7 +204,7 @@ class Shipper:
             )
             resp.raise_for_status()
             return resp.json()
-        except Exception as exc:  # noqa: BLE001 — snapshot is best-effort
+        except Exception as exc:
             log.warning("Snapshot ship failed: %s", exc)
             return None
 
@@ -237,8 +237,7 @@ class Shipper:
     # -- fallback spooling ---------------------------------------------------
     def _spool(self, batch: list[dict]) -> None:
         with open(self.spool_path, "a", encoding="utf-8") as fh:
-            for ev in batch:
-                fh.write(json.dumps(ev) + "\n")
+            fh.writelines(json.dumps(ev) + "\n" for ev in batch)
 
     def _replay_spool(self) -> None:
         """Push any spooled events to the backend now that it's reachable."""

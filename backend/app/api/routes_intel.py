@@ -19,7 +19,7 @@ All writes are audited.
 import json
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Literal, Optional
+from typing import Literal
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -27,7 +27,8 @@ from pydantic import BaseModel
 
 from ..core import auth, config
 from ..core.db import db_session
-from ..models import audit, watchlist as watchlist_store
+from ..models import audit
+from ..models import watchlist as watchlist_store
 from ..services import enrichment
 
 router = APIRouter(tags=["intel"])
@@ -45,8 +46,8 @@ class IntelImportIn(BaseModel):
     """
 
     source: Literal["stix", "text", "auto"] = "auto"
-    content: Optional[str] = None
-    url: Optional[str] = None
+    content: str | None = None
+    url: str | None = None
 
 
 # -- Feed parsing ------------------------------------------------------------

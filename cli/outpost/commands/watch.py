@@ -17,7 +17,15 @@ from rich.panel import Panel
 from ..lib import api_client
 from ..monitoring import session as monitor
 from ..rendering.banners import show_banner
-from ..rendering.terminal_views import _recon_summary, console, render_alert, render_enum_kinds, render_network_table, render_process_tree, risk_gauge
+from ..rendering.terminal_views import (
+    _recon_summary,
+    console,
+    render_alert,
+    render_enum_kinds,
+    render_network_table,
+    render_process_tree,
+    risk_gauge,
+)
 
 
 def _today() -> str:

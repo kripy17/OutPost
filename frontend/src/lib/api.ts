@@ -460,8 +460,13 @@ export async function getSuppressions(): Promise<Suppression[]> {
   return get<Suppression[]>("/rules/suppressions");
 }
 
-export async function addSuppression(ruleId: string, reason?: string, runId?: string): Promise<Suppression> {
-  return post<Suppression>("/rules/suppressions", { rule_id: ruleId, reason: reason ?? "", run_id: runId ?? null });
+export async function addSuppression(ruleId: string, reason?: string, runId?: string, value?: string): Promise<Suppression> {
+  return post<Suppression>("/rules/suppressions", {
+    rule_id: ruleId,
+    reason: reason ?? "",
+    run_id: runId ?? null,
+    value: value ?? null,
+  });
 }
 
 export async function removeSuppression(id: number): Promise<void> {
@@ -663,6 +668,9 @@ export interface AlertQueueParams {
   host_id?: string;
   assignee?: string;
   campaign?: string;
+  // "real" (host/sandbox telemetry) or "synthetic" (seed/webapp-demo/
+  // sandbox:demo) — the same split the History archive hides by default.
+  provenance?: string;
   q?: string;
   sort?: string;
   limit?: number;

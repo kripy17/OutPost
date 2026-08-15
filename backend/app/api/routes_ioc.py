@@ -63,10 +63,23 @@ def search_ioc(value: str = Query(..., min_length=1)):
         else:
             sample_hits = []
 
+        # Reputation ride-along: when the searched value is a cached IP, carry
+        # its enrichment evidence (abuse score, VT positives, verdict, age) so
+        # the search page answers "have I seen this — and is it bad?" in one
+        # glance, instead of sending the analyst to the run-detail network
+        # table for the verdict. Null when the value was never enriched.
+        rep = conn.execute(
+            "SELECT abuse_score, vt_malicious_count, reputation, checked_at "
+            "FROM enrichment_cache WHERE ip = ?",
+            (value,),
+        ).fetchone()
+        reputation = dict(rep) if rep else None
+
     return {
         "value": value,
         "count": total,
         "returned": len(matches),
+        "reputation": reputation,
         "matches": matches,
         "samples": [
             {

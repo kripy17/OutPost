@@ -83,7 +83,6 @@ def clear_key(name: str, request: Request) -> None:
             target_type="settings", target_id=f"api_key_{name}",
             detail=f"{name} key cleared (env fallback may apply)",
         )
-    return None
 
 
 @router.post("/settings/keys/{name}/test", response_model=None)

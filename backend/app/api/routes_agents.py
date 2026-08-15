@@ -40,7 +40,6 @@ def post_heartbeat(
     is flagged silent instead of blending in with hosts that never shipped
     anything.
     """
-    import json as _json
 
     from ..core import auth as auth_service
     from ..services import fleet_health

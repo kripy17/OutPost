@@ -28,6 +28,7 @@ HINT_COVERAGE = {
     "refresh-badges.sh": "test_badge_hints.py",
     "check-image-size.sh": "test_check_image_size_hints.py",
     "validate_sandbox_provider.py": "test_sandbox_provider_hints.py",
+    "gate_ruff.py": "test_ruff_hints.py",
 }
 
 

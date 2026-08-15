@@ -10,7 +10,6 @@
 
 import csv
 import io
-from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Response
 
@@ -57,7 +56,7 @@ def _like(value: str) -> str:
     return f"%{escaped}%"
 
 
-def _parse_pids(raw: Optional[str]) -> list[int]:
+def _parse_pids(raw: str | None) -> list[int]:
     """Parse the `pid` filter — one integer or a comma-separated list (the
     recon-sweep jump: every enumerating PID of an enumeration-burst alert).
     422 on any token that isn't a positive integer."""
@@ -79,10 +78,10 @@ def _parse_pids(raw: Optional[str]) -> list[int]:
 
 
 def _validate_event_filters(
-    event_type: Optional[str],
-    platform: Optional[str],
-    severity: Optional[str],
-    source: Optional[str],
+    event_type: str | None,
+    platform: str | None,
+    severity: str | None,
+    source: str | None,
 ) -> None:
     """Shared dimension validation for the event feed and its count endpoints.
     `source` is None for /events/channel-counts (the dimension being split)."""
@@ -97,12 +96,12 @@ def _validate_event_filters(
 
 
 def _event_where(
-    event_type: Optional[str],
-    platform: Optional[str],
-    severity: Optional[str],
-    q: Optional[str],
+    event_type: str | None,
+    platform: str | None,
+    severity: str | None,
+    q: str | None,
     pids: list[int],
-    source: Optional[str],
+    source: str | None,
     include_synthetic: bool,
 ) -> tuple[list[str], list]:
     """Shared WHERE clause for the event feed and the channel-count split.
@@ -143,12 +142,12 @@ def _event_where(
 
 @router.get("/events", response_model=None)
 def list_events(
-    event_type: Optional[str] = None,
-    platform: Optional[str] = None,
-    severity: Optional[str] = None,
-    q: Optional[str] = None,
-    pid: Optional[str] = None,
-    source: Optional[str] = None,
+    event_type: str | None = None,
+    platform: str | None = None,
+    severity: str | None = None,
+    q: str | None = None,
+    pid: str | None = None,
+    source: str | None = None,
     include_synthetic: bool = Query(
         False,
         description="Show events from synthetic-provenance runs (seeds / webapp detonations / the sandbox demo)",
@@ -213,11 +212,11 @@ def list_events(
 
 @router.get("/events/channel-counts", response_model=None)
 def event_channel_counts(
-    event_type: Optional[str] = None,
-    platform: Optional[str] = None,
-    severity: Optional[str] = None,
-    q: Optional[str] = None,
-    pid: Optional[str] = None,
+    event_type: str | None = None,
+    platform: str | None = None,
+    severity: str | None = None,
+    q: str | None = None,
+    pid: str | None = None,
     include_synthetic: bool = Query(
         False,
         description="Show events from synthetic-provenance runs (seeds / webapp detonations / the sandbox demo)",
@@ -320,12 +319,12 @@ def process_summary(pid: int) -> dict:
 
 @router.get("/events/export", response_model=None)
 def export_events(
-    event_type: Optional[str] = None,
-    platform: Optional[str] = None,
-    severity: Optional[str] = None,
-    q: Optional[str] = None,
-    pid: Optional[str] = None,
-    source: Optional[str] = None,
+    event_type: str | None = None,
+    platform: str | None = None,
+    severity: str | None = None,
+    q: str | None = None,
+    pid: str | None = None,
+    source: str | None = None,
     include_synthetic: bool = Query(
         False,
         description="Show events from synthetic-provenance runs (seeds / webapp detonations / the sandbox demo)",

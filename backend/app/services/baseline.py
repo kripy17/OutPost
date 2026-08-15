@@ -16,7 +16,7 @@ so first-day traffic never spams anomalies.
 
 import datetime
 import os
-from typing import Iterator
+from collections.abc import Iterator
 
 from ..core.schema import Alert
 

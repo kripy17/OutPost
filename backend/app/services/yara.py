@@ -23,13 +23,12 @@ Two rule sources:
 
 import json
 import re
-from typing import Optional
 
 # Matched-rule shape returned to callers / surfaced on the detail page.
 MATCHED_RULE = tuple[str, str]  # (rule_name, family)
 
 
-def _hex_block_to_regex(block: str) -> Optional[bytes]:
+def _hex_block_to_regex(block: str) -> bytes | None:
     """Translate a YARA-style `{ 4D 5A ?? 90 }` hex block to a regex pattern
     (bytes). `??` becomes a single-byte wildcard. Returns None if invalid."""
     cleaned = block.strip().strip("{}").replace(" ", "").replace("\n", "")
@@ -61,7 +60,7 @@ def _compile_rule(patterns: list[str]) -> list[re.Pattern]:
 
 
 class _Rule:
-    __slots__ = ("name", "family", "description", "patterns")
+    __slots__ = ("description", "family", "name", "patterns")
 
     def __init__(self, name: str, family: str, description: str, patterns: list[str]):
         self.name = name
@@ -189,7 +188,7 @@ class CompiledRule:
     list of string ids that matched (so the lab can show *why*). The original
     rule text is kept as `source` so persistence is lossless."""
 
-    __slots__ = ("name", "family", "description", "strings", "condition", "source")
+    __slots__ = ("condition", "description", "family", "name", "source", "strings")
 
     def __init__(self, name: str, family: str, description: str, strings: dict[str, re.Pattern], condition, source: str = ""):
         self.name = name

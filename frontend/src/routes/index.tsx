@@ -9,7 +9,7 @@ import { PageHeader, Panel, Stat } from "../components/ui";
 import { TREND_WINDOWS, type TrendWindow } from "../lib/constants";
 import ComparePanel from "../components/ComparePanel/ComparePanel";
 import { BASE_URL, getRuns } from "../lib/api";
-import { archiveTotals } from "./runHistoryHelpers";
+import { archiveTotals, readArchiveShowSynthetic, writeArchiveShowSynthetic } from "./runHistoryHelpers";
 
 export default function RunHistoryPage() {
   // ?q=<sample> pre-filters the archive to one binary (Overview risk bars),
@@ -19,16 +19,12 @@ export default function RunHistoryPage() {
   const host = (searchParams.get("host") ?? "").trim();
   // The archive reads as real telemetry first — synthetic provenance (seeds /
   // webapp detonations / the sandbox demo) AND soak-named collector baselines
-  // (soak-…) are hidden unless the operator asks.
-  const [includeSynthetic, setIncludeSynthetic] = useState(() => localStorage.getItem("outpost-history-synthetic") === "1");
+  // (soak-…) are hidden unless the operator asks. The synthetic half shares
+  // its real-first preference with the findings queue's Open tab, so toggling
+  // it here moves the queue too (and vice versa) — one "real hosts first"
+  // choice, remembered consistently across both surfaces.
+  const [includeSynthetic, setIncludeSynthetic] = useState(readArchiveShowSynthetic);
   const [includeSoak, setIncludeSoak] = useState(() => localStorage.getItem("outpost-history-soak") === "1");
-  useEffect(() => {
-    try {
-      localStorage.setItem("outpost-history-synthetic", includeSynthetic ? "1" : "0");
-    } catch {
-      /* storage unavailable */
-    }
-  }, [includeSynthetic]);
   useEffect(() => {
     try {
       localStorage.setItem("outpost-history-soak", includeSoak ? "1" : "0");
@@ -181,7 +177,11 @@ export default function RunHistoryPage() {
                 ))}
               </div>
               <button
-                onClick={() => setIncludeSynthetic((v) => !v)}
+                onClick={() => setIncludeSynthetic((v) => {
+                  const next = !v;
+                  writeArchiveShowSynthetic(next);
+                  return next;
+                })}
                 aria-pressed={includeSynthetic}
                 title={includeSynthetic ? "Hide demo/synthetic runs again" : "Include seeded demo runs and webapp-synthetic detonations"}
                 className={`press rounded-md px-2.5 py-1 font-mono text-[11px] transition-colors duration-150 ${

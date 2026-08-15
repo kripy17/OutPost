@@ -80,6 +80,10 @@ export interface Suppression {
   id: number;
   rule_id: string;
   run_id: string | null;
+  // Optional value scope — a sample name, related IP, or detail substring.
+  // Set = only matching alerts are suppressed (e.g. beaconing →
+  // "detonate-demo.sh"); null = the whole rule scope.
+  value: string | null;
   reason: string | null;
   created_at: string;
 }
@@ -351,10 +355,20 @@ export interface IocMatch {
   registry_key: string | null;
 }
 
+export interface ReputationEvidence {
+  abuse_score: number | null;
+  vt_malicious_count: number | null;
+  reputation: Reputation | null;
+  checked_at: string | null;
+}
+
 export interface IocSearchResponse {
   value: string;
   count: number;
   returned: number;
+  // Cached enrichment evidence for IP searches — the "is it bad?" half of
+  // "have I seen this before?", so the verdict rides along with the matches.
+  reputation?: ReputationEvidence | null;
   matches: IocMatch[];
   // Uploaded binaries whose SHA-256 matches the query (roadmap 1.4).
   samples?: SampleMeta[];

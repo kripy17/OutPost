@@ -31,3 +31,4 @@ demo/.deck-video/
 
 # `script` session captures (the `script` command writes to ./typescript by default)
 /typescript
+.coverage

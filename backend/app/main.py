@@ -14,29 +14,30 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from .api.routes_admin import auto_prune_loop
+from .api.routes_admin import router as admin_router
+from .api.routes_agents import router as agents_router
 from .api.routes_alerts import router as alerts_router
 from .api.routes_analysis import router as analysis_router
+from .api.routes_audit import router as audit_router
 from .api.routes_auth import router as auth_router
 from .api.routes_campaigns import router as campaigns_router
 from .api.routes_events import router as events_router
 from .api.routes_footprint import router as footprint_router
 from .api.routes_health import router as health_router
-from .api.routes_ioc import router as ioc_router
-from .api.routes_keys import router as keys_router
 from .api.routes_ingest import router as ingest_router
 from .api.routes_intel import router as intel_router
+from .api.routes_ioc import router as ioc_router
+from .api.routes_keys import router as keys_router
+from .api.routes_metrics import router as metrics_router
 from .api.routes_notifications import router as notifications_router
 from .api.routes_rules import router as rules_router
-from .api.routes_setup import router as setup_router
 from .api.routes_runs import router as runs_router
 from .api.routes_samples import router as samples_router
 from .api.routes_sandbox import router as sandbox_router
+from .api.routes_setup import router as setup_router
 from .api.routes_watchlist import router as watchlist_router
 from .api.routes_yara import router as yara_router
-from .api.routes_agents import router as agents_router
-from .api.routes_audit import router as audit_router
-from .api.routes_metrics import router as metrics_router
-from .api.routes_admin import auto_prune_loop, router as admin_router
 from .core import auth as auth_service
 from .core.config import CORS_ORIGINS
 from .core.db import init_db

@@ -16,8 +16,7 @@ from ..core.db import db_session
 from ..core.schema import Alert, EventIn, RunCreate
 from ..models import event as event_store
 from ..models import run as run_store
-from ..services import detection
-from ..services import normalizer
+from ..services import detection, normalizer
 
 router = APIRouter(tags=["ingest"])
 

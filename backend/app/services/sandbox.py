@@ -29,7 +29,7 @@ The report *normalizers* are pure functions — unit-testable without network.
 import asyncio
 import datetime
 import uuid
-from typing import Any, Optional
+from typing import Any
 
 import httpx
 
@@ -130,12 +130,15 @@ def _process_rows(report: dict, key: str) -> list[dict]:
     """Tolerant extraction of the process list from any provider shape: a
     plain list, a dict keyed by pid (Triage), or nested under `process`."""
     raw = report.get(key)
+    if isinstance(raw, dict) and isinstance(raw.get("process"), list):
+        # Nested under `process` — check BEFORE the pid-keyed dict branch,
+        # which would otherwise swallow this shape (returning [] from its
+        # dict-values filter) and silently drop every process row.
+        return [r for r in raw["process"] if isinstance(r, dict)]
     if isinstance(raw, dict):  # Triage: {"1234": {…}, …}
         return [v for v in raw.values() if isinstance(v, dict)]
     if isinstance(raw, list):
         return [r for r in raw if isinstance(r, dict)]
-    if isinstance(raw, dict) and isinstance(raw.get("process"), list):
-        return [r for r in raw["process"] if isinstance(r, dict)]
     return []
 
 
@@ -160,7 +163,7 @@ def _value_rows(report: dict, key: str) -> list:
     return raw if isinstance(raw, list) else []
 
 
-def _as_ts(value: Any) -> Optional[str]:
+def _as_ts(value: Any) -> str | None:
     """A sandbox timestamp (ms epoch, ISO, or None) → ISO string, else None."""
     if value is None:
         return None
@@ -475,7 +478,7 @@ def create_run_id() -> str:
     return uuid.uuid4().hex[:12]
 
 
-def get_task(task_id: str) -> Optional[dict]:
+def get_task(task_id: str) -> dict | None:
     return _tasks.get(task_id)
 
 

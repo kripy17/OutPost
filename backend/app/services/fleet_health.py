@@ -91,7 +91,7 @@ async def fleet_health_loop_once() -> list[str]:
             events_stream.publish_fleet_update(
                 h["host_id"], online=False, silent=True, last_heartbeat=h.get("last_heartbeat")
             )
-        except Exception:  # noqa: BLE001 — a bad channel must never kill the loop
+        except Exception:
             pass
     return paged
 
@@ -102,6 +102,6 @@ async def fleet_health_loop() -> None:
     while True:
         try:
             await fleet_health_loop_once()
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
         await asyncio.sleep(CHECK_INTERVAL_SECONDS)

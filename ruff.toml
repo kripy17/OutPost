@@ -1,0 +1,39 @@
+# ruff.toml — the Python trees' lint gate (verify.sh "Backend lint (ruff)").
+# Single source of truth for backend/, cli/, collectors/. Enforces the
+# correctness rules (E/F) plus import sorting (I), with everything else the
+# codebase intentionally deviates on excluded:
+#
+#   B008    Typer's idiomatic Option()/Argument() defaults in CLI commands
+#   E402    collector env-setup imports that must run before the shipper import
+#   S110/   best-effort exception swallows in webhook / cache / heartbeat /
+#   S112    notification paths (fail-soft by design)
+#   BLE001  collectors' broad Exception catches while parsing OS telemetry
+#   DTZ FLY ISC PIE PYI RUF SIM TRY UP
+#           nitpick/preview families (datetime timezones, string formats,
+#           import conventions, simplify-this/that style) — pre-existing
+#           across the trees, not the drift class the gate exists to catch.
+#
+# A gate that prints a '→ fix:' hint (scripts/gate_ruff.py) plus its repair
+# self-test (scripts/test_ruff_hints.py) pin this behavior in verify.sh.
+
+line-length = 120
+target-version = "py310"
+
+[lint]
+extend-select = ["I"]
+extend-ignore = [
+    "B008",
+    "BLE001",
+    "DTZ",
+    "E402",
+    "FLY",
+    "ISC",
+    "PIE",
+    "PYI",
+    "RUF",
+    "S110",
+    "S112",
+    "SIM",
+    "TRY",
+    "UP",
+]
