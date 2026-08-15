@@ -89,10 +89,14 @@ interactive render exceeds a budget).
    `scripts/test_badge_hints.py` (seconds — real collect-only counts).
    A **hint-coverage guard** (`scripts/gate_hint_coverage.py`, same tier,
    milliseconds) makes the discipline structural: every gate under
-   `scripts/` that emits a `→ fix:` hint must be mapped to a self-test
-   with repair assertions that is actually invoked by verify.sh — so a
-   future gate that adds hints without a wired-in test fails the push
-   here.
+   `scripts/` that emits a `→ fix:` hint must appear in the shared
+   coverage map (`scripts/hint_coverage_map.py`) — the **single source of
+   truth** the guard and both repair self-tests import, so the gate →
+   self-test pairing lives in exactly one file — and the mapped self-test
+   must be actually invoked by verify.sh. Adding a new hint-emitting gate
+   is therefore a one-line map entry (+ wiring its test into the sweep);
+   a future gate that adds hints without registering a wired-in test
+   fails the push here.
 5. **`bash verify.sh`** — the full sweep (tests, soaks, layout sweep,
    post-deploy walk, badge refresh gate, image-budget gate + hint
    self-tests + hint-coverage guard re-check).

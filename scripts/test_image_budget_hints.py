@@ -27,10 +27,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
+from hint_coverage_map import gate_for
+
+# The gate this self-test pins is resolved from the shared coverage map
+# (scripts/hint_coverage_map.py) — the pairing lives there, not here.
 SRC = {
     "ci": ROOT / ".github/workflows/ci.yml",
     "docs": ROOT / "docs/17-CI-GATES.md",
-    "gate": ROOT / "scripts/gate_image_budget_docs.py",
+    "gate": ROOT / "scripts" / gate_for(Path(__file__).name),
     "sizes_script": ROOT / "scripts/check-image-size.sh",
     "sizes_json": ROOT / "badges/image-sizes.json",
 }

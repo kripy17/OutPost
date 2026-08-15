@@ -44,9 +44,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 VENV_PY = ROOT / ".venv/bin/python"
 
+from hint_coverage_map import gate_for
+
 SRC_DIRS = ("backend", "collectors", "cli", "frontend")
+# The gate this self-test pins (scripts/refresh-badges.sh) is resolved from
+# the shared coverage map (scripts/hint_coverage_map.py) — the pairing lives
+# there, not here.
 SRC_FILES = {
-    "scripts/refresh-badges.sh": ROOT / "scripts/refresh-badges.sh",
+    "scripts/refresh-badges.sh": ROOT / "scripts" / gate_for(Path(__file__).name),
     "scripts/check-image-size.sh": ROOT / "scripts/check-image-size.sh",
     "docs/17-CI-GATES.md": ROOT / "docs/17-CI-GATES.md",
     ".github/workflows/ci.yml": ROOT / ".github/workflows/ci.yml",  # --recover parses its gates
