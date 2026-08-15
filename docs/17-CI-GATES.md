@@ -91,12 +91,15 @@ interactive render exceeds a budget).
    milliseconds) makes the discipline structural: every gate under
    `scripts/` that emits a `→ fix:` hint must appear in the shared
    coverage map (`scripts/hint_coverage_map.py`) — the **single source of
-   truth** the guard and both repair self-tests import, so the gate →
+   truth** the guard and all four repair self-tests import, so the gate →
    self-test pairing lives in exactly one file — and the mapped self-test
-   must be actually invoked by verify.sh. Adding a new hint-emitting gate
-   is therefore a one-line map entry (+ wiring its test into the sweep);
-   a future gate that adds hints without registering a wired-in test
-   fails the push here.
+   must be actually invoked by verify.sh. The four covered gates are the
+   image-budget gate, the badge `--check` gate, the image-size gate's
+   hard-ceiling failure (layer dump + offline branches), and the sandbox
+   provider gate (every failure path). Adding a new hint-emitting gate is
+   therefore a one-line map entry (+ wiring its test into the sweep); a
+   future gate that adds hints without registering a wired-in test fails
+   the push here.
 5. **`bash verify.sh`** — the full sweep (tests, soaks, layout sweep,
    post-deploy walk, badge refresh gate, image-budget gate + hint
    self-tests + hint-coverage guard re-check).

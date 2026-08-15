@@ -9,9 +9,11 @@ module — and is shared by three consumers:
   * the hint-coverage guard (gate_hint_coverage.py) — requires every
     hint-emitting gate to appear in HINT_COVERAGE and every mapped
     self-test to be wired into verify.sh;
-  * the two repair self-tests (test_image_budget_hints.py,
-    test_badge_hints.py) — each resolves the gate file it pins from this
-    map via gate_for(), instead of hardcoding its own gate path.
+  * the four repair self-tests (test_image_budget_hints.py,
+    test_badge_hints.py, test_check_image_size_hints.py,
+    test_sandbox_provider_hints.py) — each resolves the gate file it
+    pins from this map via gate_for(), instead of hardcoding its own
+    gate path.
 
 Adding a new hint-emitting gate is therefore a one-line change in
 HINT_COVERAGE: write the paired self-test (it derives its gate source from
@@ -24,6 +26,8 @@ guard and the new test both pick the mapping up automatically.
 HINT_COVERAGE = {
     "gate_image_budget_docs.py": "test_image_budget_hints.py",
     "refresh-badges.sh": "test_badge_hints.py",
+    "check-image-size.sh": "test_check_image_size_hints.py",
+    "validate_sandbox_provider.py": "test_sandbox_provider_hints.py",
 }
 
 

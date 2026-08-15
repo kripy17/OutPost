@@ -71,6 +71,7 @@ def main() -> int:
         registry = _get(base, "/sandbox/providers")
     except Exception as exc:  # backend down — the gate must fail, not skip
         print(f"FAIL — cannot reach backend at {base}: {exc}", file=sys.stderr)
+        print("  → fix: start the backend first (e.g. bash scripts/dev.sh) or pass --backend <url>, then re-run this gate", file=sys.stderr)
         return 1
 
     providers = {p["id"]: p for p in registry["providers"]}
@@ -79,12 +80,18 @@ def main() -> int:
 
     if requested not in ("auto", "demo", "anyrun", "triage", "joe"):
         print(f"FAIL — unknown provider '{requested}' (expected anyrun | triage | joe | auto | demo)", file=sys.stderr)
+        print("  → fix: pass --provider anyrun | triage | joe | auto | demo (auto = the configured provider, demo = the labeled pipeline)", file=sys.stderr)
         return 1
 
     if requested in ("anyrun", "triage", "joe") and requested not in configured:
         print(
             f"FAIL — provider '{requested}' requested but NOT configured "
             f"(set the {requested.upper()}_API_KEY env var and restart the backend)",
+            file=sys.stderr,
+        )
+        print(
+            f"  → fix: set {requested.upper()}_API_KEY and restart the backend, "
+            "or pass --provider demo to validate the labeled pipeline instead",
             file=sys.stderr,
         )
         return 1
@@ -105,6 +112,7 @@ def main() -> int:
         sample = _upload(base, name, MZ)
     except Exception as exc:
         print(f"FAIL — sample upload to {base} failed: {exc}", file=sys.stderr)
+        print("  → fix: confirm the backend is up and the samples vault is writable, then re-run this gate", file=sys.stderr)
         return 1
     print(f"uploaded {name} → {sample['sample_id']} ({sample['detected_platform']}, {sample['size']} B)")
 
@@ -113,6 +121,7 @@ def main() -> int:
         task = _post_json(base, "/sandbox/detonate", {"sample_id": sample["sample_id"], "provider": provider, "platform": "windows"})
     except Exception as exc:
         print(f"FAIL — /sandbox/detonate failed: {exc}", file=sys.stderr)
+        print("  → fix: check the provider key is set and the sandbox service is reachable, then re-run this gate", file=sys.stderr)
         return 1
     task_id = task["task_id"]
     run_id = task["run_id"]
@@ -133,26 +142,32 @@ def main() -> int:
 
     if last["status"] == "error":
         print(f"FAIL — detonation errored: {last.get('error')}", file=sys.stderr)
+        print("  → fix: inspect the provider's task error above and confirm the sample's platform matches the provider, then re-run", file=sys.stderr)
         return 1
     if last["status"] != "completed":
         print(f"FAIL — detonation did not complete within {args.max_wait}s (status={last['status']})", file=sys.stderr)
+        print("  → fix: raise --max-wait for slow provider queues, or check the provider's job status, then re-run", file=sys.stderr)
         return 1
 
     # -- 4. Assert the pipeline landed the events -----------------------------------
     if last["events"] <= 0:
         print("FAIL — task completed with zero events (normalizer produced nothing)", file=sys.stderr)
+        print("  → fix: confirm the sample type is in the provider's supported set and check the report normalizer, then re-run", file=sys.stderr)
         return 1
     try:
         run = _get(base, f"/runs/{run_id}")
     except Exception as exc:
         print(f"FAIL — cannot read the completed run: {exc}", file=sys.stderr)
+        print("  → fix: confirm the backend's /runs endpoint responds, then re-run this gate", file=sys.stderr)
         return 1
     summary = run.get("run", run)
     if not summary.get("completed_at"):
         print("FAIL — run never completed", file=sys.stderr)
+        print("  → fix: wait for the run to finish (or check the provider task) and re-run", file=sys.stderr)
         return 1
     if not str(summary.get("source", "")).startswith("sandbox:"):
         print(f"FAIL — run source '{summary.get('source')}' is not sandbox:<provider>", file=sys.stderr)
+        print("  → fix: the run must be created by the sandbox detonation path — restart the backend and re-detonate", file=sys.stderr)
         return 1
 
     print("PASS — live sandbox detonation validated end to end:")
