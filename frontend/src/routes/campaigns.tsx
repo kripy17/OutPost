@@ -1,14 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import type { MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import ExportButton from "../components/ExportButton/ExportButton";
 import { Icon } from "../components/Icon";
 import { EVENT_ICON, platformIconName } from "../components/iconMeta";
 import { eventDetail, TYPE_STYLE } from "../components/TimelineView/timeline";
 import { PageHeader } from "../components/ui";
-import { CAMPAIGN_SORTS, clusterBars, sortCampaigns, topologyClusters, type CampaignSort } from "./campaignsHelpers";
+import { CAMPAIGN_SORTS, clusterBars, reputationFill, sortCampaigns, topMembers, topologyClusters, type CampaignSort, type ClusterBar } from "./campaignsHelpers";
 import { getCampaigns, getCampaignStix, getFootprintTopology } from "../lib/api";
-import type { Campaign, CampaignIoc, Severity } from "../types";
+import type { Campaign, CampaignIoc, Reputation, Severity } from "../types";
 
 const MAX_TIMELINE = 40;
 const MAX_CHIPS = 10;
@@ -225,6 +226,26 @@ export default function CampaignsPage() {
     () => (topology ? topologyClusters(topology.clusters, campaigns) : []),
     [topology, campaigns],
   );
+  // Hover tooltip — each bar row reveals its member breakdown (sample names +
+  // hit counts) in a fixed card, same pattern as the Overview process preview
+  // but with the data already in memory, so no fetch is needed.
+  const [tip, setTip] = useState<{ x: number; y: number; row: ClusterBar } | null>(null);
+  const tipTimer = useRef<number | null>(null);
+  const showTip = (e: ReactMouseEvent<HTMLElement>, row: ClusterBar) => {
+    if (tipTimer.current !== null) window.clearTimeout(tipTimer.current);
+    const r = e.currentTarget.getBoundingClientRect();
+    tipTimer.current = window.setTimeout(() => {
+      setTip({
+        x: Math.max(8, Math.min(r.left, window.innerWidth - 304)),
+        y: Math.max(8, Math.min(r.bottom + 8, window.innerHeight - 260)),
+        row,
+      });
+    }, 120);
+  };
+  const hideTip = () => {
+    if (tipTimer.current !== null) window.clearTimeout(tipTimer.current);
+    setTip(null);
+  };
   // Sort mode persists so the analyst's preferred ordering survives reloads.
   const [sort, setSort] = useState<CampaignSort>(() => {
     const saved = localStorage.getItem("outpost-campaigns-sort");
@@ -316,13 +337,29 @@ export default function CampaignsPage() {
               {strip.length} cluster{strip.length === 1 ? "" : "s"}
               {strip.length > 10 ? " · top 10 by size" : ""}
             </span>
-            <Link
-              to="/footprint"
-              className="press ml-auto inline-flex items-center gap-1 font-mono text-[11px] text-accent transition-colors hover:underline"
-            >
-              footprint topology
-              <Icon name="arrowRight" size={11} />
-            </Link>
+            <div className="ml-auto flex items-center gap-3">
+              {/* Pattern key — the fill encodes reputation for color-blind
+                  viewers, not just the tint: solid = malicious, diagonal
+                  hatch = suspicious, crosshatch = unknown, vertical = clean. */}
+              <span
+                className="hidden items-center gap-3 font-mono text-[10px] text-text-faint lg:flex"
+                aria-label="Reputation key — fill pattern, not just color"
+              >
+                {(["malicious", "suspicious", "unknown", "clean"] as Reputation[]).map((r) => (
+                  <span key={r} className="inline-flex items-center gap-1">
+                    <span className="h-2 w-3 rounded-sm" style={reputationFill(r)} />
+                    {r}
+                  </span>
+                ))}
+              </span>
+              <Link
+                to="/footprint"
+                className="press inline-flex items-center gap-1 font-mono text-[11px] text-accent transition-colors hover:underline"
+              >
+                footprint topology
+                <Icon name="arrowRight" size={11} />
+              </Link>
+            </div>
           </div>
           {/* Compact bar chart — one row per cluster, bar width ∝ sample count
               (relative to the loudest), reputation-tinted, still deep-linking
@@ -334,17 +371,13 @@ export default function CampaignsPage() {
                 to={`/footprint?sample=${encodeURIComponent(b.memberSample)}`}
                 title={`${b.ip} — ${b.sample_count} sample${b.sample_count === 1 ? "" : "s"} · ${b.reputation}${b.inCampaign ? " · already a campaign" : " · not yet a campaign"}`}
                 className="press relative flex items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 font-mono text-[11px] transition-colors hover:bg-bg-elevated/50"
+                onMouseEnter={(e) => showTip(e, b)}
+                onMouseLeave={hideTip}
               >
                 <span
                   aria-hidden="true"
-                  className={`absolute inset-y-1 left-0 rounded-sm ${
-                    b.reputation === "malicious"
-                      ? "bg-risk-malicious/35"
-                      : b.reputation === "suspicious"
-                        ? "bg-risk-suspicious/35"
-                        : "bg-bg-elevated"
-                  }`}
-                  style={{ width: `${b.pct}%` }}
+                  className="absolute inset-y-1 left-0 rounded-sm"
+                  style={{ width: `${b.pct}%`, ...reputationFill(b.reputation) }}
                 />
                 <Icon name="network" size={10} className="relative shrink-0 text-text-muted" />
                 <span className="relative truncate text-text-primary">{b.ip}</span>
@@ -359,6 +392,47 @@ export default function CampaignsPage() {
           </div>
         </div>
       )}
+
+      {/* Bar-row hover tooltip — the cluster's member breakdown (names + hit
+          counts, loudest first, capped at 8 with the overflow counted). */}
+      {tip &&
+        (() => {
+          const { rows, more } = topMembers(tip.row.members);
+          return (
+            <div
+              role="tooltip"
+              className="pointer-events-none fixed z-50 w-72 overflow-hidden rounded-xl border border-border-subtle bg-bg-surface shadow-[var(--shadow-raised)]"
+              style={{ left: tip.x, top: tip.y }}
+            >
+              <div className="flex items-center gap-2 border-b border-border-subtle bg-bg-elevated/40 px-3 py-2">
+                <Icon name="network" size={13} className="shrink-0 text-accent" />
+                <span className="truncate font-mono text-xs font-semibold text-text-primary">{tip.row.ip}</span>
+                <span className="ml-auto shrink-0 font-mono text-[10px] text-text-faint">×{tip.row.sample_count}</span>
+              </div>
+              <div className="px-3 py-2">
+                {rows.length === 0 && <p className="font-mono text-[10px] text-text-faint">no members recorded</p>}
+                {rows.map((m) => (
+                  <div key={m.sample_name} className="flex items-baseline gap-2 py-0.5">
+                    <span className="truncate font-mono text-[10px] text-text-muted" title={m.sample_name}>
+                      {m.sample_name}
+                    </span>
+                    <span className="ml-auto shrink-0 font-mono text-[10px] tabular-nums text-text-faint">
+                      {m.hits} hit{m.hits === 1 ? "" : "s"}
+                    </span>
+                  </div>
+                ))}
+                {more > 0 && (
+                  <p className="mt-1 border-t border-border-subtle pt-1 font-mono text-[10px] text-text-faint">
+                    +{more} more
+                  </p>
+                )}
+              </div>
+              <div className="border-t border-border-subtle bg-bg-elevated/40 px-3 py-1.5 font-mono text-[10px] text-accent">
+                open in footprint topology →
+              </div>
+            </div>
+          );
+        })()}
 
       <div className="mt-6 space-y-6">
         {sorted.map((c) => (
