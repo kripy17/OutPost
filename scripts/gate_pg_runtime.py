@@ -247,11 +247,17 @@ def main() -> int:
         _check("FK violation raised", "foreign key" in str(exc).lower() or "constraint" in str(exc).lower(),
                f"got {type(exc).__name__}: {exc}")
 
-    # cleanup so the smoke is re-runnable against the same server
+    # cleanup so the smoke is re-runnable against the same server.
+    # Child tables first, in the same order as the app's prune path
+    # (routes_admin._prune): SQLite ignores FK order (FKs off by default),
+    # Postgres enforces it — deleting runs first would violate
+    # watchlist_hits_run_id_fkey.
     with db_session() as conn:
         conn.execute("DELETE FROM events WHERE run_id = ?", (run_id,))
         conn.execute("DELETE FROM alerts WHERE run_id = ?", (run_id,))
         conn.execute("DELETE FROM run_notes WHERE run_id = ?", (run_id,))
+        conn.execute("DELETE FROM watchlist_hits WHERE run_id = ?", (run_id,))
+        conn.execute("DELETE FROM run_allowlist WHERE run_id = ?", (run_id,))
         conn.execute("DELETE FROM runs WHERE run_id = ?", (run_id,))
         conn.execute("DELETE FROM enrichment_cache WHERE ip = '1.2.3.4'")
         conn.execute("DELETE FROM settings WHERE key = 'pg.smoke'")
