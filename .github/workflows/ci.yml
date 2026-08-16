@@ -94,6 +94,7 @@ jobs:
           .venv/bin/python scripts/test_badge_hints.py
           .venv/bin/python scripts/test_check_image_size_hints.py
           .venv/bin/python scripts/test_sandbox_provider_hints.py
+          .venv/bin/python scripts/test_cleanup_badge_branches.py
           .venv/bin/python scripts/gate_hint_coverage.py
 
       - name: Run the full verification sweep
@@ -108,6 +109,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: bash scripts/refresh-badges.sh --commit
+
+      - name: Clean up stale badge branches
+        # Hygiene after a successful publish: every chore/badges-* branch on
+        # origin except the one this run created (recorded in RUNNER_TEMP by
+        # refresh-badges.sh) is an orphan — a blocked pr create, or an old
+        # run that crashed between push and PR. Delete them so they can never
+        # accumulate. Idempotent; the recorded branch survives any in-flight
+        # publish (open PR or manual-PR wait).
+        if: github.ref == 'refs/heads/main' && success()
+        run: bash scripts/cleanup_badge_branches.sh
 
   # Tier 4 — the live-Postgres runtime. The sqlite3-compat shim over psycopg
   # (core/db_pg.py) runs the real backend DB layer against a postgres service
@@ -360,3 +371,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: bash scripts/refresh-badges.sh --commit
+
+      - name: Clean up stale badge branches
+        # Same hygiene as the push-run publish: dispatch/schedule runs are
+        # exactly where a blocked-pr-create orphan would accumulate without
+        # a code push, so this job cleans up after itself too.
+        run: bash scripts/cleanup_badge_branches.sh

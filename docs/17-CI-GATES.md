@@ -16,7 +16,7 @@ Every push to `main` and every pull request runs the `CI` workflow
 | `Air-gap — full bundle in a --network none container` | Builds `deploy/Dockerfile.airgap-ci`, then `docker run --network none` runs `scripts/airgap-offline.sh` **at production volume** (`OUTPOST_OFFLINE_VOLUME=1` seeds a deterministic ~11k-event store): the four-gate bundle + cold-start budget + both e2es with the network namespace EMPTY, against production-scale data | any external host reachable by any library or technique (OS-level proof, not a simulation); a >1000 ms (1500 ms at volume) cold start |
 
 Inside the verify job, three fast-fail tiers front-load the expensive checks
-so the cheapest signal fails first. The sweep itself is 19 steps; beyond the
+so the cheapest signal fails first. The sweep itself is 29 steps; beyond the
 suites it includes the **identity gate** (`scripts/gate_proc_identity.py`) —
 an AST scan of the detection/process-tree/baseline/CLI-rendering modules that
 fails if any event-level `process_name` read lacks an `exe_path` resolution,
@@ -81,12 +81,16 @@ interactive render exceeds a budget).
    budget drifted between docs/17 and the ci.yml size-gate flags (or a
    stamp/measured column out of sync) fails the push milliseconds later,
    before the sweep.
-4. **Hint self-tests (image-budget + badge gates)** (~2 min in) — the two
+4. **Hint self-tests (image-budget + badge gates)** (~2 min in) — the
    self-tests that pin the `→ fix:` hints run here too, so a refactor that
    drops a hint (or a new failure path that forgets one) fails the push
    before the 3.5-min sweep: `scripts/test_image_budget_hints.py`
    (milliseconds, pure fixture regex) then
-   `scripts/test_badge_hints.py` (seconds — real collect-only counts).
+   `scripts/test_badge_hints.py` (seconds — real collect-only counts), plus
+   `scripts/test_cleanup_badge_branches.py` (seconds — a local bare-origin
+   fixture proving the publish-hygiene step deletes stale `chore/badges-*`
+   branches on origin while keeping the branch the current run recorded in
+   `RUNNER_TEMP`, so blocked-pr-create orphans can never accumulate).
    A **hint-coverage guard** (`scripts/gate_hint_coverage.py`, same tier,
    milliseconds) makes the discipline structural: every gate under
    `scripts/` that emits a `→ fix:` hint must appear in the shared
