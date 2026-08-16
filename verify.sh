@@ -455,6 +455,14 @@ step "Layout sweep    (Playwright UI gates: overflow + triage + live monitor)" \
 step "Post-deploy walk (fail-closed auth + TLS)" \
   bash -c "cd '$ROOT' && '$ROOT/.venv/bin/python' scripts/post_deploy_walk.py"
 
+# CLI parity walk — the terminal-mirror triage surfaces LIVE. Boots an
+# isolated seeded backend and drives the real `outpost` binary through the
+# allowlist add/list/remove, suppressions add/list/remove, and bulk-triage
+# (open→acked→open) round-trips the webapp's run-detail panel + queue sweep
+# have — proving terminal parity on a real backend, not just mocks.
+step "CLI parity walk (allowlist + suppressions + bulk)" \
+  bash -c "cd '$ROOT' && '$ROOT/.venv/bin/python' scripts/cli_parity_walk.py"
+
 # Badge refresh — recompute the dynamic badge payloads with the shared
 # refresh-badges.sh. Default is --check: the sweep FAILS if any badge is
 # stale (counts moved but badges/*.json didn't), gating without committing.
