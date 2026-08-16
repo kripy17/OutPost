@@ -11,12 +11,12 @@ Every push to `main` and every pull request runs the `CI` workflow
 
 | Job | What it runs | Fails on |
 |---|---|---|
-| `verify.sh — backend · collectors · CLI · frontend` | Fast-fail ladder, then the full sweep | stale badges/README claims, tsc errors, failing pytest/vitest, collector FP-baseline soaks, layout overflow, post-deploy walk |
+| `verify.sh — backend · collectors · CLI · frontend` | Fast-fail ladder, then the full sweep | stale badges/README claims, tsc errors, failing pytest/vitest, collector FP-baseline soaks, layout overflow, post-deploy walk, CLI parity walk |
 | `Deploy — web image + Caddyfile + compose` | Production image build + **smoke-tests of the shipped images under `--network none`** — `scripts/smoke-web-image.sh` runs the actual `Dockerfile.web` artifact with an empty namespace (must boot, serve the SPA + every referenced chunk, keep the `/api` proxy live, and show an empty `/proc/net/route`), and `scripts/smoke-backend-image.sh` does the same for the `backend/Dockerfile` API container (must boot, serve `/health` + `/meta` with `demo_mode:false` + `/runs` over loopback via its own python runtime, empty `/proc/net/route`). The web smoke also has an **end-to-end phase** (`--with-backend`): a second web container (same image) joins a docker `--internal` shared network (no external route by construction; a `--network none` container cannot be attached to another network — docker forbids it — so the strict empty-namespace proof stays on its own container), starts with the backend absent so `/api/health` is an honest 502, then the real backend container joins the same network and `/api/health` **flips 502 → 200** in that same container, with `/api/runs` returning a 200 JSON array through the proxy — while a socket connect from the backend to a TEST-NET address still fails, proving the pair cannot reach outside the host. Then `scripts/walk-compose-stack.sh` brings up the **actual `deploy/docker-compose.prod.yml` stack** (real Caddy image + real backend container, `OUTPOST_HOST=localhost` so Caddy auto-HTTPS serves its internal CA) and walks the four post-deploy checklist items over real TLS — `/api/health` → ok through the proxy, `/api/runs` 401 without / 200 with an admin token, `/auth/login` + `/auth/me` enabled, and the agent-token flow (heartbeat 401 bare / 200 with the token + host online on `/api/agents`, token refused outside telemetry → 403). This is the leg that proves the compose file, its env interpolation, and the Caddy → backend wiring as the shipped containers — complementing the docker-less post-deploy walk in verify.sh. An **image-size gate** (`scripts/check-image-size.sh`) runs right after the web image build: the runtime image is multi-stage slim (caddy:2-alpine + dist only), so its size is a sharp bloat detector — growth past the 100 MB soft budget **warns** (printed + written to the run summary, exit 0) and past the 150 MB hard ceiling **fails** the job (a leaked build stage / node_modules dwarfs the base in one step; budgets tunable via `--budget-mb`/`--fail-mb`, measured size printed every run for calibration; when the hard ceiling trips, the script dumps the **top layers by size** (`docker history`) so the offending layer — a giant COPY, an npm/pip install, a leaked venv — is identifiable in the CI log instead of a bare number). The **backend image gets the same gate** (`outpost-backend:ci`, soft 300 MB / hard 400 MB — python:3.12-slim base + pip runtime deps + the app package only). Plus Caddyfile/compose config validation | Dockerfile/Caddyfile/compose drift; a shipped image that fails to boot or serves nothing; a proxy that can't reach the real backend; the compose stack failing to come up fail-closed |
 | `Air-gap — full bundle in a --network none container` | Builds `deploy/Dockerfile.airgap-ci`, then `docker run --network none` runs `scripts/airgap-offline.sh` **at production volume** (`OUTPOST_OFFLINE_VOLUME=1` seeds a deterministic ~11k-event store): the four-gate bundle + cold-start budget + both e2es with the network namespace EMPTY, against production-scale data | any external host reachable by any library or technique (OS-level proof, not a simulation); a >1000 ms (1500 ms at volume) cold start |
 
 Inside the verify job, three fast-fail tiers front-load the expensive checks
-so the cheapest signal fails first. The sweep itself is 29 steps; beyond the
+so the cheapest signal fails first. The sweep itself is 30 steps; beyond the
 suites it includes the **identity gate** (`scripts/gate_proc_identity.py`) —
 an AST scan of the detection/process-tree/baseline/CLI-rendering modules that
 fails if any event-level `process_name` read lacks an `exe_path` resolution,
@@ -105,7 +105,12 @@ interactive render exceeds a budget).
    future gate that adds hints without registering a wired-in test fails
    the push here.
 5. **`bash verify.sh`** — the full sweep (tests, soaks, layout sweep,
-   post-deploy walk, badge refresh gate, image-budget gate + hint
+   post-deploy walk, **CLI parity walk** — `scripts/cli_parity_walk.py`
+   boots an isolated seeded backend and drives the real `outpost` binary
+   through the allowlist add/list/remove, suppressions add/list/remove,
+   and bulk-triage (open→acked→open) round-trips the webapp's run-detail
+   panel + queue sweep have, proving terminal parity on a real backend
+   rather than mocks — badge refresh gate, image-budget gate + hint
    self-tests + hint-coverage guard re-check).
 
 A dedicated `Refresh dynamic badges` job runs on the **weekly schedule and
