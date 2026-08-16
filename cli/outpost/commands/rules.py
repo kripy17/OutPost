@@ -7,6 +7,10 @@
 - `outpost rules log-patterns` — the operator-editable anti-forensics pattern
   tables (log-service-stop / log-clearing) per platform — read-only mirror of
   the webapp editor, so the same rule surface is inspectable from a terminal.
+- `outpost rules suppressions add|list|remove` — rule suppressions (global /
+  run-scoped / value-scoped), the terminal mirror of the webapp's
+  SuppressionPanel + Rules page, so a noisy rule can be silenced from the
+  terminal without touching the webapp.
 """
 
 import typer
@@ -142,3 +146,76 @@ def log_patterns(
         if not any_rows:
             console.print("[dim]  (no patterns for this kind/platform)[/dim]")
     console.print("[dim]Edits happen in the webapp Rules page (or the pattern API); this view is read-only.[/dim]")
+
+
+# ── outpost rules suppressions add|list|remove ──────────────────────────────
+suppressions_app = typer.Typer(
+    help="Rule suppressions — stop a rule (or rule+scope) from firing",
+    add_completion=False,
+)
+app.add_typer(suppressions_app, name="suppressions")
+
+
+@suppressions_app.command("list")
+def suppressions_list() -> None:
+    """Every rule suppression (global + run/value scoped) — the webapp's
+    SuppressionPanel + Rules-page mirror."""
+    show_banner(primary=False)
+    try:
+        rows = api_client.get_suppressions()
+    except api_client.APIError as exc:
+        console.print(f"[bold #C4453B]Failed: {exc}[/bold #C4453B]")
+        raise typer.Exit(1)
+    if not rows:
+        console.print("[dim]No rule suppressions — every rule fires normally.[/dim]")
+        return
+    table = Table(title="Rule suppressions", border_style="dim")
+    table.add_column("ID")
+    table.add_column("Rule")
+    table.add_column("Scope")
+    table.add_column("Reason")
+    for s in rows:
+        scope = "global"
+        if s.get("run_id"):
+            scope = f"run {s['run_id'][:12]}"
+        elif s.get("value"):
+            scope = f"value {s['value']}"
+        table.add_row(str(s["id"]), s["rule_id"], scope, s.get("reason") or "-")
+    console.print(table)
+
+
+@suppressions_app.command("add")
+def suppressions_add(
+    rule_id: str = typer.Argument(..., help="rule id to suppress (e.g. beaconing)"),
+    run_id: str | None = typer.Option(None, "--run-id", help="scope to one run (default: global)"),
+    value: str | None = typer.Option(None, "--value", help="scope to a sample name / related IP value"),
+    reason: str = typer.Option("", "--reason", "-r", help="why it's suppressed"),
+) -> None:
+    """Suppress a rule — global, run-scoped (--run-id), or value-scoped
+    (--value), matching the webapp's SuppressionPanel + queue sweep."""
+    show_banner(primary=False)
+    try:
+        row = api_client.add_suppression(rule_id, reason, run_id, value)
+    except api_client.APIError as exc:
+        console.print(f"[bold #C4453B]Failed: {exc}[/bold #C4453B]")
+        raise typer.Exit(1)
+    scope = "global"
+    if row.get("run_id"):
+        scope = f"run {row['run_id'][:12]}"
+    elif row.get("value"):
+        scope = f"value {row['value']}"
+    console.print(f"[#3FA796]Suppressed {row['rule_id']} ({scope})[/#3FA796]")
+
+
+@suppressions_app.command("remove")
+def suppressions_remove(
+    suppression_id: int = typer.Argument(..., help="suppression id from `outpost rules suppressions list`"),
+) -> None:
+    """Remove a suppression, restoring the rule for future batches."""
+    show_banner(primary=False)
+    try:
+        api_client.remove_suppression(suppression_id)
+    except api_client.APIError as exc:
+        console.print(f"[bold #C4453B]Failed: {exc}[/bold #C4453B]")
+        raise typer.Exit(1)
+    console.print(f"[#3FA796]Removed suppression {suppression_id}[/#3FA796]")

@@ -20,6 +20,7 @@ import {
   removeSuppression,
 } from "../../lib/api";
 import type { Alert, AllowlistKind } from "../../types";
+import { activeSuppressions } from "./suppressions";
 
 const KINDS: AllowlistKind[] = ["ip", "file", "registry", "process", "hash"];
 
@@ -219,13 +220,9 @@ export function SuppressionPanel({ runId, alerts, sampleName }: { runId: string;
   });
   // Run-scoped suppressions always apply here; global whole-rule ones are
   // managed on the Rules page; global VALUE-scoped ones apply to this run
-  // when the value matches its sample (e.g. beaconing → detonate-demo.sh).
-  const active = all.filter((s) => {
-    if (s.run_id === runId) return true;
-    if (s.run_id != null) return false;
-    if (!s.value) return false;
-    return !!sampleName && s.value.toLowerCase() === sampleName.toLowerCase();
-  });
+  // when the value matches its sample — the same derivation the alert-row
+  // one-click button reads, so the two surfaces never disagree.
+  const active = activeSuppressions(all, runId, sampleName);
   const activeRules = new Set(active.map((s) => s.rule_id));
 
   // The rules that fired in this run — the ones worth suppressing here.

@@ -210,6 +210,111 @@ def list_events(
     }
 
 
+@router.get("/events/counts", response_model=None)
+def event_counts(
+    event_type: str | None = None,
+    platform: str | None = None,
+    severity: str | None = None,
+    q: str | None = None,
+    pid: str | None = None,
+    source: str | None = None,
+    include_synthetic: bool = Query(
+        False,
+        description="Show events from synthetic-provenance runs (seeds / webapp detonations / the sandbox demo)",
+    ),
+) -> dict:
+    """One-query counts for the ENTIRE Event Log rail — category + channel.
+
+    Replaces the old pattern where every category badge fired its own
+    filtered COUNT request plus a separate channel-counts call (7 requests
+    per filter change). One query returns both splits under the SAME shared
+    filters (severity / platform / search / pid / synthetic toggle):
+
+      types.all        — every matching event (the "All events" badge; the
+                         source filter, when active, is applied here so it
+                         matches the feed's own total)
+      types.<type>     — per event-type buckets (a partition of types.all)
+      channels.total   — every matching event with NO source filter (the
+                         "All sources" tab; source is the split dimension)
+      channels.<chan>  — the six provenance/channel facets (cross-cutting:
+                         auditd/sysmon overlap live, so they need not sum)
+
+    `event_type` (the active category) narrows ONLY the CHANNEL buckets — the
+    source rail partitions the feed, so its counts move with the category —
+    and never the TYPE buckets, because each category badge counts its own
+    type under the other filters regardless of which category is selected.
+    """
+    _validate_event_filters(event_type, platform, severity, source)
+    pids = _parse_pids(pid)
+    # event_type deliberately stays OUT of the base WHERE — it applies only to
+    # the channel buckets via the CASE below.
+    where, params = _event_where(None, platform, severity, q, pids, None, include_synthetic)
+    clause = " AND ".join(where)
+
+    # The active source facet applies to the TYPE buckets (a category badge
+    # reflects the selected tab); the CHANNEL buckets are the source split and
+    # never take it. _source_clause returns literal SQL (no bound params), so
+    # it's safe to inline inside the CASE expressions.
+    src_clause = "1=1"
+    if source:
+        src_clause, _ = _source_clause(source)
+    # event_type is inlined as a literal the same way: it appears in FIVE CASE
+    # expressions, so a `?` would need five bindings — and it's already
+    # validated against the fixed _EVENT_TYPES set, so quoting is safe.
+    type_clause = "1=1"
+    if event_type:
+        type_clause = f"e.event_type = '{event_type}'"
+
+    with db_session() as conn:
+        row = conn.execute(
+            f"""
+            SELECT
+              SUM(CASE WHEN {type_clause} THEN 1 ELSE 0 END) AS total,
+              SUM(CASE WHEN {src_clause} THEN 1 ELSE 0 END) AS all_events,
+              SUM(CASE WHEN {src_clause} AND e.event_type = 'process_create' THEN 1 ELSE 0 END)
+                  AS process_create,
+              SUM(CASE WHEN {src_clause} AND e.event_type = 'network_connection' THEN 1 ELSE 0 END)
+                  AS network_connection,
+              SUM(CASE WHEN {src_clause} AND e.event_type = 'file_write' THEN 1 ELSE 0 END)
+                  AS file_write,
+              SUM(CASE WHEN {src_clause} AND e.event_type = 'registry_write' THEN 1 ELSE 0 END)
+                  AS registry_write,
+              SUM(CASE WHEN {type_clause} AND r.source = 'live' THEN 1 ELSE 0 END)      AS live,
+              SUM(CASE WHEN {type_clause} AND r.source LIKE 'sandbox:%' THEN 1 ELSE 0 END)
+                  AS sandbox,
+              SUM(CASE WHEN {type_clause} AND COALESCE(e.log_source, '') = 'auditd'
+                       THEN 1 ELSE 0 END)                                               AS auditd,
+              SUM(CASE WHEN {type_clause} AND COALESCE(e.log_source, '') = 'sysmon'
+                       THEN 1 ELSE 0 END)                                               AS sysmon,
+              SUM(CASE WHEN {type_clause} AND r.source != 'live'
+                       AND r.source NOT LIKE 'sandbox:%' THEN 1 ELSE 0 END)             AS webapp
+            FROM events e
+            JOIN runs r ON r.run_id = e.run_id
+            WHERE {clause}
+            """,
+            params,
+        ).fetchone()
+
+    return {
+        "total": row["all_events"],
+        "types": {
+            "all": row["all_events"],
+            "process_create": row["process_create"],
+            "network_connection": row["network_connection"],
+            "file_write": row["file_write"],
+            "registry_write": row["registry_write"],
+        },
+        "channels": {
+            "total": row["total"],
+            "live": row["live"],
+            "sandbox": row["sandbox"],
+            "webapp": row["webapp"],
+            "auditd": row["auditd"],
+            "sysmon": row["sysmon"],
+        },
+    }
+
+
 @router.get("/events/channel-counts", response_model=None)
 def event_channel_counts(
     event_type: str | None = None,

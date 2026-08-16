@@ -20,7 +20,8 @@ app = typer.Typer(
 def _register_commands() -> None:
     from .commands.admin import app as admin_app
     from .commands.agent import app as agent_app
-    from .commands.alerts import alerts
+    from .commands.alerts import alerts, triage
+    from .commands.allowlist import app as allowlist_app
     from .commands.auth import app as auth_app
     from .commands.campaigns import campaigns
     from .commands.compare import compare
@@ -43,6 +44,7 @@ def _register_commands() -> None:
 
     app.command("list")(list_runs)
     app.command("alerts")(alerts)
+    app.command("triage")(triage)
     app.command()(show)
     app.command()(export)
     app.command()(run)
@@ -55,6 +57,7 @@ def _register_commands() -> None:
     app.command("samples")(samples)
     app.command("refresh")(refresh)
     app.add_typer(watchlist_app, name="watchlist")
+    app.add_typer(allowlist_app, name="allowlist")
     app.add_typer(intel_app, name="intel")
     app.add_typer(yara_app, name="yara")
     app.add_typer(footprint_app, name="footprint")

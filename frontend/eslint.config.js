@@ -44,10 +44,12 @@ export default tseslint.config(
     languageOptions: { globals: { ...globals.node } },
   },
   {
-    // The router entry declares ~20 lazy page components with no exports.
-    // React Refresh can't fast-refresh the router table anyway (every page
-    // edit reloads it), so the rule has nothing useful to say here.
-    files: ["src/main.tsx"],
+    // The router module declares ~20 lazy page components alongside the
+    // exported `router` — a non-component export, so React Refresh can't
+    // fast-refresh the route table anyway (every page edit reloads it), and
+    // the rule has nothing useful to say here. main.tsx stays export-less
+    // (its own fast-refresh boundary), so it needs no exemption.
+    files: ["src/main.tsx", "src/appRouter.tsx"],
     rules: { "react-refresh/only-export-components": "off" },
   },
 );

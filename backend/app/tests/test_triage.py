@@ -60,6 +60,42 @@ def test_alert_status_patch_roundtrip(client):
     assert client.patch("/alerts/999999", json={"status": "resolved"}).status_code == 404
 
 
+def test_alert_status_comment_semantics(client):
+    """The transition-comment contract both clients mirror (webapp
+    triageLifecycle, CLI test_triage_lifecycle), pinned at its source: a
+    non-empty comment is recorded whitespace-trimmed, while an empty /
+    whitespace-only / omitted comment stores NULL — so a bare transition
+    CLEARS a prior comment rather than accumulating it on the alert."""
+    run_id = make_run(client, sample_name="comment-contract.bin")
+    client.post("/ingest/batch", json=[_conn(run_id, "203.0.113.77")])
+    aid = client.get(f"/runs/{run_id}/alerts").json()[0]["id"]
+    assert client.get(f"/runs/{run_id}/alerts").json()[0]["status_comment"] is None
+
+    # Non-empty (padded) comment → recorded, trimmed.
+    resp = client.patch(f"/alerts/{aid}", json={"status": "acknowledged", "comment": "  seen, will resolve  "}).json()
+    assert resp["status"] == "acknowledged"
+    assert resp["status_comment"] == "seen, will resolve"
+
+    # A bare resolve (no comment key) → NULL, clearing the prior comment —
+    # the exact case the webapp + CLI lifecycle tests pin.
+    resp = client.patch(f"/alerts/{aid}", json={"status": "resolved"}).json()
+    assert resp["status"] == "resolved"
+    assert resp["status_comment"] is None
+
+    # Empty string → NULL.
+    resp = client.patch(f"/alerts/{aid}", json={"status": "open", "comment": ""}).json()
+    assert resp["status"] == "open"
+    assert resp["status_comment"] is None
+
+    # Whitespace-only → NULL (stripped first).
+    resp = client.patch(f"/alerts/{aid}", json={"status": "acknowledged", "comment": "   "}).json()
+    assert resp["status_comment"] is None
+
+    # And a fresh non-empty comment after the clears is recorded again.
+    resp = client.patch(f"/alerts/{aid}", json={"status": "resolved", "comment": "FP, our scanner"}).json()
+    assert resp["status_comment"] == "FP, our scanner"
+
+
 # -- Bulk triage (select many alerts → one transition) ------------------------
 
 
@@ -85,7 +121,8 @@ def test_bulk_status_resolve_and_validation(client):
     ids = [a["id"] for a in client.get(f"/runs/{run_id}/alerts").json()]
 
     assert client.post("/alerts/bulk", json={"ids": ids, "status": "resolved"}).json()["updated"] == len(ids)
-    assert all(a["status"] == "resolved" for a in client.get(f"/runs/{run_id}/alerts").json())
+    # Same comment contract as PATCH: an omitted comment stores NULL.
+    assert all(a["status"] == "resolved" and a["status_comment"] is None for a in client.get(f"/runs/{run_id}/alerts").json())
 
     # Validation: bad status 422, empty ids → 0 without touching the DB.
     assert client.post("/alerts/bulk", json={"ids": ids, "status": "banana"}).status_code == 422

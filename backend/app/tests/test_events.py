@@ -172,6 +172,89 @@ def test_events_channel_counts_one_query_for_source_rail(client):
     client.post(f"/runs/{live}/complete")
 
 
+def test_events_counts_one_query_for_whole_rail(client):
+    """/events/counts returns the ENTIRE rail (category + channel) in one
+    query: type buckets partition `types.all`, channel buckets mirror the
+    channel-counts split, and an active `source` facet narrows the TYPE
+    buckets (category badges reflect the selected tab) but never the CHANNEL
+    buckets (source is the split dimension)."""
+    live = make_run(client, sample_name="cnt-live.bin", session_type="live")
+    sand = make_run(client, sample_name="cnt-sand.bin", source="sandbox:anyrun")
+    web = make_run(client, sample_name="cnt-web.bin", source="cli")
+    seed = make_run(client, sample_name="cnt-seed.bin", source="seed")
+
+    def _ev(run_id: str, name: str, platform: str = "linux", etype: str = "process_create", chan: str | None = None) -> dict:
+        ev = _event(run_id, etype, platform, process_name=name, timestamp=_ts(1))
+        if chan:
+            ev["log_source"] = chan
+        return ev
+
+    _ingest(
+        client,
+        live,
+        [
+            _ev(live, "cnt-aud.exe", chan="auditd"),
+            _ev(live, "cnt-net.exe", etype="network_connection"),
+            _ev(live, "cnt-live.exe"),
+        ],
+    )
+    _ingest(client, sand, [_ev(sand, "cnt-sand.exe", platform="windows", etype="file_write")])
+    _ingest(client, web, [_ev(web, "cnt-web.exe", platform="windows", etype="registry_write")])
+    _ingest(client, seed, [_ev(seed, "cnt-seed.exe")])
+
+    # Default view (synthetic hidden): 5 events, type buckets partition all.
+    data = client.get("/events/counts", params={"q": "cnt-"}).json()
+    assert data["total"] == 5
+    types = data["types"]
+    assert types["all"] == 5
+    assert types["process_create"] == 2  # aud + live (seed excluded)
+    assert types["network_connection"] == 1
+    assert types["file_write"] == 1
+    assert types["registry_write"] == 1
+    assert sum(v for k, v in types.items() if k != "all") == types["all"]
+    # Channel split mirrors channel-counts semantics.
+    ch = data["channels"]
+    assert ch["total"] == 5
+    assert ch["live"] == 3 and ch["auditd"] == 1 and ch["sysmon"] == 0
+    assert ch["sandbox"] == 1 and ch["webapp"] == 1
+    assert ch["live"] + ch["sandbox"] + ch["webapp"] == ch["total"]
+
+    # An active source facet narrows the TYPE buckets but not the CHANNEL
+    # buckets (the split dimension): source=live shows only the 3 live events
+    # in types, while channels still report the whole set.
+    live_view = client.get("/events/counts", params={"q": "cnt-", "source": "live"}).json()
+    assert live_view["total"] == 3
+    assert live_view["types"]["all"] == 3
+    assert live_view["types"]["process_create"] == 2
+    assert live_view["types"]["network_connection"] == 1
+    assert live_view["channels"]["total"] == 5
+    assert live_view["channels"]["live"] == 3
+
+    # include_synthetic reveals the seed event (webapp bucket + process_create).
+    full = client.get("/events/counts", params={"q": "cnt-", "include_synthetic": "true"}).json()
+    assert full["total"] == 6
+    assert full["types"]["process_create"] == 3  # + the seed event
+    assert full["channels"]["webapp"] == 2
+
+    # The active category (event_type) narrows ONLY the CHANNEL buckets — the
+    # source rail partitions the feed — never the TYPE buckets (each badge
+    # counts its own type regardless of the selected category).
+    typed = client.get("/events/counts", params={"q": "cnt-", "event_type": "network_connection"}).json()
+    assert typed["total"] == 5  # types.all is category-independent
+    assert typed["types"]["network_connection"] == 1
+    assert typed["types"]["process_create"] == 2
+    assert typed["channels"]["total"] == 1  # the rail narrows to the feed
+    assert typed["channels"]["live"] == 1
+    assert typed["channels"]["auditd"] == 0  # cnt-aud.exe is process_create
+
+    # Shared validation: unknown event_type → 422.
+    assert client.get("/events/counts", params={"event_type": "bogus"}).status_code == 422
+    assert client.get("/events/counts", params={"source": "bogus"}).status_code == 422
+
+    # Close the live run so /runs/active-live's 404 contract holds.
+    client.post(f"/runs/{live}/complete")
+
+
 def test_events_backfill_infers_channel_for_legacy_collector_events(client):
     """Events shipped before collectors stamped `log_source` read NULL, so
     the Auditd/Sysmon channels stayed empty despite the telemetry. The

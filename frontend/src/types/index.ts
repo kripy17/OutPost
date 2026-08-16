@@ -793,6 +793,28 @@ export interface ChannelCountsResponse {
   channels: Record<EventSource, number>;
 }
 
+/** /events/counts — the ENTIRE Event Log rail (category + channel buckets)
+ *  in one request. `types` partitions `types.all` (which honors the active
+ *  source facet); `channels` is the source split and never takes it. */
+export interface EventCountsResponse {
+  total: number;
+  types: {
+    all: number;
+    process_create: number;
+    network_connection: number;
+    file_write: number;
+    registry_write: number;
+  };
+  channels: {
+    total: number;
+    live: number;
+    sandbox: number;
+    webapp: number;
+    auditd: number;
+    sysmon: number;
+  };
+}
+
 export interface EventFeedParams {
   event_type?: EventType | "";
   platform?: Platform | "";
