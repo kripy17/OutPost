@@ -252,6 +252,14 @@ step "Sandbox hints  (every provider-gate failure prints a fix)" \
 step "Ruff hints  (lint drift prints a fix, fix goes green)" \
   bash -c "'$ROOT/.venv/bin/python' '$ROOT/scripts/test_ruff_hints.py'"
 
+# Drill self-test — the comment-strip bite trio's fixture mode + fail-loud
+# machinery must keep working: a duplicated anchor exits 1 WITHOUT editing,
+# a clean fixture round-trips green, and a left-behind bite self-heals.
+# Runs entirely against a throwaway fixture (OUTPOST_BITE_ROOT), so it's a
+# 0.1s check — no suites run twice in the sweep.
+step "Drill self-test  (bite trio: fail-loud + self-heal)" \
+  bash -c "'$ROOT/.venv/bin/python' '$ROOT/scripts/test_bite_drill.py'"
+
 # Hint-coverage guard — the self-explaining discipline is structural: every
 # gate under scripts/ that emits a '→ fix:' hint must be mapped to a
 # self-test with repair assertions, and that self-test must actually run in
