@@ -16,7 +16,7 @@ Every push to `main` and every pull request runs the `CI` workflow
 | `Air-gap — full bundle in a --network none container` | Builds `deploy/Dockerfile.airgap-ci`, then `docker run --network none` runs `scripts/airgap-offline.sh` **at production volume** (`OUTPOST_OFFLINE_VOLUME=1` seeds a deterministic ~11k-event store): the four-gate bundle + cold-start budget + both e2es with the network namespace EMPTY, against production-scale data | any external host reachable by any library or technique (OS-level proof, not a simulation); a >1000 ms (1500 ms at volume) cold start |
 
 Inside the verify job, three fast-fail tiers front-load the expensive checks
-so the cheapest signal fails first. The sweep itself is 30 steps; beyond the
+so the cheapest signal fails first. The sweep itself is 31 steps; beyond the
 suites it includes the **identity gate** (`scripts/gate_proc_identity.py`) —
 an AST scan of the detection/process-tree/baseline/CLI-rendering modules that
 fails if any event-level `process_name` read lacks an `exe_path` resolution,
@@ -219,7 +219,13 @@ editing blindly, and the files self-heal even if the drill is killed
 mid-run. Run it deliberately — after touching any of the three comment
 paths, or whenever a lifecycle test starts feeling ornamental. It is
 intentionally NOT a sweep step: it breaks the code under test and runs
-three test suites twice, the opposite of a fast gate.
+three test suites twice, the opposite of a fast gate. What IS in the
+sweep is the drill's **machinery self-test** (`scripts/test_bite_drill.py`
+— a verify.sh step): it runs the drill against a throwaway fixture
+(`OUTPOST_BITE_ROOT`) and proves fail-loud (a duplicated anchor exits 1
+without editing), clean round-trip, and self-heal in ~0.1s, so a
+refactor that silently breaks the drill's bite/restore logic fails the
+push instead of going unnoticed.
 
 ## Branch protection on `main`
 
