@@ -643,6 +643,8 @@ export default function RunDetailPage() {
         <AlertBanner
           alerts={alerts}
           triage
+          runId={runId}
+          sampleName={run.sample_name}
           onStatus={onAlertStatus}
           onBulkStatus={onBulkAlertStatus}
           onFalsePositive={onMarkFalsePositive}

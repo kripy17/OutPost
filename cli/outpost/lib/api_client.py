@@ -42,6 +42,13 @@ def _post(path: str, body: dict | None = None) -> Any:
     return resp.json()
 
 
+def _patch(path: str, body: dict | None = None) -> Any:
+    resp = requests.patch(f"{BASE_URL}{path}", json=body or {}, headers=_auth_headers(), timeout=15)
+    if not resp.ok:
+        raise APIError(f"PATCH {path} → {resp.status_code}: {resp.text[:200]}")
+    return resp.json()
+
+
 def backfill_channels(admin_password: str) -> dict:
     """Admin-only: stamp `log_source` on legacy collector events on demand
     (the startup migration, no restart needed). Logs in as admin, POSTs
@@ -101,6 +108,65 @@ def get_alert_queue(
     if q:
         path += f"&q={quote(q)}"
     return _get(path)
+
+
+def update_alert_status(alert_id: int, status: str, comment: str = "") -> dict:
+    """Move one alert through the triage lifecycle — the terminal mirror of
+    the webapp's run-detail panel (PATCH /alerts/{id} → the updated alert).
+
+    Same transition-comment contract as the backend: the comment is recorded
+    at the transition, and an empty comment is sent as "" (the backend
+    strips it to NULL) — so a bare resolve clears a prior comment.
+    """
+    return _patch(f"/alerts/{alert_id}", {"status": status, "comment": comment})
+
+
+def bulk_update_alert_status(alert_ids: list[int], status: str, comment: str = "") -> dict:
+    """Apply one triage transition to many alerts at once — the terminal
+    mirror of the webapp's bulk bar (POST /alerts/bulk → {"updated": n}).
+    Same transition-comment contract as PATCH.
+    """
+    return _post("/alerts/bulk", {"ids": alert_ids, "status": status, "comment": comment})
+
+
+# -- Alert triage: per-run IOC allowlists ------------------------------------
+def get_run_allowlist(run_id: str) -> list[dict]:
+    """IOCs allowlisted for a run (oldest first) — the webapp's
+    AllowlistPanel mirror (GET /runs/{run_id}/allowlist)."""
+    return _get(f"/runs/{run_id}/allowlist")
+
+
+def add_run_allowlist(run_id: str, kind: str, value: str, note: str = "") -> dict:
+    """Allowlist an IOC for a run: matching alerts stop firing on future
+    batches and already-open matches are auto-acked (the response's `acked`
+    count). Mirror of the webapp's QuickAllowlist/AllowlistPanel."""
+    return _post(f"/runs/{run_id}/allowlist", {"kind": kind, "value": value, "note": note})
+
+
+def remove_run_allowlist(run_id: str, entry_id: int) -> None:
+    """Remove an allowlist entry (already-acked alerts stay acked)."""
+    resp = requests.delete(f"{BASE_URL}/runs/{run_id}/allowlist/{entry_id}", timeout=15)
+    if resp.status_code not in (200, 204):
+        raise APIError(f"DELETE /runs/{run_id}/allowlist/{entry_id} → {resp.status_code}: {resp.text[:200]}")
+
+
+# -- Alert triage: rule suppressions -----------------------------------------
+def get_suppressions() -> list[dict]:
+    """All rule suppressions (global + run/value scoped) — the webapp's
+    Rules-page + SuppressionPanel mirror (GET /rules/suppressions)."""
+    return _get("/rules/suppressions")
+
+
+def add_suppression(rule_id: str, reason: str = "", run_id: str | None = None, value: str | None = None) -> dict:
+    """Suppress a rule — run-scoped (a run), value-scoped (a sample/IP), or
+    global (neither). Mirror of the webapp's SuppressionPanel + queue sweep."""
+    return _post("/rules/suppressions", {"rule_id": rule_id, "reason": reason, "run_id": run_id, "value": value})
+
+
+def remove_suppression(suppression_id: int) -> None:
+    resp = requests.delete(f"{BASE_URL}/rules/suppressions/{suppression_id}", timeout=15)
+    if resp.status_code not in (200, 204):
+        raise APIError(f"DELETE /rules/suppressions/{suppression_id} → {resp.status_code}: {resp.text[:200]}")
 
 
 def get_run(run_id: str) -> dict:

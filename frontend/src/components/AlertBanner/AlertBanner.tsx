@@ -1,9 +1,10 @@
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { Icon } from "../Icon";
 import { toneFill, toneForSeverity } from "../../lib/fillPatterns";
-import { addSuppression, getRuleMeta, setTuning } from "../../lib/api";
+import { addSuppression, getRuleMeta, getSuppressions, setTuning } from "../../lib/api";
+import { suppressedRuleIds } from "../TriagePanels/suppressions";
 import type { Alert, AlertStatus, FpResponse, FpSuggestion } from "../../types";
 import { openDuration, sortAlertsForTriage, type TriageSort } from "./triage";
 
@@ -30,12 +31,20 @@ const STATUS_META: Record<AlertStatus, { label: string; cls: string }> = {
 export default function AlertBanner({
   alerts,
   triage = false,
+  runId,
+  sampleName,
   onStatus,
   onBulkStatus,
   onFalsePositive,
 }: {
   alerts: Alert[];
   triage?: boolean;
+  /** Run-scoped suppression target (run-detail page) — enables the one-click
+   *  "suppress this rule" action on each alert row. */
+  runId?: string;
+  /** Sample name, for resolving global VALUE-scoped suppressions (shared
+   *  derivation with the bottom SuppressionPanel). */
+  sampleName?: string | null;
   onStatus?: (alertId: number, status: AlertStatus, comment?: string) => void;
   /** Bulk triage (select many alerts → one Ack/Resolve). Triage mode only. */
   onBulkStatus?: (ids: number[], status: AlertStatus, comment?: string) => void;
@@ -51,6 +60,28 @@ export default function AlertBanner({
     staleTime: Infinity,
   });
   const byRule = new Map((meta ?? []).map((m) => [m.rule_id, m]));
+  // Suppressions effective for this run — the same shared query + derivation
+  // the bottom SuppressionPanel reads, so the per-row button and the panel
+  // can never disagree. Only fetched in triage mode (monitor never asks).
+  const queryClient = useQueryClient();
+  const { data: suppressions = [] } = useQuery({
+    queryKey: ["suppressions"],
+    queryFn: getSuppressions,
+    enabled: triage && !!runId,
+    staleTime: 30_000,
+  });
+  const suppressedRules = runId ? suppressedRuleIds(suppressions, runId, sampleName) : new Set<string>();
+  const [suppressing, setSuppressing] = useState<Record<string, boolean>>({});
+  const suppressRule = async (ruleId: string) => {
+    if (!runId || suppressing[ruleId]) return;
+    setSuppressing((s) => ({ ...s, [ruleId]: true }));
+    try {
+      await addSuppression(ruleId, undefined, runId);
+      void queryClient.invalidateQueries({ queryKey: ["suppressions"] });
+    } finally {
+      setSuppressing((s) => ({ ...s, [ruleId]: false }));
+    }
+  };
   // Per-alert comment drafts (only used in triage mode). Cleared once the
   // transition is submitted — the comment is consumed into the request.
   const [drafts, setDrafts] = useState<Record<number, string>>({});
@@ -316,6 +347,29 @@ export default function AlertBanner({
                   placeholder="Optional comment…"
                   className="min-w-0 flex-1 rounded border border-border-subtle bg-bg-elevated/40 px-2 py-1 font-mono text-[10px] text-text-primary placeholder:text-text-faint focus:border-accent/60 focus:outline-none"
                 />
+                {/* One-click run-scoped suppression — no scrolling to the
+                    bottom panel. The refetched "suppressions" query flips
+                    this into the quiet ✓ chip, which IS the feedback. */}
+                {runId && alert.rule_id ? (
+                  suppressedRules.has(alert.rule_id) ? (
+                    <span
+                      className="inline-flex items-center gap-1 rounded border border-risk-clean/40 bg-risk-clean/10 px-2 py-1 font-mono text-[10px] text-risk-clean"
+                      title={`${alert.rule_name} suppressed for this run — restore it in the Rule suppressions panel below`}
+                    >
+                      <Icon name="check" size={9} />
+                      suppressed
+                    </span>
+                  ) : (
+                    <button
+                      onClick={() => void suppressRule(alert.rule_id)}
+                      disabled={suppressing[alert.rule_id]}
+                      title={`Suppress ${alert.rule_name} for this run — stop it from firing on future batches`}
+                      className="press rounded border border-border-subtle px-2 py-1 font-mono text-[10px] text-text-faint transition-colors hover:border-risk-malicious/50 hover:text-risk-malicious disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {suppressing[alert.rule_id] ? "suppressing…" : "suppress"}
+                    </button>
+                  )
+                ) : null}
                 {alert.status === "open" && (
                   <>
                     <button

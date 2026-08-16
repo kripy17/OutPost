@@ -20,6 +20,7 @@ import type {
   HostWatchResponse,
   MetaInfo,
   ChannelCountsResponse,
+  EventCountsResponse,
   EventFeedParams,
   EventFeedResponse,
   Footprint,
@@ -170,7 +171,12 @@ async function patch<T>(path: string, body: unknown): Promise<T> {
 
 async function del(path: string): Promise<void> {
   const res = await fetch(`${BASE_URL}${path}`, { method: "DELETE", headers: authHeaders() });
-  if (res.status !== 204) throw new Error(`DELETE ${path} → ${res.status}`);
+  // DELETE contracts vary: 204 (no content) is the REST-canonical success, but
+  // a backend may 200 with a body (e.g. a summary of what was removed). Both
+  // are success — only a non-ok status is an error. Regression: this used to
+  // require exactly 204, so a 200-with-body DELETE threw a misleading
+  // "DELETE ... → 200" error.
+  if (!res.ok) throw new Error(`DELETE ${path} → ${res.status}`);
 }
 
 // -- health -----------------------------------------------------------------
@@ -305,8 +311,7 @@ export async function watchlistAdd(value: string, label: string): Promise<Watchl
 }
 
 export async function watchlistRemove(value: string): Promise<void> {
-  const res = await fetch(`${BASE_URL}/watchlist/${encodeURIComponent(value)}`, { method: "DELETE", headers: authHeaders() });
-  if (res.status !== 204) throw new Error(`DELETE /watchlist/${value} → ${res.status}`);
+  await del(`/watchlist/${encodeURIComponent(value)}`);
 }
 
 export async function watchlistExport(format: "json" | "csv"): Promise<Blob> {
@@ -380,8 +385,7 @@ export async function resetFpThreshold(): Promise<void> {
 }
 
 export async function resetTuning(param: string): Promise<void> {
-  const res = await fetch(`${BASE_URL}/rules/tuning/${param}`, { method: "DELETE", headers: authHeaders() });
-  if (res.status !== 204) throw new Error(`DELETE /rules/tuning/${param} → ${res.status}`);
+  await del(`/rules/tuning/${param}`);
 }
 
 // -- Threat-intel API keys (Settings) ------------------------------------------
@@ -774,9 +778,30 @@ export async function getEvents(params: EventFeedParams = {}): Promise<EventFeed
   return get<EventFeedResponse>(`/events${suffix ? `?${suffix}` : ""}`);
 }
 
+/** The whole Event Log rail (category + channel buckets) in ONE request —
+ *  replaces the old pattern of one COUNT probe per category badge plus a
+ *  channel-counts call (7 requests per filter change → 1). Accepts the same
+ *  filters as getEvents, `source` included (it narrows the type buckets;
+ *  the channel buckets are the source split and ignore it server-side). */
+export async function getEventCounts(
+  params: Omit<EventFeedParams, "limit" | "offset"> = {},
+): Promise<EventCountsResponse> {
+  const qs = new URLSearchParams();
+  if (params.event_type) qs.set("event_type", params.event_type);
+  if (params.platform) qs.set("platform", params.platform);
+  if (params.severity) qs.set("severity", params.severity);
+  if (params.q) qs.set("q", params.q);
+  if (params.pid) qs.set("pid", params.pid);
+  if (params.source) qs.set("source", params.source);
+  if (params.include_synthetic !== undefined) qs.set("include_synthetic", String(params.include_synthetic));
+  const suffix = qs.toString();
+  return get<EventCountsResponse>(`/events/counts${suffix ? `?${suffix}` : ""}`);
+}
+
 /** Per-channel totals for the source-tab rail — one request instead of one
  *  per tab. Accepts the same filters as getEvents minus `source` (the split
- *  dimension); `total` feeds the "All sources" tab, `channels` the rest. */
+ *  dimension); `total` feeds the "All sources" tab, `channels` the rest.
+ *  Kept for API-surface stability; the Event Log now uses getEventCounts. */
 export async function getEventChannelCounts(
   params: Omit<EventFeedParams, "source" | "limit" | "offset"> = {},
 ): Promise<ChannelCountsResponse> {

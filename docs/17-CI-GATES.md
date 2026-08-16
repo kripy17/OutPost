@@ -181,6 +181,41 @@ refresh job's recipe); a fresh run with nothing drifted is a genuine no-op
 PR + auto-merge path as the badge refresh. `--recover` covers only the size
 story — use `--commit` to also publish stale badge payloads.
 
+## Regression drills (deliberately-broken bites)
+
+Not every contract belongs in the sweep. Some properties are proven by
+tests that must FAIL when the code under test regresses — and the only
+way to know those tests still bite is to deliberately break the code and
+watch them fail. The **transition-comment drill** does exactly that for
+the alert-triage comment contract, in one command:
+
+```
+python scripts/bite_triage_comment.py
+```
+
+The contract, pinned at all three layers (backend `update_alert_status`
+test, webapp `triageLifecycle.test.tsx`, CLI `test_triage_lifecycle.py`):
+a non-empty comment is recorded whitespace-trimmed; an empty /
+whitespace-only / omitted comment stores NULL — so a bare resolve clears
+a prior ack comment. The drill temporarily applies each layer's own
+failure mode, asserts the targeted test FAILS on the exact comment
+assertion, restores the file, and asserts the same test passes again:
+
+| Layer | The bite | The assertion that must fail |
+|---|---|---|
+| Backend (`routes_alerts.py`) | store the raw untrimmed comment (`comment = body.comment`) | `status_comment == "seen, will resolve"` (trim) — plus the NULL asserts for empty/whitespace |
+| Webapp (`triageLifecycle.test.tsx` mock) | strip the comment on EVERY transition (`comment = null`) | `Unable to find "“seen, will resolve”"` on the acked card |
+| CLI (`test_triage_lifecycle.py` stub) | strip the comment on every transition (`comment = None`) | `'comment: seen, will resolve' in r.output` |
+
+Exit 0 only when all six directions hold (bite fails right, restore
+passes). The anchors are uniqueness-checked — if a file's shape drifts so
+the drill can't apply its bite safely, it fails loudly instead of
+editing blindly, and the files self-heal even if the drill is killed
+mid-run. Run it deliberately — after touching any of the three comment
+paths, or whenever a lifecycle test starts feeling ornamental. It is
+intentionally NOT a sweep step: it breaks the code under test and runs
+three test suites twice, the opposite of a fast gate.
+
 ## Branch protection on `main`
 
 `main` is protected with **required status checks**:

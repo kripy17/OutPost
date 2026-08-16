@@ -15,6 +15,7 @@ from ..rendering.terminal_views import console
 
 _VALID_STATUS = ("open", "acknowledged", "resolved", "all")
 _VALID_PROVENANCE = (None, "real", "synthetic")
+_VALID_TRIAGE = ("open", "acknowledged", "resolved")
 _SEV_STYLE = {"malicious": "bold #C4453B", "suspicious": "bold #D9A441"}
 
 
@@ -87,3 +88,37 @@ def alerts(
             (a.get("details") or "-")[:80],
         )
     console.print(table)
+
+
+def triage(
+    status: str = typer.Argument(..., help="open | acknowledged | resolved"),
+    alert_ids: list[int] = typer.Argument(..., help="one or more alert ids to transition"),
+    comment: str = typer.Option("", "--comment", "-c", help="analyst note recorded at this transition"),
+) -> None:
+    """Move alerts through the triage lifecycle — the terminal mirror of the
+    webapp's run-detail panel AND its bulk bar. open → acknowledged →
+    resolved, and back via reopen (open); one id PATCHes, many POST /alerts
+    /bulk. The optional comment is recorded at the transition — a bare
+    transition clears the prior one — matching the backend's status_comment
+    contract, so terminal triage behaves exactly like the webapp's buttons.
+    """
+    show_banner(primary=False)
+    if status not in _VALID_TRIAGE:
+        console.print("[bold #C4453B]status must be open, acknowledged, or resolved[/bold #C4453B]")
+        raise typer.Exit(1)
+    if not alert_ids:
+        console.print("[bold #C4453B]at least one alert id is required[/bold #C4453B]")
+        raise typer.Exit(1)
+    try:
+        if len(alert_ids) == 1:
+            updated = api_client.update_alert_status(alert_ids[0], status, comment)
+            line = f"[#3FA796]Alert {updated['id']} → {updated['status']}[/#3FA796]"
+            if updated.get("status_comment"):
+                line += f" — comment: {updated['status_comment']}"
+            console.print(line)
+        else:
+            result = api_client.bulk_update_alert_status(alert_ids, status, comment)
+            console.print(f"[#3FA796]{result.get('updated', len(alert_ids))} alert(s) → {status}[/#3FA796]")
+    except api_client.APIError as exc:
+        console.print(f"[bold #C4453B]Triage failed: {exc}[/bold #C4453B]")
+        raise typer.Exit(1)

@@ -4,7 +4,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { EVENT_ICON, platformIconName } from "../components/iconMeta";
 import { PageHeader } from "../components/ui";
-import { exportEventsCsv, getEventChannelCounts, getEvents, saveBlob } from "../lib/api";
+import { exportEventsCsv, getEventCounts, getEvents, saveBlob } from "../lib/api";
 import { useEventStream } from "../lib/useEventStream";
 import { parsePids, resolveSavedFilters, type SavedFilters } from "./eventsHelpers";
 import type { EventFeedEvent, EventSource, EventType, Platform, Severity } from "../types";
@@ -116,41 +116,24 @@ function EventFields({ event }: { event: EventFeedEvent }) {
 function CountBadge({
   type,
   source,
-  live,
   severity,
   platform,
   q,
   pids,
-  includeSynthetic,
+  count,
 }: {
   type: EventType | "";
   source: EventSource | "";
-  live: boolean;
   severity: Severity | "";
   platform: Platform | "";
   q: string;
   pids: number[];
-  includeSynthetic: boolean;
+  count: number | undefined;
 }) {
-  const { data } = useQuery({
-    queryKey: ["events", "count", type, severity, platform, source, q, pids.join(","), includeSynthetic],
-    queryFn: () =>
-      getEvents({
-        event_type: type || undefined,
-        severity,
-        platform,
-        source: source || undefined,
-        q,
-        pid: pids.length ? pids.join(",") : undefined,
-        include_synthetic: includeSynthetic || undefined,
-        limit: 1,
-      }),
-    staleTime: live ? 0 : 15_000,
-    refetchInterval: live ? 5_000 : false,
-  });
-
-  // Build a concise summary of active filters — the badge already shows the
-  // count, so the tooltip explains *why* the count is what it is.
+  // Presentational now — every badge reads its bucket from the page's ONE
+  // /events/counts query (shared across all five category buttons and the
+  // channel tabs), so a filter change costs one count request, not six.
+  // The tooltip explains *why* the count is what it is (the active filters).
   const desc = [
     severity ? `level: ${severity}` : null,
     platform ? `platform: ${platform}` : null,
@@ -167,7 +150,7 @@ function CountBadge({
       className="rounded-full border border-border-subtle bg-bg-elevated/60 px-1.5 py-px font-mono text-[10px] tabular-nums text-text-faint"
       title={desc || "no active filters"}
     >
-      {data?.total ?? "…"}
+      {count ?? "…"}
     </span>
   );
 }
@@ -440,17 +423,23 @@ export default function EventsPage() {
     refetchInterval: live ? 5_000 : false,
   });
 
-  // Source-tab rail: ONE query for all six channel buckets instead of one
-  // per tab. Shares the page's filter universe (category, severity, platform,
-  // search, pid, and the synthetic toggle) so the rail reads coherently with
-  // the feed — the bucket counts even partition the feed's own total.
-  const channelCountsQuery = useQuery({
-    queryKey: ["events", "channel-counts", category, severity, platform, submittedQ, submittedPids.join(","), includeSynthetic],
+  // The WHOLE rail from ONE /events/counts query — the old pattern fired a
+  // filtered COUNT probe per category badge plus a channel-counts call (7
+  // requests per filter change); now it's 1 counts request + the feed.
+  // The type buckets honor the active source tab but NOT the active category
+  // (each badge counts its own type); the channel buckets are the source
+  // split and inherit the category so the rail partitions the feed.
+  const countsQuery = useQuery({
+    // category IS in the key even though the type buckets ignore it: the
+    // channel buckets narrow to the active category server-side, so a
+    // category change must refetch (the type buckets come back unchanged).
+    queryKey: ["events", "counts", category, severity, platform, source, submittedQ, submittedPids.join(","), includeSynthetic],
     queryFn: () =>
-      getEventChannelCounts({
+      getEventCounts({
         event_type: category,
         severity,
         platform,
+        source: source || undefined,
         q: submittedQ,
         pid: submittedPids.length ? submittedPids.join(",") : undefined,
         include_synthetic: includeSynthetic || undefined,
@@ -803,12 +792,11 @@ export default function EventsPage() {
                   <CountBadge
                     type={c.type}
                     source={source}
-                    live={live}
                     severity={severity}
                     platform={platform}
                     q={submittedQ}
                     pids={submittedPids}
-                    includeSynthetic={includeSynthetic}
+                    count={countsQuery.data ? countsQuery.data.types[c.type === "" ? "all" : c.type] : undefined}
                   />
                 </button>
               </li>
@@ -964,7 +952,7 @@ export default function EventsPage() {
                     className="rounded-full border border-border-subtle bg-bg-elevated/60 px-1.5 py-px font-mono text-[10px] tabular-nums text-text-faint"
                     title={channelDesc || "no active filters"}
                   >
-                    {s.v === "" ? (channelCountsQuery.data?.total ?? "…") : (channelCountsQuery.data?.channels[s.v] ?? "…")}
+                    {s.v === "" ? (countsQuery.data?.channels.total ?? "…") : (countsQuery.data?.channels[s.v] ?? "…")}
                   </span>
                 </button>
               ))}
