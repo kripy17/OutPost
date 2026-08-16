@@ -3,17 +3,19 @@
 // the app's new way to move around fast — no hunting through menus.
 
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { getRuns } from "../lib/api";
+import { clientStateSummary, resetClientState } from "../routes/resetClientState";
 import { Icon, type IconName } from "./Icon";
 
 interface Item {
-  kind: "nav" | "run";
+  kind: "nav" | "run" | "action";
   label: string;
   hint: string;
   icon: IconName;
-  to: string;
+  to?: string;
+  onRun?: () => void;
 }
 
 const NAV_ITEMS: Item[] = [
@@ -38,15 +40,38 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
+  const [result, setResult] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
 
   const { data: runs } = useQuery({ queryKey: ["palette", "runs"], queryFn: () => getRuns(), staleTime: 15_000 });
 
+  // The one-click client-state wipe, reachable from anywhere — same confirm
+  // and report as the Settings panel. The palette stays open so the result
+  // banner is visible; the message auto-clears.
+  const handleReset = useCallback(() => {
+    if (
+      !window.confirm(
+        "Reset ALL client-side state? This clears the per-tab provenance split, the IOC search draft, and the YARA / enum / log-pattern drafts saved in this browser. Continue?",
+      )
+    )
+      return;
+    const cleared = resetClientState();
+    setResult(`Client-side state reset — ${clientStateSummary(cleared)}.`);
+    window.setTimeout(() => setResult(null), 4000);
+  }, []);
+
   const items = useMemo<Item[]>(() => {
     const q = query.trim().toLowerCase();
     const base: Item[] = [
       ...NAV_ITEMS,
+      {
+        kind: "action",
+        label: "Reset client-side state",
+        hint: "Wipe saved provenance split + search / YARA / log drafts",
+        icon: "x",
+        onRun: handleReset,
+      },
       ...(runs ?? []).slice(0, 6).map<Item>((r) => ({
         kind: "run" as const,
         label: r.sample_name,
@@ -57,7 +82,7 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
     ];
     const filtered = q ? base.filter((i) => `${i.label} ${i.hint}`.toLowerCase().includes(q)) : base;
     return filtered.slice(0, 12);
-  }, [query, runs]);
+  }, [query, runs, handleReset]);
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -83,6 +108,10 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
   }, [onClose]);
 
   const run = (item: Item) => {
+    if (item.kind === "action") {
+      item.onRun?.();
+      return; // keep the palette open so the result banner is visible
+    }
     onClose();
     if (item.to) navigate(item.to);
   };
@@ -121,6 +150,15 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
           />
           <kbd className="rounded border border-border-subtle bg-bg-elevated px-1.5 py-0.5 font-mono text-[10px] text-text-faint">esc</kbd>
         </div>
+
+        {result && (
+          <p
+            role="status"
+            className="border-b border-accent/20 bg-accent/5 px-4 py-2 font-mono text-[11px] text-accent"
+          >
+            {result}
+          </p>
+        )}
 
         <ul ref={listRef} className="max-h-80 overflow-y-auto p-1.5" role="listbox">
           {items.length === 0 && <li className="px-3 py-6 text-center text-sm text-text-faint">No matches for “{query}”.</li>}

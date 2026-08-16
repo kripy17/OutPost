@@ -4,7 +4,7 @@
 // and corrupted drafts are handled without throwing.
 
 import { beforeEach, describe, expect, it } from "vitest";
-import { anyClientState, readClientState, resetClientState } from "../routes/resetClientState";
+import { anyClientState, clientStateSummary, readClientState, resetClientState } from "../routes/resetClientState";
 import { writeSavedProvenance } from "../routes/findingsHelpers";
 import { writeSavedQuery } from "../routes/searchHelpers";
 import { writeYaraDraft } from "../routes/rulesDrafts";
@@ -91,5 +91,24 @@ describe("resetClientState", () => {
     expect(readClientState()).toEqual({ queueTabs: 0, searchDraft: false, yaraDraft: false, enumPlatforms: 0, logKinds: 0 });
     expect(anyClientState(readClientState())).toBe(false);
     expect(() => resetClientState()).not.toThrow();
+  });
+});
+
+describe("clientStateSummary (shared reset wording)", () => {
+  beforeEach(() => localStorage.clear());
+
+  it("names every category that was wiped, in the Settings/palette wording", () => {
+    seedEverything();
+    const summary = clientStateSummary(resetClientState());
+    expect(summary).toBe("cleared 2 provenance tabs, the search draft, the YARA draft, 1 enum table, 1 log-pattern table");
+  });
+
+  it("singularizes a single provenance tab", () => {
+    writeSavedProvenance("open", "real");
+    expect(clientStateSummary(resetClientState())).toBe("cleared 1 provenance tab");
+  });
+
+  it("reports when nothing was saved", () => {
+    expect(clientStateSummary(resetClientState())).toBe("nothing was saved");
   });
 });
