@@ -60,3 +60,16 @@ export function resetClientState(): ClientStateReport {
   clearLogDrafts();
   return before;
 }
+
+/** One-line summary of what a reset wiped (or that nothing was saved) — the
+ *  shared wording for the Settings panel and the command-palette action, so
+ *  both surfaces report the same clear. */
+export function clientStateSummary(cleared: ClientStateReport): string {
+  const parts: string[] = [];
+  if (cleared.queueTabs) parts.push(`${cleared.queueTabs} provenance tab${cleared.queueTabs === 1 ? "" : "s"}`);
+  if (cleared.searchDraft) parts.push("the search draft");
+  if (cleared.yaraDraft) parts.push("the YARA draft");
+  if (cleared.enumPlatforms) parts.push(`${cleared.enumPlatforms} enum table${cleared.enumPlatforms === 1 ? "" : "s"}`);
+  if (cleared.logKinds) parts.push(`${cleared.logKinds} log-pattern table${cleared.logKinds === 1 ? "" : "s"}`);
+  return parts.length ? `cleared ${parts.join(", ")}` : "nothing was saved";
+}

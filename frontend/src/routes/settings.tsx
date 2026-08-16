@@ -25,7 +25,7 @@ import {
   testIntelKey,
 } from "../lib/api";
 import { lockedIpsText, rateLimitBadge, runResetFlow } from "./settingsHelpers";
-import { anyClientState, readClientState, resetClientState, type ClientStateReport } from "./resetClientState";
+import { anyClientState, clientStateSummary, readClientState, resetClientState, type ClientStateReport } from "./resetClientState";
 import { provenanceLabel, readSavedProvenance, STATUS_TABS } from "./findingsHelpers";
 import type { NotificationSettings, NotificationSettingsIn } from "../types";
 
@@ -642,15 +642,7 @@ function ClientStatePanel() {
       return;
     const cleared = resetClientState();
     setState(readClientState());
-    const parts: string[] = [];
-    if (cleared.queueTabs) parts.push(`${cleared.queueTabs} provenance tab${cleared.queueTabs === 1 ? "" : "s"}`);
-    if (cleared.searchDraft) parts.push("the search draft");
-    if (cleared.yaraDraft) parts.push("the YARA draft");
-    if (cleared.enumPlatforms) parts.push(`${cleared.enumPlatforms} enum table${cleared.enumPlatforms === 1 ? "" : "s"}`);
-    if (cleared.logKinds) parts.push(`${cleared.logKinds} log-pattern table${cleared.logKinds === 1 ? "" : "s"}`);
-    setMsg(
-      parts.length ? `Client-side state reset — cleared ${parts.join(", ")}.` : "Client-side state reset — nothing was saved.",
-    );
+    setMsg(`Client-side state reset — ${clientStateSummary(cleared)}.`);
     setTimeout(() => setMsg(null), 5000);
   };
 
