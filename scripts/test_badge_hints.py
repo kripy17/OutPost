@@ -27,6 +27,10 @@ drift direction:
   2. missing 'Last measured'    → `→ fix: add the line below to docs/17...` + stamp line
   3. measured != committed JSON → `→ fix: rewrite badges/image-sizes.json ...` + JSON
   4. missing image-sizes.json   → `→ fix: restore badges/image-sizes.json ...`
+  5. publish PR blocked         → `::warning::` annotation + the gh error,
+     `--commit` stays GREEN (exit 0) and the branch is pushed to origin so
+     the refreshed payload survives for a manual PR — the repo forbidding
+     Actions from opening PRs is a policy, not a payload failure.
 
 Every direction the gate can report must be covered, so the self-explaining
 behavior can't silently regress. Exit 0 only when all pass.
@@ -154,11 +158,38 @@ def run_recover(tmp: Path, fakebin: Path) -> tuple[int, str]:
     return p.returncode, p.stdout + p.stderr
 
 
+def run_commit(tmp: Path, fakebin: Path) -> tuple[int, str]:
+    """Run the REAL `--commit` against the fixture (the publish path).
+
+    The fixture is a git repo with a local bare origin, so the branch push
+    succeeds; the fake gh decides what happens next."""
+    env = dict(os.environ)
+    env["PATH"] = f"{fakebin}:{env['PATH']}"
+    env["PYTHON"] = str(VENV_PY)
+    p = subprocess.run(
+        ["bash", "scripts/refresh-badges.sh", "--commit"],
+        cwd=tmp, env=env, capture_output=True, text=True,
+    )
+    return p.returncode, p.stdout + p.stderr
+
+
+def write_fake_gh(fakebin: Path, fail: bool) -> None:
+    """gh shim: `fail=True` reproduces the Actions-can't-open-PRs failure
+    (exit 1 + the gh error on stderr); `fail=False` lets pr create/merge
+    succeed. Lives in the same fakebin as the npm shim."""
+    body = (
+        "echo 'Resource not accessible by integration' >&2\nexit 1\n"
+        if fail else "exit 0\n"
+    )
+    (fakebin / "gh").write_text("#!/usr/bin/env bash\n" + body)
+    (fakebin / "gh").chmod(0o755)
+
+
 def init_git(tmp: Path) -> None:
     """Make the fixture a git repo so --recover's diff/commit tail works
     (and its `git config` stays repo-local instead of touching the global
     config)."""
-    subprocess.run(["git", "init", "-q"], cwd=tmp, check=True)
+    subprocess.run(["git", "-c", "init.defaultBranch=main", "init", "-q"], cwd=tmp, check=True)
     subprocess.run(["git", "add", "-A"], cwd=tmp, check=True)
     subprocess.run(
         ["git", "-c", "user.name=test", "-c", "user.email=test@test", "commit", "-qm", "baseline"],
@@ -275,6 +306,52 @@ def main() -> int:
             tmp, "missing image-sizes.json",
             lambda: shutil.copy(ROOT / "badges/image-sizes.json", tmp / "badges/image-sizes.json"),
             fakebin,
+        )
+
+        # 5. Publish PR blocked — the repo forbids Actions from opening PRs.
+        #    The step must warn (::warning:: annotation + the gh error) and
+        #    stay GREEN — failing red is noise because the refreshed payloads
+        #    are already committed and safe on the pushed branch. Drift the
+        #    count so --commit finds a change, give the fixture a local bare
+        #    origin so the branch push succeeds, and let the fake gh fail.
+        build_fixture(tmp)
+        fakebin = calibrate(tmp)
+        write_fake_gh(fakebin, fail=True)
+        init_git(tmp)
+        bare = tmp / "origin.git"
+        subprocess.run(["git", "init", "--bare", "-q", str(bare)], check=True)
+        subprocess.run(["git", "remote", "add", "origin", str(bare)], cwd=tmp, check=True)
+        subprocess.run(["git", "push", "-q", "-u", "origin", "main"], cwd=tmp, check=True)
+        (tmp / "backend/app/tests/test_publish_warn_drift.py").write_text("def test_drift():\n    assert True\n")
+        rc, out = run_commit(tmp, fakebin)
+        ok = (
+            rc == 0
+            and "::warning title=Badge publish PR blocked::" in out
+            and "gh pr create said: Resource not accessible by integration" in out
+        )
+        check("PR-creation blocked → warn + green (not red)", ok, f"rc={rc}\n{out}" if not ok else "rc=0, warning annotation + gh error present")
+        on = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=tmp,
+            capture_output=True, text=True,
+        ).stdout.strip()
+        check("publish branch preserved on origin", on.startswith("chore/badges-"), f"on {on!r}")
+
+        # 6. The happy publish path (gh succeeds) — the unchanged branch of
+        #    the same step still lands the PR with auto-merge armed.
+        build_fixture(tmp)
+        fakebin = calibrate(tmp)
+        write_fake_gh(fakebin, fail=False)
+        init_git(tmp)
+        bare = tmp / "origin.git"
+        subprocess.run(["git", "init", "--bare", "-q", str(bare)], check=True)
+        subprocess.run(["git", "remote", "add", "origin", str(bare)], cwd=tmp, check=True)
+        subprocess.run(["git", "push", "-q", "-u", "origin", "main"], cwd=tmp, check=True)
+        (tmp / "backend/app/tests/test_publish_ok_drift.py").write_text("def test_drift():\n    assert True\n")
+        rc, out = run_commit(tmp, fakebin)
+        check(
+            "PR opened with auto-merge armed",
+            rc == 0 and "badges PR opened with auto-merge armed" in out,
+            f"rc={rc}\n{out}" if rc != 0 else "rc=0, PR opened",
         )
 
     print(f"Badge hint self-test: {len(FAILURES)} failed" if FAILURES else "Badge hint self-test: all drift directions print a hint that repairs")
