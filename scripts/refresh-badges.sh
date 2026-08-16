@@ -400,6 +400,11 @@ git config user.email "${GIT_AUTHOR_EMAIL:-41898282+github-actions[bot]@users.no
 # changes get the same gate as everything else.
 BRANCH="chore/badges-$(date -u +%Y%m%d-%H%M%S)"
 git checkout -b "$BRANCH"
+# Record the branch this run created so the badge-branch cleanup step
+# (scripts/cleanup_badge_branches.sh) can exclude it — never delete the
+# branch an in-flight publish still needs (an open PR, or the manual-PR
+# wait after a blocked pr create). The file is consumed in the same CI job.
+printf '%s\n' "$BRANCH" > "${RUNNER_TEMP:-/tmp}/outpost-badge-branch"
 git add badges/ docs/17-CI-GATES.md
 git commit -m "$TITLE"
 git pull --rebase origin main 2>/dev/null || true

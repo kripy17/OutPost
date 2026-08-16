@@ -260,6 +260,15 @@ step "Ruff hints  (lint drift prints a fix, fix goes green)" \
 step "Hint coverage  (every hint-emitting gate has a repair self-test)" \
   bash -c "'$ROOT/.venv/bin/python' '$ROOT/scripts/gate_hint_coverage.py'"
 
+# Badge-branch cleanup self-test — the CI hygiene step (after a successful
+# publish) must delete every stale chore/badges-* branch on origin while
+# keeping the branch the current run recorded in RUNNER_TEMP (an in-flight
+# publish: open PR, or the manual-PR wait after a blocked pr create). Local
+# bare-origin fixture: stale branches die, the recorded one survives, the
+# record file is always removed, and "nothing to clean" exits 0.
+step "Badge-branch cleanup (CI hygiene self-test)" \
+  bash -c "'$ROOT/.venv/bin/python' '$ROOT/scripts/test_cleanup_badge_branches.py'"
+
 # Cross-platform collector soak baseline — the Windows (Sysmon) and Linux
 # (auditd) soaks run with --gate against ONE isolated backend (temp DB,
 # spare port) and print the FP/detection baseline as a compact table, so
