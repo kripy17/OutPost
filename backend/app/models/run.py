@@ -22,10 +22,14 @@ def create_run(
     """Create a run. `source` records where it came from (monitor detonation,
     live host collector, sandbox:<provider>, seed data, cli) so the webapp can
     badge provenance on every run card."""
+    # kind is the P0 domain profile of the run, kept in sync with the
+    # session_type compatibility field: analysis sessions are analysis jobs,
+    # everything else (live host telemetry) is a monitoring session.
+    kind = "analysis_job" if session_type == "analysis" else "monitoring_session"
     conn.execute(
-        "INSERT INTO runs (run_id, sample_name, platform, session_type, source, started_at) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (run_id, sample_name, platform, session_type, source, utcnow()),
+        "INSERT INTO runs (run_id, sample_name, platform, session_type, kind, source, started_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (run_id, sample_name, platform, session_type, kind, source, utcnow()),
     )
 
 
