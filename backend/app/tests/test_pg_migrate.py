@@ -10,9 +10,11 @@ Locks the port contract without needing a live Postgres:
   build_load_sql wires schema + data into one transactional psql script.
 """
 
+import re
 import sqlite3
 
 from app.core.db import SCHEMA
+from app.core.db_pg import _split_statements
 from app.services import pg_migrate
 
 # ---------------------------------------------------------------------------
@@ -43,6 +45,33 @@ def test_translate_schema_keeps_constraints_and_foreign_keys():
     assert "REFERENCES runs(run_id)" in pg
     assert "CREATE TABLE IF NOT EXISTS" in pg
     assert "CREATE INDEX IF NOT EXISTS" in pg
+
+
+def test_pg_ddl_declares_fk_targets_before_referencers():
+    """Postgres resolves FK targets at CREATE TABLE time (SQLite resolves
+    them lazily), so the translated DDL must declare every referenced table
+    before the table that references it.
+
+    Regression: the P0 alerts.investigation_id FK referenced `investigations`
+    while that table was declared at the schema tail — SQLite was fine, but
+    the pg-runtime job's init_db() failed with "relation investigations does
+    not exist". Self-references (recursive FKs) are legal on PG and skipped.
+    """
+    pg = pg_migrate.translate_schema()
+    declared: set[str] = set()
+    for stmt in _split_statements(pg):
+        m = re.search(r"CREATE TABLE IF NOT EXISTS (\w+)", stmt)
+        if not m:
+            continue
+        table = m.group(1)
+        targets = set(re.findall(r"REFERENCES (\w+)\s*\(", stmt)) - {table}
+        missing = targets - declared
+        assert not missing, (
+            f"{table} references {sorted(missing)} before they are declared — "
+            "move the referenced table earlier in SCHEMA (Postgres requires "
+            "FK targets to exist at CREATE TABLE time)"
+        )
+        declared.add(table)
 
 
 def test_tables_in_schema_matches_runtime_tables(tmp_path):
