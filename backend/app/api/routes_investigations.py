@@ -86,6 +86,11 @@ def create_investigation(body: InvestigationCreateIn, request: Request) -> Inves
             target_type="investigation", target_id=row["id"],
             detail=f"title {title!r} · tags {row['tags']}",
         )
+        # P0.7 — investigation lifecycle is observable in realtime via the
+        # extended run_update frame (no new event type).
+        from ..services import events_stream
+
+        events_stream.publish_run_update("", 0, investigation_id=row["id"])
     return InvestigationDTO(**row)
 
 
@@ -228,6 +233,11 @@ def close_investigation(investigation_id: str, body: InvestigationCloseIn, reque
             target_type="investigation", target_id=investigation_id,
             detail=f"closed · conclusion {conclusion!r}",
         )
+        # P0.7 — close emits the status change; subscribers (investigation
+        # workspace) refresh live, and the DB row is the reconnect source.
+        from ..services import events_stream
+
+        events_stream.publish_run_update("", 0, investigation_id=investigation_id)
     return InvestigationDTO(**row)
 
 
@@ -245,4 +255,8 @@ def reopen_investigation(investigation_id: str, request: Request) -> Investigati
             target_type="investigation", target_id=investigation_id,
             detail="closed → active",
         )
+        # P0.7 — reopen emits the status change (same additive frame).
+        from ..services import events_stream
+
+        events_stream.publish_run_update("", 0, investigation_id=investigation_id)
     return InvestigationDTO(**row)

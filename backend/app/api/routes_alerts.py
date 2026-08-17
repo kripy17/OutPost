@@ -121,6 +121,18 @@ def update_alert_status(alert_id: int, body: AlertPatchIn, request: Request) -> 
                 )
                 if old_inv:
                     inv_store.detach_finding(conn, alert_id)
+            # P0.7 — finding attach/detach is observable in realtime: emit
+            # the run_update frame with the finding + its (possibly null)
+            # investigation link, so a subscribed investigation workspace
+            # refreshes without polling. Pure push — the DB row remains the
+            # source of truth on reconnect.
+            from ..services import events_stream
+
+            events_stream.publish_run_update(
+                row["run_id"], 0,
+                investigation_id=body.investigation_id,
+                finding_id=alert_id,
+            )
         audit.log(
             conn, actor, "alert.status",
             target_type="alert", target_id=str(alert_id),
