@@ -59,10 +59,21 @@ def translate_schema(sqlite_schema: str = SCHEMA) -> str:
       SQLite path applies — fresh PG installs start correct instead of
       migrating later)
     - ``STRICT`` table option (if ever used) is dropped
+    - the two P0 indexes on migrated columns (``idx_alerts_unread`` on
+      alerts(status) WHERE seen_at IS NULL, ``idx_events_host_id`` on
+      events(host_id)): SQLite creates them inside the ``_migrate_*`` ALTER
+      passes because pre-P0 DBs lack the columns when the schema script
+      runs, but Postgres has no migration passes (fresh installs only), so
+      the translated DDL must carry them textually.
     """
     out = _AUTOINCREMENT.sub("BIGSERIAL PRIMARY KEY", sqlite_schema)
     out = _MACOS_CHECK.sub("CHECK(platform IN ('windows', 'linux', 'macos'))", out)
     out = _STRICT.sub("", out)
+    out += (
+        "\n-- P0 indexes on migrated columns (see translate_schema docstring).\n"
+        "CREATE INDEX IF NOT EXISTS idx_alerts_unread ON alerts(status) WHERE seen_at IS NULL;\n"
+        "CREATE INDEX IF NOT EXISTS idx_events_host_id ON events(host_id);\n"
+    )
     return out
 
 

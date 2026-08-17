@@ -25,6 +25,12 @@ CREATE TABLE IF NOT EXISTS runs (
     sample_name TEXT NOT NULL,
     platform TEXT NOT NULL CHECK(platform IN ('windows', 'linux')),
     session_type TEXT NOT NULL DEFAULT 'analysis' CHECK(session_type IN ('live', 'analysis')),
+    -- Domain profile of the run (P0): 'monitoring_session' = host telemetry
+    -- (live), 'analysis_job' = an artifact analysis (analysis). Kept in sync
+    -- with session_type by the creation path and the _migrate_runs_kind
+    -- backfill; session_type remains the compatibility field.
+    kind TEXT NOT NULL DEFAULT 'monitoring_session'
+        CHECK(kind IN ('monitoring_session', 'analysis_job')),
     source TEXT NOT NULL DEFAULT 'monitor',
     started_at TEXT NOT NULL,
     completed_at TEXT,
@@ -45,7 +51,23 @@ CREATE TABLE IF NOT EXISTS alerts (
     status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open', 'acknowledged', 'resolved')),
     status_comment TEXT,
     status_at TEXT,
-    assignee TEXT
+    assignee TEXT,
+    -- Finding-layer columns (P0, additive): who/what produced the alert
+    -- ('detection' = rule engine, 'analyst' = hand-created, 'correlation' =
+    -- derived), the analyst's confidence and disposition verdicts, when the
+    -- analyst first saw it (NULL = unread), and the optional investigation
+    -- the finding belongs to. Existing rows keep source='detection' and NULL
+    -- verdicts — every pre-P0 alert is an unread detection with no
+    -- investigation.
+    source TEXT NOT NULL DEFAULT 'detection'
+        CHECK(source IN ('detection', 'analyst', 'correlation')),
+    confidence TEXT
+        CHECK(confidence IS NULL OR confidence IN ('high', 'medium', 'low')),
+    disposition TEXT
+        CHECK(disposition IS NULL OR disposition IN
+            ('false-positive', 'confirmed-malicious', 'benign', 'watchlisted', 'escalated')),
+    seen_at TEXT,
+    investigation_id TEXT REFERENCES investigations(id)
 );
 
 CREATE TABLE IF NOT EXISTS events (
@@ -271,6 +293,120 @@ CREATE TABLE IF NOT EXISTS rule_suppressions (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_suppressions_rule ON rule_suppressions(rule_id);
+
+-- P0 foundations (docs: OUTPOST — P0 BACKEND FOUNDATIONS SPECIFICATION).
+-- Additive: existing rows/tables are untouched; the API/queue layers that
+-- consume these arrive in P0.2+. All tables are created up front so fresh
+-- DBs start correct and old DBs only need the _migrate_* ALTERs below.
+
+-- The optional analyst-created investigation/case: the cross-workflow anchor
+-- that binds findings, artifacts, hosts, sessions, IOCs and campaigns without
+-- forcing any telemetry into a case. Lifecycle: created → triage → active →
+-- contained → resolved → closed (reopen on new evidence; close requires a
+-- conclusion).
+CREATE TABLE IF NOT EXISTS investigations (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'created'
+        CHECK(status IN ('created', 'triage', 'active', 'contained', 'resolved', 'closed')),
+    severity TEXT,
+    conclusion TEXT,
+    created_by TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT,
+    closed_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS investigation_notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    investigation_id TEXT NOT NULL REFERENCES investigations(id),
+    note TEXT NOT NULL,
+    actor TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS investigation_tags (
+    investigation_id TEXT NOT NULL REFERENCES investigations(id),
+    tag TEXT NOT NULL,
+    PRIMARY KEY (investigation_id, tag)
+);
+
+-- Evidence references are pointers, not copies: an investigation links to
+-- artifacts/runs/hosts/iocs/campaigns by id, never duplicates their data.
+-- UNIQUE(investigation_id, ref_type, ref_id) keeps attach/detach idempotent.
+CREATE TABLE IF NOT EXISTS investigation_refs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    investigation_id TEXT NOT NULL REFERENCES investigations(id),
+    ref_type TEXT NOT NULL
+        CHECK(ref_type IN ('artifact', 'run', 'host', 'ioc', 'campaign')),
+    ref_id TEXT NOT NULL,
+    added_at TEXT NOT NULL,
+    UNIQUE (investigation_id, ref_type, ref_id)
+);
+
+-- Canonical IOC entity (P0): one row per normalized indicator value+type,
+-- with a disposition lifecycle (candidate → enriched → verdict) and the
+-- enrichment cache columns mirrored from enrichment_cache/hash_cache so an
+-- IOC carries its reputation without joining per-lookup. UNIQUE(value, type)
+-- is the identity — the same IP extracted from two runs is one IOC.
+CREATE TABLE IF NOT EXISTS iocs (
+    ioc_id TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    type TEXT NOT NULL
+        CHECK(type IN ('ip', 'domain', 'url', 'hash', 'email', 'filepath',
+                       'registry', 'mutex', 'certificate', 'other')),
+    disposition TEXT NOT NULL DEFAULT 'candidate'
+        CHECK(disposition IN ('candidate', 'enriched', 'confirmed-malicious',
+                              'benign', 'allowlisted', 'watchlisted', 'unresolved')),
+    label TEXT,
+    abuse_score INTEGER,
+    vt_malicious_count INTEGER,
+    reputation TEXT,
+    checked_at TEXT,
+    first_seen TEXT NOT NULL,
+    last_seen TEXT,
+    source TEXT,
+    UNIQUE (value, type)
+);
+
+-- Where an IOC was observed: which event / finding / artifact first (and
+-- every) carried it. UNIQUE(ioc_id, ref_type, ref_id) keeps provenance
+-- idempotent; ioc_findings is the finding-side join for triage surfaces.
+CREATE TABLE IF NOT EXISTS ioc_provenance (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ioc_id TEXT NOT NULL REFERENCES iocs(ioc_id),
+    ref_type TEXT NOT NULL
+        CHECK(ref_type IN ('event', 'finding', 'artifact')),
+    ref_id TEXT NOT NULL,
+    first_seen TEXT NOT NULL,
+    UNIQUE (ioc_id, ref_type, ref_id)
+);
+
+CREATE TABLE IF NOT EXISTS ioc_findings (
+    ioc_id TEXT NOT NULL REFERENCES iocs(ioc_id),
+    finding_id INTEGER NOT NULL REFERENCES alerts(id),
+    PRIMARY KEY (ioc_id, finding_id)
+);
+
+-- Persisted analysis-job state (P0): the execution record for artifact
+-- analysis — static, watched-host, external-provider, and (future)
+-- isolated-outpost. run_id doubles as the job id so the existing run
+-- lifecycle/report/export machinery stays the single source of truth; job
+-- status survives backend restarts (the pre-P0 sandbox tasks were
+-- in-memory only). result is a JSON blob of backend-specific output.
+CREATE TABLE IF NOT EXISTS analysis_jobs (
+    run_id TEXT PRIMARY KEY REFERENCES runs(run_id),
+    backend TEXT NOT NULL
+        CHECK(backend IN ('static', 'watched-host', 'external-provider', 'isolated-outpost')),
+    status TEXT NOT NULL DEFAULT 'queued'
+        CHECK(status IN ('queued', 'running', 'completed', 'failed', 'canceled')),
+    timeout_seconds INTEGER,
+    started_at TEXT,
+    finished_at TEXT,
+    error TEXT,
+    progress INTEGER DEFAULT 0,
+    result TEXT
+);
 """
 
 
@@ -346,6 +482,65 @@ def _migrate_alerts_assignee(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _migrate_alerts_findings(conn: sqlite3.Connection) -> None:
+    """Idempotent: add the finding-layer columns (source / confidence /
+    disposition / seen_at / investigation_id) to DBs created before the P0
+    findings pass. Fresh DBs get them from SCHEMA; older installs need the
+    ALTER. Existing rows keep the safe defaults — source='detection', NULL
+    confidence/disposition/seen_at/investigation_id — so every pre-P0 alert
+    stays a valid, unread, un-investigated detection. Also creates the unread
+    partial index (status + seen_at IS NULL); it cannot live in SCHEMA because
+    pre-triage DBs lack the `status` column when executescript runs, so it is
+    created here after both columns are guaranteed to exist."""
+    cols = _column_names(conn, "alerts")
+    if "source" not in cols:
+        conn.execute(
+            "ALTER TABLE alerts ADD COLUMN source TEXT NOT NULL DEFAULT 'detection' "
+            "CHECK(source IN ('detection', 'analyst', 'correlation'))"
+        )
+    if "confidence" not in cols:
+        conn.execute(
+            "ALTER TABLE alerts ADD COLUMN confidence TEXT "
+            "CHECK(confidence IS NULL OR confidence IN ('high', 'medium', 'low'))"
+        )
+    if "disposition" not in cols:
+        conn.execute(
+            "ALTER TABLE alerts ADD COLUMN disposition TEXT "
+            "CHECK(disposition IS NULL OR disposition IN "
+            "('false-positive', 'confirmed-malicious', 'benign', 'watchlisted', 'escalated'))"
+        )
+    if "seen_at" not in cols:
+        conn.execute("ALTER TABLE alerts ADD COLUMN seen_at TEXT")
+    if "investigation_id" not in cols:
+        conn.execute(
+            "ALTER TABLE alerts ADD COLUMN investigation_id TEXT REFERENCES investigations(id)"
+        )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_alerts_unread ON alerts(status) WHERE seen_at IS NULL"
+    )
+    conn.commit()
+
+
+def _migrate_runs_kind(conn: sqlite3.Connection) -> None:
+    """Idempotent: add the `kind` domain-profile column (monitoring_session /
+    analysis_job) to DBs created before the P0 pass, and backfill existing
+    rows from session_type: live → monitoring_session, analysis →
+    analysis_job. Must run AFTER _migrate_runs_platform_macos (whose rebuild
+    drops newer columns and would otherwise wipe the ALTER). Fresh DBs get
+    the column from SCHEMA; the backfill is a harmless no-op there because
+    the creation path stamps kind directly."""
+    if "kind" not in _column_names(conn, "runs"):
+        conn.execute(
+            "ALTER TABLE runs ADD COLUMN kind TEXT NOT NULL DEFAULT 'monitoring_session' "
+            "CHECK(kind IN ('monitoring_session', 'analysis_job'))"
+        )
+    conn.execute(
+        "UPDATE runs SET kind = CASE WHEN session_type = 'analysis' "
+        "THEN 'analysis_job' ELSE 'monitoring_session' END"
+    )
+    conn.commit()
+
+
 def _migrate_runs_source(conn: sqlite3.Connection) -> None:
     """Idempotent: add the `source` provenance column (where a run came from:
     monitor / live / sandbox:<provider> / seed / cli) to pre-existing DBs.
@@ -372,10 +567,15 @@ def _migrate_events_host_id(conn: sqlite3.Connection) -> None:
     """Idempotent: add the `host_id` fleet column (which agent a host event
     came from) to pre-existing DBs. Fresh DBs get it from SCHEMA; older
     installs need the ALTER. Pre-existing events are marked 'local' — the
-    zero-config webapp path where events originate on the same machine."""
+    zero-config webapp path where events originate on the same machine.
+
+    Also creates the host aggregate index (P0): it cannot live in SCHEMA
+    because pre-fleet DBs lack the column when executescript runs, so it is
+    created here after the column is guaranteed to exist."""
     if "host_id" not in _column_names(conn, "events"):
         conn.execute("ALTER TABLE events ADD COLUMN host_id TEXT NOT NULL DEFAULT 'local'")
-        conn.commit()
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_events_host_id ON events(host_id)")
+    conn.commit()
 
 
 def _migrate_events_log_source(conn: sqlite3.Connection) -> None:
@@ -563,9 +763,11 @@ def init_db() -> None:
         _migrate_alerts_related_pids(conn)
         _migrate_alerts_triage(conn)
         _migrate_alerts_assignee(conn)
+        _migrate_alerts_findings(conn)
         _migrate_agent_heartbeats_auth(conn)
         _migrate_samples_platform_unknown(conn)
         _migrate_runs_platform_macos(conn)
+        _migrate_runs_kind(conn)
         _migrate_runs_source(conn)
         _migrate_events_host_id(conn)
         _migrate_events_raw_record(conn)
