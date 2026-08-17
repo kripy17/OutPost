@@ -72,17 +72,58 @@ def publish_alerts(alerts: list[Any]) -> int:
     return sent
 
 
-def publish_run_update(run_id: str, event_count: int, completed: bool = False) -> int:
-    """Publish a run-level update (new events ingested, or the run completed).
+def publish_run_update(
+    run_id: str,
+    event_count: int,
+    completed: bool = False,
+    *,
+    job_id: str | None = None,
+    job_status: str | None = None,
+    progress: int | None = None,
+    investigation_id: str | None = None,
+    finding_id: int | None = None,
+) -> int:
+    """Publish a run-level update (new events ingested, run completed, or a
+    P0.7 additive extension).
 
-    The Monitor and Event Log subscribe to this so process trees, network
-    tables, and the live feed refresh the moment a batch lands instead of
-    waiting for the next poll tick — polling stays as the fallback.
+    The P0.7 contract EXTENDS this frame rather than adding a new event
+    type: the existing consumers only read run_id/events/completed, so old
+    frames stay valid and old callers stay byte-compatible. The additive
+    fields are:
+
+      job_id / job_status / progress — an analysis-job transition (create,
+        cancel, and future running/completed/failed from the executor);
+      investigation_id + finding_id — a finding attach/detach or an
+        investigation lifecycle change (create/close/reopen). When
+        finding_id is set, investigation_id is ALWAYS serialized (null =
+        the finding was detached from its case), so a client can tell
+        "omitted" (not investigation-related) from "explicit null"
+        (detached).
+
+    Terminal job states are emitted exactly once from the mutation path
+    (the route that transitions the persisted row); reconnect never
+    re-emits because publish is fire-and-forget push and the DB row is the
+    source of truth on reconnect.
     """
-    return publish(
-        "run-update",
-        {"run_id": run_id, "events": event_count, "completed": completed},
-    )
+    data: dict[str, Any] = {
+        "run_id": run_id,
+        "events": event_count,
+        "completed": completed,
+    }
+    if job_id is not None:
+        data["job_id"] = job_id
+    if job_status is not None:
+        data["job_status"] = job_status
+    if progress is not None:
+        data["progress"] = progress
+    if investigation_id is not None:
+        data["investigation_id"] = investigation_id
+    if finding_id is not None:
+        # Always serialize the investigation link for finding mutations —
+        # null means the finding was detached.
+        data["finding_id"] = finding_id
+        data["investigation_id"] = investigation_id
+    return publish("run-update", data)
 
 
 def publish_fleet_update(host_id: str, online: bool, silent: bool, last_heartbeat: str | None = None) -> int:

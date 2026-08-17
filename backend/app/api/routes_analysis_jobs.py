@@ -29,7 +29,7 @@ from ..models import audit
 from ..models import event as event_store
 from ..models import run as run_store
 from ..models import samples as samples_store
-from ..services import static_analysis
+from ..services import events_stream, static_analysis
 
 router = APIRouter(tags=["analysis"])
 
@@ -125,6 +125,16 @@ def create_analysis_job(body: AnalysisJobCreateIn, request: Request) -> Analysis
             target_type="analysis", target_id=run_id,
             detail=f"backend {body.backend} · {sample_name} ({platform})",
         )
+        # P0.7 — extend the existing run_update frame (no new event type):
+        # job create publishes the persisted state so live subscribers see
+        # the job appear (queued) or finish (static completes synchronously).
+        events_stream.publish_run_update(
+            run_id, 0,
+            completed=job["status"] in (jobs_store.COMPLETED, jobs_store.FAILED, jobs_store.CANCELED),
+            job_id=run_id,
+            job_status=job["status"],
+            progress=job.get("progress") or 0,
+        )
         return AnalysisJobDTO(**_dto(conn, job))
 
 
@@ -189,6 +199,16 @@ def cancel_analysis_job(run_id: str, request: Request) -> AnalysisJobDTO:
             conn, auth.role_from_request(request), "analysis.cancel",
             target_type="analysis", target_id=run_id,
             detail=f"{job['status']} → canceled",
+        )
+        # P0.7 — the cancel transition emits the terminal frame exactly once
+        # (from the mutation path; reconnect never re-emits — the DB row is
+        # the source of truth).
+        events_stream.publish_run_update(
+            run_id, 0,
+            completed=True,
+            job_id=run_id,
+            job_status=jobs_store.CANCELED,
+            progress=updated.get("progress") or 0,
         )
         return AnalysisJobDTO(**_dto(conn, updated))
 
