@@ -29,6 +29,7 @@ from .api.routes_footprint import router as footprint_router
 from .api.routes_health import router as health_router
 from .api.routes_ingest import router as ingest_router
 from .api.routes_intel import router as intel_router
+from .api.routes_investigations import router as investigations_router
 from .api.routes_ioc import router as ioc_router
 from .api.routes_iocs import router as iocs_router
 from .api.routes_keys import router as keys_router
@@ -153,6 +154,7 @@ app.include_router(alerts_router)
 app.include_router(findings_router)
 app.include_router(analysis_jobs_router)
 app.include_router(events_router)
+app.include_router(investigations_router)
 app.include_router(runs_router)
 app.include_router(ioc_router)
 app.include_router(iocs_router)
