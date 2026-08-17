@@ -480,6 +480,12 @@ SearchGroup = Literal[
     "findings", "iocs", "artifacts", "hosts", "sessions", "investigations", "campaigns"
 ]
 
+# P0.6 — the host-scoped aggregate timeline: a unified chronological feed of
+# every resource kind tied to one host (events, findings, sessions/jobs,
+# IOCs, investigations). A pure read model over the existing tables — no
+# host-timeline storage.
+TimelineKind = Literal["event", "finding", "session", "ioc", "investigation"]
+
 
 class SearchHit(BaseModel):
     """One result row in a search group. `group` names the owning resource;
@@ -512,3 +518,31 @@ class SearchResponseDTO(BaseModel):
     q: str = ""
     qualifiers: dict = Field(default_factory=dict)
     groups: dict[str, SearchGroupResult] = Field(default_factory=dict)
+
+
+class HostTimelineEntry(BaseModel):
+    """One row of the host aggregate timeline. `kind` discriminates the
+    resource; `timestamp` is the unified sort key (event time, alert trigger,
+    session start, IOC first-seen, investigation created); `title`/`subtitle`
+    carry the display text; `payload` carries the deep-link fields per kind."""
+
+    kind: TimelineKind
+    timestamp: datetime
+    id: str
+    title: str
+    subtitle: str | None = None
+    payload: dict = Field(default_factory=dict)
+
+
+class HostTimelineDTO(BaseModel):
+    """The host timeline envelope — host metadata plus the merged, filtered,
+    paginated feed. `total` is the honest count across ALL kinds after the
+    active filters (not just this page); `limit`/`offset` echo the request."""
+
+    host_id: str
+    platform: str | None = None
+    last_heartbeat: datetime | None = None
+    total: int = 0
+    limit: int = 50
+    offset: int = 0
+    timeline: list[HostTimelineEntry] = []

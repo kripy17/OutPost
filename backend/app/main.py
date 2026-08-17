@@ -27,6 +27,7 @@ from .api.routes_events import router as events_router
 from .api.routes_findings import router as findings_router
 from .api.routes_footprint import router as footprint_router
 from .api.routes_health import router as health_router
+from .api.routes_hosts import router as hosts_router
 from .api.routes_ingest import router as ingest_router
 from .api.routes_intel import router as intel_router
 from .api.routes_investigations import router as investigations_router
@@ -145,6 +146,7 @@ app.add_middleware(
 
 app.include_router(auth_router)
 app.include_router(health_router)
+app.include_router(hosts_router)
 app.include_router(metrics_router)
 app.include_router(keys_router)
 app.include_router(setup_router)
