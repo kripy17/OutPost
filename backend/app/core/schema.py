@@ -28,6 +28,13 @@ IocType = Literal["ip", "domain", "url", "hash", "email", "filepath", "registry"
 IocDisposition = Literal["candidate", "enriched", "confirmed-malicious", "benign", "allowlisted", "watchlisted", "unresolved"]
 AnalysisBackend = Literal["static", "watched-host", "external-provider", "isolated-outpost"]
 AnalysisStatus = Literal["queued", "running", "completed", "failed", "canceled"]
+# P0.3 investigation layer — the optional cross-workflow case anchor.
+# Lifecycle: created → triage → active → contained → resolved → closed;
+# reopen returns to `active`; close requires a conclusion.
+InvestigationStatus = Literal["created", "triage", "active", "contained", "resolved", "closed"]
+InvestigationRefType = Literal["artifact", "run", "host", "ioc", "campaign"]
+# Canonical severity ordering for the derived investigation severity.
+_SEVERITY_RANK = {"suspicious": 1, "malicious": 2}
 
 
 class EventIn(BaseModel):
@@ -375,7 +382,6 @@ class SandboxTaskOut(BaseModel):
 
     task_id: str
     run_id: str
-    sample_id: str
     sample_name: str
     provider: str
     platform: Platform
@@ -387,3 +393,80 @@ class SandboxTaskOut(BaseModel):
     error: str | None = None
     started_at: str
     finished_at: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# P0.3 — Investigation
+# ---------------------------------------------------------------------------
+
+
+class InvestigationDTO(BaseModel):
+    """One investigation — the case header with derived counts. `severity` is
+    DERIVED from the attached findings (max of the canonical suspicious /
+    malicious vocabulary), NULL when no findings are attached."""
+
+    id: str
+    title: str
+    status: InvestigationStatus = "created"
+    severity: Severity | None = None
+    conclusion: str | None = None
+    created_by: str | None = None
+    created_at: datetime
+    updated_at: datetime | None = None
+    closed_at: datetime | None = None
+    finding_count: int = 0
+    ref_count: int = 0
+    tags: list[str] = []
+
+
+class InvestigationCreateIn(BaseModel):
+    title: str = Field(min_length=1, max_length=256)
+    tags: list[str] = Field(default_factory=list, max_length=16)
+
+
+class InvestigationPatchIn(BaseModel):
+    """Fields justified by the P0 contract: title / tags / status / conclusion.
+    Only fields actually present are written (Pydantic v2 model_fields_set)."""
+
+    title: str | None = Field(default=None, min_length=1, max_length=256)
+    tags: list[str] | None = None
+    status: InvestigationStatus | None = None
+    conclusion: str | None = Field(default=None, max_length=4000)
+
+
+class InvestigationRefIn(BaseModel):
+    ref_type: InvestigationRefType
+    ref_id: str = Field(min_length=1, max_length=256)
+
+
+class InvestigationRefDTO(BaseModel):
+    investigation_id: str
+    ref_type: InvestigationRefType
+    ref_id: str
+    added_at: datetime
+
+
+class InvestigationNoteIn(BaseModel):
+    note: str = Field(min_length=1, max_length=4000)
+
+
+class InvestigationNoteDTO(BaseModel):
+    id: int
+    investigation_id: str
+    note: str
+    actor: str
+    created_at: datetime
+
+
+class InvestigationDetailDTO(InvestigationDTO):
+    """The investigation workspace payload: the header, its tags, the attached
+    findings (from the canonical alerts model — never duplicated), the
+    evidence refs (pointers, not copies), and the analyst notes."""
+
+    findings: list[Alert] = []
+    refs: list[InvestigationRefDTO] = []
+    notes: list[InvestigationNoteDTO] = []
+
+
+class InvestigationCloseIn(BaseModel):
+    conclusion: str = Field(min_length=1, max_length=4000)

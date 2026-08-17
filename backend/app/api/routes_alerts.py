@@ -43,12 +43,22 @@ def update_alert_status(alert_id: int, body: AlertPatchIn, request: Request) -> 
     """Move one alert through the triage lifecycle and/or set its P0 finding
     verdicts. `comment` is optional and recorded at the transition; an empty
     comment is stored as NULL. The extended PATCH also accepts the optional
-    disposition / confidence / investigation_id — each is written only when
-    provided (None leaves the column untouched, so a status-only PATCH
-    behaves exactly as before). Every change lands in the audit trail."""
+    disposition / confidence / investigation_id:
+
+    - disposition / confidence: written only when provided (None leaves the
+      column untouched — a status-only PATCH behaves exactly as before).
+    - investigation_id: OMITTED leaves the link untouched; a value attaches
+      the finding; an explicit null detaches it. Distinguishing "omitted"
+      from "explicit null" uses Pydantic v2's model_fields_set, so existing
+      callers that never mention investigation_id are byte-compatible.
+
+    Attach/detach audit under investigation.finding.attach / .detach and
+    touch the investigation's updated_at. Every change lands in the audit
+    trail."""
     comment = (body.comment or "").strip() or None
     actor = auth.role_from_request(request)
     now = datetime.now(timezone.utc).isoformat()
+    inv_field_sent = "investigation_id" in body.model_fields_set
     with db_session() as conn:
         row = conn.execute("SELECT * FROM alerts WHERE id = ?", (alert_id,)).fetchone()
         if not row:
@@ -60,6 +70,7 @@ def update_alert_status(alert_id: int, body: AlertPatchIn, request: Request) -> 
             if not inv:
                 raise HTTPException(status_code=422, detail=f"Unknown investigation: {body.investigation_id}")
         old = row["status"]
+        old_inv = row["investigation_id"]
         # Only verdict fields that were actually sent are written (None =
         # untouched) — existing PATCH callers stay byte-compatible. The
         # status + comment are ALWAYS written, as before.
@@ -68,11 +79,15 @@ def update_alert_status(alert_id: int, body: AlertPatchIn, request: Request) -> 
         for col, val in (
             ("disposition", body.disposition),
             ("confidence", body.confidence),
-            ("investigation_id", body.investigation_id),
         ):
             if val is not None:
                 sets.append(f"{col} = ?")
                 values.append(val)
+        if inv_field_sent:
+            # Explicitly provided: value attaches, null detaches. Omitted is
+            # handled by NOT touching the column.
+            sets.append("investigation_id = ?")
+            values.append(body.investigation_id)
         conn.execute(
             f"UPDATE alerts SET {', '.join(sets)} WHERE id = ?",
             [*values, alert_id],
@@ -84,6 +99,28 @@ def update_alert_status(alert_id: int, body: AlertPatchIn, request: Request) -> 
             detail += f" · confidence {body.confidence}"
         if body.investigation_id:
             detail += f" · case {body.investigation_id}"
+        if inv_field_sent:
+            # Finding ↔ investigation integration (P0.3): audit the attach /
+            # detach and touch the investigation's updated_at so derived
+            # counts/severity reflect the new relationship immediately.
+            from ..models import investigation as inv_store
+
+            if body.investigation_id is not None:
+                audit.log(
+                    conn, actor, "investigation.finding.attach",
+                    target_type="finding", target_id=str(alert_id),
+                    detail=f"finding {alert_id} → investigation {body.investigation_id}",
+                )
+                if old_inv != body.investigation_id:
+                    inv_store.attach_finding(conn, alert_id, body.investigation_id)
+            else:
+                audit.log(
+                    conn, actor, "investigation.finding.detach",
+                    target_type="finding", target_id=str(alert_id),
+                    detail=f"finding {alert_id} ← investigation {old_inv}" if old_inv else f"finding {alert_id} (not attached)",
+                )
+                if old_inv:
+                    inv_store.detach_finding(conn, alert_id)
         audit.log(
             conn, actor, "alert.status",
             target_type="alert", target_id=str(alert_id),
