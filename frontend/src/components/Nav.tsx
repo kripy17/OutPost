@@ -111,6 +111,7 @@ const GROUPS: { label: string; links: NavItem[] }[] = [
     label: "Operations",
     links: [
       { to: "/findings", label: "Open Findings", iconName: "alert" },
+      { to: "/investigations", label: "Investigations", iconName: "notes" },
       { to: "/watchlist", label: "Watchlist", iconName: "star" },
       { to: "/agents", label: "Agents", iconName: "terminal" },
       { to: "/rules", label: "Rules", iconName: "shield" },

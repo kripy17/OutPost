@@ -733,6 +733,82 @@ export interface QueueResponse {
   alerts: QueueAlert[];
 }
 
+// -- P1.1 — Investigations (P0.3 backend: optional cross-workflow case anchor) --
+// Mirrors backend/app/core/schema.py InvestigationDTO + detail payload.
+
+export type InvestigationStatus =
+  | "created"
+  | "triage"
+  | "active"
+  | "contained"
+  | "resolved"
+  | "closed";
+
+export type InvestigationRefType = "artifact" | "run" | "host" | "ioc" | "campaign";
+
+export type FindingSource = "detection" | "analyst" | "correlation";
+export type Confidence = "high" | "medium" | "low";
+export type Disposition =
+  | "false-positive"
+  | "confirmed-malicious"
+  | "benign"
+  | "watchlisted"
+  | "escalated";
+
+/** The P0 finding layer on top of the physical alerts rows — the backend
+ *  FindingDTO is a compatible superset of Alert, so this extends Alert with
+ *  the additive fields rather than duplicating the base. */
+export interface Finding extends Alert {
+  source: FindingSource;
+  confidence: Confidence | null;
+  disposition: Disposition | null;
+  seen_at: string | null;
+  investigation_id: string | null;
+}
+
+export interface Investigation {
+  id: string;
+  title: string;
+  status: InvestigationStatus;
+  severity: Severity | null;
+  conclusion: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string | null;
+  closed_at: string | null;
+  finding_count: number;
+  ref_count: number;
+  tags: string[];
+}
+
+export interface InvestigationRef {
+  investigation_id: string;
+  ref_type: InvestigationRefType;
+  ref_id: string;
+  added_at: string;
+}
+
+export interface InvestigationNote {
+  id: number;
+  investigation_id: string;
+  note: string;
+  actor: string;
+  created_at: string;
+}
+
+export interface InvestigationDetail extends Investigation {
+  findings: Finding[];
+  refs: InvestigationRef[];
+  notes: InvestigationNote[];
+}
+
+export interface InvestigationListResponse {
+  total: number;
+  limit: number;
+  offset: number;
+  investigations: Investigation[];
+}
+
 // -- Host behavioral baseline (anomaly layer) ---------------------------------
 
 export interface BaselineObservation {

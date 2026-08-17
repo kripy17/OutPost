@@ -31,6 +31,8 @@ const CampaignsPage = lazy(() => import("./routes/campaigns"));
 const CoveragePage = lazy(() => import("./routes/coverage"));
 const EventsPage = lazy(() => import("./routes/events"));
 const FindingsPage = lazy(() => import("./routes/findings"));
+const InvestigationsPage = lazy(() => import("./routes/investigations"));
+const InvestigationDetailPage = lazy(() => import("./routes/investigationDetail"));
 const FootprintPage = lazy(() => import("./routes/footprint"));
 const MonitorPage = lazy(() => import("./routes/monitor"));
 const NotFoundPage = lazy(() => import("./routes/notFound"));
@@ -131,6 +133,8 @@ export const router = createBrowserRouter([
       { path: "/agents", element: <AgentsPage /> },
       { path: "/audit", element: <AuditPage /> },
       { path: "/findings", element: <FindingsPage /> },
+      { path: "/investigations", element: <InvestigationsPage /> },
+      { path: "/investigations/:investigationId", element: <InvestigationDetailPage /> },
       { path: "/triage", element: <Navigate to="/findings" replace /> }, // the queue moved to its own page
       { path: "/campaigns", element: <CampaignsPage /> },
       { path: "/coverage", element: <CoveragePage /> },
