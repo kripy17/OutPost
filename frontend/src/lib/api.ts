@@ -74,6 +74,13 @@ import type {
   AnalysisJob,
   AnalysisJobCreateIn,
   AnalysisJobsResponse,
+  Investigation,
+  InvestigationDetail,
+  InvestigationListResponse,
+  InvestigationStatus,
+  InvestigationRef,
+  InvestigationRefType,
+  InvestigationNote,
 } from "../types";
 
 export const BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
@@ -454,6 +461,18 @@ export async function importRulePack(pack: RulePack): Promise<RulePackImportSumm
 // -- Alert triage (analyst workflow) -------------------------------------------
 export async function updateAlertStatus(alertId: number, status: AlertStatus, comment?: string): Promise<Alert> {
   return patch<Alert>(`/alerts/${alertId}`, { status, comment: comment ?? "" });
+}
+
+/** Attach/detach a finding to an investigation (PATCH /alerts/{id} with the
+ *  nullable investigation_id link — P0.3). The backend PATCH contract
+ *  requires `status`, so the caller passes the finding's CURRENT status —
+ *  the link change never moves the triage state. Pass null to detach. */
+export async function setAlertInvestigation(
+  alertId: number,
+  investigationId: string | null,
+  currentStatus: AlertStatus,
+): Promise<Alert> {
+  return patch<Alert>(`/alerts/${alertId}`, { status: currentStatus, investigation_id: investigationId });
 }
 
 export async function getRunAllowlist(runId: string): Promise<AllowlistEntry[]> {
@@ -888,4 +907,82 @@ export async function getAnalysisJob(runId: string): Promise<AnalysisJob> {
 /** Cancel a queued/running job (POST /analysis/{run_id}/cancel). */
 export async function cancelAnalysisJob(runId: string): Promise<AnalysisJob> {
   return post<AnalysisJob>(`/analysis/${encodeURIComponent(runId)}/cancel`, {});
+}
+
+// -- P1.1 — Investigations (P0.3 backend: the optional case anchor) -----------
+
+/** Create an investigation (POST /investigations) — title + optional tags. */
+export async function createInvestigation(body: {
+  title: string;
+  tags?: string[];
+}): Promise<Investigation> {
+  return post<Investigation>("/investigations", body);
+}
+
+/** List investigations (GET /investigations) — status/q filters, paged. */
+export async function listInvestigations(params: {
+  status?: InvestigationStatus;
+  q?: string;
+  limit?: number;
+  offset?: number;
+} = {}): Promise<InvestigationListResponse> {
+  const qs = new URLSearchParams();
+  if (params.status) qs.set("status", params.status);
+  if (params.q) qs.set("q", params.q);
+  if (params.limit !== undefined) qs.set("limit", String(params.limit));
+  if (params.offset !== undefined) qs.set("offset", String(params.offset));
+  const suffix = qs.toString();
+  return get<InvestigationListResponse>(`/investigations${suffix ? `?${suffix}` : ""}`);
+}
+
+/** One investigation workspace payload (GET /investigations/{id}). */
+export async function getInvestigation(investigationId: string): Promise<InvestigationDetail> {
+  return get<InvestigationDetail>(`/investigations/${encodeURIComponent(investigationId)}`);
+}
+
+/** Update title/tags/status/conclusion (PATCH /investigations/{id}). */
+export async function patchInvestigation(
+  investigationId: string,
+  body: {
+    title?: string;
+    tags?: string[];
+    status?: InvestigationStatus;
+    conclusion?: string | null;
+  },
+): Promise<Investigation> {
+  return patch<Investigation>(`/investigations/${encodeURIComponent(investigationId)}`, body);
+}
+
+/** Add an evidence ref (POST /investigations/{id}/refs). */
+export async function addInvestigationRef(
+  investigationId: string,
+  body: { ref_type: InvestigationRefType; ref_id: string },
+): Promise<InvestigationRef> {
+  return post<InvestigationRef>(`/investigations/${encodeURIComponent(investigationId)}/refs`, body);
+}
+
+/** Remove one evidence ref (DELETE /investigations/{id}/refs/{ref_id}). */
+export async function removeInvestigationRef(investigationId: string, refId: string): Promise<void> {
+  return del(`/investigations/${encodeURIComponent(investigationId)}/refs/${encodeURIComponent(refId)}`);
+}
+
+/** Append an analyst note (POST /investigations/{id}/notes). */
+export async function addInvestigationNote(
+  investigationId: string,
+  body: { note: string },
+): Promise<InvestigationNote> {
+  return post<InvestigationNote>(`/investigations/${encodeURIComponent(investigationId)}/notes`, body);
+}
+
+/** Close with a conclusion (POST /investigations/{id}/close). */
+export async function closeInvestigation(
+  investigationId: string,
+  body: { conclusion: string },
+): Promise<Investigation> {
+  return post<Investigation>(`/investigations/${encodeURIComponent(investigationId)}/close`, body);
+}
+
+/** Reopen a closed investigation (POST /investigations/{id}/reopen). */
+export async function reopenInvestigation(investigationId: string): Promise<Investigation> {
+  return post<Investigation>(`/investigations/${encodeURIComponent(investigationId)}/reopen`, {});
 }
