@@ -28,6 +28,7 @@ def _register_commands() -> None:
     from .commands.coverage import coverage
     from .commands.export import export
     from .commands.footprint import app as footprint_app
+    from .commands.hosts import app as hosts_app
     from .commands.intel import app as intel_app
     from .commands.list_runs import list_runs
     from .commands.notes import app as notes_app
@@ -61,6 +62,7 @@ def _register_commands() -> None:
     app.add_typer(intel_app, name="intel")
     app.add_typer(yara_app, name="yara")
     app.add_typer(footprint_app, name="footprint")
+    app.add_typer(hosts_app, name="hosts")
     app.add_typer(notes_app, name="notes")
     app.add_typer(agent_app, name="agent")
     app.add_typer(admin_app, name="admin")
