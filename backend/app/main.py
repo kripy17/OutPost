@@ -19,15 +19,18 @@ from .api.routes_admin import router as admin_router
 from .api.routes_agents import router as agents_router
 from .api.routes_alerts import router as alerts_router
 from .api.routes_analysis import router as analysis_router
+from .api.routes_analysis_jobs import router as analysis_jobs_router
 from .api.routes_audit import router as audit_router
 from .api.routes_auth import router as auth_router
 from .api.routes_campaigns import router as campaigns_router
 from .api.routes_events import router as events_router
+from .api.routes_findings import router as findings_router
 from .api.routes_footprint import router as footprint_router
 from .api.routes_health import router as health_router
 from .api.routes_ingest import router as ingest_router
 from .api.routes_intel import router as intel_router
 from .api.routes_ioc import router as ioc_router
+from .api.routes_iocs import router as iocs_router
 from .api.routes_keys import router as keys_router
 from .api.routes_metrics import router as metrics_router
 from .api.routes_notifications import router as notifications_router
@@ -147,9 +150,12 @@ app.include_router(intel_router)
 app.include_router(footprint_router)
 app.include_router(ingest_router)
 app.include_router(alerts_router)
+app.include_router(findings_router)
+app.include_router(analysis_jobs_router)
 app.include_router(events_router)
 app.include_router(runs_router)
 app.include_router(ioc_router)
+app.include_router(iocs_router)
 app.include_router(watchlist_router)
 app.include_router(samples_router)
 app.include_router(campaigns_router)

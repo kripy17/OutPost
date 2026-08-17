@@ -19,12 +19,12 @@ from pydantic import BaseModel
 
 from ..core import auth
 from ..core.db import db_session
-from ..core.schema import Alert, AlertStatusIn
+from ..core.schema import Alert, AlertPatchIn
 from ..models import audit
 from ..models import event as event_store
+from ..models import findings as findings_store
 from ..models import run as run_store
 from ..models.event import _parse_related_pids
-from ..models.run import SYNTHETIC_SOURCES
 
 router = APIRouter(tags=["alerts"])
 
@@ -39,25 +39,55 @@ def get_alerts(run_id: str) -> list[Alert]:
 
 
 @router.patch("/alerts/{alert_id}", response_model=Alert)
-def update_alert_status(alert_id: int, body: AlertStatusIn, request: Request) -> Alert:
-    """Move one alert through the triage lifecycle. `comment` is optional and
-    recorded at the transition; an empty comment is stored as NULL. Every
-    transition lands in the audit trail with the acting identity."""
+def update_alert_status(alert_id: int, body: AlertPatchIn, request: Request) -> Alert:
+    """Move one alert through the triage lifecycle and/or set its P0 finding
+    verdicts. `comment` is optional and recorded at the transition; an empty
+    comment is stored as NULL. The extended PATCH also accepts the optional
+    disposition / confidence / investigation_id — each is written only when
+    provided (None leaves the column untouched, so a status-only PATCH
+    behaves exactly as before). Every change lands in the audit trail."""
     comment = (body.comment or "").strip() or None
     actor = auth.role_from_request(request)
+    now = datetime.now(timezone.utc).isoformat()
     with db_session() as conn:
         row = conn.execute("SELECT * FROM alerts WHERE id = ?", (alert_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail=f"Unknown alert id: {alert_id}")
+        if body.investigation_id is not None:
+            inv = conn.execute(
+                "SELECT 1 FROM investigations WHERE id = ?", (body.investigation_id,)
+            ).fetchone()
+            if not inv:
+                raise HTTPException(status_code=422, detail=f"Unknown investigation: {body.investigation_id}")
         old = row["status"]
+        # Only verdict fields that were actually sent are written (None =
+        # untouched) — existing PATCH callers stay byte-compatible. The
+        # status + comment are ALWAYS written, as before.
+        sets = ["status = ?", "status_comment = ?", "status_at = ?"]
+        values: list = [body.status, comment, now]
+        for col, val in (
+            ("disposition", body.disposition),
+            ("confidence", body.confidence),
+            ("investigation_id", body.investigation_id),
+        ):
+            if val is not None:
+                sets.append(f"{col} = ?")
+                values.append(val)
         conn.execute(
-            "UPDATE alerts SET status = ?, status_comment = ?, status_at = ? WHERE id = ?",
-            (body.status, comment, datetime.now(timezone.utc).isoformat(), alert_id),
+            f"UPDATE alerts SET {', '.join(sets)} WHERE id = ?",
+            [*values, alert_id],
         )
+        detail = f"{old} → {body.status}"
+        if body.disposition:
+            detail += f" · disposition {body.disposition}"
+        if body.confidence:
+            detail += f" · confidence {body.confidence}"
+        if body.investigation_id:
+            detail += f" · case {body.investigation_id}"
         audit.log(
             conn, actor, "alert.status",
             target_type="alert", target_id=str(alert_id),
-            detail=f"{old} → {body.status}" + (f" — {comment}" if comment else ""),
+            detail=detail + (f" — {comment}" if comment else ""),
         )
         row = conn.execute("SELECT * FROM alerts WHERE id = ?", (alert_id,)).fetchone()
     d = dict(row)
@@ -287,6 +317,11 @@ def list_alert_queue(
     sample / rule / details. `sort=aging` surfaces open-oldest-first (SLA
     pressure); `sort=newest` flips it. Returns the envelope the queue page
     renders: totals per status plus the page of rows.
+
+    This is the compatibility surface for the shared finding-queue query
+    (``models/findings.query_findings``) — /findings exposes the same
+    implementation with the P0 filters (source / disposition / confidence /
+    unread_only / mark_seen) added. Behavior here is unchanged.
     """
     if status not in ("open", "acknowledged", "resolved", "all"):
         raise HTTPException(status_code=422, detail="status must be open, acknowledged, resolved, or all")
@@ -299,94 +334,20 @@ def list_alert_queue(
     limit = max(1, min(limit, 200))
     offset = max(0, offset)
 
-    # Filters EXCLUDING status — the per-status tab badges are live totals
-    # no matter which view is active (the "Open" tab must still show the
-    # acknowledged/resolved counts). The status filter is applied separately
-    # to the row query so `total` stays scoped to the active view for
-    # pagination.
-    where: list[str] = []
-    params: list = []
-    if rule_id:
-        where.append("a.rule_id = ?")
-        params.append(rule_id)
-    if severity:
-        where.append("a.severity = ?")
-        params.append(severity)
-    if host_id:
-        where.append("a.run_id IN (SELECT DISTINCT run_id FROM events WHERE host_id = ?)")
-        params.append(host_id)
-    if assignee:
-        where.append("a.assignee = ?")
-        params.append(assignee)
-    if campaign:
-        where.append(
-            "a.run_id IN (SELECT DISTINCT run_id FROM events WHERE dest_ip = ? OR file_path = ? OR registry_key = ? OR process_name = ?)"
-        )
-        params.extend([campaign] * 4)
-    if provenance:
-        # The same synthetic split the History archive hides by default — the
-        # queue can isolate (or exclude) demo/seed noise in one click.
-        marks = ",".join("?" for _ in SYNTHETIC_SOURCES)
-        op = "IN" if provenance == "synthetic" else "NOT IN"
-        where.append(f"r.source {op} ({marks})")
-        params += list(SYNTHETIC_SOURCES)
-    if q:
-        like = f"%{q}%"
-        where.append("(r.sample_name LIKE ? OR a.rule_id LIKE ? OR a.rule_name LIKE ? OR a.details LIKE ? OR a.related_ip LIKE ?)")
-        params.extend([like] * 5)
-    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
-    # Rows/pagination stay scoped to the active status view; the tab-badge
-    # counts above deliberately exclude the status filter.
-    if status != "all":
-        row_where = "WHERE " + " AND ".join(["a.status = ?", *where]) if where else "WHERE a.status = ?"
-        row_params: list = [status, *params]
-    else:
-        row_where = where_sql
-        row_params: list = list(params)
-
-    order = "a.triggered_at ASC, a.id ASC" if sort == "aging" else "a.triggered_at DESC, a.id DESC"
     with db_session() as conn:
-        # Tab badges: per-status totals across the non-status filters only.
-        counts = conn.execute(
-            f"""
-            SELECT a.status, COUNT(*) AS n
-            FROM alerts a JOIN runs r ON r.run_id = a.run_id
-            {where_sql}
-            GROUP BY a.status
-            """,
-            params,
-        ).fetchall()
-        total = conn.execute(
-            f"SELECT COUNT(*) FROM alerts a JOIN runs r ON r.run_id = a.run_id {row_where}",
-            row_params,
-        ).fetchone()[0]
-        rows = conn.execute(
-            f"""
-            SELECT a.*, r.sample_name,
-                   (SELECT GROUP_CONCAT(DISTINCT host_id) FROM events e
-                    WHERE e.run_id = a.run_id) AS host_ids
-            FROM alerts a
-            JOIN runs r ON r.run_id = a.run_id
-            {row_where}
-            ORDER BY {order}
-            LIMIT ? OFFSET ?
-            """,
-            [*row_params, limit, offset],
-        ).fetchall()
-    total_by_status = {c["status"]: c["n"] for c in counts}
-    out = []
-    for r in rows:
-        d = dict(r)
-        _parse_related_pids(d)
-        d["host_ids"] = [h for h in (d.pop("host_ids") or "").split(",") if h]
-        out.append(d)
-    return {
-        "total": total,
-        "open": total_by_status.get("open", 0),
-        "acknowledged": total_by_status.get("acknowledged", 0),
-        "resolved": total_by_status.get("resolved", 0),
-        "sort": sort,
-        "limit": limit,
-        "offset": offset,
-        "alerts": out,
-    }
+        out = findings_store.query_findings(
+            conn,
+            status=status,
+            rule_id=rule_id,
+            severity=severity,
+            host_id=host_id,
+            assignee=assignee,
+            campaign=campaign,
+            provenance=provenance,
+            q=q,
+            sort=sort,
+            limit=limit,
+            offset=offset,
+        )
+    out.pop("_page_ids", None)
+    return out

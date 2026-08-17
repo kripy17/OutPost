@@ -19,6 +19,15 @@ Severity = Literal["suspicious", "malicious"]
 Reputation = Literal["clean", "suspicious", "malicious", "unknown"]
 AlertStatus = Literal["open", "acknowledged", "resolved"]
 AllowlistKind = Literal["ip", "file", "registry", "process", "hash"]
+# P0 finding layer — who produced the alert, the analyst verdict vocabulary,
+# and the IOC / investigation types (P0.2 resource APIs).
+FindingSource = Literal["detection", "analyst", "correlation"]
+Confidence = Literal["high", "medium", "low"]
+Disposition = Literal["false-positive", "confirmed-malicious", "benign", "watchlisted", "escalated"]
+IocType = Literal["ip", "domain", "url", "hash", "email", "filepath", "registry", "mutex", "certificate", "other"]
+IocDisposition = Literal["candidate", "enriched", "confirmed-malicious", "benign", "allowlisted", "watchlisted", "unresolved"]
+AnalysisBackend = Literal["static", "watched-host", "external-provider", "isolated-outpost"]
+AnalysisStatus = Literal["queued", "running", "completed", "failed", "canceled"]
 
 
 class EventIn(BaseModel):
@@ -106,11 +115,129 @@ class Alert(BaseModel):
     status: AlertStatus = "open"
     status_comment: str | None = None
     status_at: datetime | None = None
+    # P0 finding layer (additive — every existing consumer keeps working with
+    # the defaults): who/what produced the alert, the analyst's verdicts, the
+    # unread stamp, and the optional investigation the finding belongs to.
+    source: FindingSource = "detection"
+    confidence: Confidence | None = None
+    disposition: Disposition | None = None
+    seen_at: datetime | None = None
+    investigation_id: str | None = None
 
 
 class AlertStatusIn(BaseModel):
     status: AlertStatus
     comment: str | None = None
+
+
+class AlertPatchIn(AlertStatusIn):
+    """The extended PATCH contract: the triage transition plus the P0 finding
+    verdicts (disposition / confidence) and the optional investigation link.
+    All of them optional — a status-only PATCH behaves exactly as before."""
+
+    disposition: Disposition | None = None
+    confidence: Confidence | None = None
+    investigation_id: str | None = None
+
+
+class FindingDTO(Alert):
+    """The semantic finding resource — a compatible superset of Alert (the
+    physical table stays `alerts`; this is the API-level abstraction)."""
+
+
+class FindingIn(BaseModel):
+    """Create an analyst-authored finding. `source` is forced to 'analyst'
+    server-side — the detection engine owns the 'detection' provenance."""
+
+    run_id: str = Field(min_length=1, max_length=64)
+    rule_id: str = Field(default="analyst-finding", min_length=1, max_length=128)
+    rule_name: str = Field(default="Analyst finding", min_length=1, max_length=256)
+    severity: Severity
+    details: str = Field(min_length=1, max_length=4000)
+    related_pid: int | None = None
+    related_ip: str | None = None
+    related_pids: list[int] = []
+    comment: str | None = None
+
+
+class IocDTO(BaseModel):
+    ioc_id: str
+    value: str
+    type: IocType
+    disposition: IocDisposition = "candidate"
+    label: str | None = None
+    abuse_score: int | None = None
+    vt_malicious_count: int | None = None
+    reputation: Reputation | None = None
+    checked_at: datetime | None = None
+    first_seen: datetime
+    last_seen: datetime | None = None
+    source: str | None = None
+
+
+class IocCreateIn(BaseModel):
+    value: str = Field(min_length=1, max_length=500)
+    type: IocType
+    label: str | None = Field(default=None, max_length=500)
+
+
+class IocDispositionIn(BaseModel):
+    disposition: IocDisposition
+    label: str | None = Field(default=None, max_length=500)
+
+
+class IocProvenanceDTO(BaseModel):
+    ref_type: str
+    ref_id: str
+    first_seen: datetime
+
+
+class IocDetailDTO(IocDTO):
+    """The IOC workspace payload: the row plus everything OutPost knows about
+    the indicator — where it was observed, the findings it links to, the runs
+    and hosts it appeared in. Runs/hosts are DERIVED from provenance refs
+    (event/finding → run → host); nothing is fabricated."""
+
+    provenance: list[IocProvenanceDTO] = []
+    findings: list[Alert] = []
+    runs: list[dict] = []
+    hosts: list[str] = []
+
+
+class AnalysisJobDTO(BaseModel):
+    """One persisted analysis job — `run_id` doubles as the job id (the run
+    lifecycle/report/export machinery stays the single source of truth)."""
+
+    run_id: str
+    backend: AnalysisBackend
+    status: AnalysisStatus = "queued"
+    timeout_seconds: int | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    error: str | None = None
+    progress: int = 0
+    result: dict | None = None
+    # Derived live from the run (events/alerts/risk share the run assembly).
+    sample_name: str | None = None
+    events: int = 0
+    alerts: int = 0
+    risk_score: int = 0
+
+
+class AnalysisJobCreateIn(BaseModel):
+    """Start an analysis job. `backend` selects the execution backend;
+    `sample_id` (vault sample) or `sample_name` identifies the artifact. For
+    `static` the analysis runs synchronously; `watched-host` and
+    `external-provider` persist queued state (their executors arrive in later
+    phases); `isolated-outpost` is reserved and returns 501 — OutPost has no
+    isolated execution backend yet."""
+
+    backend: AnalysisBackend
+    sample_id: str | None = Field(default=None, min_length=1, max_length=64)
+    sample_name: str | None = Field(default=None, min_length=1, max_length=256)
+    platform: Platform | None = None
+    timeout_seconds: int | None = Field(default=None, ge=1, le=86400)
+    label: str | None = Field(default=None, max_length=256)
 
 
 class AllowlistIn(BaseModel):
