@@ -44,6 +44,16 @@ export interface StreamRunUpdate {
   run_id: string;
   events: number;
   completed?: boolean;
+  // P0.7 additive extension — the same run-update frame now carries the
+  // analysis-job transition (job_id/job_status/progress) and the
+  // investigation push (investigation_id + finding_id when a finding was
+  // attached/detached; investigation_id alone on create/close/reopen).
+  // All optional: old frames and old consumers stay valid.
+  job_id?: string;
+  job_status?: "queued" | "running" | "completed" | "failed" | "canceled";
+  progress?: number;
+  investigation_id?: string | null;
+  finding_id?: number;
 }
 
 export interface StreamFleetUpdate {

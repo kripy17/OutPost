@@ -78,6 +78,29 @@ describe("streamHub", () => {
     expect(runUpdates).toEqual([{ run_id: "x", events: 3 }]);
   });
 
+  it("passes the P0.7 additive job/investigation fields through", async () => {
+    const { subscribeStream } = await hub();
+    const updates: Array<{
+      job_status?: string;
+      progress?: number;
+      investigation_id?: string | null;
+      finding_id?: number;
+    }> = [];
+    subscribeStream({ onRunUpdate: (r) => updates.push(r) });
+    const es = FakeEventSource.instances[0];
+    // Analysis-job transition frame.
+    es.fire("run-update", { run_id: "j1", events: 0, completed: true, job_id: "j1", job_status: "completed", progress: 100 });
+    // Finding attach frame.
+    es.fire("run-update", { run_id: "r1", events: 0, investigation_id: "inv1", finding_id: 42 });
+    // Finding detach frame (explicit null investigation).
+    es.fire("run-update", { run_id: "r1", events: 0, finding_id: 42, investigation_id: null });
+    expect(updates).toEqual([
+      { run_id: "j1", events: 0, completed: true, job_id: "j1", job_status: "completed", progress: 100 },
+      { run_id: "r1", events: 0, investigation_id: "inv1", finding_id: 42 },
+      { run_id: "r1", events: 0, finding_id: 42, investigation_id: null },
+    ]);
+  });
+
   it("ignores malformed frames without killing the stream", async () => {
     const { subscribeStream } = await hub();
     const alerts: { rule_id: string }[] = [];

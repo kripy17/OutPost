@@ -1043,3 +1043,98 @@ export interface TopologyResponse {
   clusters: TopologyCluster[];
   total_samples: number;
 }
+
+// -- P0.5/P0.6/P0.7 client contracts ------------------------------
+// Global search (GET /search): one grouped envelope across findings, iocs,
+// artifacts, hosts, sessions, investigations, campaigns.
+export type SearchGroup =
+  | "findings"
+  | "iocs"
+  | "artifacts"
+  | "hosts"
+  | "sessions"
+  | "investigations"
+  | "campaigns";
+
+export interface SearchHit {
+  group: SearchGroup;
+  id: string;
+  kind?: string | null;
+  title: string;
+  subtitle?: string | null;
+  payload: Record<string, unknown>;
+}
+
+export interface SearchGroupResult {
+  total: number;
+  hits: SearchHit[];
+}
+
+export interface SearchResponse {
+  q: string;
+  qualifiers: Record<string, string>;
+  groups: Record<SearchGroup, SearchGroupResult>;
+}
+
+// Host aggregate timeline (GET /hosts/{host_id}/timeline): the merged
+// chronological feed of events/findings/sessions/iocs/investigations.
+export type TimelineKind = "event" | "finding" | "session" | "ioc" | "investigation";
+
+export interface HostTimelineEntry {
+  kind: TimelineKind;
+  timestamp: string;
+  id: string;
+  title: string;
+  subtitle?: string | null;
+  payload: Record<string, unknown>;
+}
+
+export interface HostTimeline {
+  host_id: string;
+  platform?: string | null;
+  last_heartbeat?: string | null;
+  total: number;
+  limit: number;
+  offset: number;
+  timeline: HostTimelineEntry[];
+}
+
+// Analysis jobs (POST/GET /analysis): the persisted job record; run_id
+// doubles as the job id.
+export type AnalysisBackend =
+  | "static"
+  | "watched-host"
+  | "external-provider"
+  | "isolated-outpost";
+export type AnalysisStatus = "queued" | "running" | "completed" | "failed" | "canceled";
+
+export interface AnalysisJob {
+  run_id: string;
+  backend: AnalysisBackend;
+  status: AnalysisStatus;
+  timeout_seconds?: number | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  error?: string | null;
+  progress: number;
+  result?: Record<string, unknown> | null;
+  sample_name?: string | null;
+  events: number;
+  alerts: number;
+  risk_score: number;
+}
+
+export interface AnalysisJobCreateIn {
+  backend: AnalysisBackend;
+  sample_id?: string;
+  sample_name?: string;
+  platform?: Platform;
+  timeout_seconds?: number;
+}
+
+export interface AnalysisJobsResponse {
+  total: number;
+  limit: number;
+  offset: number;
+  jobs: AnalysisJob[];
+}

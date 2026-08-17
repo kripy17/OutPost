@@ -66,6 +66,14 @@ import type {
   IpIntelRefreshResponse,
   IntelFreshness,
   RefreshStaleResponse,
+  SearchResponse,
+  HostTimeline,
+  TimelineKind,
+  AnalysisBackend,
+  AnalysisStatus,
+  AnalysisJob,
+  AnalysisJobCreateIn,
+  AnalysisJobsResponse,
 } from "../types";
 
 export const BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
@@ -814,4 +822,70 @@ export async function getEventChannelCounts(
   if (params.include_synthetic !== undefined) qs.set("include_synthetic", String(params.include_synthetic));
   const suffix = qs.toString();
   return get<ChannelCountsResponse>(`/events/channel-counts${suffix ? `?${suffix}` : ""}`);
+}
+
+// -- P0.5/P0.6/P0.7 client surfaces -------------------------------------
+
+/** Global search (GET /search) — grouped results across every
+ *  analyst-facing resource. `q` may carry qualifiers (type: status:
+ *  severity: disposition: host: rule: case:); `limit` caps hits per group. */
+export async function globalSearch(q: string, limit = 10): Promise<SearchResponse> {
+  return get<SearchResponse>(`/search?q=${encodeURIComponent(q)}&limit=${limit}`);
+}
+
+/** Host aggregate timeline (GET /hosts/{host_id}/timeline) — the merged
+ *  chronological feed. `kind` restricts to one resource kind; `eventType`
+ *  narrows event rows; `q` matches display fields; limit/offset paginate. */
+export async function getHostTimeline(
+  hostId: string,
+  params: {
+    kind?: TimelineKind;
+    eventType?: string;
+    q?: string;
+    limit?: number;
+    offset?: number;
+  } = {},
+): Promise<HostTimeline> {
+  const qs = new URLSearchParams();
+  if (params.kind) qs.set("kind", params.kind);
+  if (params.eventType) qs.set("event_type", params.eventType);
+  if (params.q) qs.set("q", params.q);
+  if (params.limit !== undefined) qs.set("limit", String(params.limit));
+  if (params.offset !== undefined) qs.set("offset", String(params.offset));
+  const suffix = qs.toString();
+  return get<HostTimeline>(`/hosts/${encodeURIComponent(hostId)}/timeline${suffix ? `?${suffix}` : ""}`);
+}
+
+/** Start an analysis job (POST /analysis). `isolated-outpost` is a reserved
+ *  backend — the API returns 501 until an isolated execution env exists. */
+export async function createAnalysisJob(body: AnalysisJobCreateIn): Promise<AnalysisJob> {
+  return post<AnalysisJob>("/analysis", body);
+}
+
+/** List/filter persisted analysis jobs (GET /analysis). */
+export async function listAnalysisJobs(params: {
+  backend?: AnalysisBackend;
+  status?: AnalysisStatus;
+  artifact_id?: string;
+  limit?: number;
+  offset?: number;
+} = {}): Promise<AnalysisJobsResponse> {
+  const qs = new URLSearchParams();
+  if (params.backend) qs.set("backend", params.backend);
+  if (params.status) qs.set("status", params.status);
+  if (params.artifact_id) qs.set("artifact_id", params.artifact_id);
+  if (params.limit !== undefined) qs.set("limit", String(params.limit));
+  if (params.offset !== undefined) qs.set("offset", String(params.offset));
+  const suffix = qs.toString();
+  return get<AnalysisJobsResponse>(`/analysis${suffix ? `?${suffix}` : ""}`);
+}
+
+/** One persisted job (GET /analysis/{run_id}). */
+export async function getAnalysisJob(runId: string): Promise<AnalysisJob> {
+  return get<AnalysisJob>(`/analysis/${encodeURIComponent(runId)}`);
+}
+
+/** Cancel a queued/running job (POST /analysis/{run_id}/cancel). */
+export async function cancelAnalysisJob(runId: string): Promise<AnalysisJob> {
+  return post<AnalysisJob>(`/analysis/${encodeURIComponent(runId)}/cancel`, {});
 }

@@ -260,6 +260,89 @@ def get_navigator_layer() -> dict:
     return _get("/coverage/navigator")
 
 
+# -- P0.5/P0.6/P0.7 client surfaces (terminal parity with frontend/src/lib/api.ts)
+
+
+def global_search(q: str, limit: int = 10) -> dict:
+    """Global search (GET /search) — grouped results across every
+    analyst-facing resource; `q` may carry qualifiers (type: status:
+    severity: disposition: host: rule: case:)."""
+    return _get(f"/search?q={quote(q)}&limit={limit}")
+
+
+def host_timeline(
+    host_id: str,
+    kind: str | None = None,
+    event_type: str | None = None,
+    q: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict:
+    """Host aggregate timeline (GET /hosts/{host_id}/timeline) — the merged
+    chronological feed of events/findings/sessions/iocs/investigations."""
+    params = []
+    if kind:
+        params.append(f"kind={quote(kind)}")
+    if event_type:
+        params.append(f"event_type={quote(event_type)}")
+    if q:
+        params.append(f"q={quote(q)}")
+    params.append(f"limit={limit}")
+    params.append(f"offset={offset}")
+    return _get(f"/hosts/{quote(host_id)}/timeline?{'&'.join(params)}")
+
+
+def create_analysis_job(
+    backend: str,
+    sample_id: str | None = None,
+    sample_name: str | None = None,
+    platform: str | None = None,
+    timeout_seconds: int | None = None,
+) -> dict:
+    """Start an analysis job (POST /analysis). `isolated-outpost` returns
+    501 until an isolated execution environment exists."""
+    body: dict = {"backend": backend}
+    if sample_id:
+        body["sample_id"] = sample_id
+    if sample_name:
+        body["sample_name"] = sample_name
+    if platform:
+        body["platform"] = platform
+    if timeout_seconds is not None:
+        body["timeout_seconds"] = timeout_seconds
+    return _post("/analysis", body)
+
+
+def list_analysis_jobs(
+    backend: str | None = None,
+    status: str | None = None,
+    artifact_id: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict:
+    """List/filter persisted analysis jobs (GET /analysis)."""
+    params = []
+    if backend:
+        params.append(f"backend={quote(backend)}")
+    if status:
+        params.append(f"status={quote(status)}")
+    if artifact_id:
+        params.append(f"artifact_id={quote(artifact_id)}")
+    params.append(f"limit={limit}")
+    params.append(f"offset={offset}")
+    return _get(f"/analysis?{'&'.join(params)}")
+
+
+def get_analysis_job(run_id: str) -> dict:
+    """One persisted job (GET /analysis/{run_id})."""
+    return _get(f"/analysis/{quote(run_id)}")
+
+
+def cancel_analysis_job(run_id: str) -> dict:
+    """Cancel a queued/running job (POST /analysis/{run_id}/cancel)."""
+    return _post(f"/analysis/{quote(run_id)}/cancel", {})
+
+
 def watchlist_export(format: str = "json") -> bytes:
     resp = requests.get(f"{BASE_URL}/watchlist/export?format={format}", timeout=15)
     if not resp.ok:
