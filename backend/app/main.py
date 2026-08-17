@@ -39,6 +39,7 @@ from .api.routes_rules import router as rules_router
 from .api.routes_runs import router as runs_router
 from .api.routes_samples import router as samples_router
 from .api.routes_sandbox import router as sandbox_router
+from .api.routes_search import router as search_router
 from .api.routes_setup import router as setup_router
 from .api.routes_watchlist import router as watchlist_router
 from .api.routes_yara import router as yara_router
@@ -158,6 +159,7 @@ app.include_router(investigations_router)
 app.include_router(runs_router)
 app.include_router(ioc_router)
 app.include_router(iocs_router)
+app.include_router(search_router)
 app.include_router(watchlist_router)
 app.include_router(samples_router)
 app.include_router(campaigns_router)

@@ -470,3 +470,45 @@ class InvestigationDetailDTO(InvestigationDTO):
 
 class InvestigationCloseIn(BaseModel):
     conclusion: str = Field(min_length=1, max_length=4000)
+
+
+# ---------------------------------------------------------------------------
+# P0.5 — global search: the grouped GET /search envelope. One endpoint, every
+# analyst-facing resource group; qualifiers parsed from the query string.
+# ---------------------------------------------------------------------------
+SearchGroup = Literal[
+    "findings", "iocs", "artifacts", "hosts", "sessions", "investigations", "campaigns"
+]
+
+
+class SearchHit(BaseModel):
+    """One result row in a search group. `group` names the owning resource;
+    `id` is the resource's own id; `kind` is a display hint; `title` is the
+    primary match text; `subtitle` carries context (ip / run / severity / …);
+    `payload` carries the fields each group needs to deep-link. Minimal and
+    presentation-free: the webapp and CLI render from the same fields."""
+
+    group: SearchGroup
+    id: str
+    kind: str | None = None
+    title: str
+    subtitle: str | None = None
+    payload: dict = Field(default_factory=dict)
+
+
+class SearchGroupResult(BaseModel):
+    """A group's slice of the envelope: the page total (honest count across
+    all matches in the group, not just this page) and the page hits."""
+
+    total: int = 0
+    hits: list[SearchHit] = []
+
+
+class SearchResponseDTO(BaseModel):
+    """The GET /search envelope — `q` echoes the normalized free text (after
+    qualifiers were stripped), `qualifiers` echoes the parsed filters, and
+    `groups` holds one SearchGroupResult per resource group searched."""
+
+    q: str = ""
+    qualifiers: dict = Field(default_factory=dict)
+    groups: dict[str, SearchGroupResult] = Field(default_factory=dict)
