@@ -37,6 +37,59 @@ CREATE TABLE IF NOT EXISTS runs (
     suppressed_alerts TEXT
 );
 
+-- P0 foundations (docs: OUTPOST — P0 BACKEND FOUNDATIONS SPECIFICATION).
+-- The optional analyst-created investigation/case: the cross-workflow anchor
+-- that binds findings, artifacts, hosts, sessions, IOCs and campaigns without
+-- forcing any telemetry into a case. Lifecycle: created → triage → active →
+-- contained → resolved → closed (reopen on new evidence; close requires a
+-- conclusion).
+--
+-- Declared BEFORE `alerts` (not at the schema tail like the other P0 tables):
+-- alerts carries an `investigation_id REFERENCES investigations(id)`, and the
+-- Postgres runtime executes the translated DDL in declaration order — PG
+-- requires a FK target to exist when the referencing table is created,
+-- while SQLite resolves FKs lazily. Definition order here must therefore
+-- satisfy both engines.
+CREATE TABLE IF NOT EXISTS investigations (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'created'
+        CHECK(status IN ('created', 'triage', 'active', 'contained', 'resolved', 'closed')),
+    severity TEXT,
+    conclusion TEXT,
+    created_by TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT,
+    closed_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS investigation_notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    investigation_id TEXT NOT NULL REFERENCES investigations(id),
+    note TEXT NOT NULL,
+    actor TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS investigation_tags (
+    investigation_id TEXT NOT NULL REFERENCES investigations(id),
+    tag TEXT NOT NULL,
+    PRIMARY KEY (investigation_id, tag)
+);
+
+-- Evidence references are pointers, not copies: an investigation links to
+-- artifacts/runs/hosts/iocs/campaigns by id, never duplicates their data.
+-- UNIQUE(investigation_id, ref_type, ref_id) keeps attach/detach idempotent.
+CREATE TABLE IF NOT EXISTS investigation_refs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    investigation_id TEXT NOT NULL REFERENCES investigations(id),
+    ref_type TEXT NOT NULL
+        CHECK(ref_type IN ('artifact', 'run', 'host', 'ioc', 'campaign')),
+    ref_id TEXT NOT NULL,
+    added_at TEXT NOT NULL,
+    UNIQUE (investigation_id, ref_type, ref_id)
+);
+
 CREATE TABLE IF NOT EXISTS alerts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     run_id TEXT NOT NULL REFERENCES runs(run_id),
@@ -298,51 +351,8 @@ CREATE INDEX IF NOT EXISTS idx_suppressions_rule ON rule_suppressions(rule_id);
 -- Additive: existing rows/tables are untouched; the API/queue layers that
 -- consume these arrive in P0.2+. All tables are created up front so fresh
 -- DBs start correct and old DBs only need the _migrate_* ALTERs below.
-
--- The optional analyst-created investigation/case: the cross-workflow anchor
--- that binds findings, artifacts, hosts, sessions, IOCs and campaigns without
--- forcing any telemetry into a case. Lifecycle: created → triage → active →
--- contained → resolved → closed (reopen on new evidence; close requires a
--- conclusion).
-CREATE TABLE IF NOT EXISTS investigations (
-    id TEXT PRIMARY KEY,
-    title TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'created'
-        CHECK(status IN ('created', 'triage', 'active', 'contained', 'resolved', 'closed')),
-    severity TEXT,
-    conclusion TEXT,
-    created_by TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT,
-    closed_at TEXT
-);
-
-CREATE TABLE IF NOT EXISTS investigation_notes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    investigation_id TEXT NOT NULL REFERENCES investigations(id),
-    note TEXT NOT NULL,
-    actor TEXT NOT NULL,
-    created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS investigation_tags (
-    investigation_id TEXT NOT NULL REFERENCES investigations(id),
-    tag TEXT NOT NULL,
-    PRIMARY KEY (investigation_id, tag)
-);
-
--- Evidence references are pointers, not copies: an investigation links to
--- artifacts/runs/hosts/iocs/campaigns by id, never duplicates their data.
--- UNIQUE(investigation_id, ref_type, ref_id) keeps attach/detach idempotent.
-CREATE TABLE IF NOT EXISTS investigation_refs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    investigation_id TEXT NOT NULL REFERENCES investigations(id),
-    ref_type TEXT NOT NULL
-        CHECK(ref_type IN ('artifact', 'run', 'host', 'ioc', 'campaign')),
-    ref_id TEXT NOT NULL,
-    added_at TEXT NOT NULL,
-    UNIQUE (investigation_id, ref_type, ref_id)
-);
+-- (The investigations group lives above the alerts table — see the comment
+-- there for the Postgres declaration-order reason.)
 
 -- Canonical IOC entity (P0): one row per normalized indicator value+type,
 -- with a disposition lifecycle (candidate → enriched → verdict) and the
