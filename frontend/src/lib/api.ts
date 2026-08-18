@@ -74,6 +74,8 @@ import type {
   AnalysisJob,
   AnalysisJobCreateIn,
   AnalysisJobsResponse,
+  AnalysisObservationsResponse,
+  Finding,
   Investigation,
   InvestigationDetail,
   InvestigationListResponse,
@@ -907,6 +909,21 @@ export async function getAnalysisJob(runId: string): Promise<AnalysisJob> {
 /** Cancel a queued/running job (POST /analysis/{run_id}/cancel). */
 export async function cancelAnalysisJob(runId: string): Promise<AnalysisJob> {
   return post<AnalysisJob>(`/analysis/${encodeURIComponent(runId)}/cancel`, {});
+}
+
+/** Observations-shaped payload (GET /analysis/{run_id}/observations). Static
+ *  jobs return the stored analysis result as {kind, data} rows (strings /
+ *  iocs / pe / elf); dynamic jobs return the run's events — no observations
+ *  table exists (P0 defers it), so nothing is persisted here. */
+export async function getAnalysisObservations(runId: string): Promise<AnalysisObservationsResponse> {
+  return get<AnalysisObservationsResponse>(`/analysis/${encodeURIComponent(runId)}/observations`);
+}
+
+/** Findings attached to an analysis run (GET /analysis/{run_id}/findings) —
+ *  the existing alerts/run relationship, same assembly as /runs/{id}/alerts.
+ *  No cross-run aggregation in P0. */
+export async function getAnalysisFindings(runId: string): Promise<Finding[]> {
+  return get<Finding[]>(`/analysis/${encodeURIComponent(runId)}/findings`);
 }
 
 // -- P1.1 — Investigations (P0.3 backend: the optional case anchor) -----------

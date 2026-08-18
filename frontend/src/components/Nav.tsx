@@ -97,7 +97,10 @@ const GROUPS: { label: string; links: NavItem[] }[] = [
   },
   {
     label: "Analysis",
-    links: [{ to: "/history", label: "History", iconName: "clock" }],
+    links: [
+      { to: "/analysis", label: "Analysis", iconName: "play" },
+      { to: "/history", label: "History", iconName: "clock" },
+    ],
   },
   {
     label: "Intelligence",
