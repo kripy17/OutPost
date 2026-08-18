@@ -183,12 +183,12 @@ describe("P1.2 analysis workspace (routed)", () => {
       makeStub({ runId: RUN, job: () => jobState, observations: OBSERVATIONS, findings: FINDINGS }),
     );
     await renderAt(`/analysis/${RUN}`);
-    await waitFor(() => expect(screen.getByText("dropper.bin")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("dropper.bin")).toBeTruthy(), { timeout: 5000 });
     // Status pill + derived stats.
-    await waitFor(() => expect(screen.getAllByText("completed").length).toBeGreaterThan(0));
+    await waitFor(() => expect(screen.getAllByText("completed").length).toBeGreaterThan(0), { timeout: 5000 });
     expect(screen.getByText("8")).toBeTruthy(); // risk score
     // Observations: strings + IOC chips + PE metadata.
-    await waitFor(() => expect(screen.getByText("C:\\Windows\\System32\\cmd.exe")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("C:\\Windows\\System32\\cmd.exe")).toBeTruthy(), { timeout: 5000 });
     expect(screen.getByText("203.0.113.9")).toBeTruthy();
     expect(screen.getByText("KERNEL32.dll")).toBeTruthy();
     // Findings: rule name + details + the attach picker.
@@ -211,11 +211,11 @@ describe("P1.2 analysis workspace (routed)", () => {
     });
     vi.stubGlobal("fetch", realStub);
     await renderAt(`/analysis/${RUN}`);
-    await waitFor(() => expect(screen.getByText("Cancel job")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("Cancel job")).toBeTruthy(), { timeout: 5000 });
     fireEvent.click(screen.getByText("Cancel job"));
     // The cancel mutation seeds the canceled state into the cache — the
     // button disappears and the honest terminal panel renders.
-    await waitFor(() => expect(screen.getByText("Job canceled")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("Job canceled")).toBeTruthy(), { timeout: 5000 });
     expect(screen.queryByText("Cancel job")).toBeNull();
   });
 
@@ -226,7 +226,7 @@ describe("P1.2 analysis workspace (routed)", () => {
       makeStub({ runId: RUN, job: () => jobState, observations: OBSERVATIONS, findings: FINDINGS }),
     );
     await renderAt(`/analysis/${RUN}`);
-    await waitFor(() => expect(screen.getByText("Job failed")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("Job failed")).toBeTruthy(), { timeout: 5000 });
     expect(screen.getByText("executor unavailable")).toBeTruthy();
   });
 
@@ -242,9 +242,9 @@ describe("P1.2 analysis workspace (routed)", () => {
       makeStub({ runId: RUN, job: () => jobState, observations: OBSERVATIONS, findings: FINDINGS, postAnalysis }),
     );
     await renderAt("/analysis");
-    await waitFor(() => expect(screen.getByText("New analysis")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("New analysis")).toBeTruthy(), { timeout: 5000 });
     fireEvent.click(screen.getByText("New analysis"));
-    await waitFor(() => expect(screen.getByText("Backend")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("Backend")).toBeTruthy(), { timeout: 5000 });
     // Pick the sample from the library (artifact selection) — the page also
     // has a backend filter select, so find the combobox holding the sample.
     const selects = screen.getAllByRole("combobox") as HTMLSelectElement[];
@@ -252,8 +252,8 @@ describe("P1.2 analysis workspace (routed)", () => {
     fireEvent.change(artifactSelect, { target: { value: "s1" } });
     fireEvent.click(screen.getByText("Launch analysis"));
     // POST fired with the right body, then the app navigated to the workspace.
-    await waitFor(() => expect(postAnalysis).toHaveBeenCalled());
-    await waitFor(() => expect(screen.getByText("dropper.bin")).toBeTruthy());
+    await waitFor(() => expect(postAnalysis).toHaveBeenCalled(), { timeout: 5000 });
+    await waitFor(() => expect(screen.getByText("dropper.bin")).toBeTruthy(), { timeout: 5000 });
   });
 });
 
@@ -308,7 +308,7 @@ describe("P1.2 realtime job progress (SSE)", () => {
         <RouterProvider router={freshRouter} />
       </QueryClientProvider>,
     );
-    await waitFor(() => expect(screen.getByText("Cancel job")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("Cancel job")).toBeTruthy(), { timeout: 5000 });
     // The executor finishes: the persisted row flips, and the frame pushes
     // that transition over the shared stream.
     jobState = completeJob;

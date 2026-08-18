@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import DetectionVolume from "../components/DetectionVolume/DetectionVolume";
 import RiskTimeline from "../components/RiskTimeline/RiskTimeline";
@@ -105,7 +105,15 @@ export default function RunHistoryPage() {
             {q && host && <span className="mx-1 text-text-faint">·</span>}
             {host && (
               <>
-                host <span className="inline-flex items-center gap-1 font-mono text-text-primary"><Icon name="terminal" size={10} />{host}</span>
+                host{" "}
+                <Link
+                  to={`/hosts/${encodeURIComponent(host)}`}
+                  className="press inline-flex items-center gap-1 font-mono text-text-primary hover:text-accent"
+                  title={`The aggregate timeline — everything OutPost knows about ${host}`}
+                >
+                  <Icon name="terminal" size={10} />
+                  {host}
+                </Link>
               </>
             )}{" "}
             — {runs.length} session{runs.length === 1 ? "" : "s"}

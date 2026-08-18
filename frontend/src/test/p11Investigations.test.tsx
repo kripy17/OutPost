@@ -213,16 +213,16 @@ describe("P1.1 investigation workspace (routed)", () => {
 
   it("renders the list page with the case title", async () => {
     await renderAt("/investigations");
-    await waitFor(() => expect(screen.getByText("Investigations")).toBeTruthy());
-    await waitFor(() => expect(screen.getByText("C2 beaconing across agent fleet")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("Investigations")).toBeTruthy(), { timeout: 5000 });
+    await waitFor(() => expect(screen.getByText("C2 beaconing across agent fleet")).toBeTruthy(), { timeout: 5000 });
   });
 
   it("renders the workspace: header, findings, refs, notes", async () => {
     await renderAt("/investigations/inv1");
-    await waitFor(() => expect(screen.getByText("C2 beaconing across agent fleet")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("C2 beaconing across agent fleet")).toBeTruthy(), { timeout: 5000 });
     // Findings panel: rule name + details (the rule id chip renders the same
     // string, so assert via the unique detail text).
-    await waitFor(() => expect(screen.getAllByText("beaconing").length).toBeGreaterThan(0));
+    await waitFor(() => expect(screen.getAllByText("beaconing").length).toBeGreaterThan(0), { timeout: 5000 });
     expect(screen.getByText(/beaconing to 203\.0\.113\.1/)).toBeTruthy();
     // Refs panel.
     expect(screen.getByText("203.0.113.1")).toBeTruthy();

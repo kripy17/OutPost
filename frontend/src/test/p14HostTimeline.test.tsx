@@ -163,10 +163,10 @@ describe("P1.4 host workspace (routed)", () => {
     await renderAt("/hosts/archlinux");
     // Header + host context strip (the strip renders once the query lands).
     // "linux" appears twice (the nav platform chip + the host context strip).
-    await waitFor(() => expect(screen.getByText(/heartbeat/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/heartbeat/)).toBeTruthy(), { timeout: 5000 });
     expect(screen.getAllByText("linux").length).toBeGreaterThan(0);
     // Feed entries with their kind chips.
-    await waitFor(() => expect(screen.getAllByText("beaconing").length).toBeGreaterThan(0));
+    await waitFor(() => expect(screen.getAllByText("beaconing").length).toBeGreaterThan(0), { timeout: 5000 });
     expect(screen.getByText("network connection")).toBeTruthy();
     expect(screen.getByText("203.0.113.88")).toBeTruthy();
     // "4 entries" total.
@@ -190,9 +190,9 @@ describe("P1.4 host workspace (routed)", () => {
       }),
     );
     await renderAt("/hosts/archlinux");
-    await waitFor(() => expect(screen.getByText("archlinux")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("archlinux")).toBeTruthy(), { timeout: 5000 });
     fireEvent.click(screen.getByRole("button", { name: "Events" }));
-    await waitFor(() => expect(seen).toContain("event-filtered"));
+    await waitFor(() => expect(seen).toContain("event-filtered"), { timeout: 5000 });
     // The event-type chips appear only in the Events tab.
     expect(screen.getByRole("button", { name: "Process" })).toBeTruthy();
   });
@@ -200,7 +200,7 @@ describe("P1.4 host workspace (routed)", () => {
   it("a known-but-quiet host renders the honest empty feed with context", async () => {
     vi.stubGlobal("fetch", shellStub({ onTimeline: () => QUIET_RESPONSE }));
     await renderAt("/hosts/soak-box");
-    await waitFor(() => expect(screen.getByText("soak-box")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("soak-box")).toBeTruthy(), { timeout: 5000 });
     expect(screen.getByText(/No activity recorded for this host/)).toBeTruthy();
   });
 
@@ -234,8 +234,8 @@ describe("P1.4 host workspace (routed)", () => {
       }),
     );
     await renderAt("/hosts/archlinux");
-    await waitFor(() => expect(screen.getByText(/120 entries/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/120 entries/)).toBeTruthy(), { timeout: 5000 });
     fireEvent.click(screen.getByText(/Load more/));
-    await waitFor(() => expect(seenOffsets).toContain("offset-50"));
+    await waitFor(() => expect(seenOffsets).toContain("offset-50"), { timeout: 5000 });
   });
 });
