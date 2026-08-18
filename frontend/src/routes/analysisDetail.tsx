@@ -100,6 +100,16 @@ function ObservationRow({ obs }: { obs: AnalysisObservation }) {
       </div>
     );
   }
+  // Honest note rows — e.g. static jobs whose bytes were never stored
+  // ("no stored bytes — re-upload to run static analysis"). A note must
+  // render, never be swallowed.
+  if (obs.kind === "note" && typeof obs.data === "string") {
+    return (
+      <p className="rounded-lg border border-border-subtle bg-bg-inset px-3 py-2 text-[12px] text-text-muted">
+        {obs.data}
+      </p>
+    );
+  }
   // Event-row fallback (dynamic backends): the backend hands back the run's
   // events verbatim — same shape the Event Log renders.
   if (obs.timestamp || obs.event_type) {
