@@ -502,15 +502,24 @@ export default function RunDetailPage() {
             <SourceBadge source={run.source} />
             <ProvenanceBadge source={run.source} />
             {(run.host_ids ?? []).map((h) => (
-              <Link
-                key={h}
-                to={`/history?host=${encodeURIComponent(h)}`}
-                className="inline-flex items-center gap-1 rounded border border-border-subtle px-1.5 py-0.5 font-mono text-[10px] text-text-muted transition-colors hover:border-accent/50 hover:text-accent"
-                title={`All runs from host ${h}`}
-              >
-                <Icon name="terminal" size={10} className="opacity-60" />
-                {h}
-              </Link>
+              <span key={h} className="inline-flex items-center gap-1">
+                <Link
+                  to={`/hosts/${encodeURIComponent(h)}`}
+                  className="inline-flex items-center gap-1 rounded border border-border-subtle px-1.5 py-0.5 font-mono text-[10px] text-text-muted transition-colors hover:border-accent/50 hover:text-accent"
+                  title={`The aggregate timeline — everything OutPost knows about ${h}`}
+                >
+                  <Icon name="terminal" size={10} className="opacity-60" />
+                  {h}
+                </Link>
+                <Link
+                  to={`/history?host=${encodeURIComponent(h)}`}
+                  className="inline-flex items-center gap-1 rounded border border-border-subtle px-1.5 py-0.5 font-mono text-[10px] text-text-faint transition-colors hover:border-accent/50 hover:text-accent"
+                  title={`All runs from host ${h}`}
+                >
+                  <Icon name="clock" size={10} />
+                  runs
+                </Link>
+              </span>
             ))}
             <span>{run.session_type}</span>
             <span>started {run.started_at.slice(0, 19).replace("T", " ")} UTC</span>

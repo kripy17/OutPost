@@ -257,10 +257,21 @@ function EventRow({
           {eventMeta(e).map((m) => (
             <span key={m} className="font-mono">{m}</span>
           ))}
-          <span className="inline-flex items-center gap-1 font-mono">
-            <Icon name="terminal" size={10} className="opacity-60" />
-            {e.host_id ?? "local"}
-          </span>
+          {e.host_id ? (
+            <Link
+              to={`/hosts/${encodeURIComponent(e.host_id)}`}
+              className="press inline-flex items-center gap-1 font-mono text-text-muted hover:text-accent"
+              title={`The aggregate timeline — everything OutPost knows about ${e.host_id}`}
+            >
+              <Icon name="terminal" size={10} className="opacity-60" />
+              {e.host_id}
+            </Link>
+          ) : (
+            <span className="inline-flex items-center gap-1 font-mono">
+              <Icon name="terminal" size={10} className="opacity-60" />
+              local
+            </span>
+          )}
           <Link
             to={`/runs/${e.run_id}`}
             className="inline-flex items-center gap-1 font-mono font-medium text-accent hover:underline"

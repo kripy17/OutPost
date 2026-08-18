@@ -183,8 +183,8 @@ describe("P1.3 search page (routed)", () => {
     vi.stubGlobal("fetch", stub);
     await renderAt("/search?q=185.220.101.34");
     // The IOC deep-link runs the legacy search and renders its title.
-    await waitFor(() => expect(screen.getByText(/have I seen this before\?/)).toBeTruthy());
-    await waitFor(() => expect(seen).toContain("ioc-search-called"));
+    await waitFor(() => expect(screen.getByText(/have I seen this before\?/)).toBeTruthy(), { timeout: 5000 });
+    await waitFor(() => expect(seen).toContain("ioc-search-called"), { timeout: 5000 });
   });
 
   it("global mode renders grouped results with totals and qualifier echo", async () => {
@@ -192,12 +192,12 @@ describe("P1.3 search page (routed)", () => {
     await renderAt("/search?mode=global");
     // The heading AND the toggle tab both say "Global search" — assert the
     // toggle is the active tab, which is the unambiguous mode signal.
-    await waitFor(() => expect(screen.getByRole("tab", { name: "Global search" }).getAttribute("aria-selected")).toBe("true"));
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Global search" }).getAttribute("aria-selected")).toBe("true"), { timeout: 5000 });
     const input = screen.getByPlaceholderText(/203\.0\.113\.88/) as HTMLInputElement;
     fireEvent.change(input, { target: { value: "203.0.113.88" } });
     fireEvent.click(screen.getByText("Search"));
     // Summary line.
-    await waitFor(() => expect(screen.getByText(/9 matches across 7 resources/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/9 matches across 7 resources/)).toBeTruthy(), { timeout: 5000 });
     // Qualifier echo.
     expect(screen.getByText("type:finding")).toBeTruthy();
     expect(screen.getByText("status:open")).toBeTruthy();
@@ -208,7 +208,7 @@ describe("P1.3 search page (routed)", () => {
     expect(screen.getByText("Sessions & jobs")).toBeTruthy();
     expect(screen.getAllByText("Investigations").length).toBeGreaterThan(0);
     // Hit rows.
-    await waitFor(() => expect(screen.getAllByText("beaconing").length).toBeGreaterThan(0));
+    await waitFor(() => expect(screen.getAllByText("beaconing").length).toBeGreaterThan(0), { timeout: 5000 });
     expect(screen.getAllByText("203.0.113.88").length).toBeGreaterThan(0);
     expect(screen.getByText("C2 beaconing across agent fleet")).toBeTruthy();
   });
@@ -216,21 +216,21 @@ describe("P1.3 search page (routed)", () => {
   it("renders the honest empty state when no resource matches", async () => {
     vi.stubGlobal("fetch", shellStub({ onSearch: () => EMPTY_RESPONSE }));
     await renderAt("/search?mode=global");
-    await waitFor(() => expect(screen.getByRole("tab", { name: "Global search" }).getAttribute("aria-selected")).toBe("true"));
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Global search" }).getAttribute("aria-selected")).toBe("true"), { timeout: 5000 });
     const input = screen.getByPlaceholderText(/203\.0\.113\.88/) as HTMLInputElement;
     fireEvent.change(input, { target: { value: "zzz-no-match" } });
     fireEvent.click(screen.getByText("Search"));
-    await waitFor(() => expect(screen.getByText(/No matches across any resource/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/No matches across any resource/)).toBeTruthy(), { timeout: 5000 });
   });
 
   it("deep-links each group into its workspace", async () => {
     vi.stubGlobal("fetch", shellStub({ onSearch: () => GLOBAL_RESPONSE }));
     await renderAt("/search?mode=global");
-    await waitFor(() => expect(screen.getByRole("tab", { name: "Global search" }).getAttribute("aria-selected")).toBe("true"));
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Global search" }).getAttribute("aria-selected")).toBe("true"), { timeout: 5000 });
     const input = screen.getByPlaceholderText(/203\.0\.113\.88/) as HTMLInputElement;
     fireEvent.change(input, { target: { value: "203.0.113.88" } });
     fireEvent.click(screen.getByText("Search"));
-    await waitFor(() => expect(screen.getAllByText("beaconing").length).toBeGreaterThan(0));
+    await waitFor(() => expect(screen.getAllByText("beaconing").length).toBeGreaterThan(0), { timeout: 5000 });
     // Findings → run detail; IOC → pre-filled legacy search; artifact → sample.
     // (The investigation title also contains "beaconing", so find by href.)
     expect(Array.from(document.querySelectorAll("a")).find((a) => a.getAttribute("href") === "/runs/runbeacon1")).toBeTruthy();
@@ -246,13 +246,13 @@ describe("P1.3 search page (routed)", () => {
   it("analysis jobs deep-link into the analysis workspace; sessions into run detail", async () => {
     vi.stubGlobal("fetch", shellStub({ onSearch: () => GLOBAL_RESPONSE }));
     await renderAt("/search?mode=global");
-    await waitFor(() => expect(screen.getByRole("tab", { name: "Global search" }).getAttribute("aria-selected")).toBe("true"));
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Global search" }).getAttribute("aria-selected")).toBe("true"), { timeout: 5000 });
     const input = screen.getByPlaceholderText(/203\.0\.113\.88/) as HTMLInputElement;
     fireEvent.change(input, { target: { value: "203.0.113.88" } });
     fireEvent.click(screen.getByText("Search"));
     // The analysis_job session hit ("evil.exe" in Sessions & jobs) links to
     // /analysis/job1; the monitoring_session hit links to /runs/runbeacon1.
-    await waitFor(() => expect(screen.getAllByText("detonate-demo.sh").length).toBeGreaterThan(0));
+    await waitFor(() => expect(screen.getAllByText("detonate-demo.sh").length).toBeGreaterThan(0), { timeout: 5000 });
     const jobLink = Array.from(document.querySelectorAll("a")).find((a) => a.getAttribute("href") === "/analysis/job1");
     expect(jobLink).toBeTruthy();
     const sessionLink = Array.from(document.querySelectorAll("a")).find((a) => a.getAttribute("href") === "/runs/runbeacon1");

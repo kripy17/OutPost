@@ -74,10 +74,15 @@ function FindingRow({
             <Icon name="external" size={9} className="opacity-60" />
           </Link>
           {a.host_ids.filter(Boolean).map((h) => (
-            <span key={h} className="inline-flex items-center gap-1 font-mono">
+            <Link
+              key={h}
+              to={`/hosts/${encodeURIComponent(h)}`}
+              className="press inline-flex items-center gap-1 font-mono text-text-muted hover:text-accent"
+              title={`The aggregate timeline — everything OutPost knows about ${h}`}
+            >
               <Icon name="terminal" size={9} className="opacity-60" />
               {h}
-            </span>
+            </Link>
           ))}
           {a.related_ip && (
             <Link to={`/search?q=${encodeURIComponent(a.related_ip)}`} className="press font-mono text-accent hover:underline">
@@ -87,6 +92,16 @@ function FindingRow({
           {a.related_pids.filter(Boolean).length > 0 && (
             <Link to={`/events?pid=${a.related_pids.join(",")}`} className="press font-mono hover:text-accent">
               pid {a.related_pids.join(",")}
+            </Link>
+          )}
+          {a.investigation_id && (
+            <Link
+              to={`/investigations/${encodeURIComponent(a.investigation_id)}`}
+              className="press inline-flex items-center gap-1 font-mono text-text-muted hover:text-accent"
+              title={`Attached to the investigation ${a.investigation_id}`}
+            >
+              <Icon name="notes" size={9} className="opacity-60" />
+              case {a.investigation_id.slice(0, 12)}
             </Link>
           )}
           {a.assignee && <span className="font-mono">→ {a.assignee}</span>}

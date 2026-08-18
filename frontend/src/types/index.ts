@@ -720,6 +720,8 @@ export interface QueueAlert {
   related_pids: number[];
   host_ids: string[];
   details: string;
+  // P0.3: nullable link to the optional cross-workflow investigation overlay.
+  investigation_id?: string | null;
 }
 
 export interface QueueResponse {
