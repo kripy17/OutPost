@@ -1214,3 +1214,31 @@ export interface AnalysisJobsResponse {
   offset: number;
   jobs: AnalysisJob[];
 }
+
+/** One row of the observations-shaped payload (GET /analysis/{run_id}/
+ *  observations). Static jobs emit {kind, data} pairs — strings/iocs/pe/elf
+ *  from the stored analysis result; dynamic jobs emit raw event rows (no
+ *  observations table exists — P0 defers it), which arrive as plain event
+ *  dicts without a kind wrapper. The optional fields below cover that
+ *  event-row fallback shape. */
+export interface AnalysisObservation {
+  kind?: string;
+  data?: unknown;
+  // event-row fallback (dynamic backends)
+  id?: number | null;
+  run_id?: string;
+  event_type?: EventType;
+  timestamp?: string;
+  pid?: number | null;
+  process_name?: string | null;
+  command_line?: string | null;
+  dest_ip?: string | null;
+  dest_port?: number | null;
+  file_path?: string | null;
+  registry_key?: string | null;
+}
+
+export interface AnalysisObservationsResponse {
+  backend: AnalysisBackend;
+  observations: AnalysisObservation[];
+}

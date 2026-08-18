@@ -37,6 +37,8 @@ const FootprintPage = lazy(() => import("./routes/footprint"));
 const MonitorPage = lazy(() => import("./routes/monitor"));
 const NotFoundPage = lazy(() => import("./routes/notFound"));
 const RunDetailPage = lazy(() => import("./routes/runDetail"));
+const AnalysisPage = lazy(() => import("./routes/analysis"));
+const AnalysisDetailPage = lazy(() => import("./routes/analysisDetail"));
 const RunHistoryPage = lazy(() => import("./routes/index"));
 const OverviewPage = lazy(() => import("./routes/overview"));
 const RulesPage = lazy(() => import("./routes/rules"));
@@ -145,6 +147,8 @@ export const router = createBrowserRouter([
       { path: "/samples", element: <SamplesPage /> },
       { path: "/samples/:sampleId", element: <SampleDetailPage /> },
       { path: "/runs/:runId", element: <RunDetailPage /> },
+      { path: "/analysis", element: <AnalysisPage /> },
+      { path: "/analysis/:runId", element: <AnalysisDetailPage /> },
       // The sign-in screen is a real route: while unauthenticated the boot
       // gate above short-circuits to it from every path, and once
       // authenticated (or with auth disabled) a direct /login visit renders
