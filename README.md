@@ -69,10 +69,14 @@ host-status panel answers "is THIS host monitored?" against the live fleet.
 | 💾 **Sample vault** | Upload binaries; magic-sniffing detects PE/ELF/Mach-O, **script shebangs**, and **.lnk/.zip/Office archives**; YARA signature lab + VirusTotal reputation |
 | 🔎 **Footprint + intel** | Passive DNS / CT certificates / RDAP per sample (crt.sh, real when online, synthetic fallback), enrichment cache with force-refresh and stale sweeps, JSON/CSV footprint export |
 | 🚀 **Sandbox detonation** | Push vault samples to Any.Run / Hatching Triage / Joe Sandbox and stream the report through the real detection pipeline — `scripts/validate_sandbox_provider.py` runs the live end-to-end gate when a provider key is configured |
-| 📡 **SSE live push** | Fired alerts broadcast over `/events/stream` — StatusBar pulse, Monitor toasts, sparklines update instantly |
+| 📡 **SSE live push** | Fired alerts broadcast over `/events/stream` — StatusBar pulse, Monitor toasts, sparklines update instantly; findings queue, investigations list, and investigation workspace refetch live on matching frames |
 | 🖇️ **Correlation & triage** | IOC extraction/export, cross-run search, run comparison, watchlist (with live webhook/desktop alerts), alert triage lifecycle (open/ack/resolved + allowlists + suppressions, including rule+sample/IP value scopes from the findings sweep), STIX 2.1 + JSON + PDF export |
 | 🧪 **Real-collector live mode** | `outpost agent run/install` — auditd/Sysmon telemetry streams into live sessions; heartbeat fleet with last-seen/uptime and silent-host flags |
-| 🎨 **SOC deck UI** | Dark/light themes, collapsible rail, risk-over-time + detection-volume charts, kill chain, process tree with reputation halos, live monitor, browser notifications |
+| 🎨 **SOC deck UI** | Dark/light themes, collapsible rail, risk-over-time + detection-volume charts, kill chain, process tree with reputation halos, live monitor, browser notifications, host-workspace deep-links, investigation-linked findings |
+| 🔍 **Global search** | Cross-resource search across findings, IOCs, artifacts, hosts, sessions, investigations, and campaigns with type/status/severity/disposition/host/rule/case qualifiers — grouped results with per-group deep-links into the appropriate workspace |
+| 📋 **Investigation workspace** | Optional case overlay — create investigations, attach findings/IOCs/hosts/runs, track lifecycle (created → triage → active → contained → resolved → closed), add notes and tags, derive severity from attached findings |
+| 🔬 **Analysis workflow** | Submit artifacts to static/watched-host/external-provider backends, track job progress via SSE, view observations and generated findings, cancel running jobs |
+| 🖥️ **Host investigation** | Per-host aggregate timeline merging events, findings, sessions, IOCs, and investigations into one chronological feed with kind tabs and free-text filters |
 | ⌨️ **Terminal mirror** | The `outpost` CLI reaches the same API — **27 commands**, Rich tables, colorized risk, recon markers, rule knobs, alert-queue mirror (`outpost alerts --provenance real|synthetic`, saved per tab via `--save`, wiped with `outpost settings clear-prefs`), alert triage lifecycle (`outpost triage <id> <status> --comment`, bulk `outpost triage <status> <id1> <id2> …`), IOC allowlist (`outpost allowlist add|list|remove`), rule suppressions (`outpost rules suppressions add|list|remove`, run/value/global scopes), investigations group (`outpost investigations list|show|create|patch|attach|detach|refs-add|refs-remove|note|close|reopen`), analysis group (`outpost analysis launch|list|show|cancel|observations|findings`) |
 
 ## 📸 Screenshots
@@ -135,7 +139,7 @@ and rendered as a verdict panel.
         ┌────────────────────┐                ┌────────────────────┐
         │   React webapp     │                │   CLI (outpost)   │
         │   SOC deck UI      │                │   Rich terminal   │
-        │   23 pages         │                │   27 commands     │
+        │   25 pages         │                │   27 commands     │
         └────────────────────┘                └────────────────────┘
 ```
 
