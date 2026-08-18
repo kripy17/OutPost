@@ -49,6 +49,15 @@ def _patch(path: str, body: dict | None = None) -> Any:
     return resp.json()
 
 
+def _delete(path: str) -> None:
+    """DELETE that accepts both 200 and 204 — the CLI parity rule for
+    DELETE (mirror of the webapp's relaxed `del()`; a backend that 200s a
+    DELETE with a body must not throw a misleading error)."""
+    resp = requests.delete(f"{BASE_URL}{path}", headers=_auth_headers(), timeout=15)
+    if resp.status_code not in (200, 204):
+        raise APIError(f"DELETE {path} → {resp.status_code}: {resp.text[:200]}")
+
+
 def backfill_channels(admin_password: str) -> dict:
     """Admin-only: stamp `log_source` on legacy collector events on demand
     (the startup migration, no restart needed). Logs in as admin, POSTs
@@ -341,6 +350,114 @@ def get_analysis_job(run_id: str) -> dict:
 def cancel_analysis_job(run_id: str) -> dict:
     """Cancel a queued/running job (POST /analysis/{run_id}/cancel)."""
     return _post(f"/analysis/{quote(run_id)}/cancel", {})
+
+
+def get_analysis_observations(run_id: str) -> dict:
+    """The observations-shaped payload (GET /analysis/{run_id}/observations):
+    static jobs return the stored analysis result, dynamic jobs the run's
+    events — no observations table exists (P0 defers it)."""
+    return _get(f"/analysis/{quote(run_id)}/observations")
+
+
+def get_analysis_findings(run_id: str) -> list[dict]:
+    """Findings tied to the analysis run (GET /analysis/{run_id}/findings) —
+    the existing alerts/run relationship, same as /runs/{id}/alerts."""
+    return _get(f"/analysis/{quote(run_id)}/findings")
+
+
+# -- P0.3 investigation surface (terminal parity with frontend/src/lib/api.ts)
+
+
+def list_investigations(
+    status: str | None = None,
+    q: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict:
+    """List/filter investigations (GET /investigations) — status filter + q
+    over title/tags/notes. Returns {total, limit, offset, investigations}."""
+    params = []
+    if status:
+        params.append(f"status={quote(status)}")
+    if q:
+        params.append(f"q={quote(q)}")
+    params.append(f"limit={limit}")
+    params.append(f"offset={offset}")
+    return _get(f"/investigations?{'&'.join(params)}")
+
+
+def get_investigation(investigation_id: str) -> dict:
+    """One investigation workspace payload (GET /investigations/{id}): the
+    header with derived counts + findings / refs / notes."""
+    return _get(f"/investigations/{quote(investigation_id)}")
+
+
+def create_investigation(title: str, tags: list[str] | None = None) -> dict:
+    """Create an investigation (POST /investigations) — initial status is
+    'created', severity NULL until findings attach."""
+    body: dict = {"title": title}
+    if tags:
+        body["tags"] = tags
+    return _post("/investigations", body)
+
+
+def patch_investigation(
+    investigation_id: str,
+    title: str | None = None,
+    status: str | None = None,
+    conclusion: str | None = None,
+    tags: list[str] | None = None,
+) -> dict:
+    """Update an investigation (PATCH /investigations/{id}) — forward-only
+    status transitions; close/reopen are their own routes."""
+    body: dict = {}
+    if title is not None:
+        body["title"] = title
+    if status is not None:
+        body["status"] = status
+    if conclusion is not None:
+        body["conclusion"] = conclusion
+    if tags is not None:
+        body["tags"] = tags
+    return _patch(f"/investigations/{quote(investigation_id)}", body)
+
+
+def add_investigation_ref(investigation_id: str, ref_type: str, ref_id: str) -> dict:
+    """Attach one evidence ref (POST /investigations/{id}/refs) — a pointer,
+    never a copy. Idempotent on (investigation, ref_type, ref_id)."""
+    return _post(f"/investigations/{quote(investigation_id)}/refs", {"ref_type": ref_type, "ref_id": ref_id})
+
+
+def remove_investigation_ref(investigation_id: str, ref_id: str) -> None:
+    """Remove every ref of this investigation pointing at ref_id."""
+    _delete(f"/investigations/{quote(investigation_id)}/refs/{quote(ref_id)}")
+
+
+def add_investigation_note(investigation_id: str, note: str) -> dict:
+    """Add an analyst note (POST /investigations/{id}/notes)."""
+    return _post(f"/investigations/{quote(investigation_id)}/notes", {"note": note})
+
+
+def close_investigation(investigation_id: str, conclusion: str) -> dict:
+    """Close an investigation (POST /investigations/{id}/close) — requires a
+    conclusion; the backend rejects blank ones."""
+    return _post(f"/investigations/{quote(investigation_id)}/close", {"conclusion": conclusion})
+
+
+def reopen_investigation(investigation_id: str) -> dict:
+    """Reopen a closed investigation (POST /investigations/{id}/reopen) —
+    returns to the active lifecycle state and clears closed_at."""
+    return _post(f"/investigations/{quote(investigation_id)}/reopen", {})
+
+
+def set_alert_investigation(alert_id: int, investigation_id: str | None, current_status: str) -> dict:
+    """Attach/detach a finding to/from an investigation (PATCH /alerts/{id}).
+
+    The backend PATCH requires `status`, so the caller passes the finding's
+    CURRENT status — the link change never moves the triage state (the
+    exact parity rule the webapp's setAlertInvestigation enforces). Pass
+    None to detach."""
+    return _patch(f"/alerts/{alert_id}", {"status": current_status, "investigation_id": investigation_id})
 
 
 def watchlist_export(format: str = "json") -> bytes:
