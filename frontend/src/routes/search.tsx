@@ -33,7 +33,7 @@ const GROUPS: { key: SearchGroup; label: string; icon: IconName; link: (h: Searc
   { key: "findings", label: "Findings", icon: "alert", link: (h) => `/runs/${h.payload.run_id}` },
   { key: "iocs", label: "IOCs", icon: "search", link: (h) => `/search?q=${encodeURIComponent(String(h.payload.value ?? ""))}` },
   { key: "artifacts", label: "Artifacts", icon: "box", link: (h) => `/samples/${h.payload.sample_id}` },
-  { key: "hosts", label: "Hosts", icon: "terminal", link: () => `/agents` },
+  { key: "hosts", label: "Hosts", icon: "terminal", link: (h) => `/hosts/${encodeURIComponent(String(h.payload.host_id ?? ""))}` },
   {
     key: "sessions",
     label: "Sessions & jobs",

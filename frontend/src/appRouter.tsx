@@ -30,6 +30,7 @@ const AuditPage = lazy(() => import("./routes/audit"));
 const CampaignsPage = lazy(() => import("./routes/campaigns"));
 const CoveragePage = lazy(() => import("./routes/coverage"));
 const EventsPage = lazy(() => import("./routes/events"));
+const HostDetailPage = lazy(() => import("./routes/hostDetail"));
 const FindingsPage = lazy(() => import("./routes/findings"));
 const InvestigationsPage = lazy(() => import("./routes/investigations"));
 const InvestigationDetailPage = lazy(() => import("./routes/investigationDetail"));
@@ -133,6 +134,7 @@ export const router = createBrowserRouter([
       { path: "/search", element: <SearchPage /> },
       { path: "/watchlist", element: <WatchlistPage /> },
       { path: "/agents", element: <AgentsPage /> },
+      { path: "/hosts/:hostId", element: <HostDetailPage /> },
       { path: "/audit", element: <AuditPage /> },
       { path: "/findings", element: <FindingsPage /> },
       { path: "/investigations", element: <InvestigationsPage /> },

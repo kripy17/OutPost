@@ -178,6 +178,14 @@ function AgentRow({ agent }: { agent: AgentInfo }) {
             <Icon name="list" size={12} />
             Events
           </Link>
+          <Link
+            to={`/hosts/${encodeURIComponent(agent.host_id)}`}
+            className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-1.5 font-mono text-[11px] text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
+            title={`The aggregate timeline — everything OutPost knows about ${agent.host_id}`}
+          >
+            <Icon name="activity" size={12} />
+            Timeline
+          </Link>
         </div>
       </div>
     </li>

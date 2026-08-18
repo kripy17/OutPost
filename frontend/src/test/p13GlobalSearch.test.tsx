@@ -236,8 +236,8 @@ describe("P1.3 search page (routed)", () => {
     expect(Array.from(document.querySelectorAll("a")).find((a) => a.getAttribute("href") === "/runs/runbeacon1")).toBeTruthy();
     expect(Array.from(document.querySelectorAll("a")).find((a) => a.getAttribute("href") === "/search?q=203.0.113.88")).toBeTruthy();
     expect(Array.from(document.querySelectorAll("a")).find((a) => a.getAttribute("href") === "/samples/s1")).toBeTruthy();
-    // Hosts → fleet page (no host workspace yet); investigation → workspace.
-    expect(Array.from(document.querySelectorAll("a")).find((a) => a.getAttribute("href") === "/agents")).toBeTruthy();
+    // Hosts → the P1.4 host workspace; investigation → case workspace.
+    expect(Array.from(document.querySelectorAll("a")).find((a) => a.getAttribute("href") === "/hosts/archlinux")).toBeTruthy();
     expect(Array.from(document.querySelectorAll("a")).find((a) => a.getAttribute("href") === "/investigations/inv1")).toBeTruthy();
     // Campaigns → clusters page.
     expect(Array.from(document.querySelectorAll("a")).find((a) => a.getAttribute("href") === "/campaigns")).toBeTruthy();
