@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { Chip, PageHeader, Panel } from "../components/ui";
 import { createInvestigation, listInvestigations } from "../lib/api";
+import { useEventStream } from "../lib/useEventStream";
 import { toneFill, toneForSeverity } from "../lib/fillPatterns";
 import type { InvestigationStatus } from "../types";
 
@@ -73,6 +74,20 @@ export default function InvestigationsPage() {
     queryKey: ["investigations", status, debouncedQ],
     queryFn: () => listInvestigations({ status: status || undefined, q: debouncedQ || undefined, limit: 100 }),
   });
+
+  // P1.5 realtime: an investigation frame (created / closed / reopened / a
+  // finding attached) refreshes the list immediately — a case opened from
+  // the CLI or another surface shows up without waiting for the next poll.
+  // The persisted row stays the source of truth on reconnect.
+  useEventStream(
+    () => undefined,
+    undefined,
+    (r) => {
+      if (r.investigation_id !== undefined) {
+        void queryClient.invalidateQueries({ queryKey: ["investigations"] });
+      }
+    },
+  );
 
   const create = useMutation({
     mutationFn: () =>

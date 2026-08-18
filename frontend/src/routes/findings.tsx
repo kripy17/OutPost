@@ -4,6 +4,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { PageHeader, Panel } from "../components/ui";
 import { addSuppression, bulkUpdateAlertStatus, getAlertQueue, getRuleMeta } from "../lib/api";
+import { useEventStream } from "../lib/useEventStream";
 import { SEVERITY_COLORS, SEVERITY_LABEL } from "../lib/constants";
 import { toneFill, toneForSeverity } from "../lib/fillPatterns";
 import type { AlertStatus, QueueAlert, Severity } from "../types";
@@ -171,6 +172,25 @@ export default function FindingsPage() {
         offset,
       }),
   });
+
+  // P1.5 realtime: the queue is a live surface — a fired alert (new
+  // detection) or a run-update naming a finding (attach/detach moved its
+  // investigation link) refreshes the sweep immediately. The DB row stays
+  // the source of truth on reconnect; the queue's own mutations invalidate
+  // as before (push is an enhancement over the default refetch, never a
+  // dependency).
+  useEventStream(
+    () => {
+      void queryClient.invalidateQueries({ queryKey: ["alerts", "queue"] });
+      void queryClient.invalidateQueries({ queryKey: ["statusbar"] });
+    },
+    undefined,
+    (r) => {
+      if (r.finding_id !== undefined) {
+        void queryClient.invalidateQueries({ queryKey: ["alerts", "queue"] });
+      }
+    },
+  );
   const { data: ruleMeta } = useQuery({ queryKey: ["rules", "meta"], queryFn: getRuleMeta });
   const ruleNames = useMemo(() => {
     const m = new Map<string, string>();

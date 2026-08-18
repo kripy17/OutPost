@@ -13,6 +13,7 @@ import {
   reopenInvestigation,
   setAlertInvestigation,
 } from "../lib/api";
+import { useEventStream } from "../lib/useEventStream";
 import { toneFill, toneForSeverity } from "../lib/fillPatterns";
 import type { AlertStatus, InvestigationRefType, InvestigationStatus } from "../types";
 
@@ -45,6 +46,22 @@ export default function InvestigationDetailPage() {
   });
 
   const invalidate = () => void queryClient.invalidateQueries({ queryKey: ["investigation", investigationId] });
+
+  // P1.5 realtime: a run-update naming THIS case (finding attached/detached
+  // from the run-detail triage panel, closed/reopened from the CLI, a note
+  // or ref added elsewhere) refreshes the workspace immediately — the
+  // derived severity/counts and findings panel stay live without polling.
+  // The DB row is the source of truth on reconnect; local mutations still
+  // invalidate as before.
+  useEventStream(
+    () => undefined,
+    undefined,
+    (r) => {
+      if (r.investigation_id === investigationId) {
+        invalidate();
+      }
+    },
+  );
 
   const addNote = useMutation({
     mutationFn: () => addInvestigationNote(investigationId, { note: noteText.trim() }),
