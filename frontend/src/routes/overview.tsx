@@ -10,7 +10,7 @@ import { Chip, PageHeader, Panel } from "../components/ui";
 import { ageBucket, aggregateTrend, collapseFindings, intelFreshness, intelKeyHealth, openSince, overviewRunParams, sortFindingsRiskFirst } from "./overviewHelpers";
 import { copyToClipboard } from "../lib/clipboard";
 import { SEVERITY_BG } from "../lib/constants";
-import { BASE_URL, getAgents, getCampaigns, getHealth, getIntelFreshness, getIntelKeys, getMeta, getPlatform, getProcessSummary, getRecentAlerts, getRuleMeta, getRuns } from "../lib/api";
+import { BASE_URL, getAgents, getCampaigns, getHealth, getIntelFreshness, getIntelKeys, getMeta, getPlatform, getProcessSummary, getRecentAlerts, getRuleMeta, getRuns, resetStore } from "../lib/api";
 import { useEventStream } from "../lib/useEventStream";
 
 // Compact relative time for the host panel's auth-context tooltips (the
@@ -742,6 +742,7 @@ function HostMonitorPanel() {
 const DEMO_DISMISS_KEY = "outpost-demo-dismissed";
 
 function DemoBanner() {
+  const queryClient = useQueryClient();
   const { data: meta } = useQuery({ queryKey: ["meta"], queryFn: getMeta, staleTime: 30_000 });
   const [dismissed, setDismissed] = useState(() => {
     try {
@@ -750,36 +751,57 @@ function DemoBanner() {
       return false;
     }
   });
+  const [purging, setPurging] = useState(false);
 
   if (!meta?.demo_mode || dismissed) return null;
 
   return (
-    <div className="mb-5 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-risk-suspicious/40 bg-risk-suspicious/10 px-4 py-3">
-      <span className="inline-flex items-center gap-1.5 font-mono text-xs font-semibold text-risk-suspicious">
-        <Icon name="zap" size={13} />
-        Demo data
-      </span>
-      <p className="min-w-0 flex-1 text-xs leading-relaxed text-text-muted">
-        These sessions are seeded samples so you can explore the console — not real host telemetry. Ship live events
-        from this machine with{" "}
-        <code className="font-mono text-text-primary">outpost agent run</code> (or{" "}
-        <code className="font-mono text-text-primary">outpost agent install</code> for a persistent service).
-      </p>
-      <button
-        onClick={() => {
-          try {
-            localStorage.setItem(DEMO_DISMISS_KEY, "1");
-          } catch {
-            /* ignore */
-          }
-          setDismissed(true);
-        }}
-        className="press inline-flex items-center gap-1 rounded border border-border-subtle px-2 py-1 font-mono text-[10px] text-text-muted transition-colors hover:border-risk-suspicious/60 hover:text-risk-suspicious"
-        aria-label="Dismiss demo banner"
-      >
-        <Icon name="x" size={10} />
-        dismiss
-      </button>
+    <div className="mb-5 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-xl border border-risk-suspicious/40 bg-risk-suspicious/10 px-4 py-3">
+      <div className="flex min-w-0 flex-1 items-center gap-2">
+        <span className="inline-flex items-center gap-1.5 font-mono text-xs font-semibold text-risk-suspicious">
+          <Icon name="zap" size={13} />
+          Demo data
+        </span>
+        <p className="min-w-0 flex-1 text-xs leading-relaxed text-text-muted">
+          These sessions are seeded demo samples. Ship real telemetry with{" "}
+          <code className="font-mono text-text-primary">outpost agent run</code> or purge demo data to work with a clean store.
+        </p>
+      </div>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          disabled={purging}
+          onClick={async () => {
+            setPurging(true);
+            try {
+              await resetStore();
+              await queryClient.invalidateQueries();
+            } finally {
+              setPurging(false);
+            }
+          }}
+          className="press inline-flex items-center gap-1 rounded-md border border-risk-malicious/50 bg-risk-malicious/15 px-2.5 py-1 font-mono text-xs font-semibold text-risk-malicious transition-colors hover:bg-risk-malicious/25 disabled:opacity-50"
+          title="Wipe seeded demo data from the database"
+        >
+          <Icon name="x" size={11} />
+          {purging ? "Purging..." : "Purge demo data"}
+        </button>
+        <button
+          onClick={() => {
+            try {
+              localStorage.setItem(DEMO_DISMISS_KEY, "1");
+            } catch {
+              /* ignore */
+            }
+            setDismissed(true);
+          }}
+          className="press inline-flex items-center gap-1 rounded border border-border-subtle px-2 py-1 font-mono text-[10px] text-text-muted transition-colors hover:border-risk-suspicious/60 hover:text-risk-suspicious"
+          aria-label="Dismiss demo banner"
+        >
+          <Icon name="x" size={10} />
+          dismiss
+        </button>
+      </div>
     </div>
   );
 }

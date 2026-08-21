@@ -23,10 +23,24 @@ def metrics() -> Response:
     hour_ago = (now - timedelta(hours=1)).isoformat()
     day_ago = (now - timedelta(days=1)).isoformat()
 
+    from ..models.run import SYNTHETIC_SOURCES
+
     with db_session() as conn:
         runs_total = conn.execute("SELECT COUNT(*) AS n FROM runs").fetchone()["n"] or 0
         events_total = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"] or 0
         alerts_total = conn.execute("SELECT COUNT(*) AS n FROM alerts").fetchone()["n"] or 0
+        marks = ",".join("?" for _ in SYNTHETIC_SOURCES)
+        runs_real = conn.execute(
+            f"SELECT COUNT(*) AS n FROM runs WHERE source NOT IN ({marks})", SYNTHETIC_SOURCES
+        ).fetchone()["n"] or 0
+        events_real = conn.execute(
+            f"SELECT COUNT(*) AS n FROM events WHERE run_id IN (SELECT run_id FROM runs WHERE source NOT IN ({marks}))",
+            SYNTHETIC_SOURCES,
+        ).fetchone()["n"] or 0
+        alerts_real = conn.execute(
+            f"SELECT COUNT(*) AS n FROM alerts WHERE run_id IN (SELECT run_id FROM runs WHERE source NOT IN ({marks}))",
+            SYNTHETIC_SOURCES,
+        ).fetchone()["n"] or 0
         events_hour = conn.execute(
             "SELECT COUNT(*) AS n FROM events WHERE timestamp >= ?", (hour_ago,)
         ).fetchone()["n"] or 0
@@ -55,8 +69,11 @@ def metrics() -> Response:
 
     body = "".join([
         g("runs_total", "Total runs recorded.", runs_total),
+        g("runs_real", "Real telemetry runs recorded (excluding demo/synthetic).", runs_real),
         g("events_total", "Total events ingested.", events_total),
+        g("events_real", "Real telemetry events ingested.", events_real),
         g("alerts_total", "Total alerts fired.", alerts_total),
+        g("alerts_real", "Real telemetry alerts fired.", alerts_real),
         g("events_ingested_last_hour", "Events ingested in the last hour.", events_hour),
         g("alerts_fired_last_hour", "Alerts fired in the last hour.", alerts_hour),
         g("alerts_open", "Alerts still in the open triage state.", alerts_open),

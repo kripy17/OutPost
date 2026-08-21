@@ -25,6 +25,7 @@ from ..models import event as event_store
 from ..models import findings as findings_store
 from ..models import run as run_store
 from ..models.event import _parse_related_pids
+from ..models.run import SYNTHETIC_SOURCES
 
 router = APIRouter(tags=["alerts"])
 
@@ -292,23 +293,35 @@ def bulk_update_alert_status(body: BulkStatusIn, request: Request) -> dict:
 
 
 @router.get("/alerts")
-def list_recent_alerts(limit: int = 20) -> list[dict]:
+def list_recent_alerts(limit: int = 20, provenance: str | None = None) -> list[dict]:
     """Newest alerts across every run, with the owning sample name.
 
     Powers the dashboard's live-findings feed. `limit` is clamped to keep the
-    payload bounded.
+    payload bounded. `provenance="real"` excludes synthetic/demo sources.
     """
     limit = max(1, min(limit, 200))
     with db_session() as conn:
+        where_clause = ""
+        params: list = []
+        if provenance == "real":
+            marks = ",".join("?" for _ in SYNTHETIC_SOURCES)
+            where_clause = f"WHERE r.source NOT IN ({marks})"
+            params = list(SYNTHETIC_SOURCES)
+        elif provenance == "synthetic":
+            marks = ",".join("?" for _ in SYNTHETIC_SOURCES)
+            where_clause = f"WHERE r.source IN ({marks})"
+            params = list(SYNTHETIC_SOURCES)
+
         rows = conn.execute(
-            """
+            f"""
             SELECT a.*, r.sample_name
             FROM alerts a
             JOIN runs r ON r.run_id = a.run_id
+            {where_clause}
             ORDER BY a.triggered_at DESC, a.id DESC
             LIMIT ?
             """,
-            (limit,),
+            (*params, limit),
         ).fetchall()
     out = [dict(r) for r in rows]
     for d in out:

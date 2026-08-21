@@ -546,8 +546,11 @@ export async function getRuleMeta(): Promise<RuleMeta[]> {
 }
 
 // -- Dashboard / global findings feed ----------------------------------------
-export async function getRecentAlerts(limit = 20): Promise<GlobalAlert[]> {
-  return get<GlobalAlert[]>(`/alerts?limit=${limit}`);
+export async function getRecentAlerts(limit = 20, provenance?: "real" | "synthetic" | ""): Promise<GlobalAlert[]> {
+  const qs = new URLSearchParams();
+  qs.set("limit", String(limit));
+  if (provenance) qs.set("provenance", provenance);
+  return get<GlobalAlert[]>(`/alerts?${qs.toString()}`);
 }
 
 // -- Agent fleet (which hosts stream telemetry) ------------------------------

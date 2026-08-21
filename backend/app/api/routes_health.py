@@ -29,17 +29,24 @@ def meta() -> dict:
     ("demo" | "empty"), or null before the welcome screen is resolved.
     """
     from ..core.db import db_session
+    from ..models.run import SYNTHETIC_SOURCES
 
     with db_session() as conn:
         demo = conn.execute("SELECT value FROM settings WHERE key = 'demo_mode'").fetchone()
         onboarding = conn.execute("SELECT value FROM settings WHERE key = 'onboarding'").fetchone()
         run_count = conn.execute("SELECT COUNT(*) AS n FROM runs").fetchone()["n"]
+        marks = ",".join("?" for _ in SYNTHETIC_SOURCES)
+        real_run_count = conn.execute(
+            f"SELECT COUNT(*) AS n FROM runs WHERE source NOT IN ({marks})",
+            SYNTHETIC_SOURCES,
+        ).fetchone()["n"]
     onboarding_value = onboarding["value"] if onboarding else None
     return {
         "demo_mode": bool(demo and demo["value"] == "1"),
         "version": "1.0",
         "first_run": onboarding_value is None and run_count == 0,
         "onboarding": onboarding_value,
+        "real_run_count": real_run_count,
     }
 
 
