@@ -1,0 +1,175 @@
+"""Report export generation — JSON + PDF.
+
+Task 21 (docs/06-BUILD-PLAN.md): `GET /runs/{id}/export` returns JSON, and
+`?format=pdf` returns a PDF. The PDF is built with reportlab so both the
+webapp export button and `outpost export --format pdf` produce the same
+artifact — same data, same service.
+"""
+
+import io
+import json
+
+from ..core.db import db_session
+from ..models import event as event_store
+from ..models import run as run_store
+from ..services import campaigns as campaigns_service
+
+
+def build_json_report(run_id: str) -> dict:
+    with db_session() as conn:
+        run_row = run_store.get_run(conn, run_id)
+        if not run_row:
+            return {"error": f"Unknown run_id: {run_id}"}
+        summary = run_store.to_summary(conn, run_row)
+        events = event_store.list_events_for_run(conn, run_id)
+        alerts = event_store.list_alerts_for_run(conn, run_id)
+        # Explainability — the tuned thresholds this run was scored under.
+        tuning_row = conn.execute(
+            "SELECT params FROM run_tuning_snapshot WHERE run_id = ?", (run_id,)
+        ).fetchone()
+        effective_tuning = {}
+        if tuning_row:
+            try:
+                effective_tuning = json.loads(tuning_row["params"] or "{}")
+            except (ValueError, TypeError):
+                effective_tuning = {}
+        # Storm guard — per-rule alert-cap suppressed counts (exported so the
+        # cap is visible offline, not just in the UI).
+        suppressed_alerts = {}
+        sup_row = conn.execute(
+            "SELECT suppressed_alerts FROM runs WHERE run_id = ?", (run_id,)
+        ).fetchone()
+        if sup_row and sup_row["suppressed_alerts"]:
+            try:
+                suppressed_alerts = json.loads(sup_row["suppressed_alerts"])
+            except (ValueError, TypeError):
+                suppressed_alerts = {}
+        # Campaign references — links this analysis back to its cluster(s).
+        campaigns = campaigns_service.campaigns_for_run(conn, run_id)
+        # Network connections — cache-first reputation reads (no new external
+        # calls in the export; `checked_at` shows how old each verdict is, so
+        # exported analyses carry the same staleness the UI surfaces).
+        conn_rows = conn.execute(
+            """
+            SELECT dest_ip, dest_port, protocol, MIN(timestamp) AS first_seen
+            FROM events
+            WHERE run_id = ? AND event_type = 'network_connection' AND dest_ip IS NOT NULL
+            GROUP BY dest_ip, dest_port, protocol
+            ORDER BY first_seen ASC
+            """,
+            (run_id,),
+        ).fetchall()
+        network_connections = []
+        for row in conn_rows:
+            cached = conn.execute(
+                "SELECT abuse_score, vt_malicious_count, reputation, checked_at FROM enrichment_cache WHERE ip = ?",
+                (row["dest_ip"],),
+            ).fetchone()
+            network_connections.append(
+                {
+                    "dest_ip": row["dest_ip"],
+                    "dest_port": row["dest_port"],
+                    "protocol": row["protocol"],
+                    "first_seen": row["first_seen"],
+                    "reputation": cached["reputation"] if cached else "unknown",
+                    "abuse_score": cached["abuse_score"] if cached else None,
+                    "vt_malicious_count": cached["vt_malicious_count"] if cached else None,
+                    "checked_at": cached["checked_at"] if cached else None,
+                }
+            )
+    return {
+        "run": summary.model_dump(mode="json"),
+        "events": events,
+        "alerts": alerts,
+        "campaigns": campaigns,
+        "network_connections": network_connections,
+        "effective_tuning": effective_tuning,
+        "suppressed_alerts": suppressed_alerts,
+    }
+
+
+def build_pdf_report(run_id: str) -> bytes | None:
+    """Render a simple analyst-facing PDF of the run report."""
+    try:
+        from reportlab.lib import colors
+        from reportlab.lib.pagesizes import letter
+        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    except ImportError:
+        return None
+
+    data = build_json_report(run_id)
+    if "error" in data:
+        return None
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=letter)
+    styles = getSampleStyleSheet()
+    story = []
+
+    run = data["run"]
+    story.append(Paragraph(f"OutPost Report — {run['sample_name']}", styles["Title"]))
+    story.append(Spacer(1, 8))
+    story.append(
+        Paragraph(
+            f"run_id: {run['run_id']} &nbsp;|&nbsp; platform: {run['platform']} &nbsp;|&nbsp; "
+            f"type: {run['session_type']} &nbsp;|&nbsp; alerts: {run['alert_count']} &nbsp;|&nbsp; "
+            f"highest severity: {run['highest_severity'] or 'clean'}",
+            styles["Normal"],
+        )
+    )
+    story.append(Spacer(1, 16))
+
+    # Alerts section
+    if data["alerts"]:
+        story.append(Paragraph("Alerts", styles["Heading2"]))
+        rows = [["Severity", "Rule", "Details"]]
+        for a in data["alerts"]:
+            rows.append([a["severity"], a["rule_name"], a["details"]])
+        table = Table(rows, colWidths=[70, 170, 330])
+        table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1C2028")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#E4E7EB")),
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#2A2F3A")),
+                    ("FONTSIZE", (0, 0), (-1, -1), 8),
+                ]
+            )
+        )
+        story.append(table)
+        story.append(Spacer(1, 16))
+
+    # Events timeline
+    story.append(Paragraph("Events", styles["Heading2"]))
+    ev_rows = [["Time", "Type", "Detail"]]
+    for ev in data["events"]:
+        detail = _event_detail(ev)
+        ev_rows.append([(ev.get("timestamp") or "")[11:19], ev["event_type"], detail])
+    ev_table = Table(ev_rows, colWidths=[60, 130, 380])
+    ev_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1C2028")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#E4E7EB")),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#2A2F3A")),
+                ("FONTSIZE", (0, 0), (-1, -1), 8),
+            ]
+        )
+    )
+    story.append(ev_table)
+
+    doc.build(story)
+    return buf.getvalue()
+
+
+def _event_detail(ev: dict) -> str:
+    if ev["event_type"] == "process_create":
+        return f"{ev.get('process_name') or '?'} (pid {ev.get('pid')}) {ev.get('command_line') or ''}".strip()
+    if ev["event_type"] == "network_connection":
+        return f"{ev.get('dest_ip')}:{ev.get('dest_port')} [{ev.get('protocol')}]"
+    if ev["event_type"] == "file_write":
+        return ev.get("file_path") or "-"
+    if ev["event_type"] == "registry_write":
+        return ev.get("registry_key") or "-"
+    return "-"

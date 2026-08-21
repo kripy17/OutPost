@@ -1,0 +1,379 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    # Weekly self-heal: recompute the badges even if a push-run's refresh
+    # step ever failed (Monday 05:00 UTC). Runs on the default branch.
+    - cron: '0 5 * * 1'
+
+jobs:
+  verify:
+    name: verify.sh — backend · collectors · CLI · frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # workflow_dispatch / schedule run the refresh job instead of the full sweep.
+    if: github.event_name != 'workflow_dispatch' && github.event_name != 'schedule'
+    permissions:
+      contents: write  # the badge-refresh step commits badges/*.json on main
+      pull-requests: write  # …and lands count changes via PR + auto-merge (gh pr create/merge --auto)
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            backend/pyproject.toml
+            cli/pyproject.toml
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Create venv + install backend & CLI
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --upgrade pip
+          .venv/bin/pip install -e "./backend[dev]" -e ./cli
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Fast-fail on frontend type errors (tsc only)
+        # The build step inside verify.sh runs `tsc --noEmit && vite build`;
+        # this gate runs just the typecheck so a type error fails the push
+        # right after npm ci (~1 min in), before the Playwright download, the
+        # badge check, and the 3.5-min sweep. No emitted files, no vite run.
+        working-directory: frontend
+        run: npx tsc --noEmit
+
+      - name: Install demo deps (Playwright — layout sweep gate)
+        working-directory: demo
+        run: |
+          npm ci
+          npx playwright install chromium
+
+      - name: Fast-fail on stale badges (cheap collect-only gate)
+        # Front-loads the badge/README claim check: a stale payload fails the
+        # push in ~1 minute instead of after the full 3.5-min sweep. --check
+        # is collect-only (pytest --collect-only + vitest list) — seconds,
+        # not a test run. verify.sh re-checks it later inside its own
+        # doc-count step, so nothing is skipped, just failed earlier.
+        run: bash scripts/refresh-badges.sh --check
+
+      - name: Fast-fail on image-budget drift (static gate)
+        # The docs/17 size table vs the ci.yml size-gate flags + stamp data
+        # — pure regex over source, no yaml, no docker, milliseconds. A
+        # budget changed in either file fails the push here (~1.5 min in)
+        # instead of after the full sweep; verify.sh re-checks it later.
+        run: .venv/bin/python scripts/gate_image_budget_docs.py
+
+      - name: Fast-fail on hint regressions (image-budget + badge gates)
+        # Same self-explaining-hint discipline, front-loaded: if a refactor
+        # dropped a '→ fix:' hint from either gate (or a new failure path
+        # forgot one), the self-tests fail here (~2 min in) instead of after
+        # the 3.5-min sweep. The image-budget one is pure fixture regex
+        # (milliseconds); the badge one copies source + runs the real
+        # collect-only counts (seconds); the size-gate one is offline bash
+        # (milliseconds); the sandbox-provider one runs a fake HTTP backend
+        # (seconds). The coverage guard then proves no OTHER gate emits
+        # hints without a repair self-test. verify.sh re-runs all four
+        # inside its own steps, so nothing is skipped, just failed earlier.
+        run: |
+          .venv/bin/python scripts/test_image_budget_hints.py
+          .venv/bin/python scripts/test_badge_hints.py
+          .venv/bin/python scripts/test_check_image_size_hints.py
+          .venv/bin/python scripts/test_sandbox_provider_hints.py
+          .venv/bin/python scripts/test_cleanup_badge_branches.py
+          .venv/bin/python scripts/gate_hint_coverage.py
+
+      - name: Run the full verification sweep
+        run: bash verify.sh
+
+      - name: Publish dynamic badges (main only)
+        # GH_TOKEN is required for `gh pr create` in a workflow (the git
+        # push works via checkout's persisted credentials, but the gh CLI
+        # needs the explicit env) — without it a count-changing push would
+        # fail this step instead of landing the refreshed payloads.
+        if: github.ref == 'refs/heads/main' && success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/refresh-badges.sh --commit
+
+      - name: Clean up stale badge branches
+        # Hygiene after a successful publish: every chore/badges-* branch on
+        # origin except the one this run created (recorded in RUNNER_TEMP by
+        # refresh-badges.sh) is an orphan — a blocked pr create, or an old
+        # run that crashed between push and PR. Delete them so they can never
+        # accumulate. Idempotent; the recorded branch survives any in-flight
+        # publish (open PR or manual-PR wait).
+        if: github.ref == 'refs/heads/main' && success()
+        run: bash scripts/cleanup_badge_branches.sh
+
+  # Tier 4 — the live-Postgres runtime. The sqlite3-compat shim over psycopg
+  # (core/db_pg.py) runs the real backend DB layer against a postgres service
+  # container: schema init via the translated DDL, RETURNING-id lastrowid,
+  # upserts, INSERT OR IGNORE rowcount semantics, GROUP_CONCAT → string_agg,
+  # ILIKE search, executemany, and FK enforcement (scripts/gate_pg_runtime.py).
+  # Runs in parallel with the verify sweep — the only place a real PG server
+  # is available, so the shim is proven against the actual driver.
+  pg-runtime:
+    name: Postgres runtime (Tier 4)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event_name != 'workflow_dispatch' && github.event_name != 'schedule'
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: outpost
+          POSTGRES_PASSWORD: outpost
+          POSTGRES_DB: outpost
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U outpost"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Create venv + install backend (dev + pg)
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --upgrade pip
+          .venv/bin/pip install -e "./backend[dev,pg]"
+
+      - name: Postgres runtime smoke
+        env:
+          OUTPOST_DATABASE_URL: postgresql://outpost:outpost@localhost:5432/outpost
+        run: .venv/bin/python scripts/gate_pg_runtime.py
+
+  # The deploy surface: build the production web image and validate the TLS
+  # proxy config on every push/PR. Catches Caddyfile syntax drift, frontend
+  # builds that break inside the node:20-alpine image, and compose/env
+  # interpolation regressions (the single-quote gotcha) before a server sees
+  # them. Runs in parallel with the verify sweep.
+  deploy:
+    name: Deploy — web image + Caddyfile + compose
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: github.event_name != 'workflow_dispatch' && github.event_name != 'schedule'
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build the production web image
+        # Build context is the repo ROOT (Dockerfile.web copies frontend/ and
+        # deploy/). Runs a real npm ci + vite build inside the container, so a
+        # frontend change that builds locally but not in the alpine image
+        # fails here.
+        run: docker build -f deploy/Dockerfile.web -t outpost-web:ci .
+
+      - name: Gate the web image size
+        # The runtime image is a multi-stage slim (caddy:2-alpine + the dist
+        # only), so its size is a sharp bloat detector: a leaked build stage
+        # (node_modules, a COPY . . mistake, test fixtures) dwarfs the base
+        # in one step. Warns (soft budget, visible on the run summary) when
+        # the image grows past 100 MB and fails (hard ceiling) past 150 MB —
+        # budgets tunable via --budget-mb/--fail-mb; the measured size is
+        # printed on every run so they can be calibrated.
+        run: bash scripts/check-image-size.sh --image outpost-web:ci
+
+      - name: Build the backend image
+        # The API server container the compose stack ships (backend/Dockerfile,
+        # context ./backend). Built before the smokes so the end-to-end phase
+        # can attach it. A separate step so its build failure is its own.
+        run: docker build -f backend/Dockerfile -t outpost-backend:ci backend
+
+      - name: Gate the backend image size
+        # Same bloat gate as the web image, calibrated to the backend's base:
+        # python:3.12-slim + pip runtime deps + the app package only (~190-220
+        # MB class). Soft budget 300 MB warns (exit 0, run summary); hard
+        # ceiling 400 MB fails — catching a leaked build artifact (venv,
+        # node_modules, test fixtures) that would dwarf the base. Measured
+        # size prints every run for calibration.
+        run: bash scripts/check-image-size.sh --image outpost-backend:ci --budget-mb 300 --fail-mb 400
+
+      - name: Smoke-test the shipped web image — boots and serves with zero egress
+        # Runs the ACTUAL production artifact (not the air-gap harness image)
+        # under --network none: the container has no interface besides
+        # loopback, so this proves the image that ships boots, serves the SPA
+        # + every referenced chunk, keeps the /api proxy live (502 with the
+        # sibling backend absent), and makes zero external reach possible
+        # (asserted from /proc/net/route). Runs with OUTPOST_HOST=http://localhost
+        # — the http:// scheme disables Caddy's auto-HTTPS redirect for the
+        # smoke (otherwise every request 308s to https:// and the assertions
+        # measure the redirect, not serving); TLS config stays covered by
+        # `caddy validate` in the step below.
+        run: bash scripts/smoke-web-image.sh --image outpost-web:ci
+
+      - name: Smoke web + real backend end to end — /api flips 502 -> 200
+        # The end-to-end proof of the same shipped artifacts: phase 1 re-runs
+        # the empty-namespace assertions (502 with no upstream), then the REAL
+        # backend container joins a docker --internal shared network (no
+        # external route by construction) and the web container attaches live
+        # via `docker network connect`. Caddy's reverse_proxy `backend:8001`
+        # resolves through the embedded DNS, so /api/health flips 502 -> 200
+        # and /api/runs returns a 200 JSON array through the proxy — while a
+        # socket connect from the backend to a TEST-NET address still fails
+        # (the pair cannot reach outside the host).
+        run: bash scripts/smoke-web-image.sh --image outpost-web:ci --with-backend outpost-backend:ci
+
+      - name: Smoke-test the backend image — boots and serves /health with zero egress
+        # The API-side counterpart of the web smoke: the backend container
+        # under --network none must boot (RestartCount=0), keep /proc/net/route
+        # empty (zero egress at the OS level), and serve /health + /meta
+        # (demo_mode false — the zero-config default is honest) + /runs over
+        # loopback, probed through the app's own python runtime via docker
+        # exec (slim has no wget). Production fail-closed auth is asserted
+        # separately by the post-deploy walk, so this smoke runs zero-config.
+        run: bash scripts/smoke-backend-image.sh --image outpost-backend:ci
+
+      - name: Walk the post-deploy checklist against the SHIPPED compose stack
+        # The real end-to-end of the deploy surface: brings up the actual
+        # deploy/docker-compose.prod.yml stack (real Caddy image + real
+        # backend container, OUTPOST_HOST=localhost so Caddy's auto-HTTPS
+        # serves its internal CA) and asserts the four post-deploy checklist
+        # items over real TLS — /api/health -> ok through the proxy, /api/runs
+        # 401 without / 200 with an admin token, /auth/login + /auth/me
+        # enabled, and the OUTPOST_AGENT_TOKEN flow (heartbeat 401 bare / 200
+        # with the token + host online, token refused outside telemetry).
+        # This is the one leg that proves the compose file, its env
+        # interpolation, and the Caddy -> backend wiring as the SHIPPED
+        # containers, complementing the docker-less post-deploy walk
+        # (scripts/post_deploy_walk.py) that runs in verify.sh.
+        run: bash scripts/walk-compose-stack.sh
+
+      - name: Validate the Caddyfile
+        # caddy validate provisions the config without starting the server.
+        # OUTPOST_HOST must be set or the {$OUTPOST_HOST} placeholder expands
+        # to empty and the site address is invalid. The backend:8001 upstream
+        # is not dialed during validation.
+        run: |
+          docker run --rm \
+            -e OUTPOST_HOST=outpost.example.com \
+            -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile
+
+      - name: Validate the production compose file
+        # Parses + interpolates with the shipped env shape; catches YAML
+        # errors and the unquoted-interpolation bug class without needing
+        # images built or a backend running.
+        run: docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env.example config -q
+
+  # The strongest air-gap proof: build a full-stack test image, then run the
+  # four-gate bundle + both e2e gates inside a container whose network
+  # namespace is EMPTY (--network none). Only loopback exists, so any attempt
+  # to reach an external host — by any library or technique — fails at the OS
+  # level, not just at the in-process probes' simulation level.
+  airgap-offline:
+    name: Air-gap — full bundle in a --network none container
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    if: github.event_name != 'workflow_dispatch' && github.event_name != 'schedule'
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build the air-gap CI image
+        # Installs backend+CLI into a venv, npm ci + vite build for the
+        # frontend, and Playwright+Chromium for the e2es — all at build time
+        # (network available), so the runtime test runs with zero egress.
+        run: docker build -f deploy/Dockerfile.airgap-ci -t outpost-airgap-ci .
+
+      - name: Gate the air-gap image size
+        # Same bloat gate as the shipped images, calibrated for the test
+        # HARNESS (GB-class, not MB-class): node:22-bookworm + python3 + a
+        # project venv + frontend node_modules + Playwright/Chromium. The
+        # budget guards against the harness silently outgrowing its purpose
+        # (extra Playwright browsers, apt creep, dependency bloat — all of
+        # which cost CI minutes on every push). Soft budget warns on the run
+        # summary; the hard ceiling fails the job. Calibrated from the first
+        # measurement (1724 MB @ f4f4ddf): the tighter 1.19x headroom is
+        # deliberate — the harness's growth sources are lockfile-pinned, so a
+        # >300 MB jump means something structural (a second browser, apt
+        # creep).
+        run: bash scripts/check-image-size.sh --image outpost-airgap-ci --budget-mb 2048 --fail-mb 2560
+
+      - name: Run the air-gap bundle at production volume, network namespace empty
+        # OUTPOST_OFFLINE_VOLUME=1 seeds a deterministic ~11k-event store
+        # (scripts/seed_volume.py) so the guarantee is proven at production
+        # scale on every push — the volume run surfaced the 15MB /campaigns
+        # payload that the tiny-store runs never would.
+        run: docker run --network none --rm -e OUTPOST_OFFLINE_VOLUME=1 outpost-airgap-ci bash scripts/airgap-offline.sh
+
+  # On-demand badge refresh — no code push needed. Dispatch this workflow and
+  # it recomputes the three counts from main and publishes any change.
+  refresh-badges:
+    name: Refresh dynamic badges
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    permissions:
+      contents: write
+      pull-requests: write  # gh pr create/merge --auto needs this scope
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      - name: Create venv + install backend & CLI
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --upgrade pip
+          .venv/bin/pip install -e "./backend[dev]" -e ./cli
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build the shipped images for the size stamp
+        # The size stamp in docs/17 is only as fresh as its measurement. This
+        # job is the measurer: build the three images with :measure tags (the
+        # same Dockerfiles the Deploy + air-gap jobs ship), then
+        # refresh-badges.sh measures them, updates badges/image-sizes.json +
+        # the docs/17 'Last measured' stamp, and commits everything in one
+        # self-healing commit — the same weekly pattern as the badge payloads.
+        run: |
+          docker build -f deploy/Dockerfile.web -t outpost-web:measure .
+          docker build -f backend/Dockerfile -t outpost-backend:measure backend
+          docker build -f deploy/Dockerfile.airgap-ci -t outpost-airgap:measure .
+
+      - name: Refresh and publish badges
+        # GH_TOKEN is required for `gh pr create` in a workflow (the git
+        # push works via checkout's persisted credentials, but the gh CLI
+        # needs the explicit env). The job already has contents: write.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/refresh-badges.sh --commit
+
+      - name: Clean up stale badge branches
+        # Same hygiene as the push-run publish: dispatch/schedule runs are
+        # exactly where a blocked-pr-create orphan would accumulate without
+        # a code push, so this job cleans up after itself too.
+        run: bash scripts/cleanup_badge_branches.sh

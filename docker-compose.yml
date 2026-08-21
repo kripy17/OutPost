@@ -1,0 +1,38 @@
+# OutPost — one-command stack (backend + webapp).
+#
+#   docker compose up --build
+#     → webapp  http://localhost:5174   API: http://localhost:8001
+#
+# The SQLite DB lives in the `outpost-data` volume, so restarts and rebuilds
+# keep every run, sample, and setting. The host agent (collectors) is NOT part
+# of this stack — install it on the machines you monitor:
+#   outpost agent install    (systemd on Linux, nssm + schtasks on Windows)
+#
+# On a remote server, rebuild the frontend pointing at that server:
+#   docker compose build --build-arg VITE_API_URL=http://<server>:8001 frontend
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8001:8001"
+    environment:
+      DATABASE_PATH: /data/outpost.db
+      # The webapp's origin (nginx publishes on 5174) — extend for remote.
+      CORS_ORIGINS: '["http://localhost:5174"]'
+    volumes:
+      - outpost-data:/data
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: http://localhost:8001
+    ports:
+      - "5174:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  outpost-data:

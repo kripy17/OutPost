@@ -1,0 +1,21 @@
+# OutPost — production web (frontend + TLS proxy in one image).
+#
+# Builds the Vite bundle with VITE_API_URL=/api (relative, so the browser
+# talks to Caddy on the same origin), then serves it from Caddy with the
+# /api/* reverse proxy to the backend. Build context must be the repo ROOT
+# (the compose file sets context: ..).
+#
+#   docker build -f deploy/Dockerfile.web --build-arg VITE_API_URL=/api -t outpost-web .
+FROM node:20-alpine AS build
+WORKDIR /app
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/ ./
+ARG VITE_API_URL=/api
+ENV VITE_API_URL=$VITE_API_URL
+RUN npm run build
+
+FROM caddy:2-alpine
+COPY deploy/Caddyfile /etc/caddy/Caddyfile
+COPY --from=build /app/dist /srv/outpost
+EXPOSE 80 443

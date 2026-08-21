@@ -1,0 +1,650 @@
+@import "tailwindcss";
+
+/* OutPost design system — v7 "forensics lab" (spec-aligned identity).
+   Dark-first by default: deep slate fields (#14171C), an amber signature
+   accent that doubles as the in-progress state AND as risk-suspicious
+   (deliberate reuse), desaturated brick for malicious, teal for clean, and a
+   cyan *signal* token for telemetry (live data, network, timing) so the
+   accent and the data never compete. IBM Plex Sans + Mono. :root IS dark;
+   [data-theme="light"] is the secondary opt-in. Set before first paint by
+   the inline script in index.html (fresh storage key so every user starts
+   dark). */
+
+:root {
+  /* ── Field (backgrounds) — the forensics-lab slate ─────────────────────
+     Deep slate, not pure black; surfaces step up a notch, never jump. */
+  --bg-base: #14171c;
+  --bg-surface: #1c2028;
+  --bg-elevated: #242a35;
+  --bg-inset: #101318;
+  --bg-overlay: #1f2530;
+
+  /* Atmosphere — faint amber lab-light (top-left) + cool depth (bottom-right). */
+  --atmos-a: 110 84 22;
+  --atmos-b: 12 30 58;
+
+  /* ── Text ────────────────────────────────────────────────────────────── */
+  --text-primary: #e4e7eb;
+  --text-muted: #7a8290;
+  --text-faint: #6a7480; /* ≥4.5:1 on --bg-base (WCAG AA for 9–11px metadata) */
+
+  /* ── Signature accent — amber (interaction AND in-progress state; the
+     same hue deliberately reused as risk-suspicious below) + a cyan
+     *signal* token for telemetry so data never competes with the accent. */
+  --accent: #d9a441;
+  --accent-soft: #e8bd6a;
+  --signal: #4fd1c5;
+
+  /* ── Risk scale — functional, never decorative. Suspicious IS the accent
+     amber (reused on purpose); malicious is a desaturated brick, not neon. */
+  --risk-clean: #3fa796;
+  --risk-suspicious: #d9a441;
+  --risk-malicious: #c4453b;
+
+  /* ── Structure ───────────────────────────────────────────────────────── */
+  --border-subtle: #262c38;
+  --border-strong: #333b4a;
+
+  /* ── Depth — layered, soft on dark ───────────────────────────────────── */
+  --shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.5);
+  --shadow-raised: 0 4px 12px rgba(0, 0, 0, 0.45), 0 18px 44px -14px rgba(0, 0, 0, 0.65);
+
+  /* ── Glows — make a finding read at a glance (literal rgba per theme). ─ */
+  --glow-accent: 0 0 0 1px rgba(217, 164, 65, 0.3), 0 0 16px rgba(217, 164, 65, 0.22);
+  --glow-signal: 0 0 0 1px rgba(79, 209, 197, 0.3), 0 0 14px rgba(79, 209, 197, 0.2);
+  --glow-amber: 0 0 0 1px rgba(217, 164, 65, 0.3), 0 0 12px rgba(217, 164, 65, 0.2);
+  --glow-malicious: 0 0 0 1px rgba(196, 69, 59, 0.35), 0 0 16px rgba(196, 69, 59, 0.26);
+  --glow-clean: 0 0 0 1px rgba(63, 167, 150, 0.3), 0 0 12px rgba(63, 167, 150, 0.18);
+}
+
+/* Light — the secondary opt-in theme. */
+[data-theme="light"] {
+  --bg-base: #f4f5f7;
+  --bg-surface: #ffffff;
+  --bg-elevated: #eceef2;
+  --bg-inset: #eff1f4;
+  --bg-overlay: #ffffff;
+
+  --atmos-a: 244 231 200;
+  --atmos-b: 224 234 246;
+
+  --text-primary: #17191f;
+  --text-muted: #5b6472;
+  --text-faint: #778190;
+
+  --accent: #a16207;
+  --accent-soft: #b8771c;
+  --signal: #0e7490;
+
+  --risk-clean: #0f766e;
+  --risk-suspicious: #a16207;
+  --risk-malicious: #b23c33;
+
+  --border-subtle: #e6e9ef;
+  --border-strong: #d2d8e2;
+
+  --shadow-panel: 0 1px 2px rgba(23, 25, 31, 0.04), 0 1px 3px rgba(23, 25, 31, 0.05);
+  --shadow-raised: 0 2px 4px rgba(23, 25, 31, 0.06), 0 8px 24px -8px rgba(23, 25, 31, 0.12);
+
+  --glow-accent: 0 0 0 1px rgba(161, 98, 7, 0.25), 0 0 14px rgba(161, 98, 7, 0.14);
+  --glow-signal: 0 0 0 1px rgba(14, 116, 144, 0.25), 0 0 12px rgba(14, 116, 144, 0.14);
+  --glow-amber: 0 0 0 1px rgba(161, 98, 7, 0.25), 0 0 12px rgba(161, 98, 7, 0.13);
+  --glow-malicious: 0 0 0 1px rgba(178, 60, 51, 0.28), 0 0 14px rgba(178, 60, 51, 0.16);
+  --glow-clean: 0 0 0 1px rgba(15, 118, 110, 0.22), 0 0 10px rgba(15, 118, 110, 0.12);
+}
+
+/* ── Left rail — the workspace shell. --rail-w drives BOTH the rail width and
+   the content offset (lg:pl-[var(--rail-w)]), so the two can never drift.
+   data-rail="collapsed" on <html> shrinks it to the icon-only activity bar;
+   the pre-paint script in index.html restores it before first paint. */
+:root {
+  --rail-w: 232px;
+}
+html[data-rail="collapsed"] {
+  --rail-w: 64px;
+}
+
+@theme inline {
+  --color-bg-base: var(--bg-base);
+  --color-bg-surface: var(--bg-surface);
+  --color-bg-elevated: var(--bg-elevated);
+  --color-bg-inset: var(--bg-inset);
+  --color-bg-overlay: var(--bg-overlay);
+
+  --color-text-primary: var(--text-primary);
+  --color-text-muted: var(--text-muted);
+  --color-text-faint: var(--text-faint);
+
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-signal: var(--signal);
+
+  --color-risk-clean: var(--risk-clean);
+  --color-risk-suspicious: var(--risk-suspicious);
+  --color-risk-malicious: var(--risk-malicious);
+
+  --color-border-subtle: var(--border-subtle);
+  --color-border-strong: var(--border-strong);
+
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+/* Smooth cross-fade when switching themes (skipped under reduced motion). */
+html,
+body {
+  transition: background-color 200ms ease, color 200ms ease;
+}
+
+html,
+body {
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* The field — deep graphite with a barely-there violet bloom. Quiet, not neon. */
+body {
+  background-image:
+    radial-gradient(1000px 480px at 10% -10%, rgb(var(--atmos-a) / 0.35), transparent 60%),
+    radial-gradient(800px 520px at 108% 110%, rgb(var(--atmos-b) / 0.35), transparent 58%);
+  background-attachment: fixed;
+  min-height: 100vh;
+}
+
+/* ── Type utilities ───────────────────────────────────────────────────── */
+
+/* Micro label — small, weight-forward, lowercase. A quiet section marker. */
+.kicker {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-faint);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.kicker::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 2px;
+  background: var(--accent);
+  opacity: 0.9;
+  flex-shrink: 0;
+}
+
+/* Display headings — tight, weight-forward, minimal tracking. */
+.display {
+  font-size: 30px;
+  line-height: 1.1;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  color: var(--text-primary);
+}
+
+.text-balance {
+  text-wrap: balance;
+}
+.text-pretty {
+  text-wrap: pretty;
+}
+
+/* ── Panel — elevated card with a hairline + glass top edge ────────────── */
+.panel {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.03),
+    var(--shadow-panel);
+  /* Grid/flex items default to min-width: auto, which lets a wide child
+     (kill chain stepper, tables) blow the panel past its column and
+     overflow the page. Allowing shrink keeps the panel inside its column
+     and lets inner overflow-x-auto actually engage. */
+  min-width: 0;
+}
+.panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 16px 0;
+}
+.panel-title {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--text-muted);
+}
+
+/* ── Inset well — recessed data area inside a panel (tables, logs) ────── */
+.well {
+  background: var(--bg-inset);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+}
+
+/* ── Keyboard focus — accent ring so it's visible on every surface ─────── */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Tactile press for primary actions (opt-in class). */
+.press {
+  transition: transform 120ms ease-out;
+}
+.press:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+/* Subtle scrollbars that match the palette. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── Motion — one directed moment per page: content rises in ──────────── */
+@keyframes outpost-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-fade-up {
+  animation: outpost-fade-up 0.34s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+@keyframes outpost-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+.animate-outpost-pulse {
+  animation: outpost-pulse 1.6s ease-in-out infinite;
+}
+
+/* Toast slide-in for live alerts on the Monitor page */
+@keyframes outpost-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.animate-outpost-toast-in {
+  animation: outpost-toast-in 0.22s ease-out;
+}
+
+/* Live "recording" dot on the Monitor page */
+@keyframes outpost-record {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--risk-malicious) 45%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 5px transparent;
+  }
+}
+.animate-record {
+  animation: outpost-record 1.8s ease-out infinite;
+}
+
+/* One-shot attention flash for a process-tree node — the run-detail recon
+   actors list scrolls to a pid and rings it once (accent ring, amber hint). */
+@keyframes outpost-node-flash {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 10px transparent;
+  }
+}
+.animate-node-flash {
+  animation: outpost-node-flash 1.4s ease-out;
+}
+
+/* ── Rail tooltip — follows the collapsed rail's icons (React-positioned, so
+   it's never clipped by the nav's overflow). Fixed to the viewport at the
+   rail's right edge; the rail sits at left:0 so element rects are viewport-relative. */
+@keyframes outpost-rail-tip-in {
+  from {
+    opacity: 0;
+    transform: translateY(-50%) translateX(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(-50%) translateX(0);
+  }
+}
+.rail-tip {
+  position: fixed;
+  z-index: 70;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  padding: 6px 9px;
+  border-radius: 6px;
+  box-shadow: var(--shadow-raised);
+  pointer-events: none;
+  transform: translateY(-50%);
+  animation: outpost-rail-tip-in 110ms ease-out;
+}
+
+/* ── Top app bar — the new chrome ─────────────────────────────────────── */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  background: color-mix(in srgb, var(--bg-base) 78%, transparent);
+  backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+/* ── Command palette (⌘K) ──────────────────────────────────────────────── */
+@keyframes outpost-palette-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.animate-palette-in {
+  animation: outpost-palette-in 0.16s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+/* ── Skeleton loaders — quiet shimmer on empty surfaces ────────────────── */
+@keyframes outpost-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+.skeleton {
+  background: linear-gradient(
+    100deg,
+    var(--bg-elevated) 40%,
+    color-mix(in srgb, var(--bg-elevated) 55%, var(--bg-surface)) 50%,
+    var(--bg-elevated) 60%
+  );
+  background-size: 200% 100%;
+  animation: outpost-shimmer 1.6s linear infinite;
+  border-radius: 8px;
+}
+
+/* ── Event-log timeline — grouped by time, severity rail on the left ───── */
+.timeline-item {
+  position: relative;
+}
+.timeline-item::before {
+  content: "";
+  position: absolute;
+  left: 31px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--border-subtle);
+}
+.timeline-item:first-child::before {
+  top: 40%;
+}
+.timeline-item:last-child::before {
+  bottom: 60%;
+}
+
+/* ── Slide-over detail pane (event viewer / run detail) ────────────────── */
+@keyframes outpost-slide-in {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+.animate-slide-in {
+  animation: outpost-slide-in 0.22s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+/* ── Print / PDF export (run report → Save as PDF) ──────────────────────
+   The run detail page's "Export PDF" button calls window.print(); these
+   rules re-theme the report ink-on-paper: light tokens, chrome (rail,
+   toasters, buttons) hidden, no decorative shadows/gradients, status pills
+   and process-tree nodes (role=button divs) kept. */
+@media print {
+  :root {
+    --bg-base: #ffffff;
+    --bg-surface: #ffffff;
+    --bg-elevated: #f6f7f9;
+    --bg-inset: #f6f7f9;
+    --bg-overlay: #ffffff;
+    --text-primary: #16181d;
+    --text-muted: #4a5260;
+    --text-faint: #6b7280;
+    --accent: #8a6d1d;
+    --accent-soft: #a3822f;
+    --signal: #0e7490;
+    --risk-clean: #0f766e;
+    --risk-suspicious: #8a6d1d;
+    --risk-malicious: #a33a31;
+    --border-subtle: #e3e6eb;
+    --border-strong: #c9cfd8;
+    --glow-accent: none;
+    --glow-signal: none;
+    --glow-amber: none;
+    --glow-malicious: none;
+    --glow-clean: none;
+    --shadow-panel: none;
+    --shadow-raised: none;
+  }
+
+  body {
+    background: #fff !important;
+    background-image: none !important;
+  }
+
+  /* Chrome: the left rail (aside), any floating toaster, and interactive
+     controls. Status pills are spans/chips, not buttons, so they survive. */
+  aside,
+  nav,
+  button {
+    display: none !important;
+  }
+
+  /* Keep clickable-looking content (process-tree nodes) readable as text. */
+  [role="button"] {
+    cursor: default;
+  }
+
+  * {
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
+
+  .animate-outpost-pulse,
+  .animate-fade-up {
+    animation: none !important;
+  }
+
+  main {
+    padding-left: 0 !important;
+  }
+}
+
+/* ── Gallery tiles — samples / runs as cards, not rows ─────────────────── */
+.tile {
+  transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
+}
+.tile:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-raised);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border-subtle));
+}
+
+/* ── Dark palette candidates (Theme Lab) ─────────────────────────────────
+   data-palette on <html> re-scopes the live app; .palette-root re-scopes a
+   wrapper inside the Theme Lab so several palettes render side by side.
+   App-side rules are dark-only (html[data-theme="dark"][data-palette=…]) so
+   the light theme never inherits a palette. No data-palette attribute =
+   the default graphite palette (the :root dark values above).
+   ──────────────────────────────────────────────────────────────────────── */
+
+.palette-root[data-palette="slate"],
+html[data-theme="dark"][data-palette="slate"] {
+  --bg-base: #0e1217;
+  --bg-surface: #151b24;
+  --bg-elevated: #1c2430;
+  --bg-inset: #11151b;
+  --bg-overlay: #1b222c;
+  --atmos-a: 78 96 140;
+  --atmos-b: 16 38 78;
+  --text-primary: #e7ecf5;
+  --text-muted: #9ba9bd;
+  --text-faint: #6f7d94;
+  --accent: #8b7cf6;
+  --accent-soft: #a5b4fc;
+  --signal: #22d3ee;
+  --border-subtle: #212b3a;
+  --border-strong: #2f3b4e;
+  --glow-accent: 0 0 0 1px rgba(139, 124, 246, 0.3), 0 0 16px rgba(139, 124, 246, 0.22);
+  --glow-signal: 0 0 0 1px rgba(34, 211, 238, 0.3), 0 0 14px rgba(34, 211, 238, 0.2);
+}
+
+.palette-root[data-palette="ocean"],
+html[data-theme="dark"][data-palette="ocean"] {
+  --bg-base: #0a1120;
+  --bg-surface: #101a2c;
+  --bg-elevated: #172440;
+  --bg-inset: #0d1526;
+  --bg-overlay: #15223b;
+  --atmos-a: 40 90 180;
+  --atmos-b: 10 30 70;
+  --text-primary: #e8eefb;
+  --text-muted: #9db0cc;
+  --text-faint: #7185a6;
+  --accent: #5aa2ff;
+  --accent-soft: #7fb8ff;
+  --signal: #22d3ee;
+  --border-subtle: #1d2b44;
+  --border-strong: #2b3d5c;
+  --glow-accent: 0 0 0 1px rgba(90, 162, 255, 0.35), 0 0 16px rgba(90, 162, 255, 0.25);
+  --glow-signal: 0 0 0 1px rgba(34, 211, 238, 0.3), 0 0 14px rgba(34, 211, 238, 0.2);
+}
+
+.palette-root[data-palette="teal"],
+html[data-theme="dark"][data-palette="teal"] {
+  --bg-base: #0a0c11;
+  --bg-surface: #10141c;
+  --bg-elevated: #172030;
+  --bg-inset: #0d1017;
+  --bg-overlay: #161c27;
+  --atmos-a: 20 110 100;
+  --atmos-b: 12 45 70;
+  --text-primary: #e8ebf2;
+  --text-muted: #98a2b3;
+  --text-faint: #6d788e;
+  --accent: #2dd4bf;
+  --accent-soft: #5eead4;
+  --signal: #67e8f9;
+  --border-subtle: #1d2431;
+  --border-strong: #2a3242;
+  --glow-accent: 0 0 0 1px rgba(45, 212, 191, 0.32), 0 0 16px rgba(45, 212, 191, 0.24);
+  --glow-signal: 0 0 0 1px rgba(103, 232, 249, 0.32), 0 0 14px rgba(103, 232, 249, 0.22);
+}
+
+/* Narrow-window notice — desk tool, best viewed wide (spec). Shown only
+   below the lg breakpoint; a real desk never sees it. */
+.narrow-notice {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--accent);
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border-subtle);
+}
+@media (min-width: 1024px) {
+  .narrow-notice { display: none; }
+}
+
+/* Browser-floor warning — an old/unknown engine gets one dismissible strip
+   (amber = warning tone, matching the toasts) instead of silently degrading
+   color-mix()/:has() visuals. Rendered only when the check fails. */
+.browser-check {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.45rem 1rem;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-elevated));
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border-subtle));
+}
+.browser-check-icon {
+  flex: none;
+}
+.browser-check-dismiss {
+  flex: none;
+  margin-left: auto;
+  padding: 0.1rem 0.45rem;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--accent);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: border-color 120ms ease, color 120ms ease;
+}
+.browser-check-dismiss:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  color: var(--accent-soft);
+}

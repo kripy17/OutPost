@@ -1,0 +1,23 @@
+<!-- Tuned Sysmon config for OutPost — based on SwiftOnSecurity baseline.
+     Keeps Event IDs 1, 3, 11, 12/13/14 enabled and trims noisy defaults. -->
+<Sysmon schemaversion="4.90">
+  <EventFiltering>
+    <ProcessCreate onmatch="exclude">
+      <Image condition="is">C:\Windows\System32\svchost.exe</Image>
+    </ProcessCreate>
+
+    <NetworkConnect onmatch="exclude">
+      <DestinationPort condition="is">53</DestinationPort>
+    </NetworkConnect>
+
+    <FileCreateTime onmatch="exclude" />
+    <ProcessAccess onmatch="exclude" />
+    <DriverLoad onmatch="exclude" />
+    <ImageLoad onmatch="exclude" />
+    <CreateRemoteThread onmatch="exclude" />
+    <RawAccessRead onmatch="exclude" />
+    <PipeEvent onmatch="exclude" />
+    <WmiEvent onmatch="exclude" />
+    <DnsQuery onmatch="exclude" />
+  </EventFiltering>
+</Sysmon>

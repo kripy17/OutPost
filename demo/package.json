@@ -1,0 +1,12 @@
+{
+  "name": "outpost-shelf-stack-demo",
+  "private": true,
+  "type": "module",
+  "description": "Automated Playwright walkthrough of the OutPost 'Operation Shelf-Stack' campaign demo — see ../13-CAMPAIGN-DEMO.md",
+  "scripts": {
+    "demo": "node shelf-stack-demo.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.48.0"
+  }
+}

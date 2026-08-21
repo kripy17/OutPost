@@ -1,0 +1,26 @@
+# OutPost — production TLS front (Caddy).
+#
+# Serves the built webapp static bundle and reverse-proxies /api/* to the
+# backend (prefix stripped, so FastAPI's root routes work unchanged). Caddy
+# terminates TLS automatically:
+#   - public domain -> Let's Encrypt (OUTPOST_HOST must resolve to this box)
+#   - no domain     -> uncomment `tls internal` for a self-signed cert and
+#                      point OUTPOST_HOST at the server's IP or hostname
+#
+# The webapp is built with VITE_API_URL=/api, so every API call goes through
+# this proxy — one TLS origin, no mixed content.
+
+{$OUTPOST_HOST} {
+	encode zstd gzip
+
+	handle /api/* {
+		uri strip_prefix /api
+		reverse_proxy backend:8001
+	}
+
+	handle {
+		root * /srv/outpost
+		try_files {path} /index.html
+		file_server
+	}
+}

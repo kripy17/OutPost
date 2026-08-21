@@ -1,0 +1,599 @@
+"""OutPost SOC Terminal User Interface (TUI).
+
+An interactive, keyboard-driven terminal application for operating OutPost as a
+behavioral security monitor and dynamic malware analysis console.
+
+Navigation:
+  [↑/↓] or [k/j] : Navigate menu
+  [1-9]          : Direct jump
+  [Enter]        : Select / Drill down
+  [b / Esc]      : Back
+  [r]            : Refresh data
+  [q]            : Quit
+"""
+
+import platform
+import sys
+import time
+
+from rich.align import Align
+from rich.box import ROUNDED
+from rich.console import Console, Group
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
+
+from .lib import api_client
+from .rendering.terminal_views import (
+    SEVERITY_STYLE,
+    intel_age,
+    render_alert,
+    render_network_table,
+    render_process_tree,
+)
+
+console = Console()
+
+
+def _safe_get_runs() -> list[dict]:
+    try:
+        res = api_client.list_runs()
+        return res if isinstance(res, list) else []
+    except Exception:
+        return []
+
+
+def _safe_get_alerts() -> list[dict]:
+    try:
+        res = api_client.get_alert_queue(status="all", limit=50)
+        if isinstance(res, dict):
+            return res.get("alerts", [])
+        elif isinstance(res, list):
+            return res
+        return []
+    except Exception:
+        return []
+
+
+def _safe_get_fleet() -> dict:
+    try:
+        res = api_client.get_agents()
+        return res if isinstance(res, dict) else {"agents": [], "online": 0}
+    except Exception:
+        return {"agents": [], "online": 0}
+
+
+def _safe_get_investigations() -> list[dict]:
+    try:
+        res = api_client.list_investigations()
+        if isinstance(res, dict):
+            return res.get("investigations", [])
+        elif isinstance(res, list):
+            return res
+        return []
+    except Exception:
+        return []
+
+
+def _safe_get_samples() -> list[dict]:
+    try:
+        res = api_client.list_samples()
+        if isinstance(res, dict):
+            return res.get("samples", [])
+        elif isinstance(res, list):
+            return res
+        return []
+    except Exception:
+        return []
+
+
+def _safe_get_watchlist() -> list[dict]:
+    try:
+        res = api_client.get_watchlist()
+        return res if isinstance(res, list) else []
+    except Exception:
+        return []
+
+
+def _safe_get_campaigns() -> list[dict]:
+    try:
+        res = api_client.get_campaigns()
+        return res if isinstance(res, list) else []
+    except Exception:
+        return []
+
+
+def _safe_get_rules_meta() -> list[dict]:
+    try:
+        res = api_client.get_rules_meta()
+        return res if isinstance(res, list) else []
+    except Exception:
+        return []
+
+
+def _get_key() -> str:
+    """Read a single keypress without waiting for Enter."""
+    if platform.system().lower() == "windows":
+        import msvcrt
+        ch = msvcrt.getch()
+        if ch in (b"\x00", b"\xe0"):
+            ch2 = msvcrt.getch()
+            if ch2 == b"H":
+                return "up"
+            elif ch2 == b"P":
+                return "down"
+            elif ch2 == b"K":
+                return "left"
+            elif ch2 == b"M":
+                return "right"
+        if ch == b"\r":
+            return "enter"
+        if ch == b"\x1b":
+            return "esc"
+        try:
+            return ch.decode("utf-8", errors="ignore").lower()
+        except Exception:
+            return ""
+    else:
+        import termios
+        import tty
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        try:
+            tty.setraw(fd)
+            ch = sys.stdin.read(1)
+            if ch == "\x1b":
+                ch2 = sys.stdin.read(1)
+                if ch2 == "[":
+                    ch3 = sys.stdin.read(1)
+                    if ch3 == "A":
+                        return "up"
+                    elif ch3 == "B":
+                        return "down"
+                    elif ch3 == "C":
+                        return "right"
+                    elif ch3 == "D":
+                        return "left"
+                return "esc"
+            if ch in ("\r", "\n"):
+                return "enter"
+            return ch.lower()
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+
+class OutPostTUI:
+    def __init__(self):
+        self.running = True
+        self.current_screen = "main"
+        self.main_selected = 0
+        self.sub_selected = 0
+        self.detail_selected = 0
+        self.active_sub_view = None
+        self.status_msg = ""
+        self.selected_run_id = None
+
+        self.main_menu = [
+            ("1", "Monitor", "Live telemetry, active sessions, online fleet, detection activity"),
+            ("2", "Analyze", "Dynamic subprocess sandbox detonation, static binary inspection"),
+            ("3", "Investigate", "SOC incident investigation case management, findings & notes"),
+            ("4", "IOCs", "Cross-run IOC search, threat reputation cache, watchlist"),
+            ("5", "Hosts", "Connected fleet collectors, heartbeat health, host timeline"),
+            ("6", "Campaigns", "Auto-clustered campaigns sharing C2 infrastructure"),
+            ("7", "Reports", "Run summaries, STIX 2.1 bundles, PDF/JSON export"),
+            ("8", "Detection Rules", "37 explainable heuristics across 14 MITRE ATT&CK tactics"),
+            ("9", "Settings", "Local monitor status, threat intel keys, system health"),
+        ]
+
+        self.sub_menus = {
+            "monitor": ["Live Events", "Findings", "Sessions", "Hosts", "Detection Activity"],
+            "analyze": ["Detonate Sample", "Sample Vault", "Static Inspection", "Execution Traces"],
+            "investigate": ["Active Cases", "Closed Cases", "Triage Queue", "Case Timeline"],
+            "iocs": ["Search IOC", "Threat Watchlist", "Reputation Cache", "Infra Topology"],
+            "hosts": ["Online Fleet", "Collector Heartbeats", "Host Activity Timeline"],
+            "campaigns": ["Campaign Clusters", "Shared C2 Infrastructure", "Evidence Graph"],
+            "reports": ["Session Reports", "STIX 2.1 Bundles", "Sigma / Suricata Rules"],
+            "rules": ["37 Heuristic Rules", "ATT&CK Coverage Matrix", "YARA Signatures"],
+            "settings": ["Local Monitor Daemon", "Threat Intel Keys", "System Health & DB"],
+        }
+
+    def run(self):
+        while self.running:
+            try:
+                console.clear()
+                if self.current_screen == "main":
+                    self.render_main_screen()
+                elif self.current_screen in self.sub_menus:
+                    if self.active_sub_view is None:
+                        self.render_category_screen(self.current_screen)
+                    else:
+                        self.render_sub_view()
+                elif self.current_screen == "run_detail":
+                    self.render_run_detail()
+
+                key = _get_key()
+                self.handle_input(key)
+            except KeyboardInterrupt:
+                self.running = False
+            except Exception as exc:
+                self.status_msg = f"Error: {exc}"
+                time.sleep(1.0)
+
+        console.clear()
+        console.print("[bold #3FA796]OutPost SOC Terminal closed.[/bold #3FA796]")
+
+    def handle_input(self, key: str):
+        if key == "q":
+            if self.active_sub_view is not None:
+                self.active_sub_view = None
+                self.detail_selected = 0
+            elif self.current_screen != "main":
+                self.current_screen = "main"
+                self.sub_selected = 0
+            else:
+                self.running = False
+            return
+
+        if key in ("esc", "b"):
+            if self.active_sub_view is not None:
+                self.active_sub_view = None
+                self.detail_selected = 0
+            elif self.current_screen != "main":
+                self.current_screen = "main"
+                self.sub_selected = 0
+            return
+
+        if key == "r":
+            self.status_msg = "Refreshed."
+            return
+
+        if self.current_screen == "main":
+            if key in ("up", "k"):
+                self.main_selected = (self.main_selected - 1) % len(self.main_menu)
+            elif key in ("down", "j"):
+                self.main_selected = (self.main_selected + 1) % len(self.main_menu)
+            elif key in ("1", "2", "3", "4", "5", "6", "7", "8", "9"):
+                self.main_selected = int(key) - 1
+                self.enter_category()
+            elif key == "enter":
+                self.enter_category()
+
+        elif self.active_sub_view is None:
+            items = self.sub_menus.get(self.current_screen, [])
+            if key in ("up", "k"):
+                self.sub_selected = (self.sub_selected - 1) % len(items)
+            elif key in ("down", "j"):
+                self.sub_selected = (self.sub_selected + 1) % len(items)
+            elif key == "enter":
+                self.active_sub_view = items[self.sub_selected]
+                self.detail_selected = 0
+
+        else:
+            # Inside detail sub-view
+            if key in ("up", "k"):
+                self.detail_selected = max(0, self.detail_selected - 1)
+            elif key in ("down", "j"):
+                self.detail_selected += 1
+            elif key == "enter":
+                self.handle_detail_enter()
+
+    def enter_category(self):
+        screen_map = [
+            "monitor",
+            "analyze",
+            "investigate",
+            "iocs",
+            "hosts",
+            "campaigns",
+            "reports",
+            "rules",
+            "settings",
+        ]
+        if 0 <= self.main_selected < len(screen_map):
+            self.current_screen = screen_map[self.main_selected]
+            self.sub_selected = 0
+            self.active_sub_view = None
+            self.status_msg = ""
+
+    def handle_detail_enter(self):
+        if self.current_screen == "monitor" and self.active_sub_view in ("Sessions", "Live Events"):
+            runs = _safe_get_runs()
+            if runs and 0 <= self.detail_selected < len(runs):
+                self.selected_run_id = runs[self.detail_selected]["run_id"]
+                self.current_screen = "run_detail"
+
+    def render_main_screen(self):
+        alerts = _safe_get_alerts()
+        investigations = _safe_get_investigations()
+
+        # Build menu lines
+        lines: list[Text] = []
+        for idx, (num, label, _) in enumerate(self.main_menu):
+            is_sel = idx == self.main_selected
+            prefix = " > " if is_sel else "   "
+            style = "bold #3FA796 reverse" if is_sel else "white"
+            t = Text()
+            t.append(f"{prefix}{num}. {label.ljust(24)}", style=style)
+            lines.append(t)
+
+        menu_content = Group(*lines)
+
+        # Recent investigations / findings
+        recent_lines: list[Text] = [
+            Text("Recent investigations", style="bold white"),
+            Text("─────────────────────", style="dim"),
+        ]
+
+        if investigations:
+            for inv in investigations[:3]:
+                sev = (inv.get("severity") or "HIGH").upper()
+                style = SEVERITY_STYLE.get(sev.lower(), "bold #C4453B")
+                case_id = inv.get("id", "INC-001")[:8].ljust(10)
+                title = inv.get("title", "Suspicious Activity")[:36].ljust(38)
+                t = Text()
+                t.append(f"{case_id} {title} ")
+                t.append(sev.ljust(10), style=style)
+                recent_lines.append(t)
+        elif alerts:
+            for a in alerts[:3]:
+                sev = (a.get("severity") or "SUSPICIOUS").upper()
+                style = SEVERITY_STYLE.get(sev.lower(), "bold #D9A441")
+                case_id = f"ALT-{a.get('id', 1)}".ljust(10)
+                title = a.get("rule_name", "Alert")[:36].ljust(38)
+                t = Text()
+                t.append(f"{case_id} {title} ")
+                t.append(sev.ljust(10), style=style)
+                recent_lines.append(t)
+        else:
+            recent_lines.append(Text("No open investigations. System is secure.", style="dim"))
+
+        body = Group(
+            menu_content,
+            Text(""),
+            Group(*recent_lines),
+            Text(""),
+            Text("[↑↓] Navigate   [1-9] Direct Jump   [Enter] Select   [q] Quit", style="dim"),
+        )
+
+        panel = Panel(
+            body,
+            title="[bold #3FA796]OUTPOST[/bold #3FA796]                                      [bold yellow]SOC TERMINAL[/bold yellow]",
+            box=ROUNDED,
+            border_style="#3FA796",
+            padding=(1, 3),
+        )
+        console.print(panel)
+
+    def render_category_screen(self, category: str):
+        cat_title = category.upper()
+        runs = _safe_get_runs()
+        alerts = _safe_get_alerts()
+        fleet = _safe_get_fleet()
+
+        online_count = fleet.get("online", 0) if isinstance(fleet, dict) else 0
+        malicious_count = len([a for a in alerts if a.get("severity") == "malicious"])
+
+        stat_lines = [
+            Text.from_markup(f"[bold]Active Sessions:[/bold] {len(runs)}"),
+            Text.from_markup(f"[bold]Hosts Online:[/bold]    {online_count}"),
+            Text.from_markup(f"[bold]Open Findings:[/bold]   {len(alerts)}"),
+            Text.from_markup(f"[bold]Critical:[/bold]        [{SEVERITY_STYLE.get('malicious', 'red')}]{malicious_count}[/]"),
+            Text(""),
+            Text("────────────────────────────────────────────────────────────", style="dim"),
+            Text(""),
+        ]
+
+        sub_items = self.sub_menus.get(category, [])
+        menu_lines = []
+        for idx, item in enumerate(sub_items):
+            is_sel = idx == self.sub_selected
+            prefix = " > " if is_sel else "   "
+            style = "bold #3FA796 reverse" if is_sel else "white"
+            menu_lines.append(Text(f"{prefix}{item}", style=style))
+
+        body = Group(
+            Group(*stat_lines),
+            Group(*menu_lines),
+            Text(""),
+            Text("[↑↓] Navigate   [Enter] Select   [b/Esc] Back   [q] Quit", style="dim"),
+        )
+
+        panel = Panel(
+            body,
+            title=f"[bold #3FA796]{cat_title}[/bold #3FA796]",
+            box=ROUNDED,
+            border_style="#3FA796",
+            padding=(1, 3),
+        )
+        console.print(panel)
+
+    def render_sub_view(self):
+        view_name = self.active_sub_view or ""
+        console.print(Panel(f"[bold #3FA796]{self.current_screen.upper()} > {view_name.upper()}[/bold #3FA796]", box=ROUNDED, border_style="#3FA796"))
+
+        if self.current_screen == "monitor":
+            if view_name in ("Live Events", "Sessions"):
+                runs = _safe_get_runs()
+                table = Table(box=ROUNDED, border_style="dim", expand=True)
+                table.add_column("#", width=3)
+                table.add_column("Run ID", style="bold cyan", width=14)
+                table.add_column("Target Name", style="white")
+                table.add_column("Platform", width=10)
+                table.add_column("Alerts", width=8)
+                table.add_column("Severity", width=12)
+
+                for i, r in enumerate(runs[:12]):
+                    is_sel = i == self.detail_selected
+                    sev = r.get("highest_severity") or "clean"
+                    style = SEVERITY_STYLE.get(sev, "white")
+                    table.add_row(
+                        str(i + 1),
+                        f"{'▶ ' if is_sel else ''}{r.get('run_id', '')[:12]}",
+                        r.get("name", "Session"),
+                        r.get("environment", "linux"),
+                        str(r.get("alert_count", 0)),
+                        Text(sev.upper(), style=style),
+                        style="reverse" if is_sel else None,
+                    )
+                console.print(table)
+            elif view_name == "Findings":
+                alerts = _safe_get_alerts()
+                table = Table(box=ROUNDED, border_style="dim", expand=True)
+                table.add_column("ID", width=6)
+                table.add_column("Rule Name", style="bold white")
+                table.add_column("Severity", width=12)
+                table.add_column("Trigger Details", style="dim")
+
+                for a in alerts[:10]:
+                    sev = a.get("severity") or "suspicious"
+                    table.add_row(
+                        str(a.get("id", 0)),
+                        a.get("rule_name", ""),
+                        Text(sev.upper(), style=SEVERITY_STYLE.get(sev, "white")),
+                        str(a.get("details", ""))[:50],
+                    )
+                console.print(table)
+            elif view_name == "Hosts":
+                self.render_hosts_table()
+            elif view_name == "Detection Activity":
+                rules = _safe_get_rules_meta()
+                table = Table(title="Active Detection Heuristics", box=ROUNDED, border_style="dim", expand=True)
+                table.add_column("Rule ID", style="bold cyan")
+                table.add_column("Name", style="white")
+                table.add_column("Tactic", style="bold yellow")
+                for r in rules[:10]:
+                    table.add_row(r.get("id", ""), r.get("name", ""), r.get("tactic", "Execution"))
+                console.print(table)
+
+        elif self.current_screen == "analyze":
+            samples = _safe_get_samples()
+            table = Table(title="Sample Vault & Binaries", box=ROUNDED, border_style="dim", expand=True)
+            table.add_column("ID", style="bold cyan", width=12)
+            table.add_column("Filename", style="white")
+            table.add_column("Platform", width=10)
+            table.add_column("SHA-256", style="dim", width=22)
+            table.add_column("Family", width=14)
+            for s in samples[:10]:
+                table.add_row(
+                    s.get("sample_id", "")[:10],
+                    s.get("name", "sample"),
+                    s.get("detected_platform") or "unknown",
+                    s.get("sha256", "")[:18] + "...",
+                    s.get("family") or "clean",
+                )
+            console.print(table)
+
+        elif self.current_screen == "investigate":
+            invs = _safe_get_investigations()
+            table = Table(title="SOC Investigations", box=ROUNDED, border_style="dim", expand=True)
+            table.add_column("Case ID", style="bold cyan", width=14)
+            table.add_column("Title", style="white")
+            table.add_column("Status", width=12)
+            table.add_column("Severity", width=12)
+            for inv in invs[:10]:
+                sev = inv.get("severity") or "suspicious"
+                table.add_row(
+                    inv.get("id", "")[:12],
+                    inv.get("title", ""),
+                    inv.get("status", "open").upper(),
+                    Text(sev.upper(), style=SEVERITY_STYLE.get(sev, "white")),
+                )
+            console.print(table)
+
+        elif self.current_screen == "iocs":
+            watchlist = _safe_get_watchlist()
+            table = Table(title="Threat Watchlist", box=ROUNDED, border_style="dim", expand=True)
+            table.add_column("Value / Indicator", style="bold yellow")
+            table.add_column("Label / Threat Context", style="white")
+            table.add_column("Date Added", style="dim", width=16)
+            for w in watchlist[:10]:
+                table.add_row(w.get("value", ""), w.get("label", ""), str(w.get("created_at", ""))[:10])
+            console.print(table)
+
+        elif self.current_screen == "hosts":
+            self.render_hosts_table()
+
+        elif self.current_screen == "campaigns":
+            campaigns = _safe_get_campaigns()
+            table = Table(title="Campaign Clusters", box=ROUNDED, border_style="dim", expand=True)
+            table.add_column("Campaign Key", style="bold yellow")
+            table.add_column("Signature C2", style="bold cyan")
+            table.add_column("Linked Runs", width=12)
+            for c in campaigns[:8]:
+                table.add_row(c.get("key", ""), c.get("signature_ip") or "None", str(len(c.get("runs", []))))
+            console.print(table)
+
+        elif self.current_screen == "reports":
+            runs = _safe_get_runs()
+            table = Table(title="Session Reports", box=ROUNDED, border_style="dim", expand=True)
+            table.add_column("Run ID", style="bold cyan")
+            table.add_column("Target Name", style="white")
+            table.add_column("Risk Score", width=10)
+            for r in runs[:8]:
+                table.add_row(r.get("run_id", "")[:12], r.get("name", ""), str(r.get("risk_score", 0)))
+            console.print(table)
+
+        elif self.current_screen == "rules":
+            rules = _safe_get_rules_meta()
+            table = Table(title="37 Heuristic Rules across 14 ATT&CK Tactics", box=ROUNDED, border_style="dim", expand=True)
+            table.add_column("Rule ID", style="bold cyan", width=22)
+            table.add_column("Rule Description", style="white")
+            table.add_column("Tactic", style="bold yellow", width=16)
+            for r in rules[:12]:
+                table.add_row(r.get("id", ""), r.get("name", ""), r.get("tactic", "Execution"))
+            console.print(table)
+
+        elif self.current_screen == "settings":
+            body = (
+                "[bold]API Status:[/bold] Healthy\n"
+                "[bold]Threat Intel Cache:[/bold] Active (Keyless Fallback Ready)\n"
+                "[bold]Air-Gap Enforcement:[/bold] Loopback-only locked\n"
+            )
+            console.print(Panel(Text.from_markup(body), box=ROUNDED, border_style="dim"))
+
+        console.print(Align.center(Text.from_markup("[dim][Enter] Select Item   [b/Esc] Back to Menu   [q] Quit[/dim]")))
+
+    def render_hosts_table(self):
+        fleet = _safe_get_fleet()
+        agents = fleet.get("agents", []) if isinstance(fleet, dict) else []
+        table = Table(title="Fleet Hosts", box=ROUNDED, border_style="dim", expand=True)
+        table.add_column("Host ID", style="bold cyan")
+        table.add_column("Platform", width=10)
+        table.add_column("Status", width=10)
+        table.add_column("Last Seen", style="dim", width=16)
+        for h in agents[:10]:
+            is_on = h.get("online", False)
+            table.add_row(
+                h.get("host_id", "local"),
+                h.get("platform", "linux"),
+                Text("ONLINE" if is_on else "OFFLINE", style="bold #3FA796" if is_on else "dim"),
+                intel_age(h.get("last_seen")),
+            )
+        console.print(table)
+
+    def render_run_detail(self):
+        if not self.selected_run_id:
+            self.current_screen = "monitor"
+            return
+        try:
+            detail = api_client.get_run(self.selected_run_id)
+        except Exception:
+            detail = {}
+        run = detail.get("run", {})
+        alerts = detail.get("alerts", [])
+        network = detail.get("network_connections", [])
+        tree = detail.get("process_tree", [])
+
+        console.print(Panel(f"[bold #3FA796]RUN DETAIL: {self.selected_run_id}[/bold #3FA796]", box=ROUNDED, border_style="#3FA796"))
+        sev = run.get("highest_severity") or "clean"
+        meta = f"[bold]Target:[/bold] {run.get('name')}  |  [bold]Risk:[/bold] {run.get('risk_score', 0)}  |  [bold]Severity:[/bold] [{SEVERITY_STYLE.get(sev, 'white')}]{sev.upper()}[/]"
+        console.print(Panel(Text.from_markup(meta), box=ROUNDED, border_style="dim"))
+
+        if alerts:
+            console.print(Panel(Group(*[render_alert(a) for a in alerts[:4]]), title="Fired Alerts", box=ROUNDED, border_style="#C4453B"))
+        if tree:
+            console.print(Panel(render_process_tree(tree), title="Process Tree", box=ROUNDED, border_style="dim"))
+        if network:
+            console.print(Panel(render_network_table(network[:6]), title="Network Connections", box=ROUNDED, border_style="dim"))
+
+        console.print(Align.center(Text.from_markup("[dim][b/Esc] Back to Sessions[/dim]")))
