@@ -230,10 +230,11 @@ export type ResetResult = {
   deleted_runs: number;
   deleted_events: number;
   deleted_alerts: number;
+  deleted_samples?: number;
 };
 
-export async function resetStore(): Promise<ResetResult> {
-  return post<ResetResult>("/setup/reset", {});
+export async function resetStore(scope: "demo" | "all" = "demo", purgeSamples: boolean = false): Promise<ResetResult> {
+  return post<ResetResult>("/setup/reset", { scope, purge_samples: purgeSamples });
 }
 
 // -- runs -------------------------------------------------------------------
@@ -677,6 +678,17 @@ export async function exportSamplesCsv(params: { q?: string; include_synthetic?:
   if (!res.ok) throw new Error(`GET /samples/export → ${res.status}`);
   return res.blob();
 }
+
+export async function deleteSample(sampleId: string): Promise<{ status: string; sample_id: string }> {
+  await del(`/samples/${encodeURIComponent(sampleId)}`);
+  return { status: "ok", sample_id: sampleId };
+}
+
+export async function deleteAllSamples(): Promise<{ status: string; deleted: number }> {
+  await del("/samples");
+  return { status: "ok", deleted: 0 };
+}
+
 
 export async function exportEventsCsv(params: EventFeedParams = {}): Promise<Blob> {
   const qs = new URLSearchParams();

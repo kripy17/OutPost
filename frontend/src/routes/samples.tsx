@@ -1,10 +1,10 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { platformIconName } from "../components/iconMeta";
 import { Chip, PageHeader, Panel, Stat } from "../components/ui";
-import { exportSamplesCsv, getSamples, saveBlob } from "../lib/api";
+import { deleteAllSamples, deleteSample, exportSamplesCsv, getSamples, saveBlob } from "../lib/api";
 import type { SampleRow } from "../types";
 import { formatBytes } from "./samplesHelpers";
 
@@ -15,7 +15,7 @@ const PLATFORM_META: Record<SampleRow["detected_platform"], { label: string; ton
   unknown: { label: "?", tone: "muted" },
 };
 
-function SampleTile({ s }: { s: SampleRow }) {
+function SampleTile({ s, onDelete }: { s: SampleRow; onDelete: (id: string, name: string) => void }) {
   const plat = PLATFORM_META[s.detected_platform];
   const vt = s.vt_detections;
   return (
@@ -50,6 +50,13 @@ function SampleTile({ s }: { s: SampleRow }) {
             demo
           </Chip>
         )}
+        <button
+          onClick={() => onDelete(s.sample_id, s.original_name)}
+          className="press -mr-1 -mt-1 rounded p-1 text-text-faint transition-colors hover:bg-risk-malicious/10 hover:text-risk-malicious"
+          title={`Delete ${s.original_name}`}
+        >
+          <Icon name="x" size={13} />
+        </button>
       </div>
 
       <div className="mt-3 flex items-center gap-2 border-t border-border-subtle pt-3">
@@ -86,24 +93,34 @@ function SampleTile({ s }: { s: SampleRow }) {
         ) : (
           <span className="font-mono text-[10px] text-text-faint">no intel</span>
         )}
-        {s.runs_count > 0 ? (
-          <Link
-            to="/history"
-            className="press inline-flex items-center gap-1 rounded-md border border-border-subtle px-2 py-1 font-mono text-[10px] text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
-            title={`${s.runs_count} detonation(s) of ${s.original_name}`}
-          >
-            <Icon name="activity" size={11} />
-            {s.runs_count} detonat{s.runs_count === 1 ? "ion" : "ions"}
-          </Link>
-        ) : (
-          <span className="font-mono text-[10px] text-text-faint">not detonated</span>
-        )}
+        <div className="flex items-center gap-1.5">
+          {s.runs_count > 0 ? (
+            <Link
+              to="/history"
+              className="press inline-flex items-center gap-1 rounded-md border border-border-subtle px-2 py-1 font-mono text-[10px] text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
+              title={`${s.runs_count} detonation(s) of ${s.original_name}`}
+            >
+              <Icon name="activity" size={11} />
+              {s.runs_count} detonat{s.runs_count === 1 ? "ion" : "ions"}
+            </Link>
+          ) : (
+            <Link
+              to={`/samples/${s.sample_id}`}
+              className="press inline-flex items-center gap-1 rounded-md border border-accent/40 bg-accent/5 px-2 py-1 font-mono text-[10px] text-accent transition-colors duration-150 hover:bg-accent/15"
+              title={`Detonate ${s.original_name}`}
+            >
+              <Icon name="play" size={10} />
+              detonate
+            </Link>
+          )}
+        </div>
       </div>
     </li>
   );
 }
 
 export default function SamplesPage() {
+  const queryClient = useQueryClient();
   const [q, setQ] = useState("");
   const [debounced, setDebounced] = useState("");
   // The vault reads as real artifacts first: binaries whose entire detonation
@@ -145,6 +162,27 @@ export default function SamplesPage() {
       setExportError("CSV export failed — is the backend running?");
     }
   };
+
+  const handleDeleteSample = async (sampleId: string, name: string) => {
+    if (!window.confirm(`Delete sample ${name} from vault?`)) return;
+    try {
+      await deleteSample(sampleId);
+      void queryClient.invalidateQueries({ queryKey: ["samples"] });
+    } catch {
+      setExportError(`Failed to delete sample ${name}`);
+    }
+  };
+
+  const handleClearVault = async () => {
+    if (!window.confirm("Delete ALL samples in the vault? This cannot be undone.")) return;
+    try {
+      await deleteAllSamples();
+      void queryClient.invalidateQueries({ queryKey: ["samples"] });
+    } catch {
+      setExportError("Failed to clear sample vault");
+    }
+  };
+
   const withYara = samples.filter((s) => s.yara_rules.length > 0).length;
   const flagged = samples.filter((s) => (s.vt_detections ?? 0) > 0).length;
   const byPlatform = (p: SampleRow["detected_platform"]) => samples.filter((s) => s.detected_platform === p).length;
@@ -162,6 +200,15 @@ export default function SamplesPage() {
         actions={
           <div className="flex items-center gap-2">
             {exportError && <span className="font-mono text-[10px] text-risk-malicious">{exportError}</span>}
+            {samples.length > 0 && (
+              <button
+                onClick={() => void handleClearVault()}
+                className="press rounded-lg border border-risk-malicious/40 bg-risk-malicious/5 px-3 py-2 font-mono text-xs text-risk-malicious transition-colors hover:bg-risk-malicious/15"
+                title="Wipe all samples in the vault"
+              >
+                Clear vault
+              </button>
+            )}
             <button
               onClick={() => setShowSynthetic((v) => !v)}
               aria-pressed={showSynthetic}
@@ -249,7 +296,7 @@ export default function SamplesPage() {
         {!isLoading && !isError && samples.length > 0 && (
           <ul className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 xl:grid-cols-3">
             {samples.map((s) => (
-              <SampleTile key={s.sample_id} s={s} />
+              <SampleTile key={s.sample_id} s={s} onDelete={handleDeleteSample} />
             ))}
           </ul>
         )}

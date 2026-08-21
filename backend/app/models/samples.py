@@ -137,6 +137,18 @@ def set_sample_reputation(
     )
 
 
+def delete_sample(conn: sqlite3.Connection, sample_id: str) -> bool:
+    """Delete a sample record from the database."""
+    cur = conn.execute("DELETE FROM samples WHERE sample_id = ?", (sample_id,))
+    return cur.rowcount > 0
+
+
+def delete_all_samples(conn: sqlite3.Connection) -> int:
+    """Delete all sample records from the database."""
+    cur = conn.execute("DELETE FROM samples")
+    return cur.rowcount
+
+
 # -- hash_cache (roadmap 2.2) ---------------------------------------------------
 def get_hash_cache(conn: sqlite3.Connection, sha256: str) -> dict | None:
     row = conn.execute("SELECT * FROM hash_cache WHERE sha256 = ?", (sha256,)).fetchone()

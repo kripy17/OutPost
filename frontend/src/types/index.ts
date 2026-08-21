@@ -1247,3 +1247,29 @@ export interface AnalysisObservationsResponse {
   backend: AnalysisBackend;
   observations: AnalysisObservation[];
 }
+
+export interface LocalMonitorStatus {
+  active: boolean;
+  run_id: string | null;
+  interval?: number;
+  events_emitted?: number;
+  error?: string | null;
+}
+
+export interface DynamicDetonationResult {
+  run_id: string;
+  sample_id: string;
+  sample_name: string;
+  platform: Platform;
+  verdict: "clean" | "suspicious" | "malicious";
+  exit_code: number;
+  stdout: string;
+  stderr: string;
+  risk_score: number;
+  alerts_count: number;
+  alerts: Alert[];
+  process_tree: ProcessNode[];
+  kill_chain?: KillChainLink[];
+  events_count: number;
+}
+

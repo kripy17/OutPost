@@ -57,9 +57,14 @@ def onboard(body: OnboardIn) -> dict:
     return {"status": "ok", "choice": body.choice, "demo_mode": body.choice == "demo"}
 
 
+class ResetIn(BaseModel):
+    scope: str = Field(default="demo", description="demo = keep real host sessions; all = complete wipe")
+    purge_samples: bool = Field(default=False, description="Whether to also wipe samples in vault")
+
+
 @router.post("/setup/reset", response_model=None)
-def reset_store() -> dict:
-    """Start fresh — wipe every run that isn't local-host telemetry.
+def reset_store(body: ResetIn | None = None) -> dict:
+    """Start fresh — wipe every run that isn't local-host telemetry (or all runs on scope='all').
 
     Keeps only runs whose events were shipped by THIS machine's collector
     (events tagged `host_id` == the local host id: lowercased hostname, or
@@ -74,15 +79,25 @@ def reset_store() -> dict:
     import os
     import socket
 
+    from ..core import config
+    from ..models.run import SYNTHETIC_SOURCES
+
+    scope = body.scope if body else "demo"
+    purge_samples = body.purge_samples if body else False
+
     host_id = os.getenv("OUTPOST_HOST_ID", "").strip() or socket.gethostname().lower()
     with db_session() as conn:
-        kept = {
-            r[0]
-            for r in conn.execute(
-                "SELECT DISTINCT r.run_id FROM runs r JOIN events e ON e.run_id = r.run_id WHERE e.host_id = ?",
-                (host_id,),
-            )
-        }
+        marks_syn = ",".join("?" for _ in SYNTHETIC_SOURCES)
+        if scope == "all":
+            kept = set()
+        else:
+            kept = {
+                r[0]
+                for r in conn.execute(
+                    f"SELECT DISTINCT r.run_id FROM runs r JOIN events e ON e.run_id = r.run_id WHERE e.host_id = ? AND r.source NOT IN ({marks_syn})",
+                    (host_id, *SYNTHETIC_SOURCES),
+                )
+            }
         all_runs = [r[0] for r in conn.execute("SELECT run_id FROM runs")]
         doomed = [rid for rid in all_runs if rid not in kept]
         counts: dict[str, int] = {"deleted_runs": len(doomed)}
@@ -91,10 +106,22 @@ def reset_store() -> dict:
             # IOC linkage first — ioc_findings has an FK into alerts, and
             # provenance must not outlive the evidence it points at (P3.1).
             counts.update(iocs_store.purge_for_runs(conn, doomed))
-            for table in ("alerts", "run_notes", "run_allowlist", "watchlist_hits"):
+            for table in ("investigation_refs",):
+                conn.execute(f"DELETE FROM {table} WHERE ref_type = 'run' AND ref_id IN ({marks})", doomed)
+            for table in ("analysis_jobs", "rule_suppressions", "alerts", "run_notes", "run_allowlist", "watchlist_hits"):
                 counts[f"deleted_{table}"] = conn.execute(f"DELETE FROM {table} WHERE run_id IN ({marks})", doomed).rowcount
             counts["deleted_events"] = conn.execute(f"DELETE FROM events WHERE run_id IN ({marks})", doomed).rowcount
             counts["deleted_runs"] = conn.execute(f"DELETE FROM runs WHERE run_id IN ({marks})", doomed).rowcount
+
+        if purge_samples or scope == "all":
+            counts["deleted_samples"] = conn.execute("DELETE FROM samples").rowcount
+            if config.SAMPLES_DIR.exists():
+                for f in config.SAMPLES_DIR.glob("*.bin"):
+                    try:
+                        f.unlink()
+                    except Exception:
+                        pass
+
         # Seeded data is gone — the store is no longer demo-labeled.
         conn.execute("DELETE FROM settings WHERE key = 'demo_mode'")
 

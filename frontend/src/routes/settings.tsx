@@ -294,11 +294,25 @@ function RetentionPanel() {
     void runResetFlow({
       confirm: () =>
         window.confirm("Clear ALL demo/synthetic data? This keeps only THIS machine's real collector sessions and deletes everything else (seeds, webapp detonations, sandbox demos, test runs). Continue?"),
-      resetStore,
+      resetStore: () => resetStore("demo"),
       setBusy,
       setMsg,
       reload: () => window.location.reload(),
     });
+  };
+
+  const factoryReset = async () => {
+    if (!window.confirm("FACTORY RESET: Wipe ALL sessions, telemetry, alerts, investigations, and uploaded sample binaries? This resets OutPost to a 100% clean factory state.")) return;
+    setBusy("reset");
+    try {
+      await resetStore("all", true);
+      setMsg({ ok: true, text: "Database and sample vault completely wiped." });
+      window.location.reload();
+    } catch (e) {
+      setMsg({ ok: false, text: e instanceof Error ? e.message : "Factory reset failed." });
+    } finally {
+      setBusy(null);
+    }
   };
 
   const onRestoreFile = async (file: File | undefined) => {
@@ -366,16 +380,18 @@ function RetentionPanel() {
             <button
               onClick={() => void save()}
               disabled={busy !== null}
-              className="press rounded-lg border border-accent/60 bg-accent/10 px-3 py-2 font-mono text-xs text-accent transition-colors hover:shadow-[var(--glow-accent)] disabled:opacity-50"
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 px-3 py-2 font-mono text-xs text-accent transition-colors hover:bg-accent/10 disabled:opacity-50"
             >
+              <Icon name="check" size={12} />
               {busy === "saving" ? "Saving…" : "Save window"}
             </button>
             <button
               onClick={() => void prune()}
               disabled={busy !== null}
-              className="press rounded-lg border border-risk-malicious/50 px-3 py-2 font-mono text-xs text-risk-malicious transition-colors hover:bg-risk-malicious/10 disabled:opacity-50"
-              title="Delete runs older than the retention window now"
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-2 font-mono text-xs text-text-muted transition-colors hover:border-accent/60 hover:text-accent disabled:opacity-50"
+              title="Prune runs older than retention immediately"
             >
+              <Icon name="refresh" size={12} />
               {busy === "prune" ? "Pruning…" : "Prune now"}
             </button>
           </div>
@@ -418,22 +434,31 @@ function RetentionPanel() {
       <div className="mt-5 rounded-lg border border-dashed border-risk-malicious/30 bg-risk-malicious/5 px-4 py-3">
         <div className="flex flex-wrap items-center gap-3">
           <div className="min-w-0 flex-1">
-            <p className="kicker">Start fresh</p>
+            <p className="kicker">Start fresh & database reset</p>
             <p className="text-xs leading-relaxed text-text-muted">
-              Wipe every run that isn't this machine's collector telemetry — seeds, webapp-synthetic
-              detonations, sandbox demos, and test runs — and flip the demo banner off. Keeps only
-              real host sessions from this machine.
+              Clear demo data to wipe simulated traces while preserving real machine telemetry, or perform a full factory reset to completely wipe all historical runs, alerts, and sample binaries.
             </p>
           </div>
-          <button
-            onClick={() => void reset()}
-            disabled={busy !== null}
-            className="press inline-flex items-center gap-1.5 rounded-lg border border-risk-malicious/50 px-3 py-2 font-mono text-xs text-risk-malicious transition-colors hover:bg-risk-malicious/10 disabled:opacity-50"
-            title="Delete all demo/synthetic data (real local-host telemetry survives)"
-          >
-            <Icon name="x" size={12} />
-            {busy === "reset" ? "Clearing…" : "Clear demo data"}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => void reset()}
+              disabled={busy !== null}
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-risk-malicious/50 px-3 py-2 font-mono text-xs text-risk-malicious transition-colors hover:bg-risk-malicious/10 disabled:opacity-50"
+              title="Delete all demo/synthetic data (real local-host telemetry survives)"
+            >
+              <Icon name="x" size={12} />
+              {busy === "reset" ? "Clearing…" : "Clear demo data"}
+            </button>
+            <button
+              onClick={() => void factoryReset()}
+              disabled={busy !== null}
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-risk-malicious bg-risk-malicious/20 px-3 py-2 font-mono text-xs font-semibold text-risk-malicious transition-colors hover:bg-risk-malicious/30 disabled:opacity-50"
+              title="Wipe ALL data (factory reset)"
+            >
+              <Icon name="alert" size={12} />
+              Factory reset (Wipe all)
+            </button>
+          </div>
         </div>
       </div>
       {msg && <p className={`mt-3 text-xs ${msg.ok ? "text-accent" : "text-risk-malicious"}`}>{msg.text}</p>}

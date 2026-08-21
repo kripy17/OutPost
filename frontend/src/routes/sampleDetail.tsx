@@ -4,7 +4,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { platformIconName } from "../components/iconMeta";
 import { Chip, PageHeader, Panel } from "../components/ui";
-import { detonateDynamic, downloadSample, getRuns, getSample, getSampleStatic, getSandboxProviders, getSandboxTask, sandboxDetonate, watchlistAdd } from "../lib/api";
+import { deleteSample, detonateDynamic, downloadSample, getRuns, getSample, getSampleStatic, getSandboxProviders, getSandboxTask, sandboxDetonate, watchlistAdd } from "../lib/api";
 import type { Platform, RunSummary, SampleStatic, SandboxTask } from "../types";
 import { filterStrings, formatBytes, iocTotal } from "./samplesHelpers";
 
@@ -639,6 +639,22 @@ export default function SampleDetailPage() {
             >
               <Icon name={copied ? "check" : "copy"} size={12} />
               {copied ? "copied" : "copy hash"}
+            </button>
+            <button
+              onClick={async () => {
+                if (!window.confirm(`Delete sample ${sample.original_name} from vault?`)) return;
+                try {
+                  await deleteSample(sample.sample_id);
+                  navigate("/samples");
+                } catch {
+                  setDownloadError("Delete failed");
+                }
+              }}
+              className="press inline-flex items-center gap-1.5 rounded border border-risk-malicious/40 bg-risk-malicious/10 px-4 py-2 font-mono text-xs text-risk-malicious transition-colors duration-150 hover:bg-risk-malicious/20"
+              title={`Delete ${sample.original_name}`}
+            >
+              <Icon name="x" size={12} />
+              delete
             </button>
           </div>
         }

@@ -434,3 +434,34 @@ def download_sample(sample_id: str):
         filename=safe_name,
         headers={"x-outpost-sha256": row["sha256"]},
     )
+
+
+@router.delete("/samples/{sample_id}", response_model=None)
+def delete_sample_endpoint(sample_id: str) -> dict:
+    """Delete a sample record and its stored binary file."""
+    with db_session() as conn:
+        deleted = samples_store.delete_sample(conn, sample_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Unknown sample_id: {sample_id}")
+    path = config.SAMPLES_DIR / f"{sample_id}.bin"
+    if path.exists():
+        try:
+            path.unlink()
+        except Exception:
+            pass
+    return {"status": "ok", "sample_id": sample_id}
+
+
+@router.delete("/samples", response_model=None)
+def delete_all_samples_endpoint() -> dict:
+    """Wipe all sample records and stored binaries."""
+    with db_session() as conn:
+        count = samples_store.delete_all_samples(conn)
+    if config.SAMPLES_DIR.exists():
+        for f in config.SAMPLES_DIR.glob("*.bin"):
+            try:
+                f.unlink()
+            except Exception:
+                pass
+    return {"status": "ok", "deleted": count}
+
