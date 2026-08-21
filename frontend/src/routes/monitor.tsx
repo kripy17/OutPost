@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from "react";
 import { copyToClipboard } from "../lib/clipboard";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import AlertBanner from "../components/AlertBanner/AlertBanner";
 import ExportButton from "../components/ExportButton/ExportButton";
 import { Icon } from "../components/Icon";
@@ -43,6 +43,7 @@ interface Toast {
 }
 
 export default function MonitorPage() {
+  const navigate = useNavigate();
   const [runId, setRunId] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>("idle");
   // 'Watch a host' mode — the host whose newest session is on screen, plus
@@ -501,7 +502,7 @@ export default function MonitorPage() {
                 </span>
                 <input
                   type="file"
-                  accept=".exe,.bin,.elf,.dll,.so,.dylib,.docm,.lnk"
+                  accept=".exe,.bin,.elf,.dll,.so,.dylib,.docm,.lnk,.py,.sh,.ps1,.bat,.js"
                   onChange={onUpload}
                   className="mt-1.5 block w-full text-xs text-text-muted file:mr-3 file:rounded file:border file:border-border-subtle file:bg-bg-elevated file:px-3 file:py-1.5 file:font-mono file:text-[11px] file:text-text-muted hover:file:border-accent/60"
                 />
@@ -536,6 +537,28 @@ export default function MonitorPage() {
                         : "VirusTotal hash pre-check: clean (0 detections)"}
                     </p>
                   )}
+                  <div className="mt-3 flex items-center gap-2 border-t border-border-subtle pt-2">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          setStarting(true);
+                          const res = await detonateDynamic(sample.sample_id);
+                          navigate(`/runs/${res.run_id}`);
+                        } catch (err: unknown) {
+                          const msg = err instanceof Error ? err.message : "Dynamic detonation failed";
+                          setUploadError(msg);
+                        } finally {
+                          setStarting(false);
+                        }
+                      }}
+                      disabled={starting}
+                      className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/15 px-3 py-1.5 font-mono text-[11px] font-semibold text-accent hover:bg-accent/25 hover:shadow-[var(--glow-accent)] disabled:opacity-50"
+                    >
+                      <Icon name="play" size={11} />
+                      {starting ? "Detonating in sandbox..." : "Detonate in dynamic sandbox"}
+                    </button>
+                  </div>
                 </div>
               )}
             </div>

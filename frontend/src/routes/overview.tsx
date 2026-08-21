@@ -827,6 +827,61 @@ export default function OverviewPage() {
         <IntelFreshness />
       </Deferred>
 
+      {/* Quick SOC Operations Bar */}
+      <div className="my-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <Link
+          to="/monitor"
+          className="group flex items-center gap-3 rounded-xl border border-border-subtle bg-bg-surface/80 p-3.5 transition-all duration-150 hover:border-accent/50 hover:bg-bg-elevated hover:shadow-[var(--shadow-raised)]"
+        >
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-accent group-hover:bg-accent/25">
+            <Icon name="activity" size={16} />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs font-semibold text-text-primary">Live Monitor</p>
+            <p className="text-[10px] text-text-muted">Host telemetry &amp; sandbox</p>
+          </div>
+        </Link>
+
+        <Link
+          to="/findings"
+          className="group flex items-center gap-3 rounded-xl border border-border-subtle bg-bg-surface/80 p-3.5 transition-all duration-150 hover:border-risk-suspicious/50 hover:bg-bg-elevated hover:shadow-[var(--shadow-raised)]"
+        >
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-risk-suspicious/15 text-risk-suspicious group-hover:bg-risk-suspicious/25">
+            <Icon name="alert" size={16} />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs font-semibold text-text-primary">Findings Queue</p>
+            <p className="text-[10px] text-text-muted">Triage active detections</p>
+          </div>
+        </Link>
+
+        <Link
+          to="/investigations"
+          className="group flex items-center gap-3 rounded-xl border border-border-subtle bg-bg-surface/80 p-3.5 transition-all duration-150 hover:border-accent/50 hover:bg-bg-elevated hover:shadow-[var(--shadow-raised)]"
+        >
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-accent group-hover:bg-accent/25">
+            <Icon name="notes" size={16} />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs font-semibold text-text-primary">Investigations</p>
+            <p className="text-[10px] text-text-muted">Case management &amp; notes</p>
+          </div>
+        </Link>
+
+        <Link
+          to="/samples"
+          className="group flex items-center gap-3 rounded-xl border border-border-subtle bg-bg-surface/80 p-3.5 transition-all duration-150 hover:border-accent/50 hover:bg-bg-elevated hover:shadow-[var(--shadow-raised)]"
+        >
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-text-faint/15 text-text-primary group-hover:bg-text-faint/25">
+            <Icon name="box" size={16} />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs font-semibold text-text-primary">Sample Vault</p>
+            <p className="text-[10px] text-text-muted">Binaries &amp; static analysis</p>
+          </div>
+        </Link>
+      </div>
+
       {!isLoading && !isError && (
         <>
           <PostureHeader runs={runs} trendBars={trendBars} campaigns={campaigns.length} totalAlerts={totalAlerts} />

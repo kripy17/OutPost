@@ -1,10 +1,10 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { platformIconName } from "../components/iconMeta";
 import { Chip, PageHeader, Panel } from "../components/ui";
-import { downloadSample, getRuns, getSample, getSampleStatic, getSandboxProviders, getSandboxTask, sandboxDetonate, watchlistAdd } from "../lib/api";
+import { detonateDynamic, downloadSample, getRuns, getSample, getSampleStatic, getSandboxProviders, getSandboxTask, sandboxDetonate, watchlistAdd } from "../lib/api";
 import type { Platform, RunSummary, SampleStatic, SandboxTask } from "../types";
 import { filterStrings, formatBytes, iocTotal } from "./samplesHelpers";
 
@@ -526,9 +526,12 @@ function PeElfTable({ st }: { st: SampleStatic }) {
 }
 
 export default function SampleDetailPage() {
+  const navigate = useNavigate();
   const { sampleId = "" } = useParams();
   const [copied, setCopied] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [detonating, setDetonating] = useState(false);
+  const [detonationError, setDetonationError] = useState<string | null>(null);
 
   const { data: sample, isLoading, isError } = useQuery({
     queryKey: ["sample", sampleId],
@@ -589,7 +592,27 @@ export default function SampleDetailPage() {
         }
         lede={`Detected ${sample.detected_platform} from magic bytes · ${formatBytes(sample.size)} · uploaded ${sample.created_at.slice(0, 19).replace("T", " ")} UTC`}
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={async () => {
+                setDetonationError(null);
+                setDetonating(true);
+                try {
+                  const res = await detonateDynamic(sample.sample_id);
+                  navigate(`/runs/${res.run_id}`);
+                } catch (e: unknown) {
+                  setDetonationError(e instanceof Error ? e.message : "Detonation failed");
+                } finally {
+                  setDetonating(false);
+                }
+              }}
+              disabled={detonating}
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/15 px-4 py-2 font-mono text-xs font-semibold text-accent transition-all duration-150 hover:bg-accent/25 hover:shadow-[var(--glow-accent)] disabled:opacity-50"
+              title="Detonate sample in local isolated dynamic sandbox"
+            >
+              <Icon name="play" size={12} />
+              {detonating ? "Detonating..." : "Detonate in sandbox"}
+            </button>
             <Link
               to={`/footprint?sample=${sample.sample_id}`}
               className="press inline-flex items-center gap-1.5 rounded border border-border-subtle px-4 py-2 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
@@ -599,6 +622,7 @@ export default function SampleDetailPage() {
             </Link>
             <span className="flex items-center gap-2">
               {downloadError && <span className="font-mono text-[10px] text-risk-malicious">{downloadError}</span>}
+              {detonationError && <span className="font-mono text-[10px] text-risk-malicious">{detonationError}</span>}
               <button
                 onClick={() => void downloadSample(sample.sample_id, sample.original_name).catch(() => setDownloadError("Download failed — bytes not stored?"))}
                 className="press inline-flex items-center gap-1.5 rounded border border-border-subtle px-4 py-2 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
