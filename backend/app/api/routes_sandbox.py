@@ -13,14 +13,18 @@ background task the frontend polls.
 """
 
 import asyncio
+import datetime
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from ..core import config
 from ..core.db import db_session
 from ..core.schema import Platform, SandboxDetonateIn, SandboxTaskOut
+from ..models import event as event_store
 from ..models import run as run_store
 from ..models import samples as samples_store
+from ..services import detection
 from ..services import sandbox as sandbox_service
 
 router = APIRouter(tags=["sandbox"])
@@ -131,3 +135,59 @@ async def detonate_dynamic(body: SandboxDetonateIn) -> dict:
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Dynamic detonation failed: {e}")
 
+
+@router.get("/sandbox/playbooks", response_model=None)
+def get_playbooks() -> list[dict]:
+    """List curated attack scenario playbooks for testing and demonstration."""
+    return sandbox_service.list_playbooks()
+
+
+class PlaybookDetonateIn(BaseModel):
+    playbook_id: str
+
+
+@router.post("/sandbox/detonate/playbook", status_code=201, response_model=None)
+async def detonate_playbook(body: PlaybookDetonateIn) -> dict:
+    """Detonate a curated attack scenario playbook and push telemetry into a fresh run."""
+    playbooks = {p["id"]: p for p in sandbox_service.list_playbooks()}
+    playbook = playbooks.get(body.playbook_id)
+    if not playbook:
+        raise HTTPException(status_code=404, detail=f"Unknown playbook_id: {body.playbook_id}")
+
+    run_id = sandbox_service.create_run_id()
+    platform: Platform = playbook["platform"]
+    sample_name = f"{playbook['id']}.exe" if platform == "windows" else f"{playbook['id']}.elf"
+
+    with db_session() as conn:
+        run_store.create_run(
+            conn,
+            run_id=run_id,
+            sample_name=sample_name,
+            platform=platform,
+            session_type="analysis",
+            source=f"playbook:{playbook['id']}",
+        )
+
+    base = datetime.datetime.now(datetime.timezone.utc)
+    events = sandbox_service.demo_events(run_id, platform, sample_name, base, scenario_id=body.playbook_id)
+
+    with db_session() as conn:
+        for ev in events:
+            event_store.insert_event(conn, ev)
+        new_alerts = detection.evaluate_batch(conn, run_id, events)
+        run_store.complete_run(conn, run_id)
+        summary = run_store.to_summary(conn, run_store.get_run(conn, run_id))
+
+    from ..services import events_stream
+    events_stream.publish_alerts(new_alerts)
+
+    return {
+        "run_id": run_id,
+        "playbook_id": playbook["id"],
+        "name": playbook["name"],
+        "platform": platform,
+        "event_count": len(events),
+        "alert_count": len(new_alerts),
+        "risk_score": summary.risk_score,
+        "highest_severity": summary.highest_severity,
+    }

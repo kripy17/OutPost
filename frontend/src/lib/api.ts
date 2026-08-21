@@ -1038,3 +1038,19 @@ export async function getLocalMonitorStatus(): Promise<any> {
 export async function detonateDynamic(body: { sample_id: string }): Promise<any> {
   return post<any>("/sandbox/detonate/dynamic", body);
 }
+
+/** Get structured Sigma, Suricata, and YARA detection suite for a run (GET /runs/{id}/rules/suite). */
+export async function getRunDetectionSuite(runId: string): Promise<any> {
+  return get<any>(`/runs/${encodeURIComponent(runId)}/rules/suite`);
+}
+
+/** List curated attack scenario playbooks (GET /sandbox/playbooks). */
+export async function getPlaybooks(): Promise<any[]> {
+  return get<any[]>("/sandbox/playbooks");
+}
+
+/** Detonate a curated attack scenario playbook (POST /sandbox/detonate/playbook). */
+export async function detonatePlaybook(playbookId: string): Promise<any> {
+  return post<any>("/sandbox/detonate/playbook", { playbook_id: playbookId });
+}
+

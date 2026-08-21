@@ -275,3 +275,32 @@ def test_rules_endpoint(client):
     sigma = client.get(f"/runs/{run_id}/rules?format=sigma")
     assert sigma.status_code == 200
     assert "# No Sigma-generatable findings" in sigma.text
+
+    yara = client.get(f"/runs/{run_id}/rules?format=yara")
+    assert yara.status_code == 200
+    assert "rule OutPost_" in yara.text
+
+    suite = client.get(f"/runs/{run_id}/rules/suite")
+    assert suite.status_code == 200
+    data = suite.json()
+    assert "sigma" in data
+    assert "suricata" in data
+    assert "yara" in data
+    assert len(data["yara"]) >= 1
+
+
+def test_attack_playbooks_api(client):
+    res = client.get("/sandbox/playbooks")
+    assert res.status_code == 200
+    playbooks = res.json()
+    assert len(playbooks) >= 4
+    assert any(p["id"] == "ransomware-stager" for p in playbooks)
+
+    detonate_res = client.post("/sandbox/detonate/playbook", json={"playbook_id": "ransomware-stager"})
+    assert detonate_res.status_code == 201
+    det_data = detonate_res.json()
+    assert "run_id" in det_data
+    assert det_data["event_count"] > 0
+    assert det_data["alert_count"] > 0
+    assert det_data["risk_score"] > 0
+

@@ -111,3 +111,83 @@ def test_rules_log_patterns_rejects_bad_kind(monkeypatch, capsys):
             pass
     out = capture.get()
     assert "Unknown kind" in out
+
+
+def test_rules_generate_yara_and_all(monkeypatch):
+    from outpost.commands.rules import generate
+
+    monkeypatch.setattr(
+        api_client,
+        "get_rules",
+        lambda run_id, fmt: f"# rule mock for {run_id} ({fmt})"
+    )
+    with console.capture() as capture:
+        generate(run_id="run123456789", format="yara")
+    out = capture.get()
+    assert "Auto-generated yara rules for run run123456789" in out
+    assert "# rule mock for run123456789 (yara)" in out
+
+    with console.capture() as capture:
+        generate(run_id="run123456789", format="all")
+    out = capture.get()
+    assert "Auto-generated all rules for run run123456789" in out
+
+
+def test_playbooks_list_and_run(monkeypatch):
+    from outpost.commands.playbooks import list_playbooks, run_playbook
+    import outpost.commands.playbooks as playbooks_mod
+
+    wide = _wide(monkeypatch)
+    monkeypatch.setattr(playbooks_mod, "console", wide)
+
+    monkeypatch.setattr(
+        api_client,
+        "get_playbooks",
+        lambda: [
+            {
+                "id": "ransomware-stager",
+                "name": "Ransomware Pre-Encryption",
+                "platform": "windows",
+                "severity": "critical",
+                "tactics": ["Impact"],
+                "techniques": ["T1486"],
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        api_client,
+        "detonate_playbook",
+        lambda pid: {
+            "run_id": "playbookrun123",
+            "name": "Ransomware Pre-Encryption",
+            "platform": "windows",
+            "event_count": 12,
+            "alert_count": 3,
+            "risk_score": 85,
+        },
+    )
+    monkeypatch.setattr(
+        api_client,
+        "get_run",
+        lambda rid: {
+            "run": {"run_id": rid, "sample_name": "ransomware-stager.exe", "risk_score": 85, "highest_severity": "critical"},
+            "alerts": [],
+            "process_tree": [],
+            "network_connections": [],
+            "timeline": [],
+        },
+    )
+
+    with wide.capture() as capture:
+        list_playbooks()
+    out = capture.get()
+    assert "ransomware-stager" in out
+    assert "Ransomware Pre-Encryption" in out
+
+    with wide.capture() as capture:
+        run_playbook(playbook_id="ransomware-stager")
+    out = capture.get()
+    assert "Playbook Detonation Complete" in out
+    assert "playbookrun123" in out
+
+

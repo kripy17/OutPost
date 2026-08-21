@@ -15,9 +15,11 @@ import {
   completeRun,
   createRun,
   detonateDynamic,
+  detonatePlaybook,
   getAgents,
   getHostBaseline,
   getPlatform,
+  getPlaybooks,
   getRunDetail,
   ingestBatch,
   startLocalMonitor,
@@ -30,7 +32,7 @@ import { reconciledKinds as reconcileKinds, reconciledReconPids } from "./monito
 import { useEventStream } from "../lib/useEventStream";
 import AlertRate from "../components/AlertRate/AlertRate";
 import { buildDetonationScenario, detonationSampleName } from "../lib/synthetic";
-import type { Platform, SampleMeta, Severity } from "../types";
+import type { AttackPlaybook, Platform, SampleMeta, Severity } from "../types";
 
 type Mode = "idle" | "live" | "detonate" | "host";
 
@@ -94,6 +96,25 @@ export default function MonitorPage() {
     enabled: mode === "host" && hostId !== null,
     refetchInterval: 15_000,
   });
+
+  const [detonatingPlaybookId, setDetonatingPlaybookId] = useState<string | null>(null);
+  const { data: playbooks } = useQuery<AttackPlaybook[]>({
+    queryKey: ["playbooks"],
+    queryFn: getPlaybooks,
+  });
+
+  const handleDetonatePlaybook = async (playbookId: string) => {
+    setDetonatingPlaybookId(playbookId);
+    try {
+      const res = await detonatePlaybook(playbookId);
+      navigate(`/runs/${res.run_id}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Playbook detonation failed";
+      setUploadError(msg);
+    } finally {
+      setDetonatingPlaybookId(null);
+    }
+  };
 
   // Uploaded sample — OS auto-detected from magic bytes (roadmap 1.4); its
   // platform drives the detonation scenario and its name is used for the run.
@@ -611,6 +632,97 @@ export default function MonitorPage() {
               </button>
             </div>
             {watchError && <p className="mt-2 text-[11px] text-risk-malicious">{watchError}</p>}
+          </div>
+        </div>
+
+        {/* Attack Scenario Detonation Playbook Library */}
+        <div className="mt-10">
+          <div className="mb-4 flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-accent/40 bg-accent/15 text-accent shadow-[var(--glow-accent)]">
+                <Icon name="shield" size={14} />
+              </span>
+              <div>
+                <h3 className="font-sans text-sm font-semibold tracking-tight text-text-primary">
+                  Attack Scenario Detonation Playbooks
+                </h3>
+                <p className="text-[11px] text-text-muted">
+                  Interactive multi-stage attack simulations for testing SOC telemetry and rule generation
+                </p>
+              </div>
+            </div>
+            <span className="font-mono text-[10px] text-text-faint">
+              {playbooks?.length ?? 4} verified scenarios
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            {(playbooks || []).map((pb) => {
+              const isDetonating = detonatingPlaybookId === pb.id;
+              const isCritical = pb.severity === "critical";
+              return (
+                <div
+                  key={pb.id}
+                  className="panel group relative flex flex-col justify-between p-5 transition-all duration-200 hover:border-accent/60 hover:shadow-[0_8px_24px_-6px_rgba(217,164,65,0.15)]"
+                >
+                  <div>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <span className="rounded border border-border-subtle bg-bg-elevated/60 p-1 font-mono text-[10px] uppercase text-text-muted">
+                          <Icon name={platformIconName(pb.platform)} size={12} />
+                        </span>
+                        <h4 className="font-sans text-xs font-semibold text-text-primary group-hover:text-accent">
+                          {pb.name}
+                        </h4>
+                      </div>
+                      <span
+                        className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 font-mono text-[9px] uppercase tracking-wide ${
+                          isCritical
+                            ? "border border-risk-malicious/40 bg-risk-malicious/15 text-risk-malicious"
+                            : "border border-risk-suspicious/40 bg-risk-suspicious/15 text-risk-suspicious"
+                        }`}
+                      >
+                        <span className="h-1.5 w-1.5 rounded-full bg-current" />
+                        {pb.severity}
+                      </span>
+                    </div>
+
+                    <p className="mt-2.5 text-xs leading-relaxed text-text-muted">
+                      {pb.description}
+                    </p>
+
+                    <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                      {(pb.techniques || []).map((t) => (
+                        <span
+                          key={t}
+                          className="rounded border border-border-subtle bg-bg-inset px-1.5 py-0.5 font-mono text-[9px] text-text-faint"
+                        >
+                          {t}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="mt-4 flex items-center justify-between border-t border-border-subtle pt-3">
+                    <span className="font-mono text-[10px] text-text-faint">
+                      {pb.tactics?.join(" → ")}
+                    </span>
+                    <button
+                      onClick={() => handleDetonatePlaybook(pb.id)}
+                      disabled={detonatingPlaybookId !== null}
+                      className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/15 px-3 py-1.5 font-mono text-[11px] font-semibold text-accent transition-all duration-150 hover:bg-accent/25 hover:shadow-[var(--glow-accent)] disabled:opacity-50"
+                    >
+                      <Icon
+                        name={isDetonating ? "refresh" : "play"}
+                        size={11}
+                        className={isDetonating ? "animate-spin" : ""}
+                      />
+                      {isDetonating ? "Simulating..." : "Detonate Playbook"}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>

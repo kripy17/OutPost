@@ -1273,3 +1273,39 @@ export interface DynamicDetonationResult {
   events_count: number;
 }
 
+export interface DetectionSuite {
+  run_id: string;
+  sample_name?: string | null;
+  counts: {
+    sigma: number;
+    suricata: number;
+    yara: number;
+    total: number;
+  };
+  sigma: string[];
+  suricata: string[];
+  yara: string[];
+}
+
+export interface AttackPlaybook {
+  id: string;
+  name: string;
+  description: string;
+  platform: Platform;
+  severity: "clean" | "suspicious" | "malicious" | "critical";
+  tactics: string[];
+  techniques: string[];
+}
+
+export interface PlaybookDetonateResult {
+  run_id: string;
+  playbook_id: string;
+  name: string;
+  platform: Platform;
+  event_count: number;
+  alert_count: number;
+  risk_score: number;
+  highest_severity: Severity | null;
+}
+
+

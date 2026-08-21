@@ -31,6 +31,7 @@ def _register_commands() -> None:
     from .commands.investigations import app as investigations_app
     from .commands.list_runs import list_runs
     from .commands.notes import app as notes_app
+    from .commands.playbooks import app as playbooks_app
     from .commands.refresh import refresh
     from .commands.rules import app as rules_app
     from .commands.run import run
@@ -54,6 +55,8 @@ def _register_commands() -> None:
     app.command("campaigns")(campaigns)
     app.command("coverage")(coverage)
     app.add_typer(rules_app, name="rules")
+    app.add_typer(playbooks_app, name="playbooks")
+    app.add_typer(playbooks_app, name="playbook")
     app.command("samples")(samples)
     app.command("refresh")(refresh)
     app.add_typer(watchlist_app, name="watchlist")

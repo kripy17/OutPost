@@ -14,6 +14,8 @@ import { Panel, ProvenanceBadge, SourceBadge } from "../components/ui";
 import { connectionSources, resolvePids } from "./runDetailHelpers";
 import NotesPanel from "../components/NotesPanel/NotesPanel";
 import ProcessTree from "../components/ProcessTree/ProcessTree";
+import { ProcessGraph } from "../components/ProcessGraph";
+import { DetectionStudioModal } from "../components/DetectionStudioModal";
 import { AllowlistPanel, QuickAllowlist, SuppressionPanel } from "../components/TriagePanels/TriagePanels";
 import RulesPanel from "../components/RulesPanel/RulesPanel";
 import TimelineView from "../components/TimelineView/TimelineView";
@@ -379,6 +381,8 @@ export default function RunDetailPage() {
   // the network table to just that destination — takes priority over the
   // process filter since the plant IP is the finding.
   const [focusIp, setFocusIp] = useState<string | null>(null);
+  const [showRulesStudio, setShowRulesStudio] = useState(false);
+  const [processViewMode, setProcessViewMode] = useState<"tree" | "graph">("graph");
   const filteredConnections =
     focusIp !== null
       ? netData.filter((c) => c.dest_ip === focusIp)
@@ -548,6 +552,14 @@ export default function RunDetailPage() {
         <div className="flex items-center gap-6">
           <RiskGauge score={run.risk_score} />
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowRulesStudio(true)}
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/50 bg-accent/15 px-3 py-2 font-mono text-xs font-semibold text-accent shadow-[var(--glow-accent)] transition-all duration-150 hover:bg-accent/25 hover:border-accent"
+              title="Open Detection Rule Synthesis Studio (Sigma, Suricata, YARA)"
+            >
+              <Icon name="shield" size={12} />
+              Detection Studio
+            </button>
             <ExportButton
               runId={runId}
               label="IOCs CSV"
@@ -678,15 +690,56 @@ export default function RunDetailPage() {
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[3fr_2fr]">
         <div id="process-tree-panel" className="scroll-mt-24 min-w-0">
-          <Panel kicker="Behavior" title="Process tree">
-            <ProcessTree
-              roots={process_tree}
-              reconPids={reconPids}
-              highlightPid={flashPid}
-              selectedPid={selectedPid}
-              onSelect={(pid) => setSelectedPid((cur) => (cur === pid ? null : pid))}
-              allowlistForRun={runId}
-            />
+          <Panel
+            kicker="Behavior"
+            title="Process Ancestry & Flow"
+            right={
+              <div className="flex items-center gap-1 rounded-lg border border-border-subtle bg-bg-surface p-0.5">
+                <button
+                  onClick={() => setProcessViewMode("graph")}
+                  className={`press inline-flex items-center gap-1 rounded px-2 py-0.5 font-mono text-[10px] transition-colors ${
+                    processViewMode === "graph"
+                      ? "bg-accent/20 font-semibold text-accent"
+                      : "text-text-muted hover:text-text-primary"
+                  }`}
+                  title="Interactive SVG Ancestry Graph"
+                >
+                  <Icon name="activity" size={10} />
+                  Graph
+                </button>
+                <button
+                  onClick={() => setProcessViewMode("tree")}
+                  className={`press inline-flex items-center gap-1 rounded px-2 py-0.5 font-mono text-[10px] transition-colors ${
+                    processViewMode === "tree"
+                      ? "bg-accent/20 font-semibold text-accent"
+                      : "text-text-muted hover:text-text-primary"
+                  }`}
+                  title="Collapsible Tree View"
+                >
+                  <Icon name="terminal" size={10} />
+                  Tree
+                </button>
+              </div>
+            }
+          >
+            {processViewMode === "graph" ? (
+              <ProcessGraph
+                nodes={process_tree}
+                selectedPid={selectedPid}
+                onSelectPid={(pid) => setSelectedPid(pid)}
+                alerts={alerts}
+                events={timelineEvents}
+              />
+            ) : (
+              <ProcessTree
+                roots={process_tree}
+                reconPids={reconPids}
+                highlightPid={flashPid}
+                selectedPid={selectedPid}
+                onSelect={(pid) => setSelectedPid((cur) => (cur === pid ? null : pid))}
+                allowlistForRun={runId}
+              />
+            )}
             {/* Detection-awareness honesty (docs): the collector runs INSIDE the
                 guest, so sophisticated malware can observe or evade it — the
                 hypervisor-introspection alternative (DRAKVUF) watches from
@@ -742,6 +795,12 @@ export default function RunDetailPage() {
 
       {sample_reputation && <SampleReputation rep={sample_reputation} />}
       <KillChainCard links={kill_chain} />
+
+      <DetectionStudioModal
+        runId={runId}
+        isOpen={showRulesStudio}
+        onClose={() => setShowRulesStudio(false)}
+      />
     </div>
   );
 }

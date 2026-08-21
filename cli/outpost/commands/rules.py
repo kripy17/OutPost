@@ -36,13 +36,13 @@ def _group(ctx: typer.Context) -> None:
 @app.command("generate")
 def generate(
     run_id: str = typer.Argument(..., help="Run id"),
-    format: str = typer.Option("suricata", "--format", "-f", help="suricata or sigma"),
+    format: str = typer.Option("sigma", "--format", "-f", help="sigma, suricata, yara, or all"),
 ) -> None:
-    """Auto-generated Suricata/Sigma rules from one run's findings."""
+    """Auto-generated Sigma, Suricata, and YARA rules from one run's findings."""
     show_banner(primary=False)
 
-    if format not in ("suricata", "sigma"):
-        console.print(f"[bold #C4453B]Unknown format: {format}[/bold #C4453B] (use suricata or sigma)")
+    if format not in ("suricata", "sigma", "yara", "all"):
+        console.print(f"[bold #C4453B]Unknown format: {format}[/bold #C4453B] (use sigma, suricata, yara, or all)")
         raise typer.Exit(2)
 
     try:
@@ -51,7 +51,7 @@ def generate(
         console.print(f"[bold #C4453B]Failed: {exc}[/bold #C4453B]")
         raise typer.Exit(1)
 
-    console.print(f"[dim]Auto-generated {format} rules for run {run_id[:12]} — paste into your rules file:[/dim]")
+    console.print(f"[dim]Auto-generated {format} rules for run {run_id[:12]} — paste into your rules file:[/dim]\n")
     console.print(text)
 
 

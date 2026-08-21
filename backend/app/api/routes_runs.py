@@ -430,15 +430,16 @@ async def get_run_rules(run_id: str, format: str = "suricata"):
     file. Connections are enriched on demand (cache-first) so rules work
     immediately after ingestion — no need to visit the detail page first.
     """
-    if format not in ("suricata", "sigma"):
-        raise HTTPException(status_code=422, detail="format must be suricata or sigma")
+    if format not in ("suricata", "sigma", "yara", "all"):
+        raise HTTPException(status_code=422, detail="format must be suricata, sigma, yara, or all")
 
     from ..core.db import get_connection
     from ..services import rule_generator
 
     conn = get_connection()
     try:
-        if not run_store.get_run(conn, run_id):
+        run = run_store.get_run(conn, run_id)
+        if not run:
             raise HTTPException(status_code=404, detail=f"Unknown run_id: {run_id}")
         conn_rows = conn.execute(
             """
@@ -468,15 +469,69 @@ async def get_run_rules(run_id: str, format: str = "suricata"):
         text = "\n\n".join(rule_generator.generate_sigma_rules(run_id, alerts))
         if not text:
             text = "# No Sigma-generatable findings in this run."
-    else:
+        filename = f"outpost-sigma-{run_id[:12]}.yml"
+    elif format == "yara":
+        text = "\n\n".join(rule_generator.generate_yara_rules(run_id, run.get("sample_name")))
+        filename = f"outpost-yara-{run_id[:12]}.yar"
+    elif format == "suricata":
         text = "\n".join(rule_generator.generate_suricata_rules(run_id, connections))
         if not text:
             text = "# No malicious connections observed in this run."
+        filename = f"outpost-suricata-{run_id[:12]}.rules"
+    else:
+        sigma_txt = "\n\n".join(rule_generator.generate_sigma_rules(run_id, alerts)) or "# No Sigma rules"
+        suricata_txt = "\n".join(rule_generator.generate_suricata_rules(run_id, connections)) or "# No Suricata rules"
+        yara_txt = "\n\n".join(rule_generator.generate_yara_rules(run_id, run.get("sample_name")))
+        text = f"# ═══ SIGMA RULES ═══\n\n{sigma_txt}\n\n# ═══ SURICATA IDS RULES ═══\n\n{suricata_txt}\n\n# ═══ YARA SIGNATURES ═══\n\n{yara_txt}"
+        filename = f"outpost-detection-suite-{run_id[:12]}.txt"
 
     return Response(
         content=text,
         media_type="text/plain",
-        headers={"Content-Disposition": f'inline; filename="outpost-rules-{run_id[:12]}.txt"'},
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
+
+
+@router.get("/runs/{run_id}/rules/suite", response_model=None)
+async def get_run_detection_suite(run_id: str) -> dict:
+    """Structured detection suite (Sigma, Suricata, YARA) for UI studio preview."""
+    from ..core.db import get_connection
+    from ..services import rule_generator
+
+    conn = get_connection()
+    try:
+        run = run_store.get_run(conn, run_id)
+        if not run:
+            raise HTTPException(status_code=404, detail=f"Unknown run_id: {run_id}")
+        conn_rows = conn.execute(
+            """
+            SELECT DISTINCT e.dest_ip, e.dest_port, e.protocol
+            FROM events e
+            WHERE e.run_id = ? AND e.event_type = 'network_connection' AND e.dest_ip IS NOT NULL
+            """,
+            (run_id,),
+        ).fetchall()
+        alerts = event_store.list_alerts_for_run(conn, run_id)
+        enriched = await enrichment.enrich_run(conn, run_id)
+        conn.commit()
+    finally:
+        conn.close()
+
+    connections = [
+        {
+            "dest_ip": r["dest_ip"],
+            "dest_port": r["dest_port"],
+            "protocol": r["protocol"],
+            "reputation": (enriched.get(r["dest_ip"]) or {}).get("reputation"),
+        }
+        for r in conn_rows
+    ]
+
+    return rule_generator.generate_detection_suite(
+        run_id=run_id,
+        alerts=alerts,
+        connections=connections,
+        sample_name=run.get("sample_name"),
     )
 
 

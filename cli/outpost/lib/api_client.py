@@ -550,3 +550,14 @@ def export_footprint(sample_id: str, format: str = "json", mock: bool = False) -
     if not resp.ok:
         raise APIError(f"GET /footprint/{sample_id}/export → {resp.status_code}: {resp.text[:200]}")
     return resp.content
+
+
+def get_playbooks() -> list[dict]:
+    """List curated attack scenario playbooks."""
+    return _get("/sandbox/playbooks")
+
+
+def detonate_playbook(playbook_id: str) -> dict:
+    """Detonate a curated attack scenario playbook."""
+    return _post("/sandbox/detonate/playbook", {"playbook_id": playbook_id})
+
