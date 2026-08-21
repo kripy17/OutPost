@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import type { RunSummary } from "../../types";
 import RunCard from "./RunCard";
 
@@ -6,8 +7,11 @@ export default function RunList({ runs, highlightId = null }: { runs: RunSummary
     return (
       <div className="rounded-lg border border-border-subtle bg-bg-surface p-10 text-center">
         <p className="text-sm text-text-muted">
-          No sessions yet — start one with <span className="font-mono text-accent">outpost watch</span> or{" "}
-          <span className="font-mono text-accent">outpost run &lt;sample&gt;</span>.
+          No sessions yet — start one from{" "}
+          <Link to="/monitor" className="font-semibold text-accent hover:underline">
+            Live Monitor
+          </Link>{" "}
+          or with <span className="font-mono text-text-primary">outpost agent run</span>.
         </p>
       </div>
     );

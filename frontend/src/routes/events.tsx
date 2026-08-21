@@ -1051,7 +1051,11 @@ export default function EventsPage() {
           {!isError && events.length === 0 && !isLoading && (
             <div className="rounded-xl border border-dashed border-border-strong bg-bg-surface/50 p-14 text-center">
               <Icon name="list" size={28} className="mx-auto text-text-faint" />
-              <p className="mt-3 text-sm text-text-muted">No events match these filters.</p>
+              <p className="mt-3 text-sm text-text-muted">
+                {hasFilters || submittedPids.length > 0
+                  ? "No events match these filters."
+                  : "No events recorded yet. Connect a collector agent or start a live monitor session to stream system telemetry."}
+              </p>
               <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
                 {hasFilters && (
                   <button
