@@ -28,10 +28,10 @@ export function PageHeader({
       <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-4">
         <div className="min-w-0">
           <Kicker>{kicker}</Kicker>
-          <h1 className="display mt-1.5">{title}</h1>
-          {lede && <p className="mt-2 max-w-2xl text-pretty text-sm leading-relaxed text-text-muted">{lede}</p>}
+          <h1 className="display mt-2 font-sans tracking-tight text-text-primary">{title}</h1>
+          {lede && <p className="mt-2.5 max-w-3xl text-pretty text-sm font-normal leading-relaxed text-text-muted">{lede}</p>}
         </div>
-        {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
+        {actions && <div className="flex shrink-0 items-center gap-2.5">{actions}</div>}
       </div>
     </header>
   );

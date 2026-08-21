@@ -563,7 +563,7 @@ function IntelFreshness() {
     h.tone === "stale"
       ? "border-risk-suspicious/40 bg-risk-suspicious/10 text-risk-suspicious"
       : "border-border-subtle text-text-faint";
-  return (
+      return (
     <Link
       to="/settings"
       className={`mb-5 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border px-3 py-2 font-mono text-[10px] transition-colors duration-150 hover:brightness-110 ${cls}`}
@@ -581,14 +581,14 @@ function IntelFreshness() {
 function HostMonitorPanel() {
   const queryClient = useQueryClient();
   const { data: plat } = useQuery({ queryKey: ["platform"], queryFn: getPlatform, staleTime: Infinity });
-  const { data: fleet } =useQuery({
+  const { data: fleet } = useQuery({
     queryKey: ["agents"],
-    queryFn: () => getAgents(), staleTime: 15_000, refetchInterval: 30_000 });
+    queryFn: () => getAgents(),
+    staleTime: 15_000,
+    refetchInterval: 30_000,
+  });
   const [copied, setCopied] = useState(false);
 
-  // Live fleet: a heartbeat from this host flips the panel to "monitored"
-  // the moment it lands (e.g. the operator runs `outpost agent run`) — no
-  // waiting for the 30 s poll.
   useEventStream(
     () => undefined,
     undefined,
@@ -601,7 +601,7 @@ function HostMonitorPanel() {
   );
 
   if (!plat) return null;
-  if (plat.os === "macos") return null; // no collector ships for macOS
+  if (plat.os === "macos") return null;
 
   const agent = (fleet?.agents ?? []).find((a) => a.host_id === plat.hostname);
   const monitored = agent !== undefined;
@@ -611,125 +611,115 @@ function HostMonitorPanel() {
 
   return (
     <div
-      className={`mb-5 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border px-4 py-3 ${
-        monitored ? "border-risk-clean/40 bg-risk-clean/10" : "border-risk-suspicious/40 bg-risk-suspicious/10"
+      className={`mb-6 relative overflow-hidden rounded-2xl border p-4 backdrop-blur-xl transition-all duration-200 ${
+        monitored
+          ? "border-risk-clean/30 bg-gradient-to-r from-risk-clean/10 via-bg-surface/90 to-bg-surface/90 shadow-[0_4px_24px_-4px_rgba(63,167,150,0.15)]"
+          : "border-risk-suspicious/30 bg-gradient-to-r from-risk-suspicious/10 via-bg-surface/90 to-bg-surface/90 shadow-[0_4px_24px_-4px_rgba(217,164,65,0.15)]"
       }`}
       aria-label="This host's monitor status"
     >
-      <span
-        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
-          monitored ? "bg-risk-clean/15 text-risk-clean" : "bg-risk-suspicious/15 text-risk-suspicious"
-        }`}
-      >
-        <Icon name={glyph} size={16} />
-      </span>
-      <div className="min-w-0">
-        <p className={`font-mono text-xs font-semibold ${monitored ? "text-risk-clean" : "text-risk-suspicious"}`}>
-          {monitored ? `This host is monitored — ${agent?.online ? "agent online" : "agent silent"}` : "This host isn't monitored yet"}
-        </p>
-        <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[10px] text-text-muted">
-          <span className="truncate">
-            {plat.hostname} · {plat.os} {plat.release} · {plat.collector}
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="flex items-center gap-3.5">
+          <span
+            className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border ${
+              monitored
+                ? "border-risk-clean/40 bg-risk-clean/15 text-risk-clean shadow-[var(--glow-clean)]"
+                : "border-risk-suspicious/40 bg-risk-suspicious/15 text-risk-suspicious shadow-[var(--glow-amber)]"
+            }`}
+          >
+            <Icon name={glyph} size={20} />
           </span>
-          {monitored && agent && (
-            <>
-              {agent.identity === "collector" ? (
-                <Link
-                  to="/agents?identity=collector"
-                  className="inline-flex items-center gap-1 rounded border border-risk-clean/40 bg-risk-clean/10 px-1.5 py-px text-[10px] text-risk-clean transition-colors duration-150 hover:border-risk-clean/70 hover:bg-risk-clean/20"
-                  title={`Real host agent${agent.heartbeat_version ? ` · ${agent.heartbeat_version}` : ""} · channels: ${agent.channels?.join(", ") || "—"} · last auth: ${agent.last_auth_role ?? "—"}${agent.last_auth_at ? ` ${_rel(agent.last_auth_at)}` : ""} — open the collector fleet`}
-                >
-                  <Icon name="activity" size={9} />
-                  collector
-                </Link>
-              ) : (
-                <Link
-                  to="/agents?identity=webapp"
-                  className="inline-flex items-center gap-1 rounded border border-border-subtle bg-bg-elevated/50 px-1.5 py-px text-[10px] text-text-faint transition-colors duration-150 hover:border-border-subtle hover:bg-bg-elevated hover:text-text-muted"
-                  title="No agent heartbeat — events came from this machine (webapp detonations, sandbox runs) — open the webapp hosts"
-                >
-                  <Icon name="terminal" size={9} />
-                  webapp detonation
-                </Link>
-              )}
-              {agent.identity === "collector" &&
-                (agent.channels ?? [])
-                  .filter((c) => c !== "webapp")
-                  .map((c) => (
+          <div className="min-w-0">
+            <div className="flex items-center gap-2.5">
+              <span className="relative flex h-2.5 w-2.5">
+                <span
+                  className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-75 ${
+                    monitored ? "bg-risk-clean" : "bg-risk-suspicious"
+                  }`}
+                />
+                <span
+                  className={`relative inline-flex h-2.5 w-2.5 rounded-full ${
+                    monitored ? "bg-risk-clean" : "bg-risk-suspicious"
+                  }`}
+                />
+              </span>
+              <p className="font-sans text-sm font-semibold tracking-tight text-text-primary">
+                {monitored ? `Host Monitored — ${agent?.online ? "Agent Active" : "Agent Standby"}` : "Host Not Monitored Yet"}
+              </p>
+            </div>
+            <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 font-mono text-[11px] text-text-muted">
+              <span className="font-medium text-text-primary">{plat.hostname}</span>
+              <span className="text-text-faint">·</span>
+              <span>{plat.os} {plat.release}</span>
+              <span className="text-text-faint">·</span>
+              <span className="rounded bg-bg-elevated/70 px-1.5 py-0.5 text-text-faint">{plat.collector}</span>
+              {monitored && agent && (
+                <>
+                  <span className="text-text-faint">·</span>
+                  {agent.identity === "collector" ? (
+                    <Link
+                      to="/agents?identity=collector"
+                      className="inline-flex items-center gap-1 rounded border border-risk-clean/40 bg-risk-clean/10 px-1.5 py-0.5 text-[10px] font-medium text-risk-clean transition-colors hover:bg-risk-clean/20"
+                      title={`Real host agent · channels: ${agent.channels?.join(", ") || "—"}`}
+                    >
+                      <Icon name="activity" size={10} />
+                      collector
+                    </Link>
+                  ) : (
+                    <Link
+                      to="/agents?identity=webapp"
+                      className="inline-flex items-center gap-1 rounded border border-border-subtle bg-bg-elevated/60 px-1.5 py-0.5 text-[10px] text-text-muted hover:text-text-primary"
+                    >
+                      <Icon name="terminal" size={10} />
+                      webapp
+                    </Link>
+                  )}
+                  {agent.channels?.map((c) => (
                     <span
                       key={c}
-                      className={`inline-flex items-center gap-1 rounded border px-1.5 py-px font-mono text-[10px] ${
-                        c === "auditd"
-                          ? "border-risk-clean/30 bg-risk-clean/5 text-risk-clean/90"
-                          : c === "sysmon"
-                            ? "border-accent/30 bg-accent/5 text-accent/90"
-                            : "border-border-subtle bg-bg-elevated/50 text-text-muted"
-                      }`}
-                      title={`Telemetry channel: ${c === "auditd" ? "Linux audit daemon events (execve, connect, file writes)" : c === "sysmon" ? "Windows Sysmon events (process create, network, file, registry)" : "Custom collector channel"} — streamed live from this host`}
+                      className="rounded border border-border-subtle bg-bg-elevated/60 px-1.5 py-0.5 text-[10px] text-text-muted"
                     >
-                      <Icon name="activity" size={9} />
                       {c}
                     </span>
                   ))}
-              {agent.last_auth_role && (
-                <span
-                  className={`inline-flex items-center gap-1 rounded border px-1.5 py-px text-[10px] ${
-                    agent.last_auth_role === "agent"
-                      ? "border-accent/40 bg-accent/10 text-accent"
-                      : agent.last_auth_role === "local"
-                        ? "border-border-subtle bg-bg-elevated/50 text-text-faint"
-                        : "border-border-subtle bg-bg-elevated/50 text-text-muted"
-                  }`}
-                  title={`Authenticated ${agent.last_auth_role === "agent" ? "via the shared OUTPOST_AGENT_TOKEN" : agent.last_auth_role === "local" ? "without a credential (auth off / open mode)" : `as the ${agent.last_auth_role} role`}${agent.last_auth_at ? ` · ${_rel(agent.last_auth_at)}` : ""}`}
-                >
-                  auth: {agent.last_auth_role === "agent" ? "agent token" : agent.last_auth_role}
-                </span>
+                  {agent.last_auth_role && (
+                    <span
+                      className="rounded border border-border-subtle bg-bg-elevated/60 px-1.5 py-0.5 text-[10px] text-text-muted"
+                      title={`Authenticated as ${agent.last_auth_role}${agent.last_auth_at ? ` (${_rel(agent.last_auth_at)})` : ""}`}
+                    >
+                      auth: {agent.last_auth_role === "agent" ? "agent token" : agent.last_auth_role}
+                    </span>
+                  )}
+                </>
               )}
-            </>
-          )}
-          <span className="text-text-faint">
-            {monitored && agent?.silent
-              ? "— heartbeat lost, agent may be down"
-              : monitored
-                ? "— live events stream into the Monitor"
-                : "— run the agent to stream its activity live"}
-          </span>
-        </p>
-      </div>
-      {monitored ? (
-        <Link
-          to="/monitor"
-          className="press ml-auto inline-flex items-center gap-1.5 rounded-lg border border-risk-clean/50 bg-risk-clean/10 px-3 py-1.5 font-mono text-xs text-risk-clean transition-all duration-150 hover:shadow-[var(--glow-clean)]"
-        >
-          <Icon name="activity" size={12} />
-          Watch live
-        </Link>
-      ) : (
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          <code className="overflow-x-auto rounded-lg border border-border-subtle bg-bg-elevated/40 px-2.5 py-1.5 font-mono text-[10px] text-text-primary">
-            {agentCmd}
-          </code>
-          <button
-            onClick={() =>
-              void copyToClipboard(agentCmd).then(() => {
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {!monitored && (
+            <button
+              onClick={() => {
+                void copyToClipboard(agentCmd);
                 setCopied(true);
-                setTimeout(() => setCopied(false), 1600);
-              })
-            }
-            className="press inline-flex items-center gap-1 rounded-lg border border-risk-suspicious/50 px-2.5 py-1.5 font-mono text-[10px] text-risk-suspicious transition-colors duration-150 hover:bg-risk-suspicious/10"
-          >
-            <Icon name={copied ? "check" : "copy"} size={11} />
-            {copied ? "copied" : "copy agent command"}
-          </button>
+                setTimeout(() => setCopied(false), 2000);
+              }}
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-elevated/60 px-3 py-2 font-mono text-xs text-text-muted transition-colors hover:border-accent/60 hover:text-accent"
+              title="Copy collector command"
+            >
+              <Icon name={copied ? "check" : "copy"} size={12} />
+              {copied ? "copied" : "copy agent cmd"}
+            </button>
+          )}
           <Link
             to="/monitor"
-            className="press inline-flex items-center gap-1 rounded-lg border border-border-subtle px-2.5 py-1.5 font-mono text-[10px] text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
+            className="press inline-flex items-center gap-2 rounded-lg border border-accent/60 bg-accent/15 px-4 py-2 font-mono text-xs font-semibold text-accent shadow-[var(--glow-accent)] transition-all hover:bg-accent/25"
           >
-            <Icon name="arrowRight" size={11} />
-            Live Monitor
+            <Icon name="activity" size={13} />
+            Watch live stream
           </Link>
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -833,10 +823,10 @@ export default function OverviewPage() {
         actions={
           <Link
             to="/monitor"
-            className="press inline-flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-xs font-semibold text-bg-base transition-all duration-150 hover:bg-accent-soft hover:shadow-[var(--glow-accent)]"
+            className="press inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-accent to-accent-soft px-4 py-2.5 font-mono text-xs font-bold text-bg-base shadow-[0_0_20px_rgba(217,164,65,0.35)] transition-all duration-150 hover:scale-105 hover:shadow-[0_0_30px_rgba(217,164,65,0.5)]"
           >
             <Icon name="play" size={13} />
-            Detonate
+            Detonate sample
           </Link>
         }
       />
@@ -850,56 +840,68 @@ export default function OverviewPage() {
       </Deferred>
 
       {/* Quick SOC Operations Bar */}
-      <div className="my-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="my-6 grid grid-cols-2 gap-3.5 sm:grid-cols-4">
         <Link
           to="/monitor"
-          className="group flex items-center gap-3 rounded-xl border border-border-subtle bg-bg-surface/80 p-3.5 transition-all duration-150 hover:border-accent/50 hover:bg-bg-elevated hover:shadow-[var(--shadow-raised)]"
+          className="group relative flex flex-col justify-between overflow-hidden rounded-2xl border border-border-subtle bg-bg-surface/70 p-4 backdrop-blur-md transition-all duration-200 hover:-translate-y-1 hover:border-accent/60 hover:bg-bg-elevated hover:shadow-[0_12px_24px_-8px_rgba(217,164,65,0.2)]"
         >
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-accent group-hover:bg-accent/25">
-            <Icon name="activity" size={16} />
+          <div className="flex items-center justify-between">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-accent/40 bg-accent/15 text-accent shadow-[var(--glow-accent)] transition-transform duration-200 group-hover:scale-110">
+              <Icon name="activity" size={18} />
+            </div>
+            <Icon name="arrowRight" size={13} className="text-text-faint transition-transform duration-200 group-hover:translate-x-1 group-hover:text-accent" />
           </div>
-          <div className="min-w-0">
-            <p className="text-xs font-semibold text-text-primary">Live Monitor</p>
-            <p className="text-[10px] text-text-muted">Host telemetry &amp; sandbox</p>
+          <div className="mt-3 min-w-0">
+            <p className="font-sans text-xs font-semibold text-text-primary group-hover:text-accent">Live Monitor</p>
+            <p className="mt-0.5 text-[11px] text-text-muted">Host telemetry &amp; sandbox</p>
           </div>
         </Link>
 
         <Link
           to="/findings"
-          className="group flex items-center gap-3 rounded-xl border border-border-subtle bg-bg-surface/80 p-3.5 transition-all duration-150 hover:border-risk-suspicious/50 hover:bg-bg-elevated hover:shadow-[var(--shadow-raised)]"
+          className="group relative flex flex-col justify-between overflow-hidden rounded-2xl border border-border-subtle bg-bg-surface/70 p-4 backdrop-blur-md transition-all duration-200 hover:-translate-y-1 hover:border-risk-suspicious/60 hover:bg-bg-elevated hover:shadow-[0_12px_24px_-8px_rgba(217,164,65,0.2)]"
         >
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-risk-suspicious/15 text-risk-suspicious group-hover:bg-risk-suspicious/25">
-            <Icon name="alert" size={16} />
+          <div className="flex items-center justify-between">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-risk-suspicious/40 bg-risk-suspicious/15 text-risk-suspicious shadow-[var(--glow-amber)] transition-transform duration-200 group-hover:scale-110">
+              <Icon name="alert" size={18} />
+            </div>
+            <Icon name="arrowRight" size={13} className="text-text-faint transition-transform duration-200 group-hover:translate-x-1 group-hover:text-risk-suspicious" />
           </div>
-          <div className="min-w-0">
-            <p className="text-xs font-semibold text-text-primary">Findings Queue</p>
-            <p className="text-[10px] text-text-muted">Triage active detections</p>
+          <div className="mt-3 min-w-0">
+            <p className="font-sans text-xs font-semibold text-text-primary group-hover:text-risk-suspicious">Findings Queue</p>
+            <p className="mt-0.5 text-[11px] text-text-muted">Triage active detections</p>
           </div>
         </Link>
 
         <Link
           to="/investigations"
-          className="group flex items-center gap-3 rounded-xl border border-border-subtle bg-bg-surface/80 p-3.5 transition-all duration-150 hover:border-accent/50 hover:bg-bg-elevated hover:shadow-[var(--shadow-raised)]"
+          className="group relative flex flex-col justify-between overflow-hidden rounded-2xl border border-border-subtle bg-bg-surface/70 p-4 backdrop-blur-md transition-all duration-200 hover:-translate-y-1 hover:border-accent/60 hover:bg-bg-elevated hover:shadow-[0_12px_24px_-8px_rgba(217,164,65,0.2)]"
         >
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-accent group-hover:bg-accent/25">
-            <Icon name="notes" size={16} />
+          <div className="flex items-center justify-between">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-accent/40 bg-accent/15 text-accent shadow-[var(--glow-accent)] transition-transform duration-200 group-hover:scale-110">
+              <Icon name="notes" size={18} />
+            </div>
+            <Icon name="arrowRight" size={13} className="text-text-faint transition-transform duration-200 group-hover:translate-x-1 group-hover:text-accent" />
           </div>
-          <div className="min-w-0">
-            <p className="text-xs font-semibold text-text-primary">Investigations</p>
-            <p className="text-[10px] text-text-muted">Case management &amp; notes</p>
+          <div className="mt-3 min-w-0">
+            <p className="font-sans text-xs font-semibold text-text-primary group-hover:text-accent">Investigations</p>
+            <p className="mt-0.5 text-[11px] text-text-muted">Case management &amp; notes</p>
           </div>
         </Link>
 
         <Link
           to="/samples"
-          className="group flex items-center gap-3 rounded-xl border border-border-subtle bg-bg-surface/80 p-3.5 transition-all duration-150 hover:border-accent/50 hover:bg-bg-elevated hover:shadow-[var(--shadow-raised)]"
+          className="group relative flex flex-col justify-between overflow-hidden rounded-2xl border border-border-subtle bg-bg-surface/70 p-4 backdrop-blur-md transition-all duration-200 hover:-translate-y-1 hover:border-border-strong hover:bg-bg-elevated hover:shadow-[0_12px_24px_-8px_rgba(0,0,0,0.4)]"
         >
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-text-faint/15 text-text-primary group-hover:bg-text-faint/25">
-            <Icon name="box" size={16} />
+          <div className="flex items-center justify-between">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-border-strong bg-bg-elevated text-text-primary transition-transform duration-200 group-hover:scale-110">
+              <Icon name="box" size={18} />
+            </div>
+            <Icon name="arrowRight" size={13} className="text-text-faint transition-transform duration-200 group-hover:translate-x-1 group-hover:text-text-primary" />
           </div>
-          <div className="min-w-0">
-            <p className="text-xs font-semibold text-text-primary">Sample Vault</p>
-            <p className="text-[10px] text-text-muted">Binaries &amp; static analysis</p>
+          <div className="mt-3 min-w-0">
+            <p className="font-sans text-xs font-semibold text-text-primary group-hover:text-text-primary">Sample Vault</p>
+            <p className="mt-0.5 text-[11px] text-text-muted">Binaries &amp; static analysis</p>
           </div>
         </Link>
       </div>

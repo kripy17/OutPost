@@ -397,33 +397,46 @@ export default function MonitorPage() {
           lede="Start a session and watch it unfold in real time — process tree, network connections, timeline, and detection alerts as they fire. The webapp is the primary interface; the CLI mirrors the same API."
         />
 
-        {/* Hero — watch THIS machine live. The default flow: one click opens
-            the live session on the auto-detected host, and the collector
-            command streams real auditd/Sysmon events into it. */}
-        <div className="panel mt-8 p-6">
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="inline-flex items-center gap-2 font-mono text-sm text-accent">
-              <Icon name="activity" size={15} />
-              Watch this machine live
-            </span>
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-accent/50 bg-accent/10 px-2.5 py-0.5 font-mono text-[10px] text-accent">
-              <Icon name={platformIconName(hostPlatform)} size={12} />
-              {hostPlatform === "macos" ? "macos" : hostPlatform} — auto-detected
-            </span>
-            <span className="rounded-full border border-border-subtle px-2 py-0.5 font-mono text-[10px] text-text-faint">
-              auditd / Sysmon → live session
-            </span>
+        {/* Hero — watch THIS machine live. */}
+        <div className="panel relative mt-8 overflow-hidden border-accent/30 bg-gradient-to-br from-accent/10 via-bg-surface/90 to-bg-surface/90 p-6 shadow-[0_8px_32px_-8px_rgba(217,164,65,0.2)]">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-accent/40 bg-accent/20 text-accent shadow-[var(--glow-accent)]">
+                <Icon name="activity" size={18} />
+              </span>
+              <div>
+                <span className="font-sans text-sm font-semibold tracking-tight text-text-primary">
+                  Watch this machine live
+                </span>
+                <div className="mt-0.5 flex flex-wrap items-center gap-2">
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-accent/50 bg-accent/10 px-2.5 py-0.5 font-mono text-[10px] font-medium text-accent">
+                    <Icon name={platformIconName(hostPlatform)} size={11} />
+                    {hostPlatform === "macos" ? "macos" : hostPlatform} · auto-detected
+                  </span>
+                  <span className="rounded-full border border-border-subtle bg-bg-elevated/50 px-2 py-0.5 font-mono text-[10px] text-text-muted">
+                    auditd / Sysmon live pipeline
+                  </span>
+                </div>
+              </div>
+            </div>
+            <Link
+              to="/events"
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-elevated/60 px-3 py-2 font-mono text-xs text-text-muted transition-colors hover:border-accent/60 hover:text-accent"
+            >
+              Event stream
+              <Icon name="arrowRight" size={12} />
+            </Link>
           </div>
-          <p className="mt-2 text-xs leading-relaxed text-text-muted">
-            This page auto-detected the host OS. Open a live session below, then run the one-line collector on this
-            machine — real processes, connections, and file activity stream straight into the Monitor. Persistent
-            install: <code className="font-mono text-accent">outpost agent install</code>.
+
+          <p className="mt-3.5 text-xs leading-relaxed text-text-muted">
+            Open a live session below to stream real host telemetry (processes, network connections, file access) in real time. Persistent install: <code className="rounded bg-bg-elevated/80 px-1.5 py-0.5 font-mono text-accent">outpost agent install</code>.
           </p>
-          <div className="mt-4 flex flex-wrap items-center gap-3">
+
+          <div className="mt-5 flex flex-wrap items-center gap-3">
             <button
               onClick={startLive}
               disabled={hostPlatform === "macos"}
-              className="press inline-flex items-center gap-2 rounded-lg border border-accent/60 bg-accent/10 px-4 py-2.5 font-mono text-xs font-medium text-accent transition-all duration-150 hover:shadow-[var(--glow-accent)] disabled:cursor-default disabled:opacity-50"
+              className="press inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-accent to-accent-soft px-5 py-2.5 font-mono text-xs font-bold text-bg-base shadow-[0_0_20px_rgba(217,164,65,0.35)] transition-all duration-150 hover:scale-105 hover:shadow-[0_0_30px_rgba(217,164,65,0.5)] disabled:cursor-default disabled:opacity-50"
             >
               <Icon name="play" size={13} />
               Start live monitoring
@@ -435,40 +448,33 @@ export default function MonitorPage() {
                   setTimeout(() => setAgentCopied(false), 1600);
                 })
               }
-              className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-2 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
+              className="press inline-flex items-center gap-1.5 rounded-xl border border-border-subtle bg-bg-elevated/60 px-3.5 py-2.5 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
               title="Copy the collector command"
             >
               <Icon name={agentCopied ? "check" : "copy"} size={12} />
-              {agentCopied ? "copied" : "copy command"}
+              {agentCopied ? "copied" : "copy agent command"}
             </button>
-            <Link
-              to="/events"
-              className="press ml-auto inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-2 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
-            >
-              Event log
-              <Icon name="arrowRight" size={12} />
-            </Link>
           </div>
           {hostPlatform === "macos" && (
             <p className="mt-2 text-[11px] text-risk-suspicious">
-              Live monitoring on macOS isn't supported yet — no collector ships for it (Windows/Linux focus).
+              Live monitoring on macOS isn't supported yet — collector runs on Linux/Windows.
             </p>
           )}
-          <code className="mt-4 block overflow-x-auto rounded-lg border border-border-subtle bg-bg-elevated/40 px-3 py-2 font-mono text-[11px] text-text-primary">
+          <code className="mt-4 block overflow-x-auto rounded-xl border border-border-subtle bg-bg-elevated/60 px-3.5 py-2.5 font-mono text-[11px] text-text-primary">
             {agentCmd}
           </code>
         </div>
 
-        <div className="mt-10 grid gap-4 sm:grid-cols-2">
+        <div className="mt-8 grid gap-5 sm:grid-cols-2">
           <div className="panel p-6">
             <button onClick={startDetonation} className="press group w-full text-left">
-              <span className="inline-flex items-center gap-2 font-mono text-sm text-risk-malicious">
-                <Icon name="play" size={14} />
+              <span className="inline-flex items-center gap-2 font-sans text-sm font-semibold text-risk-malicious">
+                <Icon name="play" size={15} />
                 Detonate synthetic sample
               </span>
-              <p className="mt-2 text-xs text-text-muted">
+              <p className="mt-2 text-xs leading-relaxed text-text-muted">
                 Streams a realistic dropper scenario (macro → LOLBin → C2 beacon → file burst → persistence) into a
-                fresh run so you can watch the detection rules fire live — no collector or VM needed.
+                fresh run so you can watch detection rules fire live.
               </p>
             </button>
             <div className="mt-4 flex flex-wrap items-center gap-2">
@@ -478,17 +484,14 @@ export default function MonitorPage() {
                 {targetPlatform}
               </span>
               <span className="font-mono text-[10px] text-text-faint">
-                {sample ? "from sample magic bytes" : host ? `auto-detected from this host (${host.release})` : "detecting host…"}
+                {sample ? "from sample magic bytes" : host ? `auto-detected from host (${host.release})` : "detecting host…"}
               </span>
             </div>
 
-            {/* Sample upload — OS auto-detection (roadmap 1.4). Drag-and-drop
-                plus the picker, with the cache-first VirusTotal hash pre-check
-                surfaced BEFORE the run: if the hash is already known-bad, the
-                operator sees it before spending a detonation on it. */}
+            {/* Sample upload */}
             <div
-              className={`mt-4 rounded-lg border-t border-border-subtle pt-3 transition-colors duration-150 ${
-                dragOver ? "ring-1 ring-accent/60 ring-offset-0" : ""
+              className={`mt-5 rounded-xl border border-dashed border-border-strong bg-bg-elevated/30 p-4 transition-all duration-150 ${
+                dragOver ? "border-accent bg-accent/10 shadow-[var(--glow-accent)]" : "hover:border-accent/50"
               }`}
               onDragOver={(e) => {
                 e.preventDefault();
@@ -498,14 +501,15 @@ export default function MonitorPage() {
               onDrop={onDropFile}
             >
               <label className="block cursor-pointer">
-                <span className="text-[11px] font-semibold text-text-faint">
-                  Upload sample — auto-detect OS <span className="font-normal text-text-faint/70">(or drop a file here)</span>
+                <span className="font-sans text-xs font-semibold text-text-primary">
+                  Upload binary sample <span className="font-normal text-text-muted">— auto-detect OS</span>
                 </span>
+                <p className="mt-0.5 text-[11px] text-text-faint">Drag &amp; drop or click to choose .exe, .elf, .dll, .so, scripts</p>
                 <input
                   type="file"
                   accept=".exe,.bin,.elf,.dll,.so,.dylib,.docm,.lnk,.py,.sh,.ps1,.bat,.js"
                   onChange={onUpload}
-                  className="mt-1.5 block w-full text-xs text-text-muted file:mr-3 file:rounded file:border file:border-border-subtle file:bg-bg-elevated file:px-3 file:py-1.5 file:font-mono file:text-[11px] file:text-text-muted hover:file:border-accent/60"
+                  className="mt-2 block w-full text-xs text-text-muted file:mr-3 file:rounded-lg file:border file:border-border-subtle file:bg-bg-elevated file:px-3 file:py-1.5 file:font-mono file:text-[11px] file:text-text-primary hover:file:border-accent/60"
                 />
               </label>
               {uploadError && <p className="mt-2 text-[11px] text-risk-malicious">{uploadError}</p>}
