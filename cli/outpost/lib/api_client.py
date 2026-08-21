@@ -10,7 +10,7 @@ from urllib.parse import quote
 
 import requests
 
-BASE_URL = os.getenv("OUTPOST_API_URL", "http://localhost:8000").rstrip("/")
+BASE_URL = os.getenv("OUTPOST_API_URL", "http://localhost:8001").rstrip("/")
 
 
 class APIError(RuntimeError):
