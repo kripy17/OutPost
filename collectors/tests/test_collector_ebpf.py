@@ -1,6 +1,13 @@
-"""Tests for collectors/linux/collector_ebpf.py."""
+import sys
+from pathlib import Path
 
-from collectors.linux.collector_ebpf import parse_trace_line
+_LINUX = Path(__file__).resolve().parent.parent / "linux"
+sys.path.insert(0, str(_LINUX))
+
+try:
+    from collectors.linux.collector_ebpf import parse_trace_line
+except ModuleNotFoundError:
+    from collector_ebpf import parse_trace_line
 
 
 def test_parse_trace_line_execve():

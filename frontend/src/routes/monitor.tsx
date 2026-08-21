@@ -68,6 +68,7 @@ export default function MonitorPage() {
   const [watchError, setWatchError] = useState<string | null>(null);
   const [streaming, setStreaming] = useState(false);
   const [phase, setPhase] = useState("");
+  const [detonating, setDetonating] = useState(false);
   const cancelRef = useRef(false);
   const timerRef = useRef<number | null>(null);
 
@@ -542,21 +543,21 @@ export default function MonitorPage() {
                       type="button"
                       onClick={async () => {
                         try {
-                          setStarting(true);
-                          const res = await detonateDynamic(sample.sample_id);
+                          setDetonating(true);
+                          const res = await detonateDynamic({ sample_id: sample.sample_id });
                           navigate(`/runs/${res.run_id}`);
                         } catch (err: unknown) {
                           const msg = err instanceof Error ? err.message : "Dynamic detonation failed";
                           setUploadError(msg);
                         } finally {
-                          setStarting(false);
+                          setDetonating(false);
                         }
                       }}
-                      disabled={starting}
+                      disabled={detonating}
                       className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/15 px-3 py-1.5 font-mono text-[11px] font-semibold text-accent hover:bg-accent/25 hover:shadow-[var(--glow-accent)] disabled:opacity-50"
                     >
                       <Icon name="play" size={11} />
-                      {starting ? "Detonating in sandbox..." : "Detonate in dynamic sandbox"}
+                      {detonating ? "Detonating in sandbox..." : "Detonate in dynamic sandbox"}
                     </button>
                   </div>
                 </div>

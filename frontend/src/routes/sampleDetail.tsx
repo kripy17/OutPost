@@ -598,7 +598,7 @@ export default function SampleDetailPage() {
                 setDetonationError(null);
                 setDetonating(true);
                 try {
-                  const res = await detonateDynamic(sample.sample_id);
+                  const res = await detonateDynamic({ sample_id: sample.sample_id });
                   navigate(`/runs/${res.run_id}`);
                 } catch (e: unknown) {
                   setDetonationError(e instanceof Error ? e.message : "Detonation failed");
