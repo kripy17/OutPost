@@ -203,3 +203,99 @@ export function Stat({
     </>
   );
 }
+
+/** Animated Live status pulse for real-time telemetry */
+export function LivePulse({
+  active = true,
+  tone = "clean",
+  label,
+}: {
+  active?: boolean;
+  tone?: "clean" | "accent" | "malicious";
+  label?: string;
+}) {
+  const tones = {
+    clean: "bg-risk-clean",
+    accent: "bg-accent",
+    malicious: "bg-risk-malicious",
+  };
+  const rings = {
+    clean: "border-risk-clean/40",
+    accent: "border-accent/40",
+    malicious: "border-risk-malicious/40",
+  };
+
+  return (
+    <span className="inline-flex items-center gap-2 font-mono text-xs text-text-muted">
+      <span className="relative flex h-2.5 w-2.5 items-center justify-center">
+        {active && (
+          <span
+            className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-75 ${tones[tone]}`}
+          />
+        )}
+        <span className={`relative inline-flex h-2 w-2 rounded-full border ${rings[tone]} ${tones[tone]}`} />
+      </span>
+      {label && <span>{label}</span>}
+    </span>
+  );
+}
+
+/** Standard tactical EmptyState container */
+export function EmptyState({
+  icon,
+  title,
+  description,
+  action,
+  className = "",
+}: {
+  icon?: ReactNode;
+  title: string;
+  description?: ReactNode;
+  action?: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      className={`flex flex-col items-center justify-center rounded-xl border border-dashed border-border-subtle bg-bg-surface/50 p-8 text-center sm:p-12 ${className}`}
+    >
+      {icon && <div className="mb-3 text-text-faint">{icon}</div>}
+      <h3 className="font-sans text-sm font-semibold text-text-primary">{title}</h3>
+      {description && (
+        <p className="mt-1.5 max-w-md text-balance font-sans text-xs leading-relaxed text-text-muted">
+          {description}
+        </p>
+      )}
+      {action && <div className="mt-4">{action}</div>}
+    </div>
+  );
+}
+
+/** Tactical Segmented Progress Bar */
+export function ProgressBar({
+  value,
+  max = 100,
+  tone = "accent",
+  className = "",
+}: {
+  value: number;
+  max?: number;
+  tone?: "clean" | "accent" | "malicious";
+  className?: string;
+}) {
+  const percent = Math.min(100, Math.max(0, Math.round((value / max) * 100)));
+  const barColors = {
+    clean: "bg-risk-clean",
+    accent: "bg-accent",
+    malicious: "bg-risk-malicious",
+  };
+
+  return (
+    <div className={`h-1.5 w-full overflow-hidden rounded-full bg-bg-base border border-border-subtle ${className}`}>
+      <div
+        className={`h-full transition-all duration-300 ${barColors[tone]}`}
+        style={{ width: `${percent}%` }}
+      />
+    </div>
+  );
+}
+
