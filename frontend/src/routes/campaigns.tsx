@@ -9,7 +9,7 @@ import { eventDetail, TYPE_STYLE } from "../components/TimelineView/timeline";
 import { PageHeader } from "../components/ui";
 import { CAMPAIGN_SORTS, clusterBars, reputationFill, sortCampaigns, topMembers, topologyClusters, type CampaignSort, type ClusterBar } from "./campaignsHelpers";
 import { getCampaigns, getCampaignStix, getFootprintTopology } from "../lib/api";
-import type { Campaign, CampaignIoc, Reputation, Severity } from "../types";
+import type { Campaign, CampaignIoc, PropagationGraph, Reputation, Severity } from "../types";
 
 const MAX_TIMELINE = 40;
 const MAX_CHIPS = 10;
@@ -28,6 +28,41 @@ const IOC_GROUPS: { key: keyof Campaign["iocs"]; label: string; icon: "network" 
 
 function fmt(ts: string | null): string {
   return ts ? ts.slice(0, 19).replace("T", " ") : "—";
+}
+
+function AttackPropagationDAG({ graph }: { graph?: PropagationGraph }) {
+  if (!graph || graph.nodes.length === 0) return null;
+  return (
+    <section className="rounded-xl border border-border-subtle bg-bg-elevated/30 p-3.5">
+      <h3 className="mb-2.5 flex items-center gap-1.5 text-xs font-semibold text-text-muted">
+        <Icon name="terminal" size={12} className="text-accent" />
+        Attack Propagation & Host Traversal
+        <span className="ml-auto font-mono text-[10px] text-text-faint">{graph.nodes.length} host node{graph.nodes.length === 1 ? "" : "s"}</span>
+      </h3>
+      <div className="flex flex-wrap items-center gap-2">
+        {graph.nodes.map((node, i) => (
+          <div key={node.id} className="flex items-center gap-2">
+            <Link
+              to={`/hosts/${encodeURIComponent(node.id)}`}
+              className="flex items-center gap-2 rounded-lg border border-accent/40 bg-accent/5 px-2.5 py-1.5 transition-colors hover:border-accent hover:bg-accent/10"
+              title={`View host investigation for ${node.id}`}
+            >
+              <Icon name="terminal" size={13} className="text-accent" />
+              <div>
+                <div className="font-mono text-xs font-medium text-text-primary">{node.id}</div>
+                <div className="font-mono text-[10px] text-text-faint">{node.events} events</div>
+              </div>
+            </Link>
+            {i < graph.nodes.length - 1 && (
+              <div className="flex items-center text-text-faint">
+                <span className="font-mono text-[10px] text-accent/70">──[traversal]──▶</span>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
 }
 
 function ReputationBadge({ campaign }: { campaign: Campaign }) {
@@ -113,8 +148,10 @@ function CampaignCard({ campaign }: { campaign: Campaign }) {
       </header>
 
       <div className="grid grid-cols-1 gap-6 p-5 lg:grid-cols-[1fr_1.4fr]">
-        {/* left: member runs + IOC evidence */}
+        {/* left: member runs + IOC evidence + attack DAG */}
         <div className="space-y-5">
+          <AttackPropagationDAG graph={campaign.propagation_graph} />
+
           <section>
             <h3 className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-text-muted">
               <Icon name="activity" size={12} className="text-signal" />

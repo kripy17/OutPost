@@ -506,6 +506,26 @@ export interface Campaign {
   // Roadmap 2.4 — correlated chain across members.
   chain_links?: KillChainLink[];
   chain_label?: string | null;
+  propagation_graph?: PropagationGraph;
+}
+
+export interface PropagationNode {
+  id: string;
+  type: string;
+  first_seen: string | null;
+  events: number;
+}
+
+export interface PropagationEdge {
+  source: string;
+  target: string;
+  type: string;
+  label: string;
+}
+
+export interface PropagationGraph {
+  nodes: PropagationNode[];
+  edges: PropagationEdge[];
 }
 
 export interface RunNote {
