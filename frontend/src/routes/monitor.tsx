@@ -409,13 +409,13 @@ export default function MonitorPage() {
     return (
       <div className="mx-auto max-w-4xl px-6 py-14 lg:px-10">
         <PageHeader
-          kicker="Analyze · live"
+          kicker="Simulation · Lab"
           title={
             <>
-              Live Monitor <span className="font-normal text-text-muted">& dynamic analysis</span>
+              Simulation Lab <span className="font-normal text-text-muted">& attack scenarios</span>
             </>
           }
-          lede="Start a session and watch it unfold in real time — process tree, network connections, timeline, and detection alerts as they fire. The webapp is the primary interface; the CLI mirrors the same API."
+          lede="Deterministic multi-stage attack scenarios for testing OutPost detection rules, kill-chain mapping, and SOC workflows. Events generated here carry source='simulation' and are never presented as production host telemetry."
         />
 
         {/* Hero — watch THIS machine live. */}

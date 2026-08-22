@@ -91,9 +91,9 @@ const GROUPS: { label: string; links: NavItem[] }[] = [
     label: "Monitoring",
     links: [
       { to: "/", label: "Overview", iconName: "grid", end: true },
-      { to: "/monitor", label: "Live Monitor & Detonate", iconName: "activity" },
-      { to: "/events", label: "Event Stream", iconName: "list" },
+      { to: "/events", label: "Event Manager", iconName: "list" },
       { to: "/findings", label: "Findings & Triage", iconName: "alert" },
+      { to: "/monitor", label: "Simulation Lab", iconName: "activity" },
     ],
   },
   {

@@ -79,30 +79,102 @@ function eventMeta(e: EventFeedEvent): string[] {
    the inline expansion (EventRow when active) so the detail view is always
    the same set of fields, in the same order. */
 function EventFields({ event }: { event: EventFeedEvent }) {
-  const rows: [string, string][] = [
-    ["Event type", event.event_type.replace("_", " ")],
-    ["Timestamp", event.timestamp],
-    ["Host", event.host_id ?? "local"],
-    ["Sample", event.sample_name],
-    ["Run", event.run_id],
-    ["PID", String(event.pid ?? "—")],
-    ["PPID", String(event.ppid ?? "—")],
-    ["Process", event.process_name ?? "—"],
-    ["Command line", event.command_line ?? "—"],
-    ["Dest IP", event.dest_ip ?? "—"],
-    ["Dest port", String(event.dest_port ?? "—")],
-    ["Protocol", event.protocol ?? "—"],
-    ["File path", event.file_path ?? "—"],
-    ["Registry key", event.registry_key ?? "—"],
-  ];
   return (
     <dl className="space-y-3 border-t border-border-subtle pt-4 font-mono text-xs">
-      {rows.map(([k, v]) => (
-        <div key={k} className="flex gap-3">
-          <dt className="w-24 shrink-0 text-text-faint">{k}</dt>
-          <dd className="min-w-0 break-words text-text-primary">{v}</dd>
+      <div className="flex gap-3">
+        <dt className="w-24 shrink-0 text-text-faint">Event type</dt>
+        <dd className="min-w-0 break-words text-text-primary capitalize">{event.event_type.replace("_", " ")}</dd>
+      </div>
+      <div className="flex gap-3">
+        <dt className="w-24 shrink-0 text-text-faint">Timestamp</dt>
+        <dd className="min-w-0 break-words text-text-primary">{event.timestamp}</dd>
+      </div>
+      <div className="flex gap-3">
+        <dt className="w-24 shrink-0 text-text-faint">Host</dt>
+        <dd className="min-w-0 break-words text-text-primary">
+          <Link
+            to={`/hosts/${encodeURIComponent(event.host_id ?? "local")}`}
+            className="text-accent hover:underline inline-flex items-center gap-1"
+          >
+            {event.host_id ?? "local"}
+            <Icon name="external" size={9} className="opacity-60" />
+          </Link>
+        </dd>
+      </div>
+      <div className="flex gap-3">
+        <dt className="w-24 shrink-0 text-text-faint">Sample</dt>
+        <dd className="min-w-0 break-words text-text-primary">{event.sample_name}</dd>
+      </div>
+      <div className="flex gap-3">
+        <dt className="w-24 shrink-0 text-text-faint">Run</dt>
+        <dd className="min-w-0 break-words text-text-primary">
+          <Link to={`/runs/${event.run_id}`} className="text-accent hover:underline inline-flex items-center gap-1">
+            {event.run_id}
+            <Icon name="external" size={9} className="opacity-60" />
+          </Link>
+        </dd>
+      </div>
+      <div className="flex gap-3">
+        <dt className="w-24 shrink-0 text-text-faint">PID</dt>
+        <dd className="min-w-0 break-words text-text-primary">{String(event.pid ?? "—")}</dd>
+      </div>
+      {event.ppid && (
+        <div className="flex gap-3">
+          <dt className="w-24 shrink-0 text-text-faint">PPID</dt>
+          <dd className="min-w-0 break-words text-text-primary">{String(event.ppid)}</dd>
         </div>
-      ))}
+      )}
+      {event.process_name && (
+        <div className="flex gap-3">
+          <dt className="w-24 shrink-0 text-text-faint">Process</dt>
+          <dd className="min-w-0 break-words text-text-primary">{event.process_name}</dd>
+        </div>
+      )}
+      {event.command_line && (
+        <div className="flex gap-3">
+          <dt className="w-24 shrink-0 text-text-faint">Command line</dt>
+          <dd className="min-w-0 break-words text-text-primary">{event.command_line}</dd>
+        </div>
+      )}
+      {event.dest_ip && (
+        <div className="flex gap-3">
+          <dt className="w-24 shrink-0 text-text-faint">Dest IP</dt>
+          <dd className="min-w-0 break-words text-text-primary">
+            <Link
+              to={`/search?q=${encodeURIComponent(event.dest_ip)}`}
+              className="text-accent hover:underline inline-flex items-center gap-1 font-semibold"
+              title={`Investigate ${event.dest_ip} in IOC search`}
+            >
+              {event.dest_ip}
+              <Icon name="search" size={9} className="opacity-60" />
+            </Link>
+          </dd>
+        </div>
+      )}
+      {event.dest_port !== null && event.dest_port !== undefined && (
+        <div className="flex gap-3">
+          <dt className="w-24 shrink-0 text-text-faint">Dest port</dt>
+          <dd className="min-w-0 break-words text-text-primary">{String(event.dest_port)}</dd>
+        </div>
+      )}
+      {event.protocol && (
+        <div className="flex gap-3">
+          <dt className="w-24 shrink-0 text-text-faint">Protocol</dt>
+          <dd className="min-w-0 break-words text-text-primary uppercase">{event.protocol}</dd>
+        </div>
+      )}
+      {event.file_path && (
+        <div className="flex gap-3">
+          <dt className="w-24 shrink-0 text-text-faint">File path</dt>
+          <dd className="min-w-0 break-words text-text-primary">{event.file_path}</dd>
+        </div>
+      )}
+      {event.registry_key && (
+        <div className="flex gap-3">
+          <dt className="w-24 shrink-0 text-text-faint">Registry key</dt>
+          <dd className="min-w-0 break-words text-text-primary">{event.registry_key}</dd>
+        </div>
+      )}
     </dl>
   );
 }

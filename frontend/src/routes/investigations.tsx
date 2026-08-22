@@ -202,9 +202,24 @@ export default function InvestigationsPage() {
         <Panel><p className="py-6 text-center text-sm text-[#C4453B]">Failed to load investigations</p></Panel>
       ) : (data?.investigations.length ?? 0) === 0 ? (
         <Panel>
-          <p className="py-6 text-center text-sm text-text-muted">
-            No investigations match. Investigations are optional — create one when a finding deserves a case.
-          </p>
+          <div className="py-8 text-center">
+            <p className="text-sm text-text-muted">
+              {q || status ? "No investigations match your active filter." : "No investigations match. Investigations are optional — create one when a finding deserves a case."}
+            </p>
+            {(q || status) && (
+              <button
+                onClick={() => {
+                  setQ("");
+                  setDebouncedQ("");
+                  setStatus("");
+                }}
+                className="press mt-3 inline-flex items-center gap-1.5 rounded-lg border border-accent/50 px-3 py-1 font-mono text-xs text-accent hover:bg-accent/10"
+              >
+                <Icon name="x" size={11} />
+                Clear filters
+              </button>
+            )}
+          </div>
         </Panel>
       ) : (
         <ul className="space-y-2">

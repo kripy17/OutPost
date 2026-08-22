@@ -21,7 +21,7 @@ import RulesPanel from "../components/RulesPanel/RulesPanel";
 import TimelineView from "../components/TimelineView/TimelineView";
 import Topology from "../components/Topology/Topology";
 import { RISK_COLORS, enumKindsFromDetails, intelAgeLabel, riskBand } from "../lib/constants";
-import { bulkUpdateAlertStatus, getCampaigns, getRunDetail, getRunIocsCsv, markFalsePositive, reEnrichRun, refreshIpIntel, updateAlertStatus } from "../lib/api";
+import { addInvestigationRef, bulkUpdateAlertStatus, getCampaigns, getRunDetail, getRunIocsCsv, listInvestigations, markFalsePositive, reEnrichRun, refreshIpIntel, updateAlertStatus } from "../lib/api";
 import type { AlertStatus, NetworkConnection, ProcessNode, Reputation, RunDetail } from "../types";
 
 /* ── Risk gauge — semicircular arc, colored by band ────────────────────── */
@@ -382,7 +382,16 @@ export default function RunDetailPage() {
   // process filter since the plant IP is the finding.
   const [focusIp, setFocusIp] = useState<string | null>(null);
   const [showRulesStudio, setShowRulesStudio] = useState(false);
+  const [showAttachCase, setShowAttachCase] = useState(false);
+  const [attachingCaseId, setAttachingCaseId] = useState<string>("");
+  const [attachMsg, setAttachMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [processViewMode, setProcessViewMode] = useState<"tree" | "graph">("graph");
+
+  const { data: investigationsData } = useQuery({
+    queryKey: ["investigations", "all"],
+    queryFn: () => listInvestigations({ limit: 50 }),
+    enabled: showAttachCase,
+  });
   const filteredConnections =
     focusIp !== null
       ? netData.filter((c) => c.dest_ip === focusIp)
@@ -552,6 +561,14 @@ export default function RunDetailPage() {
         <div className="flex items-center gap-6">
           <RiskGauge score={run.risk_score} />
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowAttachCase(true)}
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/40 bg-bg-surface px-3 py-2 font-mono text-xs text-text-primary transition-all duration-150 hover:border-accent/80 hover:text-accent"
+              title="Attach this run as evidence to an incident investigation case"
+            >
+              <Icon name="notes" size={12} />
+              Attach to Case
+            </button>
             <button
               onClick={() => setShowRulesStudio(true)}
               className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/50 bg-accent/15 px-3 py-2 font-mono text-xs font-semibold text-accent shadow-[var(--glow-accent)] transition-all duration-150 hover:bg-accent/25 hover:border-accent"
@@ -801,6 +818,97 @@ export default function RunDetailPage() {
         isOpen={showRulesStudio}
         onClose={() => setShowRulesStudio(false)}
       />
+
+      {showAttachCase && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-bg-base/80 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-xl border border-border-subtle bg-bg-surface p-6 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-border-subtle pb-3">
+              <h3 className="flex items-center gap-2 font-mono text-sm font-semibold text-text-primary">
+                <Icon name="notes" size={14} className="text-accent" />
+                Attach Run to Investigation
+              </h3>
+              <button
+                onClick={() => {
+                  setShowAttachCase(false);
+                  setAttachMsg(null);
+                }}
+                className="text-text-faint hover:text-text-primary"
+              >
+                <Icon name="x" size={14} />
+              </button>
+            </div>
+            <div className="mt-4 space-y-4 font-mono text-xs">
+              <p className="text-text-muted">
+                Select an open investigation case to attach this run (<span className="text-accent">{runId.slice(0, 12)}</span>) as an evidence reference.
+              </p>
+              {investigationsData?.investigations && investigationsData.investigations.length > 0 ? (
+                <div>
+                  <label className="mb-1 block text-[10px] uppercase tracking-wide text-text-faint">Select Case</label>
+                  <select
+                    value={attachingCaseId}
+                    onChange={(e) => setAttachingCaseId(e.target.value)}
+                    className="w-full rounded-lg border border-border-subtle bg-bg-base p-2 text-text-primary outline-none focus:border-accent"
+                  >
+                    <option value="">— Select an existing case —</option>
+                    {investigationsData.investigations.map((inv) => (
+                      <option key={inv.id} value={inv.id}>
+                        {inv.title} [{inv.status.toUpperCase()}]
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : (
+                <div className="rounded-lg border border-border-subtle/60 bg-bg-base/40 p-3 text-text-faint">
+                  No active investigations found. You can create one from the{" "}
+                  <Link to="/investigations" className="text-accent underline">
+                    Investigations
+                  </Link>{" "}
+                  page.
+                </div>
+              )}
+              {attachMsg && (
+                <p className={`text-xs ${attachMsg.ok ? "text-risk-clean" : "text-risk-malicious"}`}>
+                  {attachMsg.text}
+                </p>
+              )}
+            </div>
+            <div className="mt-6 flex items-center justify-end gap-2 border-t border-border-subtle pt-3">
+              <button
+                onClick={() => {
+                  setShowAttachCase(false);
+                  setAttachMsg(null);
+                }}
+                className="press rounded-lg border border-border-subtle px-3 py-1.5 font-mono text-xs text-text-muted hover:text-text-primary"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  if (!attachingCaseId) return;
+                  try {
+                    await addInvestigationRef(attachingCaseId, { ref_type: "run", ref_id: runId });
+                    setAttachMsg({ ok: true, text: "Successfully attached to investigation!" });
+                    void queryClient.invalidateQueries({ queryKey: ["investigation", attachingCaseId] });
+                    setTimeout(() => {
+                      setShowAttachCase(false);
+                      setAttachMsg(null);
+                    }, 1200);
+                  } catch (err: unknown) {
+                    setAttachMsg({
+                      ok: false,
+                      text: err instanceof Error ? err.message : "Failed to attach run to case",
+                    });
+                  }
+                }}
+                disabled={!attachingCaseId}
+                className="press rounded-lg border border-accent bg-accent/20 px-3 py-1.5 font-mono text-xs font-semibold text-accent hover:bg-accent/30 disabled:opacity-40"
+              >
+                Confirm Attach
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
