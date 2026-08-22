@@ -184,7 +184,7 @@ export default function SearchPage() {
         else void runIocSearch(saved);
       }
     }
-  }, [params]);
+  }, [params, scope]);
 
   function persistScope(next: Scope) {
     setScope(next);
