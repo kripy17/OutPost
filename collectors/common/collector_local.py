@@ -96,8 +96,8 @@ def main():
     parser.add_argument("--timeout", type=int, default=0, help="Stop after N seconds (0 = run indefinitely)")
     args = parser.parse_args()
 
-    shipper = Shipper(backend_url=args.backend, host_id=args.host_id)
-    run_id = args.run_id or resolve_live_run_id(args.backend, args.host_id)
+    run_id = args.run_id or resolve_live_run_id(args.backend, platform.system().lower())
+    shipper = Shipper(backend_url=args.backend, run_id=run_id, host_id=args.host_id)
 
     print(f"[*] OutPost Live Agent started on {args.host_id} ({platform.system()})")
     print(f"[*] Backend: {args.backend} | Target Run: {run_id}")
@@ -114,26 +114,19 @@ def main():
                 print("[*] Timeout reached. Stopping collector.")
                 break
 
-            # Send heartbeat every 60 seconds
-            if now - last_heartbeat >= 60.0:
-                shipper.heartbeat(
-                    platform_str=platform.system().lower(),
-                    version="outpost-local-agent/1.0",
-                )
-                last_heartbeat = now
+            # Send heartbeat if interval elapsed
+            shipper.maybe_heartbeat(platform=platform.system().lower(), interval=60.0)
 
             now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
             procs = get_process_snapshot()
             current_pid_map = {p["pid"]: p for p in procs}
             current_pids = set(current_pid_map.keys())
 
-            batch: list[dict[str, Any]] = []
-
             # Check new processes
             new_pids = current_pids - known_pids
             for pid in new_pids:
                 p = current_pid_map[pid]
-                batch.append({
+                shipper.add({
                     "event_type": "process_create",
                     "timestamp": now_iso,
                     "pid": pid,
@@ -155,7 +148,7 @@ def main():
                 if k not in known_conns:
                     known_conns.add(k)
                     if not c["dest_ip"].startswith(("127.", "0.", "::1")):
-                        batch.append({
+                        shipper.add({
                             "event_type": "network_connection",
                             "timestamp": now_iso,
                             "pid": c["pid"],
@@ -168,8 +161,7 @@ def main():
                             "source": "live_host",
                         })
 
-            if batch:
-                shipper.ship_batch(run_id, batch)
+            shipper.flush()
 
             time.sleep(args.interval)
 
