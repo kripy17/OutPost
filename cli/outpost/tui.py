@@ -30,6 +30,8 @@ from .rendering.terminal_views import (
     render_alert,
     render_network_table,
     render_process_tree,
+    risk_gauge,
+    risk_style,
 )
 
 console = Console()
@@ -111,6 +113,14 @@ def _safe_get_rules_meta() -> list[dict]:
         return []
 
 
+def _safe_get_playbooks() -> list[dict]:
+    try:
+        res = api_client.get_playbooks()
+        return res if isinstance(res, list) else []
+    except Exception:
+        return []
+
+
 def _get_key() -> str:
     """Read a single keypress without waiting for Enter."""
     if platform.system().lower() == "windows":
@@ -172,27 +182,28 @@ class OutPostTUI:
         self.active_sub_view = None
         self.status_msg = ""
         self.selected_run_id = None
+        self.generated_rules_text = None
 
         self.main_menu = [
             ("1", "Monitor", "Live telemetry, active sessions, online fleet, detection activity"),
-            ("2", "Analyze", "Dynamic subprocess sandbox detonation, static binary inspection"),
+            ("2", "Analyze", "Attack scenario playbooks, sample vault, binary inspection"),
             ("3", "Investigate", "SOC incident investigation case management, findings & notes"),
             ("4", "IOCs", "Cross-run IOC search, threat reputation cache, watchlist"),
             ("5", "Hosts", "Connected fleet collectors, heartbeat health, host timeline"),
             ("6", "Campaigns", "Auto-clustered campaigns sharing C2 infrastructure"),
-            ("7", "Reports", "Run summaries, STIX 2.1 bundles, PDF/JSON export"),
+            ("7", "Reports", "Run summaries, Sigma/Suricata rule synthesis, STIX bundles"),
             ("8", "Detection Rules", "37 explainable heuristics across 14 MITRE ATT&CK tactics"),
             ("9", "Settings", "Local monitor status, threat intel keys, system health"),
         ]
 
         self.sub_menus = {
             "monitor": ["Live Events", "Findings", "Sessions", "Hosts", "Detection Activity"],
-            "analyze": ["Detonate Sample", "Sample Vault", "Static Inspection", "Execution Traces"],
+            "analyze": ["Attack Playbooks", "Sample Vault", "Static Inspection", "Execution Traces"],
             "investigate": ["Active Cases", "Closed Cases", "Triage Queue", "Case Timeline"],
             "iocs": ["Search IOC", "Threat Watchlist", "Reputation Cache", "Infra Topology"],
             "hosts": ["Online Fleet", "Collector Heartbeats", "Host Activity Timeline"],
             "campaigns": ["Campaign Clusters", "Shared C2 Infrastructure", "Evidence Graph"],
-            "reports": ["Session Reports", "STIX 2.1 Bundles", "Sigma / Suricata Rules"],
+            "reports": ["Session Reports", "Synthesize Detection Suite", "STIX 2.1 Bundles"],
             "rules": ["37 Heuristic Rules", "ATT&CK Coverage Matrix", "YARA Signatures"],
             "settings": ["Local Monitor Daemon", "Threat Intel Keys", "System Health & DB"],
         }
@@ -223,8 +234,16 @@ class OutPostTUI:
         console.print("[bold #3FA796]OutPost SOC Terminal closed.[/bold #3FA796]")
 
     def handle_input(self, key: str):
+        if not key:
+            return
+
         if key == "q":
-            if self.active_sub_view is not None:
+            if self.generated_rules_text:
+                self.generated_rules_text = None
+            elif self.current_screen == "run_detail":
+                self.current_screen = "monitor"
+                self.active_sub_view = "Live Events"
+            elif self.active_sub_view is not None:
                 self.active_sub_view = None
                 self.detail_selected = 0
             elif self.current_screen != "main":
@@ -235,7 +254,12 @@ class OutPostTUI:
             return
 
         if key in ("esc", "b"):
-            if self.active_sub_view is not None:
+            if self.generated_rules_text:
+                self.generated_rules_text = None
+            elif self.current_screen == "run_detail":
+                self.current_screen = "monitor"
+                self.active_sub_view = "Live Events"
+            elif self.active_sub_view is not None:
                 self.active_sub_view = None
                 self.detail_selected = 0
             elif self.current_screen != "main":
@@ -244,7 +268,16 @@ class OutPostTUI:
             return
 
         if key == "r":
-            self.status_msg = "Refreshed."
+            self.status_msg = "Telemetry & data refreshed."
+            return
+
+        if self.current_screen == "run_detail":
+            if key == "g" and self.selected_run_id:
+                try:
+                    self.generated_rules_text = api_client.get_rules(self.selected_run_id, "all")
+                    self.status_msg = "Detection suite synthesized."
+                except Exception as exc:
+                    self.status_msg = f"Rule generation error: {exc}"
             return
 
         if self.current_screen == "main":
@@ -301,6 +334,32 @@ class OutPostTUI:
             if runs and 0 <= self.detail_selected < len(runs):
                 self.selected_run_id = runs[self.detail_selected]["run_id"]
                 self.current_screen = "run_detail"
+                self.generated_rules_text = None
+
+        elif self.current_screen == "analyze" and self.active_sub_view == "Attack Playbooks":
+            playbooks = _safe_get_playbooks()
+            if playbooks and 0 <= self.detail_selected < len(playbooks):
+                pb = playbooks[self.detail_selected]
+                self.status_msg = f"Detonating {pb['name']}..."
+                try:
+                    res = api_client.detonate_playbook(pb["id"])
+                    self.selected_run_id = res["run_id"]
+                    self.current_screen = "run_detail"
+                    self.generated_rules_text = None
+                    self.status_msg = f"Detonated: {pb['name']} ({res.get('alert_count', 0)} alerts)"
+                except Exception as exc:
+                    self.status_msg = f"Detonation error: {exc}"
+
+        elif self.current_screen == "reports" and self.active_sub_view in ("Session Reports", "Synthesize Detection Suite"):
+            runs = _safe_get_runs()
+            if runs and 0 <= self.detail_selected < len(runs):
+                self.selected_run_id = runs[self.detail_selected]["run_id"]
+                self.current_screen = "run_detail"
+                if self.active_sub_view == "Synthesize Detection Suite":
+                    try:
+                        self.generated_rules_text = api_client.get_rules(self.selected_run_id, "all")
+                    except Exception:
+                        pass
 
     def render_main_screen(self):
         alerts = _safe_get_alerts()
@@ -409,7 +468,7 @@ class OutPostTUI:
 
     def render_sub_view(self):
         view_name = self.active_sub_view or ""
-        console.print(Panel(f"[bold #3FA796]{self.current_screen.upper()} > {view_name.upper()}[/bold #3FA796]", box=ROUNDED, border_style="#3FA796"))
+        header = f"[bold #3FA796]{self.current_screen.upper()} > {view_name.upper()}[/bold #3FA796]"
 
         if self.current_screen == "monitor":
             if view_name in ("Live Events", "Sessions"):
@@ -417,44 +476,60 @@ class OutPostTUI:
                 table = Table(box=ROUNDED, border_style="dim", expand=True)
                 table.add_column("#", width=3)
                 table.add_column("Run ID", style="bold cyan", width=14)
-                table.add_column("Target Name", style="white")
-                table.add_column("Platform", width=10)
-                table.add_column("Alerts", width=8)
+                table.add_column("Sample / Target", style="bold white")
+                table.add_column("OS", width=6)
+                table.add_column("Alerts", justify="right", width=8)
+                table.add_column("Risk Gauge", width=16)
                 table.add_column("Severity", width=12)
 
-                for i, r in enumerate(runs[:12]):
+                for i, r in enumerate(runs[:14]):
                     is_sel = i == self.detail_selected
                     sev = r.get("highest_severity") or "clean"
                     style = SEVERITY_STYLE.get(sev, "white")
+                    risk_bar = risk_gauge(r.get("risk_score"))
                     table.add_row(
                         str(i + 1),
                         f"{'▶ ' if is_sel else ''}{r.get('run_id', '')[:12]}",
-                        r.get("name", "Session"),
-                        r.get("environment", "linux"),
+                        r.get("sample_name") or r.get("name", "Session"),
+                        {"windows": "win", "linux": "nix"}.get(r.get("platform", ""), r.get("platform", "nix")),
                         str(r.get("alert_count", 0)),
-                        Text(sev.upper(), style=style),
+                        risk_bar,
+                        Text(f"● {sev.upper()}", style=style),
                         style="reverse" if is_sel else None,
                     )
-                console.print(table)
+                console.print(Panel(table, title=header, box=ROUNDED, border_style="#3FA796"))
+                console.print(Align.center(Text.from_markup("[dim][↑↓] Navigate   [Enter] Open Process Tree & Alerts   [b/Esc] Back[/dim]")))
+
             elif view_name == "Findings":
                 alerts = _safe_get_alerts()
                 table = Table(box=ROUNDED, border_style="dim", expand=True)
-                table.add_column("ID", width=6)
+                table.add_column("#", width=3)
+                table.add_column("ID", width=8, style="bold cyan")
                 table.add_column("Rule Name", style="bold white")
                 table.add_column("Severity", width=12)
-                table.add_column("Trigger Details", style="dim")
+                table.add_column("Status", width=14)
+                table.add_column("Details", style="dim")
 
-                for a in alerts[:10]:
+                for i, a in enumerate(alerts[:14]):
+                    is_sel = i == self.detail_selected
                     sev = a.get("severity") or "suspicious"
+                    st = (a.get("status") or "open").upper()
+                    st_col = "green" if st == "RESOLVED" else ("yellow" if st == "ACKNOWLEDGED" else "bold red")
                     table.add_row(
-                        str(a.get("id", 0)),
+                        str(i + 1),
+                        f"{'▶ ' if is_sel else ''}ALT-{a.get('id', 0)}",
                         a.get("rule_name", ""),
                         Text(sev.upper(), style=SEVERITY_STYLE.get(sev, "white")),
-                        str(a.get("details", ""))[:50],
+                        f"[{st_col}]{st}[/{st_col}]",
+                        str(a.get("details", ""))[:55],
+                        style="reverse" if is_sel else None,
                     )
-                console.print(table)
+                console.print(Panel(table, title=header, box=ROUNDED, border_style="#3FA796"))
+                console.print(Align.center(Text.from_markup("[dim][↑↓] Navigate   [b/Esc] Back[/dim]")))
+
             elif view_name == "Hosts":
                 self.render_hosts_table()
+
             elif view_name == "Detection Activity":
                 rules = _safe_get_rules_meta()
                 table = Table(title="Active Detection Heuristics", box=ROUNDED, border_style="dim", expand=True)
@@ -462,26 +537,53 @@ class OutPostTUI:
                 table.add_column("Name", style="white")
                 table.add_column("Tactic", style="bold yellow")
                 for r in rules[:10]:
-                    table.add_row(r.get("id", ""), r.get("name", ""), r.get("tactic", "Execution"))
-                console.print(table)
+                    table.add_row(r.get("rule_id", r.get("id", "")), r.get("name", ""), r.get("tactic", "Execution"))
+                console.print(Panel(table, title=header, box=ROUNDED, border_style="#3FA796"))
+                console.print(Align.center(Text.from_markup("[dim][b/Esc] Back to Monitor[/dim]")))
 
         elif self.current_screen == "analyze":
-            samples = _safe_get_samples()
-            table = Table(title="Sample Vault & Binaries", box=ROUNDED, border_style="dim", expand=True)
-            table.add_column("ID", style="bold cyan", width=12)
-            table.add_column("Filename", style="white")
-            table.add_column("Platform", width=10)
-            table.add_column("SHA-256", style="dim", width=22)
-            table.add_column("Family", width=14)
-            for s in samples[:10]:
-                table.add_row(
-                    s.get("sample_id", "")[:10],
-                    s.get("name", "sample"),
-                    s.get("detected_platform") or "unknown",
-                    s.get("sha256", "")[:18] + "...",
-                    s.get("family") or "clean",
-                )
-            console.print(table)
+            if view_name == "Attack Playbooks":
+                playbooks = _safe_get_playbooks()
+                table = Table(box=ROUNDED, border_style="dim", expand=True)
+                table.add_column("#", width=3)
+                table.add_column("Scenario ID", style="bold cyan", width=28)
+                table.add_column("Attack Scenario Name", style="bold white")
+                table.add_column("OS", width=6)
+                table.add_column("Severity", width=12)
+                table.add_column("ATT&CK Tactics", style="dim")
+
+                for i, pb in enumerate(playbooks):
+                    is_sel = i == self.detail_selected
+                    sev = pb.get("severity", "critical")
+                    table.add_row(
+                        str(i + 1),
+                        f"{'▶ ' if is_sel else ''}{pb['id']}",
+                        pb["name"],
+                        {"windows": "win", "linux": "nix"}.get(pb.get("platform", ""), pb.get("platform", "")),
+                        Text(f"● {sev.upper()}", style=SEVERITY_STYLE.get(sev, "white")),
+                        " → ".join(pb.get("tactics", [])),
+                        style="reverse" if is_sel else None,
+                    )
+                console.print(Panel(table, title=header, box=ROUNDED, border_style="#3FA796"))
+                console.print(Align.center(Text.from_markup("[bold green][Enter] Detonate Selected Scenario Live[/bold green]   [dim][b/Esc] Back[/dim]")))
+            else:
+                samples = _safe_get_samples()
+                table = Table(title="Sample Vault & Binaries", box=ROUNDED, border_style="dim", expand=True)
+                table.add_column("ID", style="bold cyan", width=12)
+                table.add_column("Filename", style="white")
+                table.add_column("Platform", width=10)
+                table.add_column("SHA-256", style="dim", width=22)
+                table.add_column("Family", width=14)
+                for s in samples[:10]:
+                    table.add_row(
+                        s.get("sample_id", "")[:10],
+                        s.get("name", "sample"),
+                        s.get("detected_platform") or "unknown",
+                        s.get("sha256", "")[:18] + "...",
+                        s.get("family") or "clean",
+                    )
+                console.print(Panel(table, title=header, box=ROUNDED, border_style="#3FA796"))
+                console.print(Align.center(Text.from_markup("[dim][b/Esc] Back to Analyze[/dim]")))
 
         elif self.current_screen == "investigate":
             invs = _safe_get_investigations()
@@ -498,7 +600,8 @@ class OutPostTUI:
                     inv.get("status", "open").upper(),
                     Text(sev.upper(), style=SEVERITY_STYLE.get(sev, "white")),
                 )
-            console.print(table)
+            console.print(Panel(table, title=header, box=ROUNDED, border_style="#3FA796"))
+            console.print(Align.center(Text.from_markup("[dim][b/Esc] Back to Investigate[/dim]")))
 
         elif self.current_screen == "iocs":
             watchlist = _safe_get_watchlist()
@@ -508,7 +611,8 @@ class OutPostTUI:
             table.add_column("Date Added", style="dim", width=16)
             for w in watchlist[:10]:
                 table.add_row(w.get("value", ""), w.get("label", ""), str(w.get("created_at", ""))[:10])
-            console.print(table)
+            console.print(Panel(table, title=header, box=ROUNDED, border_style="#3FA796"))
+            console.print(Align.center(Text.from_markup("[dim][b/Esc] Back to IOCs[/dim]")))
 
         elif self.current_screen == "hosts":
             self.render_hosts_table()
@@ -521,37 +625,57 @@ class OutPostTUI:
             table.add_column("Linked Runs", width=12)
             for c in campaigns[:8]:
                 table.add_row(c.get("key", ""), c.get("signature_ip") or "None", str(len(c.get("runs", []))))
-            console.print(table)
+            console.print(Panel(table, title=header, box=ROUNDED, border_style="#3FA796"))
+            console.print(Align.center(Text.from_markup("[dim][b/Esc] Back to Campaigns[/dim]")))
 
         elif self.current_screen == "reports":
             runs = _safe_get_runs()
-            table = Table(title="Session Reports", box=ROUNDED, border_style="dim", expand=True)
-            table.add_column("Run ID", style="bold cyan")
-            table.add_column("Target Name", style="white")
+            table = Table(title="Session Reports & Detection Rule Synthesis", box=ROUNDED, border_style="dim", expand=True)
+            table.add_column("#", width=3)
+            table.add_column("Run ID", style="bold cyan", width=14)
+            table.add_column("Sample Name", style="bold white")
             table.add_column("Risk Score", width=10)
-            for r in runs[:8]:
-                table.add_row(r.get("run_id", "")[:12], r.get("name", ""), str(r.get("risk_score", 0)))
-            console.print(table)
+            table.add_column("Severity", width=12)
+            for i, r in enumerate(runs[:10]):
+                is_sel = i == self.detail_selected
+                sev = r.get("highest_severity") or "clean"
+                table.add_row(
+                    str(i + 1),
+                    f"{'▶ ' if is_sel else ''}{r.get('run_id', '')[:12]}",
+                    r.get("sample_name") or r.get("name", ""),
+                    str(r.get("risk_score", 0)),
+                    Text(sev.upper(), style=SEVERITY_STYLE.get(sev, "white")),
+                    style="reverse" if is_sel else None,
+                )
+            console.print(Panel(table, title=header, box=ROUNDED, border_style="#3FA796"))
+            console.print(Align.center(Text.from_markup("[dim][Enter] View Session & Synthesize Rules   [b/Esc] Back[/dim]")))
 
         elif self.current_screen == "rules":
             rules = _safe_get_rules_meta()
             table = Table(title="37 Heuristic Rules across 14 ATT&CK Tactics", box=ROUNDED, border_style="dim", expand=True)
-            table.add_column("Rule ID", style="bold cyan", width=22)
-            table.add_column("Rule Description", style="white")
-            table.add_column("Tactic", style="bold yellow", width=16)
-            for r in rules[:12]:
-                table.add_row(r.get("id", ""), r.get("name", ""), r.get("tactic", "Execution"))
-            console.print(table)
+            table.add_column("Rule ID", style="bold cyan", width=24)
+            table.add_column("Rule Name", style="white")
+            table.add_column("Tactic", style="bold yellow", width=18)
+            table.add_column("Technique", style="dim", width=14)
+            for r in rules[:14]:
+                table.add_row(
+                    r.get("rule_id", r.get("id", "")),
+                    r.get("name", ""),
+                    r.get("tactic", "Execution"),
+                    r.get("technique", ""),
+                )
+            console.print(Panel(table, title=header, box=ROUNDED, border_style="#3FA796"))
+            console.print(Align.center(Text.from_markup("[dim][b/Esc] Back to Rules[/dim]")))
 
         elif self.current_screen == "settings":
             body = (
-                "[bold]API Status:[/bold] Healthy\n"
+                "[bold]API Status:[/bold] Healthy (Connected to http://127.0.0.1:8001)\n"
                 "[bold]Threat Intel Cache:[/bold] Active (Keyless Fallback Ready)\n"
                 "[bold]Air-Gap Enforcement:[/bold] Loopback-only locked\n"
+                "[bold]Rule Synthesis Studio:[/bold] Ready (Sigma / Suricata / YARA)\n"
             )
             console.print(Panel(Text.from_markup(body), box=ROUNDED, border_style="dim"))
-
-        console.print(Align.center(Text.from_markup("[dim][Enter] Select Item   [b/Esc] Back to Menu   [q] Quit[/dim]")))
+            console.print(Align.center(Text.from_markup("[dim][b/Esc] Back to Menu[/dim]")))
 
     def render_hosts_table(self):
         fleet = _safe_get_fleet()
@@ -570,6 +694,7 @@ class OutPostTUI:
                 intel_age(h.get("last_seen")),
             )
         console.print(table)
+        console.print(Align.center(Text.from_markup("[dim][b/Esc] Back to Menu[/dim]")))
 
     def render_run_detail(self):
         if not self.selected_run_id:
@@ -586,14 +711,33 @@ class OutPostTUI:
 
         console.print(Panel(f"[bold #3FA796]RUN DETAIL: {self.selected_run_id}[/bold #3FA796]", box=ROUNDED, border_style="#3FA796"))
         sev = run.get("highest_severity") or "clean"
-        meta = f"[bold]Target:[/bold] {run.get('name')}  |  [bold]Risk:[/bold] {run.get('risk_score', 0)}  |  [bold]Severity:[/bold] [{SEVERITY_STYLE.get(sev, 'white')}]{sev.upper()}[/]"
+        target_name = run.get("sample_name") or run.get("name", "Target")
+        r_style = risk_style(run.get("risk_score"))
+        meta = (
+            f"[bold]Target:[/bold] {target_name}  |  "
+            f"[bold]Platform:[/bold] {run.get('platform', 'nix')}  |  "
+            f"[bold]Risk:[/bold] [{r_style}]{run.get('risk_score', 0)}/100[/{r_style}]  |  "
+            f"[bold]Severity:[/bold] [{SEVERITY_STYLE.get(sev, 'white')}]{sev.upper()}[/]"
+        )
         console.print(Panel(Text.from_markup(meta), box=ROUNDED, border_style="dim"))
 
-        if alerts:
-            console.print(Panel(Group(*[render_alert(a) for a in alerts[:4]]), title="Fired Alerts", box=ROUNDED, border_style="#C4453B"))
-        if tree:
-            console.print(Panel(render_process_tree(tree), title="Process Tree", box=ROUNDED, border_style="dim"))
-        if network:
-            console.print(Panel(render_network_table(network[:6]), title="Network Connections", box=ROUNDED, border_style="dim"))
+        if self.generated_rules_text:
+            console.print(
+                Panel(
+                    self.generated_rules_text,
+                    title="[bold yellow]Auto-Generated Detection Rules (Sigma / Suricata / YARA)[/bold yellow]",
+                    box=ROUNDED,
+                    border_style="#D9A441",
+                )
+            )
+            console.print(Align.center(Text.from_markup("[dim][b/Esc] Back to Run Detail   [q] Back to Sessions[/dim]")))
+        else:
+            if alerts:
+                console.print(Panel(Group(*[render_alert(a) for a in alerts[:4]]), title="Fired Detections", box=ROUNDED, border_style="#C4453B"))
+            if tree:
+                console.print(Panel(render_process_tree(tree), title="Process Tree Hierarchy", box=ROUNDED, border_style="dim"))
+            if network:
+                console.print(Panel(render_network_table(network[:6]), title="Network Sockets & Threat Reputation", box=ROUNDED, border_style="dim"))
 
-        console.print(Align.center(Text.from_markup("[dim][b/Esc] Back to Sessions[/dim]")))
+            console.print(Align.center(Text.from_markup("[bold cyan][g] Synthesize Sigma/Suricata/YARA Rules[/bold cyan]   [dim][b/Esc] Back to Sessions[/dim]")))
+
