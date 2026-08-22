@@ -266,6 +266,26 @@ async def auto_prune_loop() -> None:
 # -- Backup / restore -----------------------------------------------------------
 
 
+def _prune_old_backups(keep: int = 5) -> int:
+    """Keep only the most recent N backup files in data/, removing older ones."""
+    try:
+        backups = sorted(
+            [p for p in DATA_DIR.glob("outpost-backup-*.db") if p.is_file()],
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        pruned = 0
+        for old in backups[keep:]:
+            try:
+                old.unlink()
+                pruned += 1
+            except OSError:
+                pass
+        return pruned
+    except Exception:
+        return 0
+
+
 @router.get("/admin/backup", response_model=None)
 def backup(request: Request) -> FileResponse:
     """Stream a consistent SQLite backup (the online-backup API, safe while
@@ -283,6 +303,7 @@ def backup(request: Request) -> FileResponse:
         src.backup(dst)
     dst.close()
     src.close()
+    _prune_old_backups(keep=5)
     with db_session() as conn:
         audit.log(conn, _actor(request), "backup.create", target_type="store", detail=f"→ {tmp.name}")
     return FileResponse(tmp, media_type="application/octet-stream", filename=tmp.name)
