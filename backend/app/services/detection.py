@@ -2011,6 +2011,18 @@ def check_tls_sni_suspicious(event: dict) -> Alert | None:
                 "suspicious", event,
                 f"TLS SNI with suspicious label: {sni}",
             )
+    ja3 = (event.get("ja3") or event.get("tls_ja3") or "").strip().lower()
+    if ja3 and ja3 in {
+        "a0e9f5d64349fb13191bc781f81f42e1",  # Cobalt Strike default
+        "727dd56e522b3bde61704234766e1491",  # Metasploit default HTTPS payload
+        "b32309a26951912be7dba376398abc3b",  # PoshC2 standard client hello
+    }:
+        return _make_alert(
+            event["run_id"], "tls-sni-suspicious",
+            "Known C2 TLS client handshake (JA3 fingerprint)",
+            "malicious", event,
+            f"TLS client hello matched known C2 framework JA3 hash: {ja3}",
+        )
     return None
 
 

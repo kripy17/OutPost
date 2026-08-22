@@ -42,6 +42,30 @@ def test_parse_trace_line_loopback_ignored():
     assert ev is None
 
 
+def test_parse_trace_line_memfd_create():
+    line = 'dropper-777 [001] .... 1234.5680: sys_enter_memfd_create: uname: "payload.elf", flags: 1'
+    ev = parse_trace_line(line, "run_ebpf_123")
+    assert ev is not None
+    assert ev["run_id"] == "run_ebpf_123"
+    assert ev["event_type"] == "file_write"
+    assert ev["pid"] == 777
+    assert ev["process_name"] == "dropper"
+    assert ev["file_path"] == "memfd:payload.elf"
+    assert ev["log_source"] == "ebpf"
+
+
+def test_parse_trace_line_ptrace():
+    line = "injector-888 [003] .... 1234.5681: sys_enter_ptrace: request: PTRACE_POKETEXT, pid: 123"
+    ev = parse_trace_line(line, "run_ebpf_123")
+    assert ev is not None
+    assert ev["run_id"] == "run_ebpf_123"
+    assert ev["event_type"] == "process_create"
+    assert ev["pid"] == 888
+    assert ev["process_name"] == "injector"
+    assert "PTRACE_POKETEXT" in ev["command_line"]
+    assert ev["log_source"] == "ebpf"
+
+
 def test_parse_trace_line_invalid():
     line = "random garbage line that is not a tracepoint"
     ev = parse_trace_line(line, "run_ebpf_123")

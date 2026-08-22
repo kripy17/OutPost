@@ -109,6 +109,36 @@ def parse_trace_line(line: str, run_id: str) -> dict | None:
                 "raw_record": line.strip(),
             }
 
+    elif event == "sys_enter_memfd_create":
+        uname_m = re.search(r'uname:\s*"?([^",\s]+)"?', args)
+        mem_name = uname_m.group(1) if uname_m else "anonymous"
+        return {
+            "run_id": run_id,
+            "platform": "linux",
+            "event_type": "file_write",
+            "timestamp": now_ts,
+            "pid": pid,
+            "process_name": comm,
+            "file_path": f"memfd:{mem_name}",
+            "log_source": "ebpf",
+            "raw_record": line.strip(),
+        }
+
+    elif event == "sys_enter_ptrace":
+        req_m = re.search(r"request:\s*(\w+)", args)
+        req = req_m.group(1) if req_m else "0"
+        return {
+            "run_id": run_id,
+            "platform": "linux",
+            "event_type": "process_create",
+            "timestamp": now_ts,
+            "pid": pid,
+            "process_name": comm,
+            "command_line": f"ptrace(request={req})",
+            "log_source": "ebpf",
+            "raw_record": line.strip(),
+        }
+
     return None
 
 

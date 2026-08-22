@@ -168,6 +168,28 @@ def build_campaigns(conn, include_synthetic: bool = False) -> list[dict]:
         ).fetchall()
         chain_links = killchain.correlate_chain([dict(a) for a in member_alerts])
 
+        # Multi-host attack propagation DAG
+        host_rows = conn.execute(
+            f"""
+            SELECT DISTINCT host_id, MIN(timestamp) as first_seen, COUNT(*) as event_count
+            FROM events
+            WHERE run_id IN ({placeholders}) AND host_id IS NOT NULL
+            GROUP BY host_id
+            ORDER BY first_seen ASC
+            """,
+            run_ids,
+        ).fetchall()
+        graph_nodes = [{"id": r["host_id"] or "local", "type": "host", "first_seen": r["first_seen"], "events": r["event_count"]} for r in host_rows]
+        graph_edges = []
+        for i in range(len(graph_nodes) - 1):
+            graph_edges.append({
+                "source": graph_nodes[i]["id"],
+                "target": graph_nodes[i+1]["id"],
+                "type": "lateral_traversal",
+                "label": "shared infrastructure",
+            })
+        propagation_graph = {"nodes": graph_nodes, "edges": graph_edges}
+
         campaigns.append(
             {
                 "key": ip,
@@ -185,6 +207,7 @@ def build_campaigns(conn, include_synthetic: bool = False) -> list[dict]:
                 "timeline_total": timeline_total,
                 "chain_links": chain_links,
                 "chain_label": killchain.chain_label(chain_links),
+                "propagation_graph": propagation_graph,
             }
         )
 
