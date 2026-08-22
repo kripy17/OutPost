@@ -105,7 +105,6 @@ def main():
     known_pids = {p["pid"] for p in get_process_snapshot()}
     known_conns: set[tuple[str, int, str, int]] = set()
     start_time = time.time()
-    last_heartbeat = 0.0
 
     try:
         while True:
