@@ -193,10 +193,10 @@ export default function SamplesPage() {
         kicker="Intelligence · samples"
         title={
           <>
-            Sample vault <span className="font-normal text-text-muted">— every uploaded binary, scanned</span>
+            Sample Vault <span className="font-normal text-text-muted">— malware binaries & static inspection</span>
           </>
         }
-        lede="The binaries submitted for detonation with their OS sniff, YARA signature hits, and VirusTotal reputation — searchable by name, hash, or family. Upload new ones from the Monitor page."
+        lede="Central vault for uploaded binaries (.exe, .elf, .dll, scripts). Inspect cryptographic hashes, Shannon entropy, section headers, extracted strings, and YARA signatures."
         actions={
           <div className="flex items-center gap-2">
             {exportError && <span className="font-mono text-[10px] text-risk-malicious">{exportError}</span>}

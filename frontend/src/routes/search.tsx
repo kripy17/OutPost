@@ -184,8 +184,7 @@ export default function SearchPage() {
         else void runIocSearch(saved);
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [params]);
 
   function persistScope(next: Scope) {
     setScope(next);

@@ -735,13 +735,13 @@ export default function EventsPage() {
   return (
     <div className="mx-auto max-w-[1400px] px-5 py-8 lg:px-8">
       <PageHeader
-        kicker="Workspace · event log"
+        kicker="Workspace · telemetry"
         title={
           <>
-            Event Log <span className="font-normal text-text-muted">— system activity viewer</span>
+            Event Manager <span className="font-normal text-text-muted">— security telemetry & activity explorer</span>
           </>
         }
-        lede="Every process, network, file, and registry event across all sessions — grouped by log channel, leveled by severity, live when you want it. Select any entry for the full record."
+        lede="Authoritative activity stream across hosts, sessions, and log channels (auditd, Sysmon, eBPF) — grouped by event type, leveled by severity, with realtime streaming. Select any entry for full telemetry details."
         actions={
           <div className="flex items-center gap-2">
             <button

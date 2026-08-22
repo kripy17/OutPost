@@ -116,7 +116,7 @@ export default function InvestigationsPage() {
   );
 
   return (
-    <div>
+    <div className="mx-auto max-w-[1200px] px-5 py-8 lg:px-8">
       <PageHeader
         kicker="Case management"
         title="Investigations"

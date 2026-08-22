@@ -461,10 +461,10 @@ export default function AgentsPage() {
         kicker="Operations · fleet"
         title={
           <>
-            Agents <span className="font-normal text-text-muted">— hosts streaming telemetry</span>
+            Fleet &amp; Hosts <span className="font-normal text-text-muted">— host status & activity profiles</span>
           </>
         }
-        lede="Every event names the host it came from. Detonations and sandbox runs attribute to this server; hosts running the collector stream under their own label. Watch heartbeats, volume, and findings per machine."
+        lede="Enrolled fleet agents, live heartbeat health, event ingestion volumes, and behavioral anomaly baselines. Select any host to inspect its aggregate timeline and security posture."
         actions={
           <button
             onClick={() => window.location.reload()}

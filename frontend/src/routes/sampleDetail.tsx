@@ -556,12 +556,22 @@ export default function SampleDetailPage() {
     }
   };
 
-  if (isLoading) return <p className="p-8 text-sm text-text-muted">Loading sample…</p>;
+  if (isLoading) return <p className="p-8 text-sm text-text-muted font-mono">Loading sample…</p>;
   if (isError || !sample) {
     return (
-      <p className="p-8 text-sm text-risk-malicious">
-        Couldn't load sample <span className="font-mono">{sampleId}</span>.
-      </p>
+      <div className="mx-auto max-w-4xl px-6 py-12">
+        <Panel kicker="Sample Vault · 404" title="Sample not found">
+          <p className="text-sm text-text-muted">
+            Couldn't find sample <span className="font-mono text-text-primary">{sampleId}</span> in the vault.
+          </p>
+          <div className="mt-4">
+            <Link to="/samples" className="press inline-flex items-center gap-1.5 font-mono text-xs text-accent underline">
+              <Icon name="chevronLeft" size={12} />
+              Return to Sample Vault
+            </Link>
+          </div>
+        </Panel>
+      </div>
     );
   }
 

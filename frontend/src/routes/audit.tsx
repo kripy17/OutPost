@@ -118,7 +118,7 @@ export default function AuditPage() {
       <p className="mt-4 text-center text-[11px] text-text-faint">
         Want the raw feed?{" "}
         <Link to="/events" className="text-accent hover:underline">
-          Event Log
+          Event Manager
         </Link>{" "}
         is the machine-level stream — this is the human-level one.
       </p>
