@@ -433,11 +433,9 @@ async def get_run_rules(run_id: str, format: str = "suricata"):
     if format not in ("suricata", "sigma", "yara", "all"):
         raise HTTPException(status_code=422, detail="format must be suricata, sigma, yara, or all")
 
-    from ..core.db import get_connection
     from ..services import rule_generator
 
-    conn = get_connection()
-    try:
+    with db_session() as conn:
         run = run_store.get_run(conn, run_id)
         if not run:
             raise HTTPException(status_code=404, detail=f"Unknown run_id: {run_id}")
@@ -451,9 +449,6 @@ async def get_run_rules(run_id: str, format: str = "suricata"):
         ).fetchall()
         alerts = event_store.list_alerts_for_run(conn, run_id)
         enriched = await enrichment.enrich_run(conn, run_id)
-        conn.commit()
-    finally:
-        conn.close()
 
     connections = [
         {

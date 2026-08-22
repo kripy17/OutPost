@@ -26,10 +26,11 @@ def generate_suricata_rules(run_id: str, connections: list[dict[str, Any]]) -> l
     seen: set[str] = set()
 
     for conn in connections:
-        if conn.get("reputation") != "malicious":
+        rep = conn.get("reputation")
+        if rep not in ("malicious", "suspicious") and not conn.get("watchlist") and not conn.get("abuse_score"):
             continue
         ip = str(conn.get("dest_ip", "")).strip()
-        if not ip or ip in seen:
+        if not ip or ip in seen or ip.startswith(("127.", "0.", "::1", "10.", "192.168.")):
             continue
         seen.add(ip)
 
