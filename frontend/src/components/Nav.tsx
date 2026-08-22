@@ -88,34 +88,49 @@ interface NavItem {
 
 const GROUPS: { label: string; links: NavItem[] }[] = [
   {
-    label: "Monitoring",
+    label: "Monitor",
     links: [
       { to: "/", label: "Overview", iconName: "grid", end: true },
       { to: "/events", label: "Event Manager", iconName: "list" },
       { to: "/findings", label: "Findings & Triage", iconName: "alert" },
+      { to: "/agents", label: "Fleet / Hosts", iconName: "terminal" },
+    ],
+  },
+  {
+    label: "Investigate",
+    links: [
+      { to: "/investigations", label: "Investigations", iconName: "notes" },
+      { to: "/campaigns", label: "Campaigns", iconName: "flag" },
+      { to: "/search", label: "IOC Intelligence", iconName: "search" },
+    ],
+  },
+  {
+    label: "Malware Analysis",
+    links: [
+      { to: "/samples", label: "Sample Vault", iconName: "box" },
+      { to: "/footprint", label: "Threat Footprint", iconName: "globe" },
+      { to: "/history", label: "Session History", iconName: "clock" },
+    ],
+  },
+  {
+    label: "Lab",
+    links: [
       { to: "/monitor", label: "Simulation Lab", iconName: "activity" },
     ],
   },
   {
-    label: "Investigation & Intel",
-    links: [
-      { to: "/investigations", label: "Investigations", iconName: "notes" },
-      { to: "/history", label: "Session History", iconName: "clock" },
-      { to: "/samples", label: "Sample Vault", iconName: "box" },
-      { to: "/search", label: "IOC Intelligence", iconName: "search" },
-      { to: "/campaigns", label: "Campaigns", iconName: "flag" },
-      { to: "/footprint", label: "Threat Footprint", iconName: "globe" },
-    ],
-  },
-  {
-    label: "Detection & Fleet",
+    label: "Detection",
     links: [
       { to: "/rules", label: "Detection & YARA", iconName: "shield" },
       { to: "/coverage", label: "ATT&CK Matrix", iconName: "target" },
-      { to: "/agents", label: "Fleet Agents", iconName: "terminal" },
       { to: "/watchlist", label: "Watchlist", iconName: "star" },
-      { to: "/audit", label: "Audit Log", iconName: "file" },
+    ],
+  },
+  {
+    label: "Administration",
+    links: [
       { to: "/settings", label: "Settings", iconName: "bell" },
+      { to: "/audit", label: "Audit Log", iconName: "file" },
     ],
   },
 ];
