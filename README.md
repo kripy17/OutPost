@@ -347,7 +347,7 @@ One command runs the whole verification sweep:
 | Suite | Count | Covers |
 |---|---|---|
 | Backend pytest | **708** | ingestion, dynamic sandbox tracing, local host monitoring, OS-aware rules (win/linux/macOS), risk + ATT&CK, campaigns, events search + channel-counts + log_source backfill, samples vault, SSE broadcast, notes, storm caps, triage, footprint, YARA, auth, fleet health, Postgres migration core + live Postgres runtime dialect |
-| Collector pytest | **35** | Sysmon, auditd, and eBPF tracepoint shipping, local collector, normalization, agent-token auth, attribution fallback |
+| Collector pytest | **38** | Sysmon, auditd, eBPF tracepoints, and macOS EndpointSecurity shipping, local collector, normalization, agent-token auth, attribution fallback |
 | CLI pytest | **132** | rendering regressions, campaigns, risk columns, YARA, footprint, rules knobs, agent install, triage lifecycle, allowlist, suppressions, investigations, analysis, playbooks, interactive TUI console |
 | Frontend | **359** | vitest unit tests + clean `tsc --noEmit` + Vite build |
 
