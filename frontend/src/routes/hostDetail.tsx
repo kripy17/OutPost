@@ -18,6 +18,8 @@ import { useEventStream } from "../lib/useEventStream";
 import { toneFill, toneForReputation, toneForSeverity } from "../lib/fillPatterns";
 import type { EventType, HostTimelineEntry, TimelineKind } from "../types";
 import { relativeTime } from "./agentsHelpers";
+import ProcessContextModal from "../components/ProcessContextModal";
+import NetworkContextModal from "../components/NetworkContextModal";
 
 const KIND_TABS: { value: TimelineKind | ""; label: string; icon: IconName }[] = [
   { value: "", label: "All", icon: "grid" },
@@ -62,45 +64,85 @@ function entryLink(e: HostTimelineEntry): string {
   }
 }
 
-function EntryRow({ e }: { e: HostTimelineEntry }) {
+function EntryRow({
+  e,
+  onInspectIp,
+  onInspectPid,
+}: {
+  e: HostTimelineEntry;
+  onInspectIp?: (ip: string) => void;
+  onInspectPid?: (pid: number) => void;
+}) {
   const meta = KIND_META[e.kind];
   const payload = e.payload as Record<string, string | number | null | undefined>;
   const ts = String(e.timestamp ?? "").slice(0, 19).replace("T", " ");
+
+  const pid = payload.pid ? Number(payload.pid) : undefined;
+  const rawIp = String(payload.dest_ip ?? (e.kind === "ioc" && payload.type === "ip" ? payload.value : ""));
+  const destIp = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(rawIp) ? rawIp : undefined;
+
   return (
-    <Link
-      to={entryLink(e)}
-      className="group flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-bg-elevated/40"
-      title={e.subtitle ?? undefined}
-    >
-      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-border-subtle text-signal">
-        <Icon name={meta.icon} size={13} />
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="flex flex-wrap items-center gap-2">
-          <span className="font-mono text-xs text-text-primary group-hover:text-accent">{e.title}</span>
-          <span className={`rounded border px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wide ${meta.chip}`}>
-            {meta.label}
-          </span>
-          {e.kind === "finding" && payload.severity && (
-            <span
-              className="h-1.5 w-1.5 rounded-full"
-              style={toneFill(toneForSeverity(payload.severity as "suspicious" | "malicious"))}
-              aria-hidden
-            />
-          )}
-          {e.kind === "ioc" && payload.reputation && (
-            <span
-              className="h-1.5 w-1.5 rounded-full"
-              style={toneFill(toneForReputation(payload.reputation as "clean" | "suspicious" | "malicious" | "unknown"))}
-              aria-hidden
-            />
-          )}
+    <div className="group flex items-center justify-between gap-3 px-4 py-2.5 transition-colors hover:bg-bg-elevated/40 border-b border-border-subtle/30 last:border-0">
+      <Link
+        to={entryLink(e)}
+        className="flex min-w-0 flex-1 items-center gap-3"
+        title={e.subtitle ?? undefined}
+      >
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-border-subtle text-signal">
+          <Icon name={meta.icon} size={13} />
         </span>
-        <span className="mt-0.5 block truncate font-mono text-[10px] text-text-faint">{e.subtitle ?? e.id}</span>
-      </span>
-      <span className="shrink-0 font-mono text-[10px] tabular-nums text-text-faint">{ts}</span>
-      <Icon name="chevronRight" size={13} className="shrink-0 text-text-faint transition-colors group-hover:text-accent" />
-    </Link>
+        <span className="min-w-0 flex-1">
+          <span className="flex flex-wrap items-center gap-2">
+            <span className="font-mono text-xs text-text-primary group-hover:text-accent">{e.title}</span>
+            <span className={`rounded border px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wide ${meta.chip}`}>
+              {meta.label}
+            </span>
+            {e.kind === "finding" && payload.severity && (
+              <span
+                className="h-1.5 w-1.5 rounded-full"
+                style={toneFill(toneForSeverity(payload.severity as "suspicious" | "malicious"))}
+                aria-hidden
+              />
+            )}
+            {e.kind === "ioc" && payload.reputation && (
+              <span
+                className="h-1.5 w-1.5 rounded-full"
+                style={toneFill(toneForReputation(payload.reputation as "clean" | "suspicious" | "malicious" | "unknown"))}
+                aria-hidden
+              />
+            )}
+          </span>
+          <span className="mt-0.5 block truncate font-mono text-[10px] text-text-faint">{e.subtitle ?? e.id}</span>
+        </span>
+      </Link>
+
+      <div className="flex shrink-0 items-center gap-2">
+        {pid !== undefined && onInspectPid && (
+          <button
+            onClick={() => onInspectPid(pid)}
+            className="press inline-flex items-center gap-1 rounded border border-border-subtle bg-bg-elevated/60 px-2 py-0.5 font-mono text-[10px] text-text-muted hover:border-accent/40 hover:text-accent"
+            title={`Investigate process context for PID ${pid}`}
+          >
+            <Icon name="terminal" size={10} />
+            PID {pid}
+          </button>
+        )}
+        {destIp && onInspectIp && (
+          <button
+            onClick={() => onInspectIp(destIp)}
+            className="press inline-flex items-center gap-1 rounded border border-accent/40 bg-accent/10 px-2 py-0.5 font-mono text-[10px] text-accent hover:bg-accent/20"
+            title={`Investigate network context for ${destIp}`}
+          >
+            <Icon name="activity" size={10} />
+            Context
+          </button>
+        )}
+        <span className="font-mono text-[10px] tabular-nums text-text-faint">{ts}</span>
+        <Link to={entryLink(e)}>
+          <Icon name="chevronRight" size={13} className="text-text-faint transition-colors hover:text-accent" />
+        </Link>
+      </div>
+    </div>
   );
 }
 
@@ -113,6 +155,8 @@ export default function HostDetailPage() {
   const [debouncedQ, setDebouncedQ] = useState("");
   const [offset, setOffset] = useState(0);
   const [entries, setEntries] = useState<HostTimelineEntry[]>([]);
+  const [inspectPid, setInspectPid] = useState<number | null>(null);
+  const [inspectIp, setInspectIp] = useState<string | null>(null);
   const LIMIT = 50;
 
   // Live-ish: a fleet heartbeat push for this host (or any run update)
@@ -301,7 +345,12 @@ export default function HostDetailPage() {
         >
           <div className="divide-y divide-border-subtle/60">
             {entries.map((e) => (
-              <EntryRow key={`${e.kind}-${e.id}`} e={e} />
+              <EntryRow
+                key={`${e.kind}-${e.id}`}
+                e={e}
+                onInspectIp={setInspectIp}
+                onInspectPid={setInspectPid}
+              />
             ))}
           </div>
           {moreAvailable && (
@@ -312,6 +361,13 @@ export default function HostDetailPage() {
             </div>
           )}
         </Panel>
+      )}
+
+      {inspectPid !== null && (
+        <ProcessContextModal pid={inspectPid} onClose={() => setInspectPid(null)} />
+      )}
+      {inspectIp !== null && (
+        <NetworkContextModal ip={inspectIp} onClose={() => setInspectIp(null)} />
       )}
     </div>
   );

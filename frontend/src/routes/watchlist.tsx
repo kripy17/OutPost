@@ -1,9 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { PageHeader } from "../components/ui";
 import { watchlistAdd, watchlistExport, watchlistImport, watchlistList, watchlistRemove } from "../lib/api";
 import { parseImport, typeOf } from "./watchlistHelpers";
+import NetworkContextModal from "../components/NetworkContextModal";
 
 function download(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob);
@@ -20,6 +22,7 @@ export default function WatchlistPage() {
   const [label, setLabel] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [importMsg, setImportMsg] = useState<string | null>(null);
+  const [inspectIp, setInspectIp] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const add = async (e: React.FormEvent) => {
@@ -156,21 +159,45 @@ export default function WatchlistPage() {
                 </span>
                 <code className="min-w-0 truncate font-mono text-xs text-text-primary">{e.value}</code>
                 {e.label && <span className="truncate text-xs text-text-muted">— {e.label}</span>}
-                <span className="ml-auto shrink-0 font-mono text-[10px] text-text-faint">
-                  {e.added_at.slice(0, 19).replace("T", " ")}
-                </span>
-                <button
-                  onClick={() => void remove(e.value)}
-                  className="press flex h-7 w-7 items-center justify-center rounded-lg text-text-faint transition-colors duration-150 hover:bg-risk-malicious/10 hover:text-risk-malicious"
-                  aria-label={`Remove ${e.value}`}
-                >
-                  <Icon name="x" size={13} />
-                </button>
+                <div className="ml-auto flex shrink-0 items-center gap-2">
+                  {t.label === "ip" && (
+                    <button
+                      onClick={() => setInspectIp(e.value)}
+                      className="press inline-flex items-center gap-1 rounded border border-accent/40 bg-accent/10 px-2 py-0.5 font-mono text-[10px] text-accent hover:bg-accent/20"
+                      title={`Investigate network context for ${e.value}`}
+                    >
+                      <Icon name="activity" size={10} />
+                      Context
+                    </button>
+                  )}
+                  <Link
+                    to={`/search?q=${encodeURIComponent(e.value)}`}
+                    className="press inline-flex items-center gap-1 rounded border border-border-subtle bg-bg-elevated/60 px-2 py-0.5 font-mono text-[10px] text-text-muted hover:border-accent/40 hover:text-accent"
+                    title={`Search ${e.value} in Global IOC Intelligence`}
+                  >
+                    <Icon name="search" size={10} />
+                    Search
+                  </Link>
+                  <span className="font-mono text-[10px] text-text-faint">
+                    {e.added_at.slice(0, 19).replace("T", " ")}
+                  </span>
+                  <button
+                    onClick={() => void remove(e.value)}
+                    className="press flex h-7 w-7 items-center justify-center rounded-lg text-text-faint transition-colors duration-150 hover:bg-risk-malicious/10 hover:text-risk-malicious"
+                    aria-label={`Remove ${e.value}`}
+                  >
+                    <Icon name="x" size={13} />
+                  </button>
+                </div>
               </div>
             );
           })
         )}
       </div>
+
+      {inspectIp !== null && (
+        <NetworkContextModal ip={inspectIp} onClose={() => setInspectIp(null)} />
+      )}
     </div>
   );
 }

@@ -20,6 +20,8 @@ import { toneFill, toneForReputation } from "../lib/fillPatterns";
 import { globalSearch, searchIocs } from "../lib/api";
 import type { IocSearchResponse, Reputation, SearchGroup, SearchHit, SearchResponse } from "../types";
 import { platformTone, readSavedQuery, writeSavedQuery } from "./searchHelpers";
+import NetworkContextModal from "../components/NetworkContextModal";
+import ProcessContextModal from "../components/ProcessContextModal";
 
 type Scope = "ioc" | "global";
 
@@ -71,37 +73,84 @@ function KindChip({ hit }: { hit: SearchHit }) {
   return <span className={`rounded border px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wide ${tone}`}>{kind}</span>;
 }
 
-function GlobalResultRow({ hit }: { hit: SearchHit }) {
+function GlobalResultRow({
+  hit,
+  onInspectIp,
+  onInspectPid,
+}: {
+  hit: SearchHit;
+  onInspectIp?: (ip: string) => void;
+  onInspectPid?: (pid: number) => void;
+}) {
   const meta = GROUP_META.get(hit.group);
   const to = meta?.link(hit) ?? "#";
   const payload = hit.payload as Record<string, string | number | undefined>;
+  const rawIp = String(payload.dest_ip ?? (hit.group === "iocs" && hit.kind === "ip" ? payload.value : ""));
+  const destIp = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(rawIp) ? rawIp : undefined;
+  const pid = payload.pid ? Number(payload.pid) : undefined;
+
   return (
-    <Link
-      to={to}
-      className="group flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-bg-elevated/40"
-      title={hit.subtitle ?? undefined}
-    >
-      <span className="min-w-0 flex-1">
-        <span className="flex flex-wrap items-center gap-2">
-          <span className="font-mono text-xs text-text-primary group-hover:text-accent">{hit.title}</span>
-          <KindChip hit={hit} />
-          {hit.group === "findings" && payload.severity && (
-            <span
-              className={`h-1.5 w-1.5 rounded-full ${payload.severity === "malicious" ? "bg-risk-malicious" : "bg-risk-suspicious"}`}
-              aria-hidden
-            />
-          )}
+    <div className="group flex items-center justify-between gap-3 px-4 py-2.5 transition-colors hover:bg-bg-elevated/40 border-b border-border-subtle/30 last:border-0">
+      <Link
+        to={to}
+        className="flex min-w-0 flex-1 items-center gap-3"
+        title={hit.subtitle ?? undefined}
+      >
+        <span className="min-w-0 flex-1">
+          <span className="flex flex-wrap items-center gap-2">
+            <span className="font-mono text-xs text-text-primary group-hover:text-accent">{hit.title}</span>
+            <KindChip hit={hit} />
+            {hit.group === "findings" && payload.severity && (
+              <span
+                className={`h-1.5 w-1.5 rounded-full ${payload.severity === "malicious" ? "bg-risk-malicious" : "bg-risk-suspicious"}`}
+                aria-hidden
+              />
+            )}
+          </span>
+          <span className="mt-0.5 block truncate font-mono text-[10px] text-text-faint">
+            {hit.subtitle ?? hit.id}
+          </span>
         </span>
-        <span className="mt-0.5 block truncate font-mono text-[10px] text-text-faint">
-          {hit.subtitle ?? hit.id}
-        </span>
-      </span>
-      <Icon name="chevronRight" size={13} className="shrink-0 text-text-faint transition-colors group-hover:text-accent" />
-    </Link>
+      </Link>
+
+      <div className="flex shrink-0 items-center gap-2">
+        {pid !== undefined && onInspectPid && (
+          <button
+            onClick={() => onInspectPid(pid)}
+            className="press inline-flex items-center gap-1 rounded border border-border-subtle bg-bg-elevated/60 px-2 py-0.5 font-mono text-[10px] text-text-muted hover:border-accent/40 hover:text-accent"
+            title={`Investigate process context for PID ${pid}`}
+          >
+            <Icon name="terminal" size={10} />
+            PID {pid}
+          </button>
+        )}
+        {destIp && onInspectIp && (
+          <button
+            onClick={() => onInspectIp(destIp)}
+            className="press inline-flex items-center gap-1 rounded border border-accent/40 bg-accent/10 px-2 py-0.5 font-mono text-[10px] text-accent hover:bg-accent/20"
+            title={`Investigate network context for ${destIp}`}
+          >
+            <Icon name="activity" size={10} />
+            Context
+          </button>
+        )}
+        <Link to={to}>
+          <Icon name="chevronRight" size={13} className="shrink-0 text-text-faint transition-colors group-hover:text-accent" />
+        </Link>
+      </div>
+    </div>
   );
 }
 
-function GlobalResults({ data }: { data: SearchResponse }) {
+function GlobalResults({
+  data,
+  onInspectIp,
+  onInspectPid,
+}: {
+  data: SearchResponse;
+  onInspectIp?: (ip: string) => void;
+  onInspectPid?: (pid: number) => void;
+}) {
   const groupsWithHits = GROUPS.filter((g) => (data.groups[g.key]?.total ?? 0) > 0);
   const totalMatches = GROUPS.reduce((n, g) => n + (data.groups[g.key]?.total ?? 0), 0);
   const quals = Object.entries(data.qualifiers ?? {});
@@ -148,7 +197,12 @@ function GlobalResults({ data }: { data: SearchResponse }) {
             </header>
             <div className="divide-y divide-border-subtle/60">
               {(res?.hits ?? []).map((h) => (
-                <GlobalResultRow key={`${h.group}-${h.id}`} hit={h} />
+                <GlobalResultRow
+                  key={`${h.group}-${h.id}`}
+                  hit={h}
+                  onInspectIp={onInspectIp}
+                  onInspectPid={onInspectPid}
+                />
               ))}
             </div>
           </section>
@@ -168,6 +222,8 @@ export default function SearchPage() {
   const [globalResult, setGlobalResult] = useState<SearchResponse | null>(null);
   const [globalLoading, setGlobalLoading] = useState(false);
   const [globalError, setGlobalError] = useState<string | null>(null);
+  const [inspectIp, setInspectIp] = useState<string | null>(null);
+  const [inspectPid, setInspectPid] = useState<number | null>(null);
 
   // Deep-link support: ?q= (IOC scope) or ?q=+?mode=global (global scope)
   // run once on mount; a bare visit re-runs the last saved query in the
@@ -302,11 +358,22 @@ export default function SearchPage() {
 
           {result && (
             <div className="mt-8 space-y-6">
-              <p className="flex items-center gap-2 text-xs text-text-muted">
-                <Icon name="zap" size={12} className="text-signal" />
-                {result.count} match{result.count === 1 ? "" : "es"} for <span className="font-mono text-text-primary">{result.value}</span>
-                {result.returned < result.count && ` — showing first ${result.returned}`}
-              </p>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="flex items-center gap-2 text-xs text-text-muted">
+                  <Icon name="zap" size={12} className="text-signal" />
+                  {result.count} match{result.count === 1 ? "" : "es"} for <span className="font-mono text-text-primary">{result.value}</span>
+                  {result.returned < result.count && ` — showing first ${result.returned}`}
+                </p>
+                {/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(result.value) && (
+                  <button
+                    onClick={() => setInspectIp(result.value)}
+                    className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/40 bg-accent/10 px-3 py-1.5 font-mono text-xs text-accent hover:bg-accent/20"
+                  >
+                    <Icon name="activity" size={12} />
+                    Investigate Network Context
+                  </button>
+                )}
+              </div>
 
               {/* Reputation ride-along: the cached enrichment verdict for an IP
                   search surfaces with the matches — same evidence the run-detail
@@ -442,8 +509,21 @@ export default function SearchPage() {
             </div>
           )}
 
-          {globalResult && !globalLoading && <GlobalResults data={globalResult} />}
+          {globalResult && !globalLoading && (
+            <GlobalResults
+              data={globalResult}
+              onInspectIp={setInspectIp}
+              onInspectPid={setInspectPid}
+            />
+          )}
         </>
+      )}
+
+      {inspectIp !== null && (
+        <NetworkContextModal ip={inspectIp} onClose={() => setInspectIp(null)} />
+      )}
+      {inspectPid !== null && (
+        <ProcessContextModal pid={inspectPid} onClose={() => setInspectPid(null)} />
       )}
     </div>
   );
