@@ -71,7 +71,7 @@ Unlike opaque ML-based platforms, OutPost utilizes **deterministic, explainable 
 
 | Capability | Description |
 |---|---|
-| 🖥️ **OS-Aware Detection Engine** | **37 heuristics** across Linux, Windows, and macOS covering all **14 MITRE ATT&CK tactics** (LOLBin execution, reverse shells, C2 beaconing, fan-out file encryption, account enumeration, persistence). |
+| 🖥️ **OS-Aware Detection Engine** | **37 rules** across Linux, Windows, and macOS covering all 14 MITRE tactics (LOLBin execution, reverse shells, C2 beaconing, fan-out file encryption, account enumeration, persistence). |
 | 🆔 **Kernel-Resolved Process Identity** | Evaluates true kernel binary paths (auditd `exe=` / Sysmon `Image`) rather than spoofable process command names. |
 | 🔬 **Deep Context Modal Workspaces** | 1-click **Process Context Modal** and **Network Context Modal** to inspect parent/child lineage, active sockets, touched files, communicating hosts, and correlated alerts. |
 | 🏷️ **Universal Data Provenance** | Clear, honest visual badges across every surface distinguishing `LIVE` host telemetry from `SIMULATION` lab playbooks and `SANDBOX` detonations. |
@@ -79,7 +79,7 @@ Unlike opaque ML-based platforms, OutPost utilizes **deterministic, explainable 
 | 🗂️ **Campaign Clustering** | Graph clustering groups sessions and events sharing high-confidence C2s or file hashes into aggregated campaign threat cards. |
 | 📡 **Realtime SSE Broadcast** | Server-Sent Events stream live alerts, status transitions, and triage updates without polling. |
 | 🔒 **Air-Gapped by Design** | Zero external CDNs, fonts, or analytics. Self-contained fonts and verified offline runtime guarantees. |
-| ⌨️ **First-Class CLI Parity** | 31 terminal commands, full Rich color formatting, interactive TUI console, and headless scripting support. |
+| ⌨️ **First-Class CLI Parity** | **31 commands**, full Rich color formatting, interactive TUI console, and headless scripting support. |
 
 ---
 
