@@ -918,7 +918,26 @@ export default function OverviewPage() {
         </Link>
       </div>
 
-      {!isLoading && !isError && (
+      {!isLoading && !isError && runs.length === 0 && (
+        <Panel kicker="Telemetry status" title="No telemetry received">
+          <div className="py-8 text-center font-mono text-sm text-text-muted">
+            <p className="font-semibold text-text-primary">0 monitored sessions active</p>
+            <p className="mt-1 text-xs text-text-faint">
+              Connect a Linux or Windows agent collector, or launch the Simulation Lab to generate security events.
+            </p>
+            <div className="mt-4 flex justify-center gap-3">
+              <Link to="/events" className="btn btn-primary text-xs">
+                Open Event Manager
+              </Link>
+              <Link to="/monitor" className="btn text-xs">
+                Open Simulation Lab
+              </Link>
+            </div>
+          </div>
+        </Panel>
+      )}
+
+      {!isLoading && !isError && runs.length > 0 && (
         <>
           <PostureHeader runs={runs} trendBars={trendBars} campaigns={campaigns.length} totalAlerts={totalAlerts} />
           {/* One-line trend affordance — the analytical bars live in History now. */}
