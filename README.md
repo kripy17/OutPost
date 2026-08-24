@@ -216,7 +216,7 @@ OutPost maintains a comprehensive automated quality gate verifying every compone
 | Collector pytest | **38** | Linux `auditd`/`eBPF`, Windows `Sysmon`, macOS `EndpointSecurity` shippers |
 | CLI pytest | **132** | All 31 CLI commands, Rich table rendering, argument validation, interactive TUI mode |
 | Frontend | **365** | Vitest unit tests + clean `tsc --noEmit` + Vite production build |
-| ATT&CK Coverage | **14/14** | Complete coverage across all 14 MITRE tactics with 0 gaps |
+| ATT&CK Coverage | **14/14** | Complete matrix coverage across ATT&CK tactics with 0 gaps |
 | Playwright E2E | **54 checks** | Cross-browser layout verification across 18 routes and 3 responsive viewports |
 | **Total Test Count** | **1,246** | **100% Green / 0 Failures** |
 
