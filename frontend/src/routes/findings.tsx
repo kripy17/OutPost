@@ -9,6 +9,8 @@ import { useEventStream } from "../lib/useEventStream";
 import { SEVERITY_COLORS, SEVERITY_LABEL } from "../lib/constants";
 import { toneFill, toneForSeverity } from "../lib/fillPatterns";
 import type { AlertStatus, QueueAlert, Severity } from "../types";
+import ProcessContextModal from "../components/ProcessContextModal";
+import NetworkContextModal from "../components/NetworkContextModal";
 import {
   ageLabel,
   PAGE,
@@ -27,6 +29,8 @@ function FindingRow({
   ruleNames,
   onSuppress,
   suppressing,
+  onInspectIp,
+  onInspectPid,
 }: {
   a: QueueAlert;
   selected: boolean;
@@ -34,6 +38,8 @@ function FindingRow({
   ruleNames: Map<string, string>;
   onSuppress: (a: QueueAlert) => void;
   suppressing: boolean;
+  onInspectIp?: (ip: string) => void;
+  onInspectPid?: (pid: number) => void;
 }) {
   const sev = a.severity as Severity;
   return (
@@ -87,14 +93,38 @@ function FindingRow({
             </Link>
           ))}
           {a.related_ip && (
-            <Link to={`/search?q=${encodeURIComponent(a.related_ip)}`} className="press font-mono text-accent hover:underline">
-              {a.related_ip}
-            </Link>
+            <span className="inline-flex items-center gap-1">
+              <Link to={`/search?q=${encodeURIComponent(a.related_ip)}`} className="press font-mono text-accent hover:underline">
+                {a.related_ip}
+              </Link>
+              {onInspectIp && (
+                <button
+                  onClick={() => onInspectIp(a.related_ip as string)}
+                  className="press inline-flex items-center gap-0.5 rounded border border-accent/40 bg-accent/10 px-1 py-px font-mono text-[9px] text-accent hover:bg-accent/20"
+                  title={`Inspect network context for ${a.related_ip}`}
+                >
+                  <Icon name="activity" size={9} />
+                  Context
+                </button>
+              )}
+            </span>
           )}
           {a.related_pids.filter(Boolean).length > 0 && (
-            <Link to={`/events?pid=${a.related_pids.join(",")}`} className="press font-mono hover:text-accent">
-              pid {a.related_pids.join(",")}
-            </Link>
+            <span className="inline-flex items-center gap-1">
+              <Link to={`/events?pid=${a.related_pids.join(",")}`} className="press font-mono hover:text-accent">
+                pid {a.related_pids.join(",")}
+              </Link>
+              {onInspectPid && a.related_pids[0] && (
+                <button
+                  onClick={() => onInspectPid(a.related_pids[0])}
+                  className="press inline-flex items-center gap-0.5 rounded border border-border-subtle bg-bg-elevated/60 px-1 py-px font-mono text-[9px] text-text-muted hover:border-accent/40 hover:text-accent"
+                  title={`Inspect process context for PID ${a.related_pids[0]}`}
+                >
+                  <Icon name="terminal" size={9} />
+                  PID
+                </button>
+              )}
+            </span>
           )}
           {a.investigation_id && (
             <Link
@@ -148,6 +178,8 @@ export default function FindingsPage() {
   const [offset, setOffset] = useState(0);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [busy, setBusy] = useState(false);
+  const [inspectIp, setInspectIp] = useState<string | null>(null);
+  const [inspectPid, setInspectPid] = useState<number | null>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   const setParam = (k: string, v: string) => {
@@ -558,6 +590,8 @@ export default function FindingsPage() {
                     void suppress([target]);
                   }}
                   suppressing={suppressingId === a.id}
+                  onInspectIp={setInspectIp}
+                  onInspectPid={setInspectPid}
                 />
               ))}
             </ul>
@@ -585,6 +619,13 @@ export default function FindingsPage() {
           </div>
         )}
       </Panel>
+
+      {inspectIp !== null && (
+        <NetworkContextModal ip={inspectIp} onClose={() => setInspectIp(null)} />
+      )}
+      {inspectPid !== null && (
+        <ProcessContextModal pid={inspectPid} onClose={() => setInspectPid(null)} />
+      )}
     </div>
   );
 }
