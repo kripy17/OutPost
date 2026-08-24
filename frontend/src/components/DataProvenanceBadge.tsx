@@ -74,3 +74,5 @@ export function DataProvenanceBadge({
     </span>
   );
 }
+
+export default DataProvenanceBadge;

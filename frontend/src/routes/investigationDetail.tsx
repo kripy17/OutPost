@@ -16,6 +16,9 @@ import {
 import { useEventStream } from "../lib/useEventStream";
 import { toneFill, toneForSeverity } from "../lib/fillPatterns";
 import type { AlertStatus, InvestigationRefType, InvestigationStatus } from "../types";
+import DataProvenanceBadge from "../components/DataProvenanceBadge";
+import NetworkContextModal from "../components/NetworkContextModal";
+import ProcessContextModal from "../components/ProcessContextModal";
 
 const REF_TYPES: InvestigationRefType[] = ["run", "host", "ioc", "artifact", "campaign"];
 const STATUSES: InvestigationStatus[] = ["created", "triage", "active", "contained", "resolved"];
@@ -38,6 +41,8 @@ export default function InvestigationDetailPage() {
   const [refId, setRefId] = useState("");
   const [conclusion, setConclusion] = useState("");
   const [showClose, setShowClose] = useState(false);
+  const [inspectIp, setInspectIp] = useState<string | null>(null);
+  const [inspectPid, setInspectPid] = useState<number | null>(null);
 
   const { data: inv, isLoading, isError } = useQuery({
     queryKey: ["investigation", investigationId],
@@ -253,6 +258,7 @@ export default function InvestigationDetailPage() {
                           {f.rule_name}
                         </Link>
                         <span className="rounded border border-border-subtle px-1 py-px font-mono text-[9px] uppercase text-text-faint">{f.rule_id}</span>
+                        <DataProvenanceBadge source="live" size="sm" />
                         <span className="ml-auto font-mono text-[10px] text-text-faint">{f.status}</span>
                       </div>
                       <p className="mt-0.5 truncate font-mono text-[11px] text-text-muted" title={f.details}>{f.details}</p>
@@ -303,6 +309,7 @@ export default function InvestigationDetailPage() {
                     r.ref_type === "host" ? `/hosts/${encodeURIComponent(r.ref_id)}` :
                     r.ref_type === "ioc" ? `/search?q=${encodeURIComponent(r.ref_id)}` :
                     null;
+                  const isIp = r.ref_type === "ioc" && /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(r.ref_id);
                   return (
                   <li key={`${r.ref_type}:${r.ref_id}`} className="flex items-center gap-2 rounded-lg border border-border-subtle bg-bg-surface px-3 py-1.5">
                     <span className="rounded border border-border-subtle px-1 py-px font-mono text-[9px] uppercase text-text-faint">{r.ref_type}</span>
@@ -310,6 +317,16 @@ export default function InvestigationDetailPage() {
                       <Link to={refLink} className="min-w-0 flex-1 truncate font-mono text-[11px] text-text-primary hover:text-accent">{r.ref_id}</Link>
                     ) : (
                       <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-text-primary">{r.ref_id}</span>
+                    )}
+                    {isIp && (
+                      <button
+                        onClick={() => setInspectIp(r.ref_id)}
+                        className="press inline-flex items-center gap-1 rounded border border-accent/40 bg-accent/10 px-1.5 py-0.5 font-mono text-[10px] text-accent hover:bg-accent/20"
+                        title={`Investigate network context for ${r.ref_id}`}
+                      >
+                        <Icon name="activity" size={10} />
+                        Context
+                      </button>
                     )}
                     <span className="font-mono text-[9px] text-text-faint">{r.added_at}</span>
                     <button
@@ -362,6 +379,13 @@ export default function InvestigationDetailPage() {
           </Panel>
         </div>
       </div>
+
+      {inspectIp !== null && (
+        <NetworkContextModal ip={inspectIp} onClose={() => setInspectIp(null)} />
+      )}
+      {inspectPid !== null && (
+        <ProcessContextModal pid={inspectPid} onClose={() => setInspectPid(null)} />
+      )}
     </div>
   );
 }

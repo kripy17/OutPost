@@ -10,6 +10,7 @@ import { PageHeader } from "../components/ui";
 import { CAMPAIGN_SORTS, clusterBars, reputationFill, sortCampaigns, topMembers, topologyClusters, type CampaignSort, type ClusterBar } from "./campaignsHelpers";
 import { getCampaigns, getCampaignStix, getFootprintTopology } from "../lib/api";
 import type { Campaign, CampaignIoc, PropagationGraph, Reputation, Severity } from "../types";
+import NetworkContextModal from "../components/NetworkContextModal";
 
 const MAX_TIMELINE = 40;
 const MAX_CHIPS = 10;
@@ -80,31 +81,57 @@ function ReputationBadge({ campaign }: { campaign: Campaign }) {
   );
 }
 
-function IocChip({ ioc, tone }: { ioc: CampaignIoc; tone: "accent" | "suspicious" | "clean" | "muted" }) {
+function IocChip({
+  ioc,
+  tone,
+  onInspectIp,
+}: {
+  ioc: CampaignIoc;
+  tone: "accent" | "suspicious" | "clean" | "muted";
+  onInspectIp?: (ip: string) => void;
+}) {
+  const isIp = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ioc.value);
   const cls = {
     accent: "border-accent/40 text-accent",
     suspicious: "border-risk-suspicious/40 text-risk-suspicious",
     clean: "border-risk-clean/40 text-risk-clean",
     muted: "border-border-subtle text-text-muted",
   }[tone];
-  // One-click hunt pivot: every chip is an IOC, so it jumps straight to the
-  // IOC search pre-filled with that value.
+
   return (
-    <Link
-      to={`/search?q=${encodeURIComponent(ioc.value)}`}
-      className={`truncate rounded-md border bg-bg-elevated/40 px-2 py-0.5 font-mono text-[11px] transition-colors duration-150 hover:border-accent/60 hover:text-accent ${cls}`}
-      title={`${ioc.value} — seen in ${ioc.runs} run(s). Click to search it.`}
-    >
-      {ioc.value}
-      <span className="ml-1.5 text-[10px] opacity-70">×{ioc.runs}</span>
-    </Link>
+    <span className={`inline-flex items-center gap-1 rounded-md border bg-bg-elevated/40 px-2 py-0.5 font-mono text-[11px] ${cls}`}>
+      <Link
+        to={`/search?q=${encodeURIComponent(ioc.value)}`}
+        className="truncate transition-colors hover:underline"
+        title={`${ioc.value} — seen in ${ioc.runs} run(s). Click to search it.`}
+      >
+        {ioc.value}
+        <span className="ml-1 text-[10px] opacity-70">×{ioc.runs}</span>
+      </Link>
+      {isIp && onInspectIp && (
+        <button
+          onClick={() => onInspectIp(ioc.value)}
+          className="ml-0.5 text-accent hover:text-accent-hover"
+          title={`Investigate network context for ${ioc.value}`}
+        >
+          <Icon name="activity" size={10} />
+        </button>
+      )}
+    </span>
   );
 }
 
-function CampaignCard({ campaign }: { campaign: Campaign }) {
+function CampaignCard({
+  campaign,
+  onInspectIp,
+}: {
+  campaign: Campaign;
+  onInspectIp?: (ip: string) => void;
+}) {
   const shown = campaign.timeline.slice(0, MAX_TIMELINE);
   const total = campaign.timeline_total ?? campaign.timeline.length;
   const hidden = total - shown.length;
+  const isIp = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(campaign.key);
   const iconTone: Record<string, "accent" | "suspicious" | "clean" | "muted"> = {
     ips: "accent",
     registry_keys: "suspicious",
@@ -120,6 +147,16 @@ function CampaignCard({ campaign }: { campaign: Campaign }) {
           <Icon name="network" size={17} />
         </span>
         <span className="font-mono text-lg font-semibold tracking-tight text-text-primary">{campaign.key}</span>
+        {isIp && onInspectIp && (
+          <button
+            onClick={() => onInspectIp(campaign.key)}
+            className="press inline-flex items-center gap-1 rounded border border-accent/40 bg-accent/10 px-2 py-0.5 font-mono text-[10px] text-accent hover:bg-accent/20"
+            title={`Investigate network context for ${campaign.key}`}
+          >
+            <Icon name="activity" size={10} />
+            Context
+          </button>
+        )}
         <span className="rounded border border-border-subtle px-1.5 py-0.5 font-mono text-[10px] uppercase text-text-faint">
           {campaign.runs.length} sample{campaign.runs.length === 1 ? "" : "s"}
         </span>
@@ -188,7 +225,12 @@ function CampaignCard({ campaign }: { campaign: Campaign }) {
                 </h3>
                 <div className="flex flex-wrap gap-1.5">
                   {items.map((ioc) => (
-                    <IocChip key={`${key}-${ioc.value}`} ioc={ioc} tone={iconTone[key]} />
+                    <IocChip
+                      key={`${key}-${ioc.value}`}
+                      ioc={ioc}
+                      tone={iconTone[key]}
+                      onInspectIp={onInspectIp}
+                    />
                   ))}
                 </div>
               </section>
@@ -295,6 +337,7 @@ export default function CampaignsPage() {
       /* storage unavailable — ordering still applies for this visit */
     }
   }, [sort]);
+  const [inspectIp, setInspectIp] = useState<string | null>(null);
   const sorted = useMemo(() => sortCampaigns(campaigns, sort), [campaigns, sort]);
 
   return (
@@ -473,9 +516,17 @@ export default function CampaignsPage() {
 
       <div className="mt-6 space-y-6">
         {sorted.map((c) => (
-          <CampaignCard key={c.key} campaign={c} />
+          <CampaignCard
+            key={c.key}
+            campaign={c}
+            onInspectIp={setInspectIp}
+          />
         ))}
       </div>
+
+      {inspectIp !== null && (
+        <NetworkContextModal ip={inspectIp} onClose={() => setInspectIp(null)} />
+      )}
     </div>
   );
 }
