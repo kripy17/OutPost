@@ -7,6 +7,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import ExportButton from "../components/ExportButton/ExportButton";
 import { Icon } from "../components/Icon";
 import { getNavigatorLayer, getRuleMeta } from "../lib/api";
@@ -69,13 +70,17 @@ function TacticColumn({
             .sort((a, b) => b.weight - a.weight)
             .map((rule) => (
               <li key={rule.rule_id} className="group">
-                <div className={`flex items-baseline gap-2 rounded-lg border bg-bg-elevated/40 px-2.5 py-2 transition-colors duration-150 ${severityTone(rule.severity)} group-hover:bg-bg-elevated/70`}>
+                <Link
+                  to="/rules"
+                  className={`flex items-baseline gap-2 rounded-lg border bg-bg-elevated/40 px-2.5 py-2 transition-colors duration-150 ${severityTone(rule.severity)} group-hover:border-accent/50 group-hover:bg-bg-elevated/70`}
+                  title={`View detection rule details for ${rule.rule_name}`}
+                >
                   <code className="shrink-0 font-mono text-[11px] font-semibold">{rule.technique}</code>
-                  <span className="min-w-0 flex-1 truncate text-xs text-text-primary" title={rule.rule_name}>
+                  <span className="min-w-0 flex-1 truncate text-xs text-text-primary group-hover:text-accent" title={rule.rule_name}>
                     {rule.rule_name}
                   </span>
                   <span className="shrink-0 font-mono text-[10px] text-text-faint">+{rule.weight}</span>
-                </div>
+                </Link>
               </li>
             ))}
         </ul>
