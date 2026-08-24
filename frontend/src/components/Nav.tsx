@@ -103,10 +103,7 @@ const GROUPS: { label: string; links: NavItem[] }[] = [
     label: "Malware Analysis",
     links: [
       { to: "/samples", label: "Sample Vault", iconName: "box" },
-      { to: "/analysis", label: "Analysis Pipeline", iconName: "process" },
-      { to: "/history", label: "Session Archive", iconName: "clock" },
-      { to: "/footprint", label: "Threat Footprint", iconName: "globe" },
-      { to: "/campaigns", label: "Campaigns", iconName: "flag" },
+      { to: "/analysis", label: "Dynamic Analysis", iconName: "process" },
     ],
   },
   {

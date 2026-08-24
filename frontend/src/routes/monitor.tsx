@@ -1,6 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from "react";
-import { copyToClipboard } from "../lib/clipboard";
 import { Link, useNavigate } from "react-router-dom";
 import AlertBanner from "../components/AlertBanner/AlertBanner";
 import ExportButton from "../components/ExportButton/ExportButton";
@@ -11,7 +10,6 @@ import NetworkTable from "../components/NetworkTable/NetworkTable";
 import ProcessTree from "../components/ProcessTree/ProcessTree";
 import TimelineView from "../components/TimelineView/TimelineView";
 import {
-  BASE_URL,
   completeRun,
   createRun,
   detonateDynamic,
@@ -22,7 +20,6 @@ import {
   getPlaybooks,
   getRunDetail,
   ingestBatch,
-  startLocalMonitor,
   stopLocalMonitor,
   uploadSample,
   watchHost,
@@ -289,21 +286,6 @@ export default function MonitorPage() {
     setPhase("analysis complete");
   };
 
-  const startLive = async () => {
-    const label = `Live monitor — ${new Date().toISOString().slice(0, 19).replace("T", " ")}`;
-    const { run_id } = await createRun(label, hostPlatform, "live");
-    setReconPids(new Set());
-    setReconKinds([]);
-    setRunId(run_id);
-    setMode("live");
-    setPhase(`live — streaming real host processes & network events (${hostPlatform})`);
-    try {
-      await startLocalMonitor({ run_id });
-    } catch {
-      // In-process monitor fallback
-    }
-  };
-
   // Watch a fleet host: open its newest session (open live run first, else
   // its most recent) and stream it exactly like a detonation.
   const startWatch = async (hostIdToWatch: string) => {
@@ -399,12 +381,6 @@ export default function MonitorPage() {
     return () => window.removeEventListener("keydown", onKey);
   }, [mode, runId, inProgress, endAnalysis]);
 
-  const agentCmd =
-    hostPlatform === "windows"
-      ? `python collectors\\windows\\collector_win.py --backend-url ${BASE_URL} --mode live`
-      : `python collectors/${hostPlatform}/collector_${hostPlatform}.py --backend-url ${BASE_URL} --mode live`;
-  const [agentCopied, setAgentCopied] = useState(false);
-
   if (mode === "idle") {
     return (
       <div className="mx-auto max-w-4xl px-6 py-14 lg:px-10">
@@ -412,80 +388,104 @@ export default function MonitorPage() {
           kicker="Simulation · Lab"
           title={
             <>
-              Simulation Lab <span className="font-normal text-text-muted">& attack scenarios</span>
+              Simulation Lab <span className="font-normal text-text-muted">— synthetic attack scenarios</span>
             </>
           }
-          lede="Deterministic multi-stage attack scenarios for testing OutPost detection rules, kill-chain mapping, and SOC workflows. Events generated here carry source='simulation' and are never presented as production host telemetry."
+          lede="Deterministic multi-stage attack scenarios for testing OutPost detection rules, kill-chain mapping, and SOC workflows. Telemetry generated here carries source='simulation' and is strictly isolated from live operational host monitoring."
         />
 
-        {/* Hero — watch THIS machine live. */}
-        <div className="panel relative mt-8 overflow-hidden border-accent/30 bg-gradient-to-br from-accent/10 via-bg-surface/90 to-bg-surface/90 p-6 shadow-[0_8px_32px_-8px_rgba(217,164,65,0.2)]">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-accent/40 bg-accent/20 text-accent shadow-[var(--glow-accent)]">
-                <Icon name="activity" size={18} />
+        {/* Attack Scenario Playbooks — Primary Action */}
+        <div className="mt-8">
+          <div className="mb-4 flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-accent/40 bg-accent/15 text-accent shadow-[var(--glow-accent)]">
+                <Icon name="shield" size={14} />
               </span>
               <div>
-                <span className="font-sans text-sm font-semibold tracking-tight text-text-primary">
-                  Watch this machine live
-                </span>
-                <div className="mt-0.5 flex flex-wrap items-center gap-2">
-                  <span className="inline-flex items-center gap-1.5 rounded-full border border-accent/50 bg-accent/10 px-2.5 py-0.5 font-mono text-[10px] font-medium text-accent">
-                    <Icon name={platformIconName(hostPlatform)} size={11} />
-                    {hostPlatform === "macos" ? "macos" : hostPlatform} · auto-detected
-                  </span>
-                  <span className="rounded-full border border-border-subtle bg-bg-elevated/50 px-2 py-0.5 font-mono text-[10px] text-text-muted">
-                    auditd / Sysmon live pipeline
-                  </span>
-                </div>
+                <h3 className="font-sans text-sm font-semibold tracking-tight text-text-primary">
+                  Attack Scenario Detonation Playbooks
+                </h3>
+                <p className="text-[11px] text-text-muted">
+                  Deterministic multi-stage simulations exercising OutPost behavioral detection rules and triage workflows
+                </p>
               </div>
             </div>
-            <Link
-              to="/events"
-              className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-elevated/60 px-3 py-2 font-mono text-xs text-text-muted transition-colors hover:border-accent/60 hover:text-accent"
-            >
-              Event stream
-              <Icon name="arrowRight" size={12} />
-            </Link>
+            <span className="font-mono text-[10px] text-text-faint">
+              {playbooks?.length ?? 4} verified scenarios
+            </span>
           </div>
 
-          <p className="mt-3.5 text-xs leading-relaxed text-text-muted">
-            Open a live session below to stream real host telemetry (processes, network connections, file access) in real time. Persistent install: <code className="rounded bg-bg-elevated/80 px-1.5 py-0.5 font-mono text-accent">outpost agent install</code>.
-          </p>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            {(playbooks || []).map((pb) => {
+              const isDetonating = detonatingPlaybookId === pb.id;
+              const isCritical = pb.severity === "critical";
+              return (
+                <div
+                  key={pb.id}
+                  className="panel group relative flex flex-col justify-between p-5 transition-all duration-200 hover:border-accent/60 hover:shadow-[0_8px_24px_-6px_rgba(217,164,65,0.15)]"
+                >
+                  <div>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <span className="rounded border border-border-subtle bg-bg-elevated/60 p-1 font-mono text-[10px] uppercase text-text-muted">
+                          <Icon name={platformIconName(pb.platform)} size={12} />
+                        </span>
+                        <h4 className="font-sans text-xs font-semibold text-text-primary group-hover:text-accent">
+                          {pb.name}
+                        </h4>
+                      </div>
+                      <span
+                        className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 font-mono text-[9px] uppercase tracking-wide ${
+                          isCritical
+                            ? "border border-risk-malicious/40 bg-risk-malicious/15 text-risk-malicious"
+                            : "border border-risk-suspicious/40 bg-risk-suspicious/15 text-risk-suspicious"
+                        }`}
+                      >
+                        <span className="h-1.5 w-1.5 rounded-full bg-current" />
+                        {pb.severity}
+                      </span>
+                    </div>
 
-          <div className="mt-5 flex flex-wrap items-center gap-3">
-            <button
-              onClick={startLive}
-              disabled={hostPlatform === "macos"}
-              className="press inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-accent to-accent-soft px-5 py-2.5 font-mono text-xs font-bold text-bg-base shadow-[0_0_20px_rgba(217,164,65,0.35)] transition-all duration-150 hover:scale-105 hover:shadow-[0_0_30px_rgba(217,164,65,0.5)] disabled:cursor-default disabled:opacity-50"
-            >
-              <Icon name="play" size={13} />
-              Start live monitoring
-            </button>
-            <button
-              onClick={() =>
-                void copyToClipboard(agentCmd).then(() => {
-                  setAgentCopied(true);
-                  setTimeout(() => setAgentCopied(false), 1600);
-                })
-              }
-              className="press inline-flex items-center gap-1.5 rounded-xl border border-border-subtle bg-bg-elevated/60 px-3.5 py-2.5 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
-              title="Copy the collector command"
-            >
-              <Icon name={agentCopied ? "check" : "copy"} size={12} />
-              {agentCopied ? "copied" : "copy agent command"}
-            </button>
+                    <p className="mt-2.5 text-xs leading-relaxed text-text-muted">
+                      {pb.description}
+                    </p>
+
+                    <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                      {(pb.techniques || []).map((t) => (
+                        <span
+                          key={t}
+                          className="rounded border border-border-subtle bg-bg-inset px-1.5 py-0.5 font-mono text-[9px] text-text-faint"
+                        >
+                          {t}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="mt-4 flex items-center justify-between border-t border-border-subtle pt-3">
+                    <span className="font-mono text-[10px] text-text-faint">
+                      {pb.tactics?.join(" → ")}
+                    </span>
+                    <button
+                      onClick={() => handleDetonatePlaybook(pb.id)}
+                      disabled={detonatingPlaybookId !== null}
+                      className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/15 px-3 py-1.5 font-mono text-[11px] font-semibold text-accent transition-all duration-150 hover:bg-accent/25 hover:shadow-[var(--glow-accent)] disabled:opacity-50"
+                    >
+                      <Icon
+                        name={isDetonating ? "refresh" : "play"}
+                        size={11}
+                        className={isDetonating ? "animate-spin" : ""}
+                      />
+                      {isDetonating ? "Simulating..." : "Detonate Playbook"}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
-          {hostPlatform === "macos" && (
-            <p className="mt-2 text-[11px] text-risk-suspicious">
-              Live monitoring on macOS isn't supported yet — collector runs on Linux/Windows.
-            </p>
-          )}
-          <code className="mt-4 block overflow-x-auto rounded-xl border border-border-subtle bg-bg-elevated/60 px-3.5 py-2.5 font-mono text-[11px] text-text-primary">
-            {agentCmd}
-          </code>
         </div>
 
+        {/* Custom Simulation Detonation */}
         <div className="mt-8 grid gap-5 sm:grid-cols-2">
           <div className="panel p-6">
             <button onClick={startDetonation} className="press group w-full text-left">
@@ -494,8 +494,8 @@ export default function MonitorPage() {
                 Detonate synthetic sample
               </span>
               <p className="mt-2 text-xs leading-relaxed text-text-muted">
-                Streams a realistic dropper scenario (macro → LOLBin → C2 beacon → file burst → persistence) into a
-                fresh run so you can watch detection rules fire live.
+                Streams a multi-stage dropper scenario (macro → LOLBin → C2 beacon → file burst → persistence) into a
+                fresh simulation run.
               </p>
             </button>
             <div className="mt-4 flex flex-wrap items-center gap-2">
@@ -635,96 +635,6 @@ export default function MonitorPage() {
           </div>
         </div>
 
-        {/* Attack Scenario Detonation Playbook Library */}
-        <div className="mt-10">
-          <div className="mb-4 flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-accent/40 bg-accent/15 text-accent shadow-[var(--glow-accent)]">
-                <Icon name="shield" size={14} />
-              </span>
-              <div>
-                <h3 className="font-sans text-sm font-semibold tracking-tight text-text-primary">
-                  Attack Scenario Detonation Playbooks
-                </h3>
-                <p className="text-[11px] text-text-muted">
-                  Interactive multi-stage attack simulations for testing SOC telemetry and rule generation
-                </p>
-              </div>
-            </div>
-            <span className="font-mono text-[10px] text-text-faint">
-              {playbooks?.length ?? 4} verified scenarios
-            </span>
-          </div>
-
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            {(playbooks || []).map((pb) => {
-              const isDetonating = detonatingPlaybookId === pb.id;
-              const isCritical = pb.severity === "critical";
-              return (
-                <div
-                  key={pb.id}
-                  className="panel group relative flex flex-col justify-between p-5 transition-all duration-200 hover:border-accent/60 hover:shadow-[0_8px_24px_-6px_rgba(217,164,65,0.15)]"
-                >
-                  <div>
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex items-center gap-2">
-                        <span className="rounded border border-border-subtle bg-bg-elevated/60 p-1 font-mono text-[10px] uppercase text-text-muted">
-                          <Icon name={platformIconName(pb.platform)} size={12} />
-                        </span>
-                        <h4 className="font-sans text-xs font-semibold text-text-primary group-hover:text-accent">
-                          {pb.name}
-                        </h4>
-                      </div>
-                      <span
-                        className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 font-mono text-[9px] uppercase tracking-wide ${
-                          isCritical
-                            ? "border border-risk-malicious/40 bg-risk-malicious/15 text-risk-malicious"
-                            : "border border-risk-suspicious/40 bg-risk-suspicious/15 text-risk-suspicious"
-                        }`}
-                      >
-                        <span className="h-1.5 w-1.5 rounded-full bg-current" />
-                        {pb.severity}
-                      </span>
-                    </div>
-
-                    <p className="mt-2.5 text-xs leading-relaxed text-text-muted">
-                      {pb.description}
-                    </p>
-
-                    <div className="mt-3 flex flex-wrap items-center gap-1.5">
-                      {(pb.techniques || []).map((t) => (
-                        <span
-                          key={t}
-                          className="rounded border border-border-subtle bg-bg-inset px-1.5 py-0.5 font-mono text-[9px] text-text-faint"
-                        >
-                          {t}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="mt-4 flex items-center justify-between border-t border-border-subtle pt-3">
-                    <span className="font-mono text-[10px] text-text-faint">
-                      {pb.tactics?.join(" → ")}
-                    </span>
-                    <button
-                      onClick={() => handleDetonatePlaybook(pb.id)}
-                      disabled={detonatingPlaybookId !== null}
-                      className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/15 px-3 py-1.5 font-mono text-[11px] font-semibold text-accent transition-all duration-150 hover:bg-accent/25 hover:shadow-[var(--glow-accent)] disabled:opacity-50"
-                    >
-                      <Icon
-                        name={isDetonating ? "refresh" : "play"}
-                        size={11}
-                        className={isDetonating ? "animate-spin" : ""}
-                      />
-                      {isDetonating ? "Simulating..." : "Detonate Playbook"}
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
       </div>
     );
   }

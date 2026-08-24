@@ -201,7 +201,7 @@ describe("P1.4 host workspace (routed)", () => {
     vi.stubGlobal("fetch", shellStub({ onTimeline: () => QUIET_RESPONSE }));
     await renderAt("/hosts/soak-box");
     await waitFor(() => expect(screen.getByText("soak-box")).toBeTruthy(), { timeout: 5000 });
-    expect(screen.getByText(/No activity recorded for this host/)).toBeTruthy();
+    await waitFor(() => expect(screen.getByText(/No activity recorded for this host/)).toBeTruthy(), { timeout: 5000 });
   });
 
   it("an unknown host renders the 404 state", async () => {

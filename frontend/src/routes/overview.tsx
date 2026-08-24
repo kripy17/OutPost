@@ -832,15 +832,24 @@ export default function OverviewPage() {
             OutPost <span className="font-normal text-text-muted">— behavioral monitor</span>
           </>
         }
-        lede="Detect suspicious activity on this machine, watch detonations land in real time, and track shared infrastructure across every session."
+        lede="Unified behavioral security telemetry, live fleet pulse, and prioritized SOC detection queue across monitored endpoints."
         actions={
-          <Link
-            to="/monitor"
-            className="press inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-accent to-accent-soft px-4 py-2.5 font-mono text-xs font-bold text-bg-base shadow-[0_0_20px_rgba(217,164,65,0.35)] transition-all duration-150 hover:scale-105 hover:shadow-[0_0_30px_rgba(217,164,65,0.5)]"
-          >
-            <Icon name="play" size={13} />
-            Detonate sample
-          </Link>
+          <div className="flex items-center gap-2">
+            <Link
+              to="/events"
+              className="press inline-flex items-center gap-1.5 rounded-xl border border-accent/60 bg-accent/15 px-3.5 py-2 font-mono text-xs font-semibold text-accent transition-all duration-150 hover:bg-accent/25 hover:shadow-[var(--glow-accent)]"
+            >
+              <Icon name="list" size={13} />
+              Event Manager
+            </Link>
+            <Link
+              to="/monitor"
+              className="press inline-flex items-center gap-1.5 rounded-xl border border-border-subtle bg-bg-elevated px-3.5 py-2 font-mono text-xs font-medium text-text-muted transition-all duration-150 hover:border-accent/40 hover:text-text-primary"
+            >
+              <Icon name="activity" size={13} />
+              Simulation Lab
+            </Link>
+          </div>
         }
       />
 
