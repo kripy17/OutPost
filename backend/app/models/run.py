@@ -47,12 +47,13 @@ def get_run(conn: sqlite3.Connection, run_id: str) -> dict | None:
 
 
 # Provenance markers that are demo/synthetic by construction — seeds, the
-# webapp's generated detonations (current and legacy `monitor` label), and the
-# keyless sandbox demo. Hidden from the archive by default so it reads as real
-# telemetry first; `include_synthetic` reveals them. Real integrations
+# webapp's generated detonations (current and legacy `monitor` label),
+# Simulation Lab playbooks (`simulation`), and the keyless sandbox demo.
+# Hidden from the archive by default so it reads as real telemetry first;
+# `include_synthetic` reveals them. Real integrations
 # (sandbox:anyrun/triage/joe), host collectors (`live`), and CLI analyses stay
 # visible regardless.
-SYNTHETIC_SOURCES = ("seed", "webapp-demo", "monitor", "sandbox:demo")
+SYNTHETIC_SOURCES = ("seed", "webapp-demo", "monitor", "sandbox:demo", "simulation")
 
 
 def _synthetic_clause(include_synthetic: bool) -> str:

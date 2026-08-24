@@ -109,7 +109,8 @@ def build_campaigns(conn, include_synthetic: bool = False) -> list[dict]:
         if anchor is None:
             continue
 
-        excl = "" if include_synthetic else " AND r.source NOT IN (?,?,?,?)"
+        marks = ",".join("?" for _ in SYNTHETIC_SOURCES)
+        excl = "" if include_synthetic else f" AND r.source NOT IN ({marks})"
         args: list = [] if include_synthetic else list(SYNTHETIC_SOURCES)
         run_rows = conn.execute(
             f"""

@@ -57,6 +57,8 @@ import type {
   QueueResponse,
   HostBaseline,
   ProcessSummary,
+  NetworkSummary,
+  FileSummary,
   RulePack,
   RulePackImportSummary,
   IntelKeysResponse,
@@ -256,8 +258,8 @@ export async function getRunDetail(runId: string): Promise<RunDetail> {
   return get<RunDetail>(`/runs/${runId}`);
 }
 
-export async function createRun(sampleName: string, platform: Platform, sessionType: SessionType): Promise<{ run_id: string }> {
-  return post<{ run_id: string }>("/runs", { sample_name: sampleName, platform, session_type: sessionType });
+export async function createRun(sampleName: string, platform: Platform, sessionType: SessionType, source?: string): Promise<{ run_id: string }> {
+  return post<{ run_id: string }>("/runs", { sample_name: sampleName, platform, session_type: sessionType, ...(source ? { source } : {}) });
 }
 
 export async function completeRun(runId: string): Promise<void> {
@@ -569,6 +571,16 @@ export async function watchHost(hostId: string): Promise<HostWatchResponse> {
 // -- Process summary (hover preview on process-jump links) -------------------
 export async function getProcessSummary(pid: number): Promise<ProcessSummary> {
   return get<ProcessSummary>(`/events/process-summary?pid=${pid}`);
+}
+
+// -- Network summary (investigation context for destination IPs) --------------
+export async function getNetworkSummary(ip: string): Promise<NetworkSummary> {
+  return get<NetworkSummary>(`/events/network-summary?ip=${encodeURIComponent(ip)}`);
+}
+
+// -- File summary (investigation context for file paths) ----------------------
+export async function getFileSummary(path: string): Promise<FileSummary> {
+  return get<FileSummary>(`/events/file-summary?path=${encodeURIComponent(path)}`);
 }
 
 // -- Auth brute-force guard (read-only Settings view) ------------------------

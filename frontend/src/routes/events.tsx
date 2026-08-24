@@ -7,6 +7,9 @@ import { PageHeader } from "../components/ui";
 import { exportEventsCsv, getEventCounts, getEvents, saveBlob } from "../lib/api";
 import { useEventStream } from "../lib/useEventStream";
 import { parsePids, resolveSavedFilters, type SavedFilters } from "./eventsHelpers";
+import { DataProvenanceBadge } from "../components/DataProvenanceBadge";
+import { ProcessContextModal } from "../components/ProcessContextModal";
+import { NetworkContextModal } from "../components/NetworkContextModal";
 import type { EventFeedEvent, EventSource, EventType, Platform, Severity } from "../types";
 
 const PAGE = 60;
@@ -271,11 +274,15 @@ function EventRow({
   active,
   onSelect,
   onFilterPid,
+  onInspectProcess,
+  onInspectNetwork,
 }: {
   e: EventFeedEvent;
   active: boolean;
   onSelect: (e: EventFeedEvent | null) => void;
   onFilterPid?: (pid: number) => void;
+  onInspectProcess?: (pid: number) => void;
+  onInspectNetwork?: (ip: string) => void;
 }) {
   const lvl = levelOf(e);
   const rail = e.run_severity === "malicious" ? "bg-risk-malicious" : e.run_severity === "suspicious" ? "bg-risk-suspicious" : "bg-border-strong";
@@ -312,6 +319,7 @@ function EventRow({
               <span className={`rounded-full border px-1.5 py-px font-mono text-[9px] uppercase tracking-wide ${lvl.badge}`}>
                 {lvl.label}
               </span>
+              <DataProvenanceBadge source={e.source} log_source={e.log_source} />
               <span className="ml-auto font-mono text-[10px] tabular-nums text-text-faint">
                 {e.timestamp.slice(11, 19)} UTC
               </span>
@@ -353,17 +361,15 @@ function EventRow({
           </Link>
         </div>
 
-        {/* Inline expansion — the full raw record, unfolded under the row
-            (Event-Viewer parity: click a row, read everything it carried).
-            The summary stays above; this adds the complete field set, the
-            process drill-down, and the collector's original payload. */}
+        {/* Inline expansion — the full raw record, unfolded under the row */}
         {active && (
           <div className="border-t border-border-subtle bg-bg-base/40 px-5 py-4">
-            <div className="mb-4 flex items-center gap-2">
+            <div className="mb-4 flex flex-wrap items-center gap-2">
               <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium ${lvl.badge}`}>
                 <Icon name={lvl.icon} size={12} />
                 {lvl.label}
               </span>
+              <DataProvenanceBadge source={e.source} log_source={e.log_source} />
               <span className="inline-flex items-center gap-1.5 rounded-full border border-border-subtle px-2.5 py-1 font-mono text-[11px] text-text-muted">
                 <Icon name={platformIconName(e.platform)} size={12} />
                 {e.platform}
@@ -372,20 +378,52 @@ function EventRow({
 
             <EventFields event={e} />
 
-            {/* Process-centric drill-down: jump from one record to everything
-                this PID did across the feed. */}
-            {e.pid && (
-              <button
-                onClick={() => onFilterPid?.(e.pid as number)}
-                className="press mt-4 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-border-subtle px-3 py-2 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
-              >
-                <Icon name="process" size={12} />
-                Show everything this process did (pid {e.pid})
-              </button>
-            )}
+            {/* Process & Network investigation action pivots */}
+            <div className="mt-4 flex flex-wrap gap-2">
+              {e.pid && (
+                <>
+                  <button
+                    onClick={() => onInspectProcess?.(e.pid as number)}
+                    className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/50 bg-accent/10 px-3 py-1.5 font-mono text-xs font-semibold text-accent transition-colors hover:bg-accent/20"
+                    title={`Inspect full process tree, socket connections, and findings for PID ${e.pid}`}
+                  >
+                    <Icon name="process" size={12} />
+                    Investigate Process Context (PID {e.pid})
+                  </button>
+                  <button
+                    onClick={() => onFilterPid?.(e.pid as number)}
+                    className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-1.5 font-mono text-xs text-text-muted transition-colors hover:border-accent/60 hover:text-accent"
+                    title={`Filter event feed to PID ${e.pid}`}
+                  >
+                    <Icon name="list" size={12} />
+                    Trace PID {e.pid} in Feed
+                  </button>
+                </>
+              )}
 
-            {/* Raw record — the collector's original payload, side by side
-                with the normalized row (auditd/Sysmon line parity). */}
+              {e.dest_ip && (
+                <>
+                  <button
+                    onClick={() => onInspectNetwork?.(e.dest_ip as string)}
+                    className="press inline-flex items-center gap-1.5 rounded-lg border border-sky-500/50 bg-sky-500/10 px-3 py-1.5 font-mono text-xs font-semibold text-sky-400 transition-colors hover:bg-sky-500/20"
+                    title={`Inspect communicating hosts, responsible processes, and findings for ${e.dest_ip}`}
+                  >
+                    <Icon name="network" size={12} />
+                    Investigate Network Context ({e.dest_ip})
+                  </button>
+                  <Link
+                    to={`/search?q=${encodeURIComponent(e.dest_ip)}`}
+                    className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-surface px-3 py-1.5 font-mono text-xs text-text-muted transition-colors hover:border-accent/60 hover:text-accent"
+                    title={`Pivot to IOC Intelligence for ${e.dest_ip}`}
+                  >
+                    <Icon name="search" size={12} />
+                    Search IOC
+                  </Link>
+                </>
+              )}
+            </div>
+
+            {/* Raw record */}
             {e.raw_record && (
               <div className="mt-5">
                 <p className="kicker mb-2 flex items-center gap-1.5">
@@ -450,6 +488,8 @@ export default function EventsPage() {
   const [submittedQ, setSubmittedQ] = useState(initialQ || saved?.q || "");
   const [pidInput, setPidInput] = useState((initialPids.length ? initialPids : (saved?.pids ?? [])).join(","));
   const [submittedPids, setSubmittedPids] = useState<number[]>(initialPids.length ? initialPids : (saved?.pids ?? []));
+  const [inspectPid, setInspectPid] = useState<number | null>(null);
+  const [inspectIp, setInspectIp] = useState<string | null>(null);
   const [offset, setOffset] = useState(0);
   const [selected, setSelected] = useState<EventFeedEvent | null>(null);
   const [live, setLive] = useState(false);
@@ -1187,6 +1227,8 @@ export default function EventsPage() {
                               setSubmittedPids([pid]);
                               setSelected(null);
                             }}
+                            onInspectProcess={setInspectPid}
+                            onInspectNetwork={setInspectIp}
                           />
                         ))}
                       </ul>
@@ -1274,6 +1316,8 @@ export default function EventsPage() {
                                   setSubmittedPids([pid]);
                                   setSelected(null);
                                 }}
+                                onInspectProcess={setInspectPid}
+                                onInspectNetwork={setInspectIp}
                               />
                             ))}
                           </ul>
@@ -1328,6 +1372,14 @@ export default function EventsPage() {
           )}
         </section>
       </div>
+
+      {inspectPid !== null && (
+        <ProcessContextModal pid={inspectPid} onClose={() => setInspectPid(null)} />
+      )}
+
+      {inspectIp !== null && (
+        <NetworkContextModal ip={inspectIp} onClose={() => setInspectIp(null)} />
+      )}
     </div>
   );
 }

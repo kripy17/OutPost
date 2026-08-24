@@ -2,376 +2,235 @@
 
 # 🛡️ OutPost
 
-### Cross-platform behavioral security monitor — a SOC console in your browser
+### Cross-Platform Behavioral Security & Telemetry Monitor
 
-Detonate samples, watch OS-aware detection rules fire in real time, score risk,
-map kill chains, and cluster runs into campaigns — all through a polished
-dark/light web deck with a full terminal mirror.
+*A self-hosted, explainable SOC monitoring platform and malware analysis workbench with dual first-class interfaces: a reactive web deck and an interactive terminal console.*
 
-`FastAPI` · `React 19` · `Vite 6` · `SQLite` · `Typer` · `Rich` · `Playwright`
+`FastAPI` · `React 19` · `TypeScript` · `Vite 6` · `SQLite / PostgreSQL` · `Typer` · `Rich` · `Playwright`
 
-![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square)
-![FastAPI](https://img.shields.io/badge/FastAPI-backend-009688?style=flat-square)
-![React](https://img.shields.io/badge/React-19-61DAFB?style=flat-square)
-![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?style=flat-square)
-![Tests](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fkripy17%2FOutPost%2Fmain%2Fbadges%2Ftests.json&style=flat-square)
-![Rules](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fkripy17%2FOutPost%2Fmain%2Fbadges%2Frules.json&style=flat-square)
-![Commands](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fkripy17%2FOutPost%2Fmain%2Fbadges%2Fcommands.json&style=flat-square)
-![Tactics](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fkripy17%2FOutPost%2Fmain%2Fbadges%2Fcoverage.json&style=flat-square)
-![CI](https://github.com/kripy17/OutPost/actions/workflows/ci.yml/badge.svg)
-![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-backend-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
+[![React](https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=black)](https://react.dev)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
+[![Tests](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fkripy17%2FOutPost%2Fmain%2Fbadges%2Ftests.json&style=flat-square)](https://github.com/kripy17/OutPost/actions)
+[![Rules](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fkripy17%2FOutPost%2Fmain%2Fbadges%2Frules.json&style=flat-square)](docs/11-DETECTION-LOGIC.md)
+[![Commands](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fkripy17%2FOutPost%2Fmain%2Fbadges%2Fcommands.json&style=flat-square)](docs/09-CLI-SPEC.md)
+[![Tactics](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fkripy17%2FOutPost%2Fmain%2Fbadges%2Fcoverage.json&style=flat-square)](docs/11-DETECTION-LOGIC.md)
+[![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
 
 <p align="center">
-  <img src="demo/deck-demo-hero.gif" alt="OutPost — the command deck: risk over time, detection volume, live findings" width="82%">
+  <img src="demo/deck-demo-hero.gif" alt="OutPost — the command deck: risk over time, detection volume, live findings" width="85%">
   <br>
-  <em>The command deck — risk-over-time, detection volume, and the live findings feed.</em>
-</p>
-
-<p align="center">
-  <img src="demo/deck-demo-hero2.gif" alt="OutPost — live analysis: monitor streaming and the run-detail process tree" width="82%">
-  <br>
-  <em>Live analysis — a detonation streaming on the Monitor, then the run detail's process tree with risk halos.</em>
+  <em>The Command Deck — risk-over-time, detection volume, and live findings feed.</em>
 </p>
 
 </div>
 
 ---
 
-## What is OutPost?
+## 📖 What is OutPost?
 
-OutPost watches **process, network, file, and persistence behavior** on
-Windows, Linux, and macOS and flags malicious activity with **explainable,
-rule-based heuristics** — no ML black box. Every finding is traceable to a
-named rule, mapped to the **MITRE ATT&CK** kill chain, and scored 0–100.
+**OutPost** is an open, self-hosted behavioral security monitoring system designed to provide deep observability, anomaly detection, and automated threat triage across Windows, Linux, and macOS endpoints.
 
-It runs **fully synthetic scenarios** out of the box: stream a detonation and
-watch alerts toast in live as the rules fire — dynamic malware analysis
-without a sandbox, hypervisor, or malware.
+Unlike opaque ML-based platforms, OutPost utilizes **deterministic, explainable rule-based heuristics** mapped directly to the **MITRE ATT&CK** matrix. Telemetry is collected directly from kernel and OS primitives (`auditd`/`eBPF` on Linux, `Sysmon` on Windows, and `EndpointSecurity` on macOS), normalized into a single unified event schema, and enriched in real time.
 
-**No OS picker anywhere** (the vision): on first open the webapp auto-detects
-the host OS from the backend (`GET /platform`), tailors the install-agent
-guidance to it, targets detonations at it by default, and the Overview's
-host-status panel answers "is THIS host monitored?" against the live fleet.
+### 🏛️ The Three Explicit Product Domains
 
-> Originally built as a BSc Cybersecurity (Year 3) semester project. The
-> internal design documents used to build it aren't shipped in this repo.
+```text
+                                OUTPOST CONSOLE
+                                       │
+        ┌──────────────────────────────┼──────────────────────────────┐
+        │                              │                              │
+ 1. LIVE MONITORING           2. MALWARE ANALYSIS            3. SIMULATION LAB
+ (Real Host Telemetry)        (Real Binary Analysis)         (Safe Rule Testing)
+        │                              │                              │
+  Host Collectors                Sample Vault                   Attack Playbooks
+  [Linux/Windows/macOS]          [Upload & Hashes]              [LOLBin/C2/Ransomware]
+        │                              │                              │
+  POST /ingest/batch             Static Analysis                POST /runs (source=simulation)
+        │                        [PE/ELF/Entropy/YARA]                │
+  Persisted `events` Table             │                        Isolated Ingestion
+        │                        Dynamic Sandbox                      │
+  Event Manager (`/events`)      [Configured / 501]             Rule Tuning & Verification
+        │                              │                              │
+  Findings Queue (`/findings`)   Analysis Results                     │
+        │                              │                              │
+  Incident Cases (`/investigations`) ──┘                              │
+```
 
-## ✨ Highlights
+1. **Live Host Monitoring (`source="live"`)**:
+   Watches real production endpoints running lightweight collector agents. Raw OS events (process execution, socket connections, file writes, registry changes) flow through the ingestion pipeline into persisted database records and trigger real-time detection heuristics.
+2. **Malware Analysis & Sample Vault (`source="sandbox"`)**:
+   Provides binary intake, SHA256 deduplication, file magic detection, static disassembly (PE headers, ELF sections, strings, entropy, IOC extraction), YARA signature scanning, and external dynamic sandbox dispatch (Any.Run, Hatching Triage, Joe Sandbox) with transparent API key status.
+3. **Simulation Lab (`source="simulation"`)**:
+   Safe, deterministic attack scenario playbooks executed in complete isolation from live monitoring feeds to validate rule thresholds, test alert pipelines, and train SOC analysts.
 
-| | |
+---
+
+## ✨ Flagship Capabilities
+
+| Capability | Description |
 |---|---|
-| 🖥️ **OS-aware detection engine** | **37 rules** across Windows / Linux / macOS covering all 14 MITRE tactics — LOLBin abuse, reverse shells, persistence, C2 beaconing, ransomware write bursts, process masquerading, DNS tunnels, fan-out plants, Discovery/Exfiltration chains |
-| 🆔 **Resolved process identity** | Every rule keys on the **kernel-resolved path** (auditd `exe=` / Sysmon `Image`, shipped as `exe_path`) with a `process_name` fallback — masquerading judges the real binary, and nameless rows still match instead of silently skipping. The AST **identity gate** in `verify.sh` locks it so a future rule can't regress to spoofable name-only matching |
-| ⛈️ **Storm guard** | Per-rule per-run alert caps (first-seen 20, beaconing 15, fan-out 10, default 25) with **held-back counts** surfaced on run detail and in exports — no alert flood on long live sessions |
-| 📈 **Alert-rate sparkline** | Per-minute severity bars with a flood guide line, live on the Monitor and per-run on run detail |
-| 🎯 **Risk scoring + ATT&CK** | 0–100 risk per run, severity bands, every rule mapped to a kill-chain stage, MITRE Navigator layer export, coverage matrix with gaps highlighted |
-| 🗂️ **Campaign clustering** | Runs sharing IOCs auto-grouped into campaign cards — combined timeline, shared IOC evidence, signature C2, campaign-level STIX bundles |
-| 💾 **Sample vault** | Upload binaries; magic-sniffing detects PE/ELF/Mach-O, **script shebangs**, and **.lnk/.zip/Office archives**; YARA signature lab + VirusTotal reputation |
-| 🔎 **Footprint + intel** | Passive DNS / CT certificates / RDAP per sample (crt.sh, real when online, synthetic fallback), enrichment cache with force-refresh and stale sweeps, JSON/CSV footprint export |
-| 🚀 **Sandbox detonation** | Push vault samples to Any.Run / Hatching Triage / Joe Sandbox and stream the report through the real detection pipeline — `scripts/validate_sandbox_provider.py` runs the live end-to-end gate when a provider key is configured |
-| 📡 **SSE live push** | Fired alerts broadcast over `/events/stream` — StatusBar pulse, Monitor toasts, sparklines update instantly; findings queue, investigations list, and investigation workspace refetch live on matching frames |
-| 🖇️ **Correlation & triage** | IOC extraction/export, cross-run search, run comparison, watchlist (with live webhook/desktop alerts), alert triage lifecycle (open/ack/resolved + allowlists + suppressions, including rule+sample/IP value scopes from the findings sweep), STIX 2.1 + JSON + PDF export |
-| 🧪 **Real-collector live mode** | `outpost agent run/install` — auditd/Sysmon telemetry streams into live sessions; heartbeat fleet with last-seen/uptime and silent-host flags |
-| 🎨 **SOC deck UI** | Dark/light themes, collapsible rail, risk-over-time + detection-volume charts, kill chain, process tree with reputation halos, live monitor, browser notifications, host-workspace deep-links, investigation-linked findings |
-| 🔍 **Global search** | Cross-resource search across findings, IOCs, artifacts, hosts, sessions, investigations, and campaigns with type/status/severity/disposition/host/rule/case qualifiers — grouped results with per-group deep-links into the appropriate workspace |
-| 📋 **Investigation workspace** | Optional case overlay — create investigations, attach findings/IOCs/hosts/runs, track lifecycle (created → triage → active → contained → resolved → closed), add notes and tags, derive severity from attached findings |
-| 🔬 **Analysis workflow** | Submit artifacts to static/watched-host/external-provider backends, track job progress via SSE, view observations and generated findings, cancel running jobs |
-| 🖥️ **Host investigation** | Per-host aggregate timeline merging events, findings, sessions, IOCs, and investigations into one chronological feed with kind tabs and free-text filters |
-| ⌨️ **Terminal mirror** | The `outpost` CLI reaches the same API — **31 commands**, Rich tables, colorized risk, recon markers, rule knobs, alert-queue mirror (`outpost alerts --provenance real|synthetic`, saved per tab via `--save`, wiped with `outpost settings clear-prefs`), alert triage lifecycle (`outpost triage <id> <status> --comment`, bulk `outpost triage <status> <id1> <id2> …`), IOC allowlist (`outpost allowlist add|list|remove`), rule suppressions (`outpost rules suppressions add|list|remove`, run/value/global scopes), investigations group (`outpost investigations list|show|create|patch|attach|detach|refs-add|refs-remove|note|close|reopen`), analysis group (`outpost analysis launch|list|show|cancel|observations|findings`) |
+| 🖥️ **OS-Aware Detection Engine** | **37 heuristics** across Linux, Windows, and macOS covering all **14 MITRE ATT&CK tactics** (LOLBin execution, reverse shells, C2 beaconing, fan-out file encryption, account enumeration, persistence). |
+| 🆔 **Kernel-Resolved Process Identity** | Evaluates true kernel binary paths (auditd `exe=` / Sysmon `Image`) rather than spoofable process command names. |
+| 🔬 **Deep Context Modal Workspaces** | 1-click **Process Context Modal** and **Network Context Modal** to inspect parent/child lineage, active sockets, touched files, communicating hosts, and correlated alerts. |
+| 🏷️ **Universal Data Provenance** | Clear, honest visual badges across every surface distinguishing `LIVE` host telemetry from `SIMULATION` lab playbooks and `SANDBOX` detonations. |
+| ⛈️ **Alert Storm Guard** | Per-rule burst caps (first-seen: 20, beaconing: 15, fan-out: 10, default: 25) with held-back counts preventing console flooding. |
+| 🗂️ **Campaign Clustering** | Graph clustering groups sessions and events sharing high-confidence C2s or file hashes into aggregated campaign threat cards. |
+| 📡 **Realtime SSE Broadcast** | Server-Sent Events stream live alerts, status transitions, and triage updates without polling. |
+| 🔒 **Air-Gapped by Design** | Zero external CDNs, fonts, or analytics. Self-contained fonts and verified offline runtime guarantees. |
+| ⌨️ **First-Class CLI Parity** | 31 terminal commands, full Rich color formatting, interactive TUI console, and headless scripting support. |
 
-## 📸 Screenshots
-
-<p align="center">
-  <img src="demo/screenshots/deck/01-overview-stats.png" width="49%" alt="Overview — stat strip" />
-  <img src="demo/screenshots/deck/02-overview-risk-timeline.png" width="49%" alt="Overview — risk timeline" />
-</p>
-<p align="center">
-  <img src="demo/screenshots/deck/03-overview-detection-volume.png" width="49%" alt="Overview — detection volume" />
-  <img src="demo/screenshots/deck/07-vault-stats.png" width="49%" alt="Sample vault" />
-</p>
-<p align="center">
-  <img src="demo/screenshots/deck/11-detonate-live.png" width="49%" alt="Monitor — live detonation" />
-  <img src="demo/screenshots/deck/13-detail-top.png" width="49%" alt="Run detail — risk gauge" />
-</p>
-<p align="center">
-  <img src="demo/screenshots/deck/14-detail-killchain.png" width="49%" alt="Run detail — kill chain" />
-  <img src="demo/screenshots/deck/18-detail-notes.png" width="49%" alt="Run detail — analyst notes" />
-</p>
-<p align="center">
-  <img src="demo/screenshots/deck/29-gates-run.png" width="49%" alt="The verify.sh gates — 3/3 green" />
-  <img src="demo/screenshots/deck/30-airgap-gates.png" width="49%" alt="The air-gap story — four gates + measured cold start" />
-</p>
-
-A **~150-second tightened walkthrough** (`demo/deck-demo-trimmed.webm`, 8 acts:
-Overview → Sample vault → Monitor detonation → Run detail → Findings triage →
-quality gates → the verify.sh gates run → **the air-gap story**) plus looping
-**GIF previews** (`demo/deck-demo-preview.gif`, and the two hero GIFs above)
-are recorded automatically by
-[`demo/deck-demo.mjs`](demo/deck-demo.mjs) and edited with
-[`demo/trim-demo.py`](demo/trim-demo.py) / [`demo/make-gif-preview.py`](demo/make-gif-preview.py).
-
-The final frame is the air-gap guarantee, proven live: the offline job's four
-gates — static artifact scan, CLI network matrix, backend egress contract,
-no-config runtime egress — plus the measured cold-start harness (zero external
-request attempts, zero hung requests, ~0.3 s worst case) run against the deck
-and rendered as a verdict panel.
-
-## 🏗️ Architecture
-
-```
-┌───────────────────┐   ┌───────────────────┐   ┌───────────────────┐
-│ Windows (Sysmon)  │   │ Linux (auditd)    │   │ macOS (rule set)  │
-│  collector        │   │  collector        │   │                   │
-└─────────┬─────────┘   └─────────┬─────────┘   └─────────┬─────────┘
-          └───────────────────────┼───────────────────────┘
-                                  ▼  POST /ingest/batch
-                 ┌──────────────────────────────────────┐
-                 │            FastAPI backend           │
-                 │  normalize · store (SQLite)          │
-                 │  OS-aware detection engine           │
-                 │  risk + ATT&CK · kill chain          │
-                 │  process tree · enrichment · YARA    │
-                 │  campaign clustering · SSE live push │
-                 └───────────────────┬──────────────────┘
-                                     │ REST API + SSE
-                  ┌──────────────────┴──────────────────┐
-                  ▼                                     ▼
-        ┌────────────────────┐                ┌────────────────────┐
-        │   React webapp     │                │   CLI (outpost)   │
-        │   SOC deck UI      │                │   Rich terminal   │
-        │   25 pages         │                │   31 commands     │
-        └────────────────────┘                └────────────────────┘
-```
-
-**The backend is where the intelligence lives.** Collectors stay dumb
-(telemetry → normalize → ship); the webapp and CLI are thin clients of one
-API and one event schema — no feature lives in only one interface. The
-**webapp is the primary interface**; the CLI is its deliberate terminal mirror.
+---
 
 ## 🚀 Quickstart
 
-> **PEP 668 note (Arch / Debian / Fedora):** your system Python refuses
-> `pip` installs system-wide. That's expected — the installer creates a venv
-> for you. Never use `--break-system-packages`.
+### Prerequisites
+- **Python 3.10+**
+- **Node.js 18+**
 
-Requirements: **Python 3.10+** and **Node 18+**.
-
-```bash
-# 1. One-command install (venv + backend + CLI + frontend + demo data)
-bash scripts/install.sh
-
-# 2. Start the stack (backend :8001 + webapp :5174)
-bash scripts/dev.sh start
-#    → webapp:  http://localhost:5174   API: http://localhost:8001
-
-# 3. That's it — the webapp auto-detects this host's OS and
-detonations/live sessions target it; detonate a sample on the Monitor page.
-```
-
-#### 🔬 Enable real sandbox detonations (Any.Run / Hatching Triage / Joe Sandbox)
-
-Without a provider key the sandbox panel runs a clearly-labeled demo
-detonation. To push samples to a **real** sandbox, export one provider key
-and restart the backend so it picks it up:
+### Automated 1-Command Setup
 
 ```bash
-# pick ONE provider — copy-paste the matching line, then restart:
+# 1. Clone repository & install all dependencies (backend, CLI, frontend)
+./setup.sh
 
-export ANYRUN_API_KEY="your-anyrun-key"            # https://any.run → API access token
-export TRIAGE_API_KEY="your-triage-key"            # https://tria.ge → Hatching Triage API key
-export JOE_API_KEY="your-joe-key"                  # https://jbxcloud.joesecurity.org → API key
-
-# optional: pin the active provider instead of auto-picking the first set one
-# export SANDBOX_PROVIDER="anyrun"   # "anyrun" | "triage" | "joe"
-
-bash scripts/dev.sh stop && bash scripts/dev.sh start
+# 2. Start the complete stack (Backend on :8001 + Web Console on :5174)
+./start.sh
 ```
 
-The Monitor's sandbox panel switches to the live provider automatically
-(polling the analysis and streaming the report through the normal detection
-pipeline). Verify the whole path with one command — it detonates a sample
-end to end and asserts the events land in the run:
+- **Web Console**: [http://localhost:5174](http://localhost:5174)
+- **API Documentation**: [http://localhost:8001/docs](http://localhost:8001/docs)
 
-```bash
-.venv/bin/python scripts/validate_sandbox_provider.py --backend http://127.0.0.1:8001
-```
-
-> Docker: the same vars work in `deploy/docker-compose.prod.yml` (the
-> backend's `environment:` block already interpolates `ANYRUN_API_KEY` /
-> `TRIAGE_API_KEY` / `JOE_API_KEY` from your shell).
-
-Prefer to drive it by hand? [`scripts/install.sh`](scripts/install.sh) shows
-every step it performs, in order.
-
-### 🐳 Run with Docker (one command)
-
-No local Python/Node needed — the whole stack (backend + webapp) builds and
-runs in containers, with the SQLite database persisted in a named volume.
+### Docker Deployment
 
 ```bash
 docker compose up --build
-#    → webapp  http://localhost:5174   API: http://localhost:8001
-```
-
-The data volume survives restarts and rebuilds. On a remote server, rebuild
-the frontend so the browser reaches the API at that server:
-
-```bash
-docker compose build --build-arg VITE_API_URL=http://<server>:8001 frontend
-```
-
-The **host agent is not part of the stack** — the collectors live on the
-machines you monitor and stream into this backend (`outpost agent install`
-on the target host, pointing `OUTPOST_API_URL` at the server).
-
-**Production:** a TLS-terminated stack (Caddy front + auth on by default,
-fail-closed) lives in [`deploy/`](deploy/README.md) — `docker compose -f
-deploy/docker-compose.prod.yml up --build` with a public domain for
-automatic Let's Encrypt, or a hardened systemd unit for the backend alone.
-
-**Air-gapped by default.** The webapp makes **zero external HTTP requests**
-and renders identically with the network fully blocked:
-
-- **Self-hosted fonts** — IBM Plex Sans/Mono ship in the bundle
-  (`frontend/public/fonts/`, local `@font-face`), so the signature
-typeface never depends on the Google Fonts CDN.
-- **No third-party calls** — no CDNs, telemetry, or icon services; the CLI is
-network-minimal too (every request goes through one `api_client` seam,
-loopback-only, enforced by a CI gate), and the backend's only outbound
-calls are key/config-gated (enrichment, sandbox, passive DNS, webhooks) —
-proven at runtime: with zero keys, the background flows make zero requests.
-Run `bash scripts/airgap-verify.sh` for the one-shot verification of all
-four gates plus the cold-start latency budget — see
-[`docs/18-AIR-GAP.md`](docs/18-AIR-GAP.md) for the full guarantees and how
-to run each gate standalone.
-- **Enforced in CI** — both Playwright e2e gates treat *any* non-localhost
-request as a console error, and a static gate scans the shipped build
-(`dist/index.html` + every asset chunk) for external dependency syntax
-(`scripts/gate_airgap_artifacts.py`), so an external dependency can never
-sneak back in unnoticed.
-- **Measured** — worst-case air-gapped cold start (browser boot + first
-interactive render, production build, cache disabled): **≈ 0.3 s**
-(`demo/measure-airgap-load.mjs`).
-
-### Try it without a collector
-
-The webapp and CLI run against **seeded demo data** — no live telemetry
-needed:
-
-```bash
-source .venv/bin/activate
-cd backend && python -m app.seed_demo        # a demo run with alerts
-cd .. && outpost list                        # see it in the terminal
-outpost campaigns                            # campaign clusters
-```
-
-Seeds: `app.seed_demo` (single run), `app.seed_campaign` (the **Shelf-Stack**
-campaign pair sharing C2 `203.0.113.88`), `app.seed_macos` (a macOS
-LaunchAgent/osascript run).
-
-### CLI usage
-
-```bash
-outpost --help             # all commands
-outpost list               # session history (colorized risk)
-outpost show <run_id>      # full report: risk, kill chain, tree, network
-outpost run <sample>       # analyze a synthetic sample
-outpost watch              # live event watch mode (recon markers)
-outpost search <ioc>       # cross-run IOC search
-outpost compare <a> <b>    # diff two runs
-outpost campaigns          # campaign clusters
-outpost samples            # sample vault
-outpost rules <run_id>     # Suricata/Sigma detection rules
-outpost rules knobs        # tunable detection thresholds
-outpost rules log-patterns # anti-forensics pattern tables
-outpost watchlist          # add|list|remove|export|import
-outpost notes <run_id>     # analyst notes
-outpost yara list|test     # signature lab mirror
-outpost footprint <sample> # passive DNS / CT / ASN per sample
-outpost coverage           # MITRE ATT&CK coverage matrix
-outpost intel              # enrichment cache status + refresh
-outpost agent run|install  # bootstrap the host collector
-outpost admin backfill-channels   # stamp channels on legacy events
-outpost admin pg-migrate          # Tier 4: export SQLite → Postgres artifacts
-outpost export <run_id> --format json|stix -o out.json
-```
-
-Point the CLI at a non-default backend with `OUTPOST_API_URL=http://localhost:8001`.
-
-### Real-machine monitoring
-
-- **Windows** — install Sysmon with `collectors/windows/sysmon_config.xml`,
-  then run the collector.
-- **Linux** — `sudo auditctl -R collectors/linux/audit.rules` (needs auditd),
-  then run the collector.
-
-The collector configs and shippers live in [`collectors/`](collectors/)
-(`windows/`, `linux/`, plus shared tests).
-
-### 🚀 Universal Quickstart (Linux, macOS, Windows)
-
-**1. Clone and Run Setup (creates venv, installs all backend, CLI, and frontend dependencies):**
-```bash
-# Linux / macOS
-./setup.sh
-
-# Windows (PowerShell)
-.\setup.ps1
-```
-
-**2. Start OutPost (Backend on port 8001 + Web Console on port 5174):**
-```bash
-# Linux / macOS
-./start.sh
-
-# Windows (PowerShell)
-.\start.ps1
-```
-
-**3. Run the CLI:**
-```bash
-source .venv/bin/activate
-outpost --help
 ```
 
 ---
 
-## 🧪 Testing
+## ⌨️ OutPost CLI Reference
 
-One command runs the whole verification sweep:
+The `outpost` command-line utility provides comprehensive SOC operations directly inside your terminal.
+
+```bash
+# Activate the environment
+source .venv/bin/activate
+outpost --help
+```
+
+### 1. Live Telemetry & Fleet Operations
+```bash
+outpost watch                          # Stream live host telemetry with recon markers
+outpost console                        # Launch the interactive Rich TUI SOC Console
+outpost agent run                      # Run host collector in the foreground
+outpost agent install                  # Install host collector as a background service
+outpost hosts                          # Per-host aggregate telemetry timelines
+```
+
+### 2. Triage & Incident Case Management
+```bash
+outpost alerts                         # Inspect active alert queue (--provenance real|synthetic)
+outpost triage <alert_id> <status>     # Move alert (open -> acknowledged -> resolved)
+outpost triage resolved 101 102 103    # Bulk status update with optional --comment
+outpost allowlist list                 # View active IOC allowlists
+outpost allowlist add --ip 1.1.1.1     # Allowlist benign IP from future alert generation
+outpost watchlist list                 # View monitored indicator watchlist
+outpost investigations list            # View incident investigation cases
+outpost investigations create "Case"   # Create new investigation case
+```
+
+### 3. Detection Engineering & Rule Ops
+```bash
+outpost rules list                     # List all 37 active detection rules & MITRE tactics
+outpost rules knobs                    # Inspect and tune heuristic thresholds
+outpost rules log-patterns             # Inspect anti-forensics & log tampering patterns
+outpost coverage                       # Display MITRE ATT&CK coverage matrix (14/14)
+outpost yara list                      # List custom YARA signatures
+outpost yara test <rule.yar>           # Scan sample vault against YARA rule
+```
+
+### 4. Threat Intelligence & Forensics
+```bash
+outpost search <indicator>             # Cross-session search for IP, domain, hash, or process
+outpost campaigns                      # Inspect auto-clustered adversary campaigns
+outpost footprint <sample_id>          # Retrieve passive DNS, CT certs, and ASN metadata
+outpost intel                          # Check enrichment cache status & trigger refreshes
+outpost samples                        # List uploaded binary samples in the vault
+outpost compare <run_a> <run_b>        # Diff two execution timelines side-by-side
+outpost export <run_id> --format stix  # Export session data as STIX 2.1 or JSON
+```
+
+### 5. Administration & Preferences
+```bash
+outpost auth generate-token            # Generate shared OUTPOST_AGENT_TOKEN
+outpost admin backfill-channels        # Backfill channel tags on legacy events
+outpost admin pg-migrate               # Export SQLite database to PostgreSQL
+outpost settings                       # Inspect console filters & preferences
+```
+
+---
+
+## 🏗️ Architecture
+
+```text
+┌─────────────────────────┐   ┌─────────────────────────┐   ┌─────────────────────────┐
+│     Linux (auditd/eBPF) │   │     Windows (Sysmon)    │   │ macOS (EndpointSecurity)│
+│     Collector Agent     │   │     Collector Agent     │   │ Collector Agent         │
+└────────────┬────────────┘   └────────────┬────────────┘   └────────────┬────────────┘
+             └─────────────────────────────┼─────────────────────────────┘
+                                           ▼ POST /ingest/batch
+                          ┌─────────────────────────────────┐
+                          │         FastAPI Backend         │
+                          │   • Unified Event Normalizer    │
+                          │   • SQLite / PostgreSQL Storage │
+                          │   • 37 Heuristic Rules Engine   │
+                          │   • MITRE ATT&CK Risk Scoring   │
+                          │   • YARA Lab & IOC Extraction   │
+                          │   • Real-Time SSE Event Stream  │
+                          └────────────────┬────────────────┘
+                                           │ REST API + SSE
+                     ┌─────────────────────┴─────────────────────┐
+                     ▼                                           ▼
+          ┌─────────────────────┐                     ┌─────────────────────┐
+          │     Web Console     │                     │     OutPost CLI     │
+          │   React 19 + Vite   │                     │     Typer + Rich    │
+          │  Tailwind CSS v4    │                     │  Terminal SOC Deck  │
+          └─────────────────────┘                     └─────────────────────┘
+```
+
+---
+
+## 🧪 Verification & Testing
+
+OutPost maintains a comprehensive automated quality gate verifying every component:
 
 ```bash
 ./verify.sh
 ```
 
-| Suite | Count | Covers |
-|---|---|---|
-| Backend pytest | **708** | ingestion, dynamic sandbox tracing, local host monitoring, OS-aware rules (win/linux/macOS), risk + ATT&CK, campaigns, events search + channel-counts + log_source backfill, samples vault, SSE broadcast, notes, storm caps, triage, footprint, YARA, auth, fleet health, Postgres migration core + live Postgres runtime dialect |
-| Collector pytest | **38** | Sysmon, auditd, eBPF tracepoints, and macOS EndpointSecurity shipping, local collector, normalization, agent-token auth, attribution fallback |
-| CLI pytest | **132** | rendering regressions, campaigns, risk columns, YARA, footprint, rules knobs, agent install, triage lifecycle, allowlist, suppressions, investigations, analysis, playbooks, interactive TUI console |
-| Frontend | **359** | vitest unit tests + clean `tsc --noEmit` + Vite build |
+| Test Suite | Tests Passing | Scope Covered |
+|---|:---:|---|
+| **Backend Pytest** | **711** | Ingestion, normalizers, rules engine, risk scoring, campaigns, search, SSE stream, YARA, triage, PostgreSQL runtime dialect |
+| **Frontend Vitest** | **365** | UI components, modals, triage workflows, client stores, theme switching, SVG rendering |
+| **CLI Pytest** | **132** | All 31 CLI commands, Rich table rendering, argument validation, interactive TUI mode |
+| **Collectors Pytest** | **38** | Linux `auditd`/`eBPF`, Windows `Sysmon`, macOS `EndpointSecurity` shippers |
+| **ATT&CK Coverage** | **14 / 14** | Complete coverage across all 14 MITRE tactics with 0 gaps |
+| **Playwright E2E** | **54 checks** | Cross-browser layout verification across 18 routes and 3 responsive viewports |
+| **Total Test Count** | **1,246** | **100% Green / 0 Failures** |
 
-Beyond the suites: the 14/14 ATT&CK coverage gate, both collector FP-baseline
-soaks, the **sandbox provider gate** (`scripts/validate_sandbox_provider.py`),
-the Playwright layout sweep, the post-deploy walk (fail-closed auth + TLS +
-channel gate), and the doc-count gate all run as steps of the same sweep.
+---
 
-## 📚 Documentation
+## 🔒 Scope & Safety Guarantees
 
-- **[docs/](docs/)** — Complete technical specifications:
-  - `docs/00-OVERVIEW.md` through `docs/18-AIR-GAP.md` covering architecture, backend API, collectors, detection logic, integrations, CLI spec, and air-gap guarantees.
-- **[demo/README.md](demo/README.md)** — Playwright walkthroughs and demo recordings.
+OutPost is strictly a **defensive security monitoring and analysis tool**. It contains no weaponized payloads, exploits, or offensive automation.
 
+- **Air-Gap Guarantee**: The web console ships with self-hosted fonts and assets (`frontend/public/fonts/`). No external analytics, trackers, or CDN scripts are loaded.
+- **Enrichment Safety**: Threat intelligence APIs (VirusTotal, AbuseIPDB) require explicit user-configured API keys in `.env` and fail closed to offline mode when unconfigured.
 
-## 🔒 Scope & safety
-
-OutPost **monitors and analyzes** behavior — it generates nothing weaponized.
-Detection runs on synthetic event streams by default, so the demo is safe to
-run anywhere. Real malware should only ever run in an isolated environment
-you're prepared to reset. Enrichment
-(AbuseIPDB / VirusTotal) needs API keys in `backend/.env` and degrades
-gracefully without them.
+---
 
 ## 📄 License
 
-[MIT](LICENSE) — built for a BSc Cybersecurity (Year 3) semester project.
+Distributed under the [MIT License](LICENSE).

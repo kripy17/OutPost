@@ -745,6 +745,8 @@ export interface QueueAlert {
   details: string;
   // P0.3: nullable link to the optional cross-workflow investigation overlay.
   investigation_id?: string | null;
+  source?: string | null;
+  run_source?: string | null;
 }
 
 export interface QueueResponse {
@@ -958,6 +960,7 @@ export interface HostWatchResponse {
 
 export interface ProcessSummary {
   pid: number;
+  ppid?: number | null;
   process_name: string | null;
   command_line: string | null;
   platform: Platform;
@@ -966,6 +969,32 @@ export interface ProcessSummary {
   sample_name: string;
   event_count: number;
   alert_count: number;
+  children?: { pid: number; process_name: string | null; command_line: string | null }[];
+  network_connections?: { dest_ip: string; dest_port: number | null; protocol: string | null }[];
+  files_written?: string[];
+  findings?: { id: number; rule_id: string; rule_name: string; severity: string; details: string }[];
+}
+
+export interface NetworkSummary {
+  dest_ip: string;
+  event_count: number;
+  first_seen: string | null;
+  last_seen: string | null;
+  hosts: string[];
+  processes: { pid: number; process_name: string | null; command_line: string | null }[];
+  ports: { dest_port: number | null; protocol: string | null }[];
+  watchlist?: { notes: string | null } | null;
+  findings: { id: number; rule_id: string; rule_name: string; severity: string; details: string; run_id: string }[];
+}
+
+export interface FileSummary {
+  file_path: string;
+  event_count: number;
+  first_seen: string | null;
+  last_seen: string | null;
+  hosts: string[];
+  processes: { pid: number; process_name: string | null; command_line: string | null }[];
+  findings: { id: number; rule_id: string; rule_name: string; severity: string; details: string; run_id: string }[];
 }
 
 // -- Dashboard / global findings feed ----------------------------------------

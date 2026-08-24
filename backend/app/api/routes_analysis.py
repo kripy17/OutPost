@@ -400,17 +400,40 @@ def process_summary(pid: int) -> dict:
             for r in conn.execute("SELECT DISTINCT run_id FROM events WHERE pid = ?", (pid,)).fetchall()
         ]
         alert_count = 0
+        findings = []
         if run_ids:
             placeholders = ",".join("?" * len(run_ids))
-            alert_count = conn.execute(
+            alert_rows = conn.execute(
                 f"""
-                SELECT COUNT(*) AS n FROM alerts
+                SELECT id, rule_id, rule_name, severity, details FROM alerts
                 WHERE run_id IN ({placeholders}) AND (related_pid = ? OR related_pids LIKE ?)
                 """,
                 (*run_ids, pid, f"%{pid}%"),
-            ).fetchone()["n"]
+            ).fetchall()
+            alert_count = len(alert_rows)
+            findings = [dict(a) for a in alert_rows]
+
+        child_rows = conn.execute(
+            "SELECT DISTINCT pid, process_name, command_line FROM events WHERE ppid = ? AND pid IS NOT NULL",
+            (pid,),
+        ).fetchall()
+        children = [dict(c) for c in child_rows]
+
+        net_rows = conn.execute(
+            "SELECT DISTINCT dest_ip, dest_port, protocol FROM events WHERE pid = ? AND dest_ip IS NOT NULL",
+            (pid,),
+        ).fetchall()
+        network_connections = [dict(n) for n in net_rows]
+
+        file_rows = conn.execute(
+            "SELECT DISTINCT file_path FROM events WHERE pid = ? AND file_path IS NOT NULL",
+            (pid,),
+        ).fetchall()
+        files_written = [f["file_path"] for f in file_rows]
+
     return {
         "pid": pid,
+        "ppid": row["ppid"],
         "process_name": row["process_name"],
         "command_line": row["command_line"],
         "platform": row["platform"],
@@ -419,6 +442,151 @@ def process_summary(pid: int) -> dict:
         "sample_name": row["sample_name"],
         "event_count": event_count,
         "alert_count": alert_count,
+        "children": children,
+        "network_connections": network_connections,
+        "files_written": files_written,
+        "findings": findings,
+    }
+
+
+@router.get("/events/network-summary", response_model=None)
+def network_summary(ip: str) -> dict:
+    """Detailed network investigation context for a destination IP derived strictly
+    from persisted events: event counts, first/last seen, communicating hosts,
+    responsible processes, destination ports/protocols, correlated findings,
+    and watchlist presence.
+    """
+    clean_ip = ip.strip()
+    if not clean_ip:
+        raise HTTPException(status_code=422, detail="ip parameter cannot be empty")
+
+    with db_session() as conn:
+        row = conn.execute(
+            """
+            SELECT COUNT(*) AS event_count,
+                   MIN(timestamp) AS first_seen,
+                   MAX(timestamp) AS last_seen
+            FROM events
+            WHERE dest_ip = ?
+            """,
+            (clean_ip,),
+        ).fetchone()
+
+        event_count = row["event_count"] if row else 0
+        if not event_count:
+            raise HTTPException(status_code=404, detail=f"No events observed for destination IP {clean_ip}")
+
+        host_rows = conn.execute(
+            "SELECT DISTINCT host_id FROM events WHERE dest_ip = ? AND host_id IS NOT NULL",
+            (clean_ip,),
+        ).fetchall()
+        hosts = [h["host_id"] for h in host_rows]
+
+        proc_rows = conn.execute(
+            "SELECT DISTINCT pid, process_name, command_line FROM events WHERE dest_ip = ? AND pid IS NOT NULL",
+            (clean_ip,),
+        ).fetchall()
+        processes = [dict(p) for p in proc_rows]
+
+        port_rows = conn.execute(
+            "SELECT DISTINCT dest_port, protocol FROM events WHERE dest_ip = ? AND dest_port IS NOT NULL",
+            (clean_ip,),
+        ).fetchall()
+        ports = [dict(p) for p in port_rows]
+
+        # Check watchlist
+        watch_row = conn.execute(
+            "SELECT label, added_at FROM watchlist WHERE value = ?",
+            (clean_ip,),
+        ).fetchone()
+        watchlist_entry = dict(watch_row) if watch_row else None
+
+        # Correlated alerts
+        alert_rows = conn.execute(
+            """
+            SELECT a.id, a.rule_id, a.rule_name, a.severity, a.details, a.run_id
+            FROM alerts a
+            WHERE a.details LIKE ? OR a.run_id IN (
+                SELECT DISTINCT run_id FROM events WHERE dest_ip = ?
+            )
+            LIMIT 20
+            """,
+            (f"%{clean_ip}%", clean_ip),
+        ).fetchall()
+        findings = [dict(a) for a in alert_rows]
+
+    return {
+        "dest_ip": clean_ip,
+        "event_count": event_count,
+        "first_seen": row["first_seen"],
+        "last_seen": row["last_seen"],
+        "hosts": hosts,
+        "processes": processes,
+        "ports": ports,
+        "watchlist": watchlist_entry,
+        "findings": findings,
+    }
+
+
+@router.get("/events/file-summary", response_model=None)
+def file_summary(path: str) -> dict:
+    """Detailed file investigation context for a file path derived strictly from
+    persisted events: event count, first/last seen, hosts, responsible processes,
+    and correlated findings.
+    """
+    clean_path = path.strip()
+    if not clean_path:
+        raise HTTPException(status_code=422, detail="path parameter cannot be empty")
+
+    with db_session() as conn:
+        row = conn.execute(
+            """
+            SELECT COUNT(*) AS event_count,
+                   MIN(timestamp) AS first_seen,
+                   MAX(timestamp) AS last_seen
+            FROM events
+            WHERE file_path = ?
+            """,
+            (clean_path,),
+        ).fetchone()
+
+        event_count = row["event_count"] if row else 0
+        if not event_count:
+            raise HTTPException(status_code=404, detail=f"No events observed for file path {clean_path}")
+
+        host_rows = conn.execute(
+            "SELECT DISTINCT host_id FROM events WHERE file_path = ? AND host_id IS NOT NULL",
+            (clean_path,),
+        ).fetchall()
+        hosts = [h["host_id"] for h in host_rows]
+
+        proc_rows = conn.execute(
+            "SELECT DISTINCT pid, process_name, command_line FROM events WHERE file_path = ? AND pid IS NOT NULL",
+            (clean_path,),
+        ).fetchall()
+        processes = [dict(p) for p in proc_rows]
+
+        alert_rows = conn.execute(
+            """
+            SELECT a.id, a.rule_id, a.rule_name, a.severity, a.details, a.run_id
+            FROM alerts a
+            WHERE a.details LIKE ? OR a.run_id IN (
+                SELECT DISTINCT run_id FROM events WHERE file_path = ?
+            )
+            LIMIT 20
+            """,
+            (f"%{clean_path}%", clean_path),
+        ).fetchall()
+        findings = [dict(a) for a in alert_rows]
+
+    return {
+        "file_path": clean_path,
+        "event_count": event_count,
+        "first_seen": row["first_seen"],
+        "last_seen": row["last_seen"],
+        "hosts": hosts,
+        "processes": processes,
+        "findings": findings,
     }
 
 

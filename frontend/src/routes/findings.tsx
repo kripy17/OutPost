@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
+import { DataProvenanceBadge } from "../components/DataProvenanceBadge";
 import { PageHeader, Panel } from "../components/ui";
 import { addSuppression, bulkUpdateAlertStatus, getAlertQueue, getRuleMeta } from "../lib/api";
 import { useEventStream } from "../lib/useEventStream";
@@ -58,6 +59,7 @@ function FindingRow({
           <span className="rounded border border-border-subtle px-1 py-px font-mono text-[9px] uppercase tracking-wide text-text-faint">
             {a.rule_id}
           </span>
+          <DataProvenanceBadge source={a.run_source || a.source || "live"} />
           <span
             className="ml-auto rounded-full border border-border-subtle px-1.5 py-px font-mono text-[10px] tabular-nums text-text-faint"
             title={`Triggered ${a.triggered_at}`}

@@ -88,47 +88,38 @@ interface NavItem {
 
 const GROUPS: { label: string; links: NavItem[] }[] = [
   {
-    label: "Monitor",
+    label: "Live Monitoring",
     links: [
       { to: "/", label: "Overview", iconName: "grid", end: true },
       { to: "/events", label: "Event Manager", iconName: "list" },
       { to: "/findings", label: "Findings & Triage", iconName: "alert" },
       { to: "/agents", label: "Fleet / Hosts", iconName: "terminal" },
-    ],
-  },
-  {
-    label: "Investigate",
-    links: [
       { to: "/investigations", label: "Investigations", iconName: "notes" },
-      { to: "/campaigns", label: "Campaigns", iconName: "flag" },
       { to: "/search", label: "IOC Intelligence", iconName: "search" },
+      { to: "/watchlist", label: "Watchlist", iconName: "star" },
     ],
   },
   {
     label: "Malware Analysis",
     links: [
       { to: "/samples", label: "Sample Vault", iconName: "box" },
+      { to: "/analysis", label: "Analysis Pipeline", iconName: "process" },
+      { to: "/history", label: "Session Archive", iconName: "clock" },
       { to: "/footprint", label: "Threat Footprint", iconName: "globe" },
-      { to: "/history", label: "Session History", iconName: "clock" },
+      { to: "/campaigns", label: "Campaigns", iconName: "flag" },
     ],
   },
   {
-    label: "Lab",
+    label: "Simulation Lab",
     links: [
       { to: "/monitor", label: "Simulation Lab", iconName: "activity" },
     ],
   },
   {
-    label: "Detection",
+    label: "Detection & Admin",
     links: [
       { to: "/rules", label: "Detection & YARA", iconName: "shield" },
       { to: "/coverage", label: "ATT&CK Matrix", iconName: "target" },
-      { to: "/watchlist", label: "Watchlist", iconName: "star" },
-    ],
-  },
-  {
-    label: "Administration",
-    links: [
       { to: "/settings", label: "Settings", iconName: "bell" },
       { to: "/audit", label: "Audit Log", iconName: "file" },
     ],

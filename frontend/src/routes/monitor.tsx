@@ -348,7 +348,7 @@ export default function MonitorPage() {
 
     // Synthetic attack scenario fallback if no sample is uploaded
     const name = detonationSampleName(targetPlatform);
-    const { run_id } = await createRun(name, targetPlatform, "analysis");
+    const { run_id } = await createRun(name, targetPlatform, "analysis", "simulation");
     setReconPids(new Set());
     setReconKinds([]);
     setRunId(run_id);

@@ -187,7 +187,10 @@ function FindingsFeed() {
         </p>
       )}
       {!isLoading && !isError && groups.length === 0 && (
-        <p className="py-8 text-center text-sm text-text-muted">No findings yet — detonate a sample from Monitor.</p>
+        <div className="py-8 text-center font-mono text-sm text-text-muted">
+          <p className="font-semibold text-text-primary">Monitoring active — 0 findings detected</p>
+          <p className="mt-1 text-xs text-text-faint">No security heuristics or IOC alerts have triggered across ingested host telemetry.</p>
+        </div>
       )}
 
       <ol className="space-y-2">
@@ -323,7 +326,17 @@ function FindingsFeed() {
               <span>
                 {preview.data.event_count} event{preview.data.event_count === 1 ? "" : "s"}
               </span>
-              <span className={preview.data.alert_count > 0 ? "text-risk-suspicious" : ""}>
+              {(preview.data.children?.length ?? 0) > 0 && (
+                <span>
+                  {preview.data.children!.length} child{preview.data.children!.length === 1 ? "" : "ren"}
+                </span>
+              )}
+              {(preview.data.network_connections?.length ?? 0) > 0 && (
+                <span>
+                  {preview.data.network_connections!.length} socket{preview.data.network_connections!.length === 1 ? "" : "s"}
+                </span>
+              )}
+              <span className={preview.data.alert_count > 0 ? "text-risk-suspicious font-semibold" : ""}>
                 {preview.data.alert_count} alert{preview.data.alert_count === 1 ? "" : "s"}
               </span>
             </div>

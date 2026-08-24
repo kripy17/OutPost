@@ -172,7 +172,7 @@ def query_findings(
     ).fetchone()[0]
     rows = conn.execute(
         f"""
-        SELECT a.*, r.sample_name,
+        SELECT a.*, r.sample_name, r.source AS run_source,
                (SELECT GROUP_CONCAT(DISTINCT host_id) FROM events e
                 WHERE e.run_id = a.run_id) AS host_ids
         FROM alerts a
