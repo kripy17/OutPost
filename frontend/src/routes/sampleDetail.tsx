@@ -334,12 +334,24 @@ function SandboxDetonation({ sample }: { sample: { sample_id: string; original_n
     >
       <p className="mb-4 max-w-2xl text-sm text-text-muted">
         Push the sample to an external sandbox (Any.Run, Triage, or Joe) and stream the report back
-        through the detection pipeline as a normal run. This is a roadmap integration: until an API
-        key is configured (<code className="font-mono text-accent">ANYRUN_API_KEY</code> /{" "}
-        <code className="font-mono text-accent">TRIAGE_API_KEY</code> /{" "}
-        <code className="font-mono text-accent">JOE_API_KEY</code>) the labeled demo detonates locally —
-        same pipeline, clearly marked.
+        through the detection pipeline as a normal run.
       </p>
+
+      {providers && providers.mode !== "live" && (
+        <div className="mb-4 rounded-xl border border-sky-500/30 bg-sky-500/10 p-4 font-mono text-xs text-text-muted">
+          <p className="font-semibold text-text-primary flex items-center gap-1.5">
+            <Icon name="box" size={14} className="text-sky-400" />
+            Dynamic Execution Backend: Not Configured
+          </p>
+          <p className="mt-1 text-[11px] text-text-faint">
+            To execute live detonations against Any.Run, Hatching Triage, or Joe Sandbox, configure your provider API keys in{" "}
+            <Link to="/settings" className="text-accent underline hover:text-accent-hover">
+              Settings
+            </Link>
+            .
+          </p>
+        </div>
+      )}
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <button

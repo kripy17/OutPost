@@ -541,7 +541,7 @@ export default function AgentsPage() {
       )}
 
       {!isLoading && !isError && agents.length === 0 && (
-        <Panel kicker="Fleet" title={identity ? "No hosts match this filter" : "No agents yet"}>
+        <Panel kicker="Fleet" title={identity ? "No hosts match this filter" : "No telemetry received"}>
           <div className="py-6 text-center">
             <Icon name="terminal" size={28} className="mx-auto text-text-faint" />
             {identity ? (
@@ -556,15 +556,23 @@ export default function AgentsPage() {
                 </button>
               </p>
             ) : (
-              <p className="mx-auto mt-3 max-w-md text-sm leading-relaxed text-text-muted">
-                Telemetry appears here the moment any event lands. To bring a real host online, open the{" "}
-                <Link to="/monitor" className="text-accent hover:underline">
-                  Live Monitor
-                </Link>
-                , start a live session, then run{" "}
-                <code className="rounded bg-bg-elevated px-1.5 py-0.5 font-mono text-[11px] text-text-primary">outpost agent run</code>{" "}
-                on the host — its auditd/Sysmon events stream in under this host's name.
-              </p>
+              <div className="mx-auto mt-3 max-w-lg space-y-3 text-sm leading-relaxed text-text-muted">
+                <p>
+                  No telemetry has been received yet. To enroll and monitor a host, run{" "}
+                  <code className="rounded bg-bg-elevated px-1.5 py-0.5 font-mono text-[11px] text-text-primary">
+                    outpost agent run
+                  </code>{" "}
+                  on the target endpoint.
+                </p>
+                <div className="rounded-xl border border-border-subtle bg-bg-base/50 p-4 text-left font-mono text-xs">
+                  <p className="font-semibold text-text-primary mb-2">Supported Collector Channels</p>
+                  <ul className="space-y-1.5 text-text-muted text-[11px]">
+                    <li>• <strong className="text-text-primary">Linux</strong>: <code className="text-accent">auditd</code> / <code className="text-accent">eBPF</code> (process execution, socket connections, file writes, auth)</li>
+                    <li>• <strong className="text-text-primary">Windows</strong>: <code className="text-accent">Sysmon</code> (process creation, network connect, file writes, registry)</li>
+                    <li>• <strong className="text-text-primary">macOS</strong>: <code className="text-accent">EndpointSecurity</code> (process exec/fork, socket connect, file access)</li>
+                  </ul>
+                </div>
+              </div>
             )}
           </div>
         </Panel>
