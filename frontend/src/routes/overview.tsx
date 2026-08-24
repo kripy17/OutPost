@@ -134,8 +134,8 @@ function FindingsFeed() {
     const fresh = new Set<string>();
     for (const k of keys) if (!prevKeys.current.has(k)) fresh.add(k);
     prevKeys.current = keys;
-    setFreshKeys(fresh);
     if (fresh.size === 0) return;
+    setFreshKeys(fresh);
     const t = setTimeout(() => setFreshKeys(new Set()), 2500);
     return () => clearTimeout(t);
   }, [alerts]);
