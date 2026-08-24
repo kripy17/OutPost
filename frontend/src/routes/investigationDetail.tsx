@@ -258,7 +258,7 @@ export default function InvestigationDetailPage() {
                           {f.rule_name}
                         </Link>
                         <span className="rounded border border-border-subtle px-1 py-px font-mono text-[9px] uppercase text-text-faint">{f.rule_id}</span>
-                        <DataProvenanceBadge source="live" size="sm" />
+                        <DataProvenanceBadge source="live" />
                         <span className="ml-auto font-mono text-[10px] text-text-faint">{f.status}</span>
                       </div>
                       <p className="mt-0.5 truncate font-mono text-[11px] text-text-muted" title={f.details}>{f.details}</p>
