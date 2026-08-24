@@ -6,11 +6,11 @@ import { Deferred } from "../components/Deferred/Deferred";
 import { Icon } from "../components/Icon";
 import { platformIconName } from "../components/iconMeta";
 import { RiskGauge, RiskTrendBars, SeverityDonut, type RiskTrendBar } from "../components/Posture/Posture";
-import { Chip, PageHeader, Panel } from "../components/ui";
+import { PageHeader, Panel } from "../components/ui";
 import { ageBucket, aggregateTrend, collapseFindings, intelFreshness, intelKeyHealth, openSince, overviewRunParams, sortFindingsRiskFirst } from "./overviewHelpers";
 import { copyToClipboard } from "../lib/clipboard";
 import { SEVERITY_BG } from "../lib/constants";
-import { BASE_URL, getAgents, getCampaigns, getHealth, getIntelFreshness, getIntelKeys, getMeta, getPlatform, getProcessSummary, getRecentAlerts, getRuleMeta, getRuns, resetStore } from "../lib/api";
+import { BASE_URL, getAgents, getCampaigns, getHealth, getIntelFreshness, getIntelKeys, getMeta, getPlatform, getProcessSummary, getRecentAlerts, getRuleMeta, getRuns, listInvestigations, resetStore } from "../lib/api";
 import { useEventStream } from "../lib/useEventStream";
 
 // Compact relative time for the host panel's auth-context tooltips (the
@@ -22,7 +22,7 @@ function _rel(iso: string): string {
   if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
   return `${Math.floor(s / 86400)}d ago`;
 }
-import type { Campaign, ProcessSummary, RunSummary, Severity } from "../types";
+import type { ProcessSummary, RunSummary, Severity } from "../types";
 
 /* ──────────────────────────────────────────────────────────────────────── */
 // Threat posture — the console header. Three visual primitives instead of a
@@ -368,93 +368,83 @@ function SkeletonList({ rows }: { rows: number }) {
   );
 }
 
-/* ──────────────────────────────────────────────────────────────────────── */
-// Campaign spotlight
-/* ──────────────────────────────────────────────────────────────────────── */
+function ActiveInvestigationsPanel() {
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ["investigations", "active"],
+    queryFn: () => listInvestigations({ limit: 4 }),
+  });
 
-function rankCampaign(c: Campaign): number {
-  const shared = c.iocs.ips.filter((i) => i.runs >= 2).length;
-  return c.runs.length * 10 + Math.min(shared, 5) + c.runs.reduce((n, r) => n + r.alert_count, 0);
-}
+  const investigations = data?.investigations ?? [];
 
-function CampaignSpotlight() {
-  const { data: campaigns = [], isLoading, isError } = useQuery({ queryKey: ["campaigns"], queryFn: () => getCampaigns() });
-
-  if (isLoading) return <p className="text-sm text-text-muted">Grouping runs…</p>;
-  if (isError) return <p className="text-xs text-risk-malicious">Couldn't load campaigns.</p>;
-  if (campaigns.length === 0) {
-    return (
-      <Panel kicker="Hunt" title="Campaign spotlight">
-        <p className="text-sm text-text-muted">Two or more runs connecting to the same IP form a campaign automatically.</p>
-      </Panel>
-    );
-  }
-
-  const top = [...campaigns].sort((a, b) => rankCampaign(b) - rankCampaign(a))[0];
-  const rep = top.reputation;
-  const sharedIps = top.iocs.ips.filter((i) => i.runs >= 2).slice(0, 3);
-  const topRuns = [...top.runs].sort((a, b) => b.alert_count - a.alert_count).slice(0, 3);
+  if (isLoading) return <p className="text-sm text-text-muted">Loading cases…</p>;
+  if (isError) return <p className="text-xs text-risk-malicious">Couldn't load investigations.</p>;
 
   return (
     <Panel
-      kicker="Hunt"
-      title="Campaign spotlight"
+      kicker="Case workspace"
+      title="Active investigations"
       right={
-        <Link to="/campaigns" className="press inline-flex items-center gap-1 font-mono text-[10px] text-accent hover:underline">
-          all campaigns <Icon name="arrowRight" size={11} />
+        <Link to="/investigations" className="press inline-flex items-center gap-1 font-mono text-[10px] text-accent hover:underline">
+          all cases <Icon name="arrowRight" size={11} />
         </Link>
       }
     >
-      <div className="space-y-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <Icon name="network" size={14} className="text-accent" />
-          <span className="font-mono text-sm font-semibold text-text-primary">{top.key}</span>
-          <Chip tone={rep === "malicious" ? "malicious" : "suspicious"} dot glow>
-            {top.watchlist ? "★ " : ""}
-            {rep ?? "unknown"}
-            {top.watchlist_label ? ` — ${top.watchlist_label}` : ""}
-          </Chip>
-          <span className="font-mono text-[10px] text-text-faint">
-            {top.runs.length} run{top.runs.length === 1 ? "" : "s"}
-          </span>
+      {investigations.length === 0 ? (
+        <div className="py-6 text-center">
+          <p className="font-mono text-xs text-text-muted">No open investigation cases.</p>
+          <p className="mt-1 text-[11px] text-text-faint">
+            Create an investigation from the findings queue or investigate suspicious telemetry.
+          </p>
+          <Link
+            to="/investigations"
+            className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-elevated px-3 py-1.5 font-mono text-xs text-text-muted hover:border-accent/40 hover:text-accent"
+          >
+            <Icon name="plus" size={12} />
+            New investigation
+          </Link>
         </div>
-
-        <ul className="space-y-1">
-          {topRuns.map((r) => (
-            <li key={r.run_id}>
-              <Link
-                to={`/runs/${r.run_id}`}
-                className="group flex items-baseline gap-2 rounded-md border border-transparent px-2 py-1 transition-colors hover:border-border-subtle hover:bg-bg-elevated"
-              >
-                <span className="font-mono text-xs text-text-primary">{r.sample_name}</span>
-                <span className="ml-auto font-mono text-[10px] text-text-faint">
-                  {r.alert_count} alert{r.alert_count === 1 ? "" : "s"}
+      ) : (
+        <div className="space-y-2">
+          {investigations.map((inv) => (
+            <Link
+              key={inv.id}
+              to={`/investigations/${inv.id}`}
+              className="group block rounded-xl border border-border-subtle/70 bg-bg-elevated/40 p-3 transition-colors hover:border-accent/50 hover:bg-bg-elevated"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="truncate font-sans text-xs font-semibold text-text-primary group-hover:text-accent">
+                  {inv.title}
                 </span>
                 <span
-                  className={`text-xs ${r.highest_severity === "malicious" ? "text-risk-malicious" : "text-risk-suspicious"}`}
+                  className={`shrink-0 rounded border px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wide ${
+                    inv.status === "active" || inv.status === "triage"
+                      ? "border-risk-suspicious/40 text-risk-suspicious"
+                      : inv.status === "created"
+                        ? "border-accent/40 text-accent"
+                        : "border-border-subtle text-text-faint"
+                  }`}
                 >
-                  ●
+                  {inv.status}
                 </span>
-              </Link>
-            </li>
+              </div>
+              <div className="mt-1.5 flex flex-wrap items-center gap-2 font-mono text-[10px] text-text-faint">
+                <span>{inv.id}</span>
+                <span>·</span>
+                <span>updated {inv.updated_at ? _rel(inv.updated_at) : "recently"}</span>
+                {inv.tags && inv.tags.length > 0 && (
+                  <div className="flex gap-1">
+                    {inv.tags.slice(0, 2).map((t) => (
+                      <span key={t} className="rounded bg-bg-surface px-1 text-[9px] text-text-muted">
+                        #{t}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </Link>
           ))}
-        </ul>
-
-        {sharedIps.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5 border-t border-border-subtle pt-2">
-            <span className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">shared C2</span>
-            {sharedIps.map((i) => (
-              <span
-                key={i.value}
-                className="rounded border border-accent/40 bg-bg-elevated/50 px-2 py-0.5 font-mono text-[11px] text-accent"
-              >
-                {i.value}
-                <span className="ml-1 text-[10px] text-text-faint">×{i.runs}</span>
-              </span>
-            ))}
-          </div>
-        )}
-      </div>
+        </div>
+      )}
     </Panel>
   );
 }
@@ -955,7 +945,7 @@ export default function OverviewPage() {
           <FindingsFeed />
         </Deferred>
         <Deferred>
-          <CampaignSpotlight />
+          <ActiveInvestigationsPanel />
         </Deferred>
       </div>
 

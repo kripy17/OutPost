@@ -92,10 +92,10 @@ const GROUPS: { label: string; links: NavItem[] }[] = [
     links: [
       { to: "/", label: "Overview", iconName: "grid", end: true },
       { to: "/events", label: "Event Manager", iconName: "list" },
-      { to: "/findings", label: "Findings & Triage", iconName: "alert" },
-      { to: "/agents", label: "Fleet / Hosts", iconName: "terminal" },
+      { to: "/findings", label: "Findings", iconName: "alert" },
+      { to: "/agents", label: "Fleet", iconName: "terminal" },
       { to: "/investigations", label: "Investigations", iconName: "notes" },
-      { to: "/search", label: "IOC Intelligence", iconName: "search" },
+      { to: "/search", label: "IOC Search", iconName: "search" },
       { to: "/watchlist", label: "Watchlist", iconName: "star" },
     ],
   },
@@ -103,22 +103,27 @@ const GROUPS: { label: string; links: NavItem[] }[] = [
     label: "Malware Analysis",
     links: [
       { to: "/samples", label: "Sample Vault", iconName: "box" },
-      { to: "/analysis", label: "Dynamic Analysis", iconName: "process" },
+      { to: "/analysis", label: "Analysis Jobs", iconName: "process" },
     ],
   },
   {
-    label: "Simulation Lab",
+    label: "Lab",
     links: [
       { to: "/monitor", label: "Simulation Lab", iconName: "activity" },
     ],
   },
   {
-    label: "Detection & Admin",
+    label: "Detection",
     links: [
-      { to: "/rules", label: "Detection & YARA", iconName: "shield" },
-      { to: "/coverage", label: "ATT&CK Matrix", iconName: "target" },
-      { to: "/settings", label: "Settings", iconName: "bell" },
+      { to: "/rules", label: "Rules", iconName: "shield" },
+      { to: "/coverage", label: "ATT&CK Coverage", iconName: "target" },
+    ],
+  },
+  {
+    label: "System",
+    links: [
       { to: "/audit", label: "Audit Log", iconName: "file" },
+      { to: "/settings", label: "Settings", iconName: "bell" },
     ],
   },
 ];

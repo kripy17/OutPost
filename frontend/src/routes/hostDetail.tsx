@@ -332,9 +332,11 @@ export default function HostDetailPage() {
       ) : shown === 0 ? (
         <Panel>
           <p className="py-8 text-center text-sm text-text-muted">
-            {total === 0
-              ? `No ${kind || "activity"} recorded for this host${debouncedQ ? " matching the filter" : ""}.`
-              : `No ${kind || "entries"} match the current filters.`}
+            {eventType === "registry_write" && data?.platform === "linux"
+              ? "Registry activity is not collected on Linux (Windows Sysmon only)."
+              : total === 0
+                ? `No ${kind || "activity"} recorded for this host${debouncedQ ? " matching the filter" : ""}.`
+                : `No ${kind || "entries"} match the current filters.`}
           </p>
         </Panel>
       ) : (
