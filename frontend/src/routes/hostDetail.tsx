@@ -8,12 +8,12 @@
 // workspaces. Unknown hosts 404 (the fleet identity union), known-but-quiet
 // hosts render an honest empty feed with their platform/heartbeat context.
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Icon, type IconName } from "../components/Icon";
 import { PageHeader, Panel } from "../components/ui";
-import { getHostTimeline } from "../lib/api";
+import { getHostContainment, getHostTimeline, isolateHost } from "../lib/api";
 import { useEventStream } from "../lib/useEventStream";
 import { toneFill, toneForReputation, toneForSeverity } from "../lib/fillPatterns";
 import type { EventType, HostTimelineEntry, TimelineKind } from "../types";
@@ -202,9 +202,22 @@ export default function HostDetailPage() {
     setOffset(0);
   };
 
-  const shown = entries.length;
-  const total = data?.total ?? 0;
-  const moreAvailable = shown < total;
+  const { data: containment } = useQuery({
+    queryKey: ["host-containment", hostId],
+    queryFn: () => getHostContainment(hostId!),
+    enabled: !!hostId,
+    retry: false,
+  });
+
+  const toggleIsolation = useMutation({
+    mutationFn: (isolated: boolean) => isolateHost(hostId!, { isolated, reason: "Toggled from host investigation workspace" }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["host-containment", hostId] });
+      void queryClient.invalidateQueries({ queryKey: ["agents"] });
+    },
+  });
+
+  const isIsolated = containment?.isolated ?? false;
 
   if (isError) {
     return (
@@ -222,6 +235,10 @@ export default function HostDetailPage() {
     );
   }
 
+  const shown = entries.length;
+  const total = data?.total ?? 0;
+  const moreAvailable = shown < total;
+
   return (
     <div className="mx-auto max-w-5xl px-5 py-8 lg:px-8">
       <PageHeader
@@ -230,6 +247,18 @@ export default function HostDetailPage() {
         lede="Everything OutPost knows about this machine in one chronological feed — events, findings, sessions/jobs, IOCs, and the investigations its findings belong to."
         actions={
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => toggleIsolation.mutate(!isIsolated)}
+              disabled={toggleIsolation.isPending}
+              className={`press inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 font-mono text-[11px] font-semibold transition-colors duration-150 ${
+                isIsolated
+                  ? "border-signal/60 bg-signal/10 text-signal hover:bg-signal/20"
+                  : "border-risk-malicious/60 bg-risk-malicious/10 text-risk-malicious hover:bg-risk-malicious/20"
+              }`}
+            >
+              <Icon name="alert" size={12} />
+              {toggleIsolation.isPending ? "Updating…" : isIsolated ? "Lift Quarantine" : "Quarantine Host"}
+            </button>
             <Link
               to={`/events?q=${encodeURIComponent(hostId ?? "")}`}
               className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-1.5 font-mono text-[11px] text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
@@ -248,8 +277,27 @@ export default function HostDetailPage() {
         }
       />
 
+      {isIsolated && (
+        <div className="mb-5 flex items-center justify-between rounded-xl border border-risk-malicious/60 bg-risk-malicious/15 p-3.5 text-risk-malicious">
+          <div className="flex items-center gap-2">
+            <Icon name="alert" size={16} />
+            <span className="font-mono text-xs font-bold uppercase tracking-wider">
+              HOST IS CURRENTLY NETWORK ISOLATED / CONTAINED
+            </span>
+          </div>
+          <span className="font-mono text-[10px] text-text-muted">
+            Reason: {containment?.reason || "Operator containment"}
+          </span>
+        </div>
+      )}
+
       {/* Host context strip — platform + heartbeat from the timeline envelope. */}
       <div className="mb-5 flex flex-wrap items-center gap-3">
+        {isIsolated && (
+          <span className="rounded-full border border-risk-malicious/60 bg-risk-malicious/20 px-2.5 py-1 font-mono text-[11px] font-bold text-risk-malicious">
+            ISOLATED
+          </span>
+        )}
         {data?.platform && (
           <span className="rounded-full border border-border-subtle bg-bg-surface px-2.5 py-1 font-mono text-[11px] capitalize text-text-muted">
             {data.platform}

@@ -12,6 +12,8 @@ Every parser is bounds-checked against truncated / adversarial inputs: a bad or
 partial header yields `None` for that format, never an exception.
 """
 
+import hashlib
+import math
 import re
 
 # ---------------------------------------------------------------------------
@@ -255,6 +257,7 @@ def parse_pe(data: bytes) -> dict | None:
         "entry_point_rva": entry_rva,
         "sections": sections,
         "imports": imports,
+        "imphash": compute_imphash(imports),
     }
 
 
@@ -365,7 +368,6 @@ def parse_elf(data: bytes) -> dict | None:
 # Entropy & Capability Detection
 # ---------------------------------------------------------------------------
 
-import math
 from collections import Counter
 from typing import Any
 
@@ -407,18 +409,138 @@ def detect_capabilities(data: bytes, extracted_strings: list[str]) -> list[dict[
 
 
 # ---------------------------------------------------------------------------
+# Imphash & Fuzzy Hashing (Binary Similarity)
+# ---------------------------------------------------------------------------
+
+
+def compute_imphash(imports: list[str]) -> str | None:
+    """Compute standard PE Import Hash (imphash) from resolved imports.
+
+    Normalizes import names to lowercase, strips common extensions (.dll, .ocx, .sys),
+    joins with commas, and returns MD5 hex digest.
+    """
+    if not imports:
+        return None
+    normalized: list[str] = []
+    for imp in imports:
+        name = imp.strip().lower()
+        for ext in (".dll", ".ocx", ".sys", ".drv", ".exe", ".cpl"):
+            if name.endswith(ext):
+                name = name[: -len(ext)]
+                break
+        if name:
+            normalized.append(name)
+    if not normalized:
+        return None
+    raw = ",".join(normalized)
+    return hashlib.md5(raw.encode("ascii", errors="replace")).hexdigest()
+
+
+def compute_fuzzy_hash(data: bytes) -> str:
+    """Compute Context-Triggered Piecewise Hash (CTPH / fuzzy hash) without external libraries.
+
+    Format: <blocksize>:<digest1>:<digest2>
+    Enables zero-ML similarity clustering across malware families.
+    """
+    if not data:
+        return "3::"
+
+    n = len(data)
+    bs = 3
+    while bs * 64 < n and bs < 3072:
+        bs *= 2
+
+    b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+    def _hash_blocks(block_size: int) -> str:
+        digest = []
+        h1 = 0
+        h2 = 0
+        window = [0] * 7
+        win_idx = 0
+
+        for byte in data:
+            old_b = window[win_idx]
+            window[win_idx] = byte
+            win_idx = (win_idx + 1) % 7
+
+            h1 = (h1 + byte - old_b) % 65521
+            h2 = (h2 + 7 * byte - sum(window)) % 65521
+            roll = (h1 + (h2 << 16)) & 0xFFFFFFFF
+
+            if (roll % block_size) == (block_size - 1):
+                c = b64[(roll ^ byte) % len(b64)]
+                if len(digest) < 64:
+                    digest.append(c)
+        return "".join(digest) or "A"
+
+    d1 = _hash_blocks(bs)
+    d2 = _hash_blocks(bs * 2)
+    return f"{bs}:{d1}:{d2}"
+
+
+def _levenshtein(s1: str, s2: str) -> int:
+    if len(s1) < len(s2):
+        return _levenshtein(s2, s1)
+    if len(s2) == 0:
+        return len(s1)
+    previous_row = list(range(len(s2) + 1))
+    for i, c1 in enumerate(s1):
+        current_row = [i + 1]
+        for j, c2 in enumerate(s2):
+            insertions = previous_row[j + 1] + 1
+            deletions = current_row[j] + 1
+            substitutions = previous_row[j] + (c1 != c2)
+            current_row.append(min(insertions, deletions, substitutions))
+        previous_row = current_row
+    return previous_row[-1]
+
+
+def compare_fuzzy_hashes(hash1: str, hash2: str) -> int:
+    """Compare two fuzzy hashes and return a similarity percentage from 0 to 100."""
+    try:
+        b1_str, d1_1, d1_2 = hash1.split(":", 2)
+        b2_str, d2_1, d2_2 = hash2.split(":", 2)
+        b1, b2 = int(b1_str), int(b2_str)
+    except (ValueError, AttributeError):
+        return 0
+
+    s1, s2 = "", ""
+    if b1 == b2:
+        s1, s2 = d1_1, d2_1
+    elif b1 == b2 * 2:
+        s1, s2 = d1_1, d2_2
+    elif b1 * 2 == b2:
+        s1, s2 = d1_2, d2_1
+    else:
+        return 0
+
+    if not s1 or not s2:
+        return 0
+
+    dist = _levenshtein(s1, s2)
+    max_len = max(len(s1), len(s2))
+    if max_len == 0:
+        return 100
+    score = int((1.0 - (dist / max_len)) * 100)
+    return max(0, min(100, score))
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
 
 def analyze_sample(data: bytes) -> dict:
-    """Full static analysis of a blob: strings, IOCs, PE/ELF metadata, entropy, capabilities."""
+    """Full static analysis of a blob: strings, IOCs, PE/ELF metadata, entropy, capabilities, imphash, fuzzy_hash."""
     strings = extract_strings(data)
     entropy = calculate_entropy(data)
     capabilities = detect_capabilities(data, strings)
 
     pe_info = parse_pe(data)
     elf_info = parse_elf(data)
+    imphash = pe_info.get("imphash") if pe_info else None
+    fuzzy = compute_fuzzy_hash(data)
 
     return {
         "strings": strings,
@@ -428,5 +550,7 @@ def analyze_sample(data: bytes) -> dict:
         "entropy": entropy,
         "is_packed": entropy > 7.1,
         "capabilities": capabilities,
+        "imphash": imphash,
+        "fuzzy_hash": fuzzy,
     }
 

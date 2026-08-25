@@ -526,3 +526,63 @@ def status():
             f" · runs: {me.get('run_count', 0)}[/dim]"
         )
     return
+
+
+# ---------------------------------------------------------------------------
+# outpost agent bootstrap / isolate / unisolate
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def bootstrap():
+    """Display 1-click copy-paste deployment scripts for Linux, macOS, and Windows."""
+    from rich.panel import Panel
+
+    from ..lib import api_client
+
+    try:
+        cmds = api_client.get_bootstrap_commands()
+    except Exception as exc:
+        console.print(f"[red]Error fetching bootstrap commands from backend: {exc}[/red]")
+        raise typer.Exit(1)
+
+    console.print(Panel(
+        f"[bold cyan]Linux & macOS (1-Click Shell):[/bold cyan]\n"
+        f"[green]{cmds['linux_command']}[/green]\n\n"
+        f"[bold cyan]Windows (1-Click PowerShell):[/bold cyan]\n"
+        f"[green]{cmds['windows_command']}[/green]\n\n"
+        f"[dim]Server Target: {cmds['server']}[/dim]",
+        title="[bold white]OutPost Agent 1-Click Bootstrap[/bold white]",
+        border_style="cyan",
+    ))
+
+
+@app.command()
+def isolate(
+    host_id: str = typer.Argument(..., help="Host ID to isolate from the network"),
+    reason: str = typer.Option("Operator containment request", "--reason", "-r", help="Reason for isolation"),
+):
+    """Enforce active host isolation (quarantine) to stop lateral movement."""
+    from ..lib import api_client
+
+    try:
+        api_client.isolate_host(host_id, isolated=True, reason=reason)
+        console.print(f"[bold red]Host {host_id} is now ISOLATED / CONTAINED.[/bold red] Reason: {reason}")
+    except Exception as exc:
+        console.print(f"[red]Failed to isolate host {host_id}: {exc}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command()
+def unisolate(
+    host_id: str = typer.Argument(..., help="Host ID to restore network access for"),
+):
+    """Lift active host containment and restore normal network operations."""
+    from ..lib import api_client
+
+    try:
+        api_client.isolate_host(host_id, isolated=False)
+        console.print(f"[bold green]Host {host_id} network isolation has been lifted.[/bold green]")
+    except Exception as exc:
+        console.print(f"[red]Failed to un-isolate host {host_id}: {exc}[/red]")
+        raise typer.Exit(1)

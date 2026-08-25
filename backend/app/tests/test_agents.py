@@ -379,3 +379,58 @@ def test_host_watch_prefers_open_live_session(client):
     # Don't leak an open live session into the shared test DB — the ingest
     # tests assert /runs/active-live falls back to 404 when nothing is open.
     client.post(f"/runs/{live}/complete", json={})
+
+
+def test_agent_bootstrap_scripts_and_commands(client):
+    """Assert bootstrap script endpoints return valid scripts and commands."""
+    res_sh = client.get("/agents/install.sh")
+    assert res_sh.status_code == 200
+    assert "OUTPOST_API_URL" in res_sh.text
+    assert "#!/usr/bin/env bash" in res_sh.text
+
+    res_ps1 = client.get("/agents/install.ps1")
+    assert res_ps1.status_code == 200
+    assert "OUTPOST_API_URL" in res_ps1.text
+
+    res_cmd = client.get("/agents/bootstrap-command")
+    assert res_cmd.status_code == 200
+    data = res_cmd.json()
+    assert "linux_command" in data
+    assert "curl" in data["linux_command"]
+    assert "windows_command" in data
+
+
+def test_host_containment_isolation_and_kill(client):
+    """Assert active host isolation and process kill actions work and reflect in heartbeat."""
+    host = "host-contain-test"
+    # Initially uncontained
+    res = client.get(f"/agents/{host}/containment")
+    assert res.status_code == 200
+    assert res.json()["isolated"] is False
+
+    # Isolate host
+    iso_res = client.post(f"/agents/{host}/isolate", json={"isolated": True, "reason": "Suspected Ransomware"})
+    assert iso_res.status_code == 200
+    assert iso_res.json()["isolated"] is True
+
+    # Queue process kill
+    kill_res = client.post(f"/agents/{host}/kill-process", json={"pid": 9999, "process_name": "badware.exe"})
+    assert kill_res.status_code == 200
+    assert kill_res.json()["status"] == "queued"
+
+    # Verify containment endpoint reflects state
+    cont_res = client.get(f"/agents/{host}/containment").json()
+    assert cont_res["isolated"] is True
+    assert cont_res["reason"] == "Suspected Ransomware"
+    assert len(cont_res["pending_actions"]) == 1
+    assert cont_res["pending_actions"][0]["pid"] == 9999
+
+    # Heartbeat receives containment instructions
+    hb_res = client.post(f"/agents/{host}/heartbeat", json={"platform": "linux", "version": "0.1.0"}).json()
+    assert hb_res["isolated"] is True
+    assert len(hb_res["pending_actions"]) == 1
+
+    # Un-isolate
+    uniso_res = client.post(f"/agents/{host}/isolate", json={"isolated": False})
+    assert uniso_res.status_code == 200
+    assert uniso_res.json()["isolated"] is False

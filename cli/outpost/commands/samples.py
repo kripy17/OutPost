@@ -19,10 +19,56 @@ SEV_STYLE = {
 }
 
 
+def _show_similar(sample_id: str, threshold: int = 20) -> None:
+    try:
+        data = api_client.get_similar_samples(sample_id, min_similarity=threshold)
+    except Exception as exc:
+        console.print(f"[bold red]Failed to fetch similar samples: {exc}[/bold red]")
+        raise typer.Exit(1)
+
+    matches = data.get("similar", [])
+    console.print(f"[bold white]Target Sample:[/bold white] [cyan]{sample_id}[/cyan]")
+    if data.get("target_imphash"):
+        console.print(f"  [dim]Imphash:[/dim] [green]{data['target_imphash']}[/green]")
+    if data.get("target_fuzzy_hash"):
+        console.print(f"  [dim]CTPH / Fuzzy:[/dim] [yellow]{data['target_fuzzy_hash']}[/yellow]")
+    console.print()
+
+    if not matches:
+        console.print(f"[dim]No related samples found in the vault matching >= {threshold}% similarity.[/dim]")
+        return
+
+    table = Table(title=f"Binary-Similar Samples ({len(matches)})", border_style="dim")
+    table.add_column("Sample ID")
+    table.add_column("Filename")
+    table.add_column("Similarity", justify="right")
+    table.add_column("Imphash Match", justify="center")
+    table.add_column("SHA256")
+
+    for m in matches:
+        sim_val = m["similarity"]
+        sim_color = "bold red" if sim_val >= 80 else "bold yellow" if sim_val >= 50 else "cyan"
+        table.add_row(
+            m["sample_id"][:12],
+            m["original_name"],
+            f"[{sim_color}]{sim_val}%[/{sim_color}]",
+            "[bold green]YES[/bold green]" if m.get("imphash_match") else "[dim]no[/dim]",
+            m["sha256"][:16] + "...",
+        )
+    console.print(table)
+
+
 def samples(
     q: str = typer.Option("", "--q", "-q", help="Filter by name / hash / family"),
+    similar: str = typer.Option("", "--similar", "-s", help="Query binary-similar samples in the vault for a given sample ID"),
+    threshold: int = typer.Option(20, "--threshold", "-t", help="Similarity percentage threshold (0-100)"),
 ) -> None:
     show_banner(primary=False)
+
+    if similar:
+        _show_similar(similar, threshold)
+        return
+
     data = api_client.list_samples(q.strip())
     rows = data.get("samples", [])
 

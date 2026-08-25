@@ -435,6 +435,7 @@ export interface PeMetadata {
   entry_point_rva: number | null;
   sections: PeSection[];
   imports: string[];
+  imphash?: string | null;
 }
 
 export interface ElfSection {
@@ -467,6 +468,8 @@ export interface SampleStatic {
   entropy?: number;
   is_packed?: boolean;
   capabilities?: Array<{ category: string; matched: string[]; confidence: string }>;
+  imphash?: string | null;
+  fuzzy_hash?: string | null;
 }
 
 export interface CompareResponse {

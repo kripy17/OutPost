@@ -116,3 +116,34 @@ def test_campaigns_export_stix_api_error_exits(monkeypatch, tmp_path):
     assert exc.value.exit_code == 1
     assert "Campaign STIX export failed" in capture.get()
     assert not (tmp_path / "nope.json").exists()
+
+
+def test_samples_similar_command(monkeypatch):
+    from outpost.commands.samples import samples
+
+    monkeypatch.setattr(
+        api_client,
+        "get_similar_samples",
+        lambda sid, min_similarity: {
+            "target_id": sid,
+            "target_imphash": "a1b2c3d4",
+            "target_fuzzy_hash": "24:abcdef:12345",
+            "similar": [
+                {
+                    "sample_id": "sample456",
+                    "original_name": "malware_v2.exe",
+                    "similarity": 85,
+                    "imphash_match": True,
+                    "sha256": "abcdef1234567890",
+                }
+            ],
+        },
+    )
+
+    with console.capture() as capture:
+        samples(similar="sample123", threshold=20)
+    out = capture.get()
+    assert "sample123" in out
+    assert "malware_v2.exe" in out
+    assert "85%" in out
+    assert "YES" in out

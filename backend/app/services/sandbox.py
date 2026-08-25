@@ -453,6 +453,33 @@ PLAYBOOKS: list[dict[str, Any]] = [
         "tactics": ["Execution", "Persistence", "Defense Evasion"],
         "techniques": ["T1059.004", "T1053.003", "T1070.002"],
     },
+    {
+        "id": "shadow-copy-delete",
+        "name": "Ransomware Shadow Deletion & Recovery Tamper",
+        "description": "Adversary executing vssadmin shadow deletion, wbadmin catalog wipe, and bcdedit recovery disablement before encryption.",
+        "platform": "windows",
+        "severity": "critical",
+        "tactics": ["Impact", "Defense Evasion"],
+        "techniques": ["T1490", "T1070"],
+    },
+    {
+        "id": "kerberoast-spn-enum",
+        "name": "Kerberoasting SPN Discovery & Ticket Extraction",
+        "description": "Active Directory SPN enumeration using setspn.exe followed by Kerberos ticket memory extraction via PowerShell.",
+        "platform": "windows",
+        "severity": "high",
+        "tactics": ["Discovery", "Credential Access"],
+        "techniques": ["T1087.002", "T1558.003"],
+    },
+    {
+        "id": "scheduled-task-persist",
+        "name": "Scheduled Task Persistence & Host Takeover",
+        "description": "Creation of SYSTEM-level automated Scheduled Task with logon trigger and registry TaskCache tampering.",
+        "platform": "windows",
+        "severity": "high",
+        "tactics": ["Persistence", "Privilege Escalation"],
+        "techniques": ["T1053.005", "T1543"],
+    },
 ]
 
 
@@ -521,6 +548,44 @@ def demo_events(
                 process_name="wevtutil.exe", command_line=r"wevtutil.exe cl Security"),
             _ev(run_id, "windows", "registry_write", _seq(base, 6), pid=1001,
                 registry_key=r"HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\Run\Stage2Updater"),
+        ]
+
+    if scenario_id == "shadow-copy-delete":
+        return [
+            _ev(run_id, "windows", "process_create", _seq(base, 0), pid=1000, ppid=4,
+                process_name="vssadmin.exe", command_line=r"vssadmin.exe delete shadows /all /quiet"),
+            _ev(run_id, "windows", "process_create", _seq(base, 1), pid=1001, ppid=1000,
+                process_name="wbadmin.exe", command_line=r"wbadmin.exe delete catalog -quiet"),
+            _ev(run_id, "windows", "process_create", _seq(base, 2), pid=1002, ppid=1000,
+                process_name="bcdedit.exe", command_line=r"bcdedit.exe /set {default} bootstatuspolicy ignoreallfailures"),
+            _ev(run_id, "windows", "process_create", _seq(base, 3), pid=1003, ppid=1000,
+                process_name="bcdedit.exe", command_line=r"bcdedit.exe /set {default} recoveryenabled no"),
+            *[_ev(run_id, "windows", "file_write", _seq(base, 4 + j), pid=1000,
+                  file_path=rf"C:\Data\finance_q{j+1}.xlsx.enc") for j in range(4)],
+        ]
+
+    if scenario_id == "kerberoast-spn-enum":
+        return [
+            _ev(run_id, "windows", "process_create", _seq(base, 0), pid=1000, ppid=4,
+                process_name="setspn.exe", command_line=r"setspn.exe -T corp.local -Q MSSQLSvc/*"),
+            _ev(run_id, "windows", "process_create", _seq(base, 1), pid=1001, ppid=1000,
+                process_name="powershell.exe",
+                command_line=r"powershell.exe -Command Add-Type -AssemblyName System.IdentityModel; New-Object System.IdentityModel.Tokens.KerberosRequestorSecurityToken -ArgumentList 'MSSQLSvc/db01.corp.local'"),
+            _ev(run_id, "windows", "network_connection", _seq(base, 2), pid=1001,
+                dest_ip="10.0.0.1", dest_port=88, protocol="TCP"),
+            _ev(run_id, "windows", "file_write", _seq(base, 3), pid=1001,
+                file_path=r"C:\Temp\kerberoast_hashes.txt"),
+        ]
+
+    if scenario_id == "scheduled-task-persist":
+        return [
+            _ev(run_id, "windows", "process_create", _seq(base, 0), pid=1000, ppid=4,
+                process_name="schtasks.exe",
+                command_line=r'schtasks.exe /create /tn "SecurityHealthServiceUpdate" /tr "C:\Users\victim\AppData\Local\Temp\updater.exe" /sc onlogon /ru "SYSTEM"'),
+            _ev(run_id, "windows", "registry_write", _seq(base, 1), pid=1000,
+                registry_key=r"HKEY_LOCAL_MACHINE\Software\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tree\SecurityHealthServiceUpdate"),
+            _ev(run_id, "windows", "file_write", _seq(base, 2), pid=1000,
+                file_path=r"C:\Windows\System32\Tasks\SecurityHealthServiceUpdate"),
         ]
 
     if platform == "linux" or scenario_id == "linux-persistence-rootkit":

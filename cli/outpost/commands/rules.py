@@ -219,3 +219,44 @@ def suppressions_remove(
         console.print(f"[bold #C4453B]Failed: {exc}[/bold #C4453B]")
         raise typer.Exit(1)
     console.print(f"[#3FA796]Removed suppression {suppression_id}[/#3FA796]")
+
+
+@app.command("sigma")
+def sigma(
+    file_or_yaml: str = typer.Argument(..., help="Path to Sigma YAML file, or raw YAML string"),
+) -> None:
+    """Transpile a Sigma YAML detection rule into OutPost criteria and MITRE mapping."""
+    import os
+
+    show_banner(primary=False)
+    if os.path.exists(file_or_yaml):
+        with open(file_or_yaml, "r", encoding="utf-8") as f:
+            yaml_content = f.read()
+    else:
+        yaml_content = file_or_yaml
+
+    try:
+        res = api_client.transpile_sigma(yaml_content)
+    except Exception as exc:
+        console.print(f"[bold #C4453B]Failed to transpile Sigma rule: {exc}[/bold #C4453B]")
+        raise typer.Exit(1)
+
+    console.print(f"[bold #3FA796]Transpiled Rule:[/bold #3FA796] [bold white]{res.get('title')}[/bold white] ([dim]{res.get('rule_id')}[/dim])")
+    console.print(f"[dim]Severity:[/dim] [yellow]{res.get('severity')}[/yellow] | [dim]Tactics:[/dim] {', '.join(res.get('mitre_tactics', []))} | [dim]Techniques:[/dim] {', '.join(res.get('mitre_techniques', []))}")
+    if res.get("description"):
+        console.print(f"[dim]Description:[/dim] {res.get('description')}\n")
+
+    table = Table(title="OutPost Detection Filter Mappings", border_style="dim")
+    table.add_column("Target Field")
+    table.add_column("Condition")
+    table.add_column("Value")
+    table.add_column("Original Sigma Field", style="dim")
+
+    for c in res.get("criteria", []):
+        table.add_row(
+            f"[cyan]{c['target_field']}[/cyan]",
+            f"[yellow]{c['modifier']}[/yellow]",
+            f"[green]{c['value']}[/green]",
+            c.get("original_field", "-"),
+        )
+    console.print(table)

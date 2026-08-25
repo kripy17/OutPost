@@ -4,7 +4,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { platformIconName } from "../components/iconMeta";
 import { Chip, PageHeader, Panel } from "../components/ui";
-import { deleteSample, detonateDynamic, downloadSample, getRuns, getSample, getSampleStatic, getSandboxProviders, getSandboxTask, sandboxDetonate, watchlistAdd } from "../lib/api";
+import { deleteSample, detonateDynamic, downloadSample, getRuns, getSample, getSampleStatic, getSandboxProviders, getSandboxTask, getSimilarSamples, sandboxDetonate, watchlistAdd } from "../lib/api";
 import type { Platform, RunSummary, SampleStatic, SandboxTask } from "../types";
 import { filterStrings, formatBytes, iocTotal } from "./samplesHelpers";
 
@@ -216,9 +216,19 @@ function StaticAnalysis({ sample }: { sample: { sample_id: string; sha256: strin
                 </div>
               </div>
             )}
+
+            {st.fuzzy_hash && (
+              <div className="flex flex-wrap items-center gap-2 rounded border border-border-subtle bg-bg-base/60 p-2.5 font-mono text-[11px]">
+                <span className="text-text-faint">CTPH / Fuzzy Hash:</span>
+                <span className="text-text-muted select-all truncate max-w-xl">{st.fuzzy_hash}</span>
+              </div>
+            )}
           </div>
         </Panel>
       )}
+
+      {/* Binary Similarity & Fuzzy Hash Matching */}
+      <SimilarSamplesPanel sampleId={sample.sample_id} />
 
       {/* Executable metadata — PE or ELF, whichever the bytes actually are. */}
       {(st?.pe || st?.elf) && (
@@ -227,6 +237,96 @@ function StaticAnalysis({ sample }: { sample: { sample_id: string; sha256: strin
         </Panel>
       )}
     </div>
+  );
+}
+
+
+function SimilarSamplesPanel({ sampleId }: { sampleId: string }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["sample", "similar", sampleId],
+    queryFn: () => getSimilarSamples(sampleId, 20),
+  });
+
+  if (isLoading) {
+    return (
+      <Panel kicker="Static · similarity" title="Binary Similarity & Fuzzy Hash Matching">
+        <p className="text-xs text-text-muted">Comparing context-triggered piecewise hashes across sample vault…</p>
+      </Panel>
+    );
+  }
+
+  const matches = data?.similar || [];
+
+  return (
+    <Panel
+      kicker="Static · similarity"
+      title="Binary Similarity & Fuzzy Hash Matching"
+      right={
+        <span className="font-mono text-[10px] text-text-faint">
+          {matches.length} matching sample{matches.length === 1 ? "" : "s"}
+        </span>
+      }
+    >
+      <div className="space-y-3">
+        <div className="flex flex-wrap items-center gap-3 text-xs">
+          {data?.target_imphash && (
+            <div className="rounded border border-accent/40 bg-accent/5 px-2 py-1 font-mono text-[11px]">
+              <span className="text-text-faint">Target imphash: </span>
+              <span className="text-accent font-bold">{data.target_imphash}</span>
+            </div>
+          )}
+          {data?.target_fuzzy_hash && (
+            <div className="rounded border border-border-subtle bg-bg-base px-2 py-1 font-mono text-[11px] truncate max-w-md">
+              <span className="text-text-faint">Target CTPH: </span>
+              <span className="text-text-muted">{data.target_fuzzy_hash}</span>
+            </div>
+          )}
+        </div>
+
+        {matches.length === 0 ? (
+          <p className="text-xs text-text-muted py-2">
+            No related binary variants detected in the vault above the 20% similarity threshold.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {matches.map((m: any) => (
+              <div key={m.sample_id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border-subtle bg-bg-base/60 p-3 hover:border-accent/40">
+                <div className="space-y-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <Link
+                      to={`/samples/${m.sample_id}`}
+                      className="font-mono text-xs font-semibold text-text-primary hover:text-accent truncate"
+                    >
+                      {m.original_name}
+                    </Link>
+                    {m.imphash_match && (
+                      <span className="rounded bg-accent/20 px-1.5 py-0.5 font-mono text-[10px] font-bold text-accent">
+                        IMPHASH MATCH
+                      </span>
+                    )}
+                  </div>
+                  <p className="font-mono text-[10px] text-text-faint truncate">
+                    SHA256: {m.sha256}
+                  </p>
+                </div>
+                <div className="flex items-center gap-3 shrink-0">
+                  <div className="text-right">
+                    <span className="font-mono text-xs font-bold text-accent">{m.similarity}%</span>
+                    <span className="block font-mono text-[10px] text-text-faint">similarity</span>
+                  </div>
+                  <div className="h-1.5 w-20 overflow-hidden rounded-full bg-bg-elevated">
+                    <div
+                      className="h-full rounded-full bg-accent"
+                      style={{ width: `${m.similarity}%` }}
+                    />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </Panel>
   );
 }
 
@@ -474,6 +574,11 @@ function PeElfTable({ st }: { st: SampleStatic }) {
           </Chip>
           {pe.entry_point_rva !== null && (
             <span className="font-mono text-[11px] text-text-muted">entry RVA 0x{pe.entry_point_rva.toString(16)}</span>
+          )}
+          {pe.imphash && (
+            <span className="rounded border border-accent/40 bg-accent/10 px-2 py-0.5 font-mono text-[10px] text-accent">
+              imphash: {pe.imphash}
+            </span>
           )}
           <span className="font-mono text-[10px] text-text-faint">
             {pe.imports.length} import DLL{pe.imports.length === 1 ? "" : "s"}

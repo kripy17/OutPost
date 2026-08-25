@@ -1066,3 +1066,53 @@ export async function detonatePlaybook(playbookId: string): Promise<any> {
   return post<any>("/sandbox/detonate/playbook", { playbook_id: playbookId });
 }
 
+/** Get 1-click curl and PowerShell bootstrap agent commands (GET /agents/bootstrap-command). */
+export async function getAgentBootstrapCommands(): Promise<{
+  server: string;
+  agent_token_configured: boolean;
+  linux_command: string;
+  macos_command: string;
+  windows_command: string;
+}> {
+  return get<any>("/agents/bootstrap-command");
+}
+
+/** Get isolation status and pending remediation actions for a host (GET /agents/{host_id}/containment). */
+export async function getHostContainment(hostId: string): Promise<{
+  host_id: string;
+  isolated: boolean;
+  isolated_at: string | null;
+  isolated_by: string | null;
+  reason: string | null;
+  pending_actions: any[];
+  updated_at: string | null;
+}> {
+  return get<any>(`/agents/${encodeURIComponent(hostId)}/containment`);
+}
+
+/** Set host network isolation status (POST /agents/{host_id}/isolate). */
+export async function isolateHost(
+  hostId: string,
+  payload: { isolated: boolean; reason?: string },
+): Promise<any> {
+  return post<any>(`/agents/${encodeURIComponent(hostId)}/isolate`, payload);
+}
+
+/** Queue process kill remediation action (POST /agents/{host_id}/kill-process). */
+export async function killHostProcess(
+  hostId: string,
+  payload: { pid?: number; process_name?: string },
+): Promise<any> {
+  return post<any>(`/agents/${encodeURIComponent(hostId)}/kill-process`, payload);
+}
+
+/** Search sample vault for binary-similar samples (GET /samples/{sample_id}/similar). */
+export async function getSimilarSamples(sampleId: string, minSimilarity: number = 20): Promise<any> {
+  return get<any>(`/samples/${encodeURIComponent(sampleId)}/similar?min_similarity=${minSimilarity}`);
+}
+
+/** Transpile Sigma YAML detection rule (POST /rules/sigma/transpile). */
+export async function transpileSigmaRule(sigmaYaml: string): Promise<any> {
+  return post<any>("/rules/sigma/transpile", { sigma_yaml: sigmaYaml });
+}
+

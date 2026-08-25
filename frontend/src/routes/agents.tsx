@@ -12,12 +12,18 @@ import { Link, useSearchParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { platformIconName } from "../components/iconMeta";
 import { PageHeader, Panel } from "../components/ui";
-import { getAgents, getHostBaseline, getHostSnapshot, resetHostBaseline } from "../lib/api";
+import { getAgentBootstrapCommands, getAgents, getHostBaseline, getHostContainment, getHostSnapshot, isolateHost, killHostProcess, resetHostBaseline } from "../lib/api";
 import { useEventStream } from "../lib/useEventStream";
 import type { AgentInfo, HostBaseline } from "../types";
 import { channelMix, channelTone, relativeTime } from "./agentsHelpers";
 
-function AgentRow({ agent }: { agent: AgentInfo }) {
+function AgentRow({
+  agent,
+  onOpenContainment,
+}: {
+  agent: AgentInfo;
+  onOpenContainment: (hostId: string) => void;
+}) {
   const recent = agent.recent_run_ids ?? [];
   const status: "online" | "offline" | "silent" = agent.silent ? "silent" : agent.online ? "online" : "offline";
   const statusTone =
@@ -116,11 +122,7 @@ function AgentRow({ agent }: { agent: AgentInfo }) {
               <span className="text-text-faint">{agent.heartbeat_version}</span>
             )}
           </p>
-          {/* Channel mix — per-channel event volume, not just which channels
-              exist: a host that ships mostly auditd reads differently from
-              one that's mostly webapp detonations. Sorted by volume, each
-              entry carries a proportion bar of its share of the host's
-              telemetry. */}
+          {/* Channel mix */}
           {agent.channel_counts && Object.keys(agent.channel_counts).length > 0 && (
             <div
               className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1"
@@ -148,6 +150,14 @@ function AgentRow({ agent }: { agent: AgentInfo }) {
         </div>
 
         <div className="flex shrink-0 flex-wrap items-center gap-2">
+          <button
+            onClick={() => onOpenContainment(agent.host_id)}
+            className="press inline-flex items-center gap-1.5 rounded-lg border border-risk-malicious/50 bg-risk-malicious/10 px-3 py-1.5 font-mono text-[11px] font-semibold text-risk-malicious transition-colors duration-150 hover:bg-risk-malicious/20"
+            title="Quarantine host or kill malicious processes"
+          >
+            <Icon name="alert" size={12} />
+            Containment
+          </button>
           {recent.length > 0 && (
             <div className="flex items-center gap-1">
               {recent.map((rid) => (
@@ -189,6 +199,249 @@ function AgentRow({ agent }: { agent: AgentInfo }) {
         </div>
       </div>
     </li>
+  );
+}
+
+
+function BootstrapModal({ onClose }: { onClose: () => void }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["agent-bootstrap-commands"],
+    queryFn: getAgentBootstrapCommands,
+  });
+  const [copied, setCopied] = useState<string | null>(null);
+
+  const copyToClipboard = (text: string, key: string) => {
+    void navigator.clipboard.writeText(text);
+    setCopied(key);
+    setTimeout(() => setCopied(null), 2000);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-2xl rounded-2xl border border-border-subtle bg-bg-surface p-6 shadow-2xl">
+        <div className="flex items-center justify-between pb-4 border-b border-border-subtle">
+          <div className="flex items-center gap-2">
+            <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-accent/40 bg-accent/10 text-accent">
+              <Icon name="terminal" size={16} />
+            </span>
+            <div>
+              <h3 className="font-mono text-sm font-bold text-text-primary">1-Click Agent Bootstrap</h3>
+              <p className="text-xs text-text-muted">Enroll any Linux, macOS, or Windows host into live monitoring</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="press rounded-lg p-1.5 text-text-muted hover:text-text-primary">
+            <Icon name="x" size={16} />
+          </button>
+        </div>
+
+        {isLoading ? (
+          <p className="py-8 text-center text-xs text-text-muted font-mono">Generating bootstrap commands…</p>
+        ) : (
+          <div className="mt-4 space-y-4">
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="font-mono text-xs font-semibold text-text-primary flex items-center gap-1.5">
+                  <Icon name="terminal" size={13} className="text-accent" />
+                  Linux &amp; macOS (Universal Bash)
+                </span>
+                <button
+                  onClick={() => copyToClipboard(data?.linux_command || "", "linux")}
+                  className="press inline-flex items-center gap-1 rounded border border-border-subtle px-2 py-0.5 font-mono text-[10px] text-text-muted hover:text-accent"
+                >
+                  <Icon name="copy" size={10} />
+                  {copied === "linux" ? "Copied!" : "Copy"}
+                </button>
+              </div>
+              <pre className="rounded-lg border border-border-subtle bg-bg-base p-3 font-mono text-xs text-accent overflow-x-auto select-all">
+                {data?.linux_command}
+              </pre>
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="font-mono text-xs font-semibold text-text-primary flex items-center gap-1.5">
+                  <Icon name="terminal" size={13} className="text-accent" />
+                  Windows (PowerShell)
+                </span>
+                <button
+                  onClick={() => copyToClipboard(data?.windows_command || "", "windows")}
+                  className="press inline-flex items-center gap-1 rounded border border-border-subtle px-2 py-0.5 font-mono text-[10px] text-text-muted hover:text-accent"
+                >
+                  <Icon name="copy" size={10} />
+                  {copied === "windows" ? "Copied!" : "Copy"}
+                </button>
+              </div>
+              <pre className="rounded-lg border border-border-subtle bg-bg-base p-3 font-mono text-xs text-accent overflow-x-auto select-all">
+                {data?.windows_command}
+              </pre>
+            </div>
+
+            <div className="rounded-lg border border-border-subtle bg-bg-elevated/30 p-3 text-[11px] text-text-muted">
+              <p className="font-medium text-text-primary mb-1">What this script does:</p>
+              <ul className="list-disc list-inside space-y-0.5 text-text-faint">
+                <li>Configures backend URL to <code className="text-text-primary">{data?.server}</code></li>
+                <li>Pings collector liveness heartbeats every 60s</li>
+                <li>Streams process creation, network sockets, file writes, and registry changes</li>
+                <li>Applies network isolation &amp; process containment instructions from the console</li>
+              </ul>
+            </div>
+          </div>
+        )}
+
+        <div className="mt-6 flex justify-end">
+          <button
+            onClick={onClose}
+            className="press rounded-lg border border-border-subtle px-4 py-1.5 font-mono text-xs text-text-muted hover:text-text-primary"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+function ContainmentModal({ hostId, onClose }: { hostId: string; onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const { data, isLoading } = useQuery({
+    queryKey: ["host-containment", hostId],
+    queryFn: () => getHostContainment(hostId),
+  });
+
+  const [killPid, setKillPid] = useState("");
+  const [killProcessName, setKillProcessName] = useState("");
+  const [killMsg, setKillMsg] = useState<string | null>(null);
+
+  const toggleIsolation = useMutation({
+    mutationFn: (isolated: boolean) => isolateHost(hostId, { isolated, reason: "Operator console action" }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["host-containment", hostId] });
+      void queryClient.invalidateQueries({ queryKey: ["agents"] });
+    },
+  });
+
+  const queueKill = useMutation({
+    mutationFn: () => killHostProcess(hostId, { pid: killPid ? parseInt(killPid, 10) : undefined, process_name: killProcessName || undefined }),
+    onSuccess: () => {
+      setKillMsg("Process kill instruction queued for next agent heartbeat.");
+      setKillPid("");
+      setKillProcessName("");
+      void queryClient.invalidateQueries({ queryKey: ["host-containment", hostId] });
+      setTimeout(() => setKillMsg(null), 3000);
+    },
+  });
+
+  const isIsolated = data?.isolated ?? false;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-lg rounded-2xl border border-border-subtle bg-bg-surface p-6 shadow-2xl">
+        <div className="flex items-center justify-between pb-4 border-b border-border-subtle">
+          <div className="flex items-center gap-2">
+            <span className={`flex h-8 w-8 items-center justify-center rounded-lg border ${isIsolated ? "border-risk-malicious bg-risk-malicious/10 text-risk-malicious" : "border-accent/40 bg-accent/10 text-accent"}`}>
+              <Icon name="alert" size={16} />
+            </span>
+            <div>
+              <h3 className="font-mono text-sm font-bold text-text-primary">Active Host Containment &amp; Remediation</h3>
+              <p className="text-xs text-text-muted">Target host: <code className="text-accent">{hostId}</code></p>
+            </div>
+          </div>
+          <button onClick={onClose} className="press rounded-lg p-1.5 text-text-muted hover:text-text-primary">
+            <Icon name="x" size={16} />
+          </button>
+        </div>
+
+        {isLoading ? (
+          <p className="py-8 text-center text-xs text-text-muted font-mono">Loading containment status…</p>
+        ) : (
+          <div className="mt-4 space-y-5">
+            <div className="rounded-xl border border-border-subtle bg-bg-elevated/30 p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="font-mono text-xs font-semibold text-text-primary">Network Isolation Status</span>
+                  <p className="text-[11px] text-text-muted">Quarantine host to block outbound lateral movement</p>
+                </div>
+                <span className={`rounded-full border px-2.5 py-0.5 font-mono text-[10px] font-bold uppercase ${isIsolated ? "border-risk-malicious/60 bg-risk-malicious/15 text-risk-malicious" : "border-signal/60 bg-signal/15 text-signal"}`}>
+                  {isIsolated ? "ISOLATED" : "NORMAL"}
+                </span>
+              </div>
+              <div className="pt-1">
+                {isIsolated ? (
+                  <button
+                    onClick={() => toggleIsolation.mutate(false)}
+                    disabled={toggleIsolation.isPending}
+                    className="press w-full rounded-lg border border-signal/60 bg-signal/10 py-2 font-mono text-xs font-semibold text-signal hover:bg-signal/20"
+                  >
+                    {toggleIsolation.isPending ? "Lifting Isolation…" : "Lift Isolation / Restore Host"}
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => toggleIsolation.mutate(true)}
+                    disabled={toggleIsolation.isPending}
+                    className="press w-full rounded-lg border border-risk-malicious/60 bg-risk-malicious/10 py-2 font-mono text-xs font-semibold text-risk-malicious hover:bg-risk-malicious/20"
+                  >
+                    {toggleIsolation.isPending ? "Isolating Host…" : "Enforce Network Isolation (Contain Host)"}
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-border-subtle bg-bg-elevated/30 p-4 space-y-3">
+              <div>
+                <span className="font-mono text-xs font-semibold text-text-primary">Terminate Host Process</span>
+                <p className="text-[11px] text-text-muted">Instruct collector to kill an active PID or executable name</p>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <input
+                  type="number"
+                  placeholder="Target PID (e.g. 4812)"
+                  value={killPid}
+                  onChange={(e) => setKillPid(e.target.value)}
+                  className="rounded-lg border border-border-subtle bg-bg-base px-3 py-1.5 font-mono text-xs text-text-primary focus:border-accent/60 focus:outline-none"
+                />
+                <input
+                  type="text"
+                  placeholder="Process Name (e.g. malware.exe)"
+                  value={killProcessName}
+                  onChange={(e) => setKillProcessName(e.target.value)}
+                  className="rounded-lg border border-border-subtle bg-bg-base px-3 py-1.5 font-mono text-xs text-text-primary focus:border-accent/60 focus:outline-none"
+                />
+              </div>
+              <button
+                onClick={() => queueKill.mutate()}
+                disabled={queueKill.isPending || (!killPid && !killProcessName)}
+                className="press w-full rounded-lg border border-accent/60 bg-accent/10 py-1.5 font-mono text-xs text-accent hover:bg-accent/20 disabled:opacity-50"
+              >
+                {queueKill.isPending ? "Queuing Kill…" : "Queue Process Termination"}
+              </button>
+              {killMsg && <p className="font-mono text-[10px] text-risk-clean">{killMsg}</p>}
+            </div>
+
+            {data?.pending_actions && data.pending_actions.length > 0 && (
+              <div className="space-y-1.5 font-mono text-[10px]">
+                <span className="uppercase text-text-faint">Pending Remediation Queue ({data.pending_actions.length}):</span>
+                {data.pending_actions.map((act: any, idx: number) => (
+                  <div key={idx} className="flex items-center justify-between rounded bg-bg-base p-2 text-text-muted border border-border-subtle">
+                    <span>Kill {act.process_name || `PID ${act.pid}`}</span>
+                    <span className="text-text-faint">{act.requested_at?.slice(11, 19)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="mt-6 flex justify-end">
+          <button
+            onClick={onClose}
+            className="press rounded-lg border border-border-subtle px-4 py-1.5 font-mono text-xs text-text-muted hover:text-text-primary"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -451,28 +704,45 @@ export default function AgentsPage() {
     },
   );
 
+  const [showBootstrap, setShowBootstrap] = useState(false);
+  const [containmentHost, setContainmentHost] = useState<string | null>(null);
+
   const agents = data?.agents ?? [];
   const totalEvents = agents.reduce((n, a) => n + a.event_count, 0);
   const totalAlerts = agents.reduce((n, a) => n + a.alert_count, 0);
 
   return (
     <div className="mx-auto max-w-[1200px] px-5 py-8 lg:px-8">
+      {showBootstrap && <BootstrapModal onClose={() => setShowBootstrap(false)} />}
+      {containmentHost && (
+        <ContainmentModal hostId={containmentHost} onClose={() => setContainmentHost(null)} />
+      )}
+
       <PageHeader
         kicker="Operations · fleet"
         title={
           <>
-            Fleet &amp; Hosts <span className="font-normal text-text-muted">— host status & activity profiles</span>
+            Fleet &amp; Hosts <span className="font-normal text-text-muted">— host status &amp; activity profiles</span>
           </>
         }
         lede="Enrolled fleet agents, live heartbeat health, event ingestion volumes, and behavioral anomaly baselines. Select any host to inspect its aggregate timeline and security posture."
         actions={
-          <button
-            onClick={() => window.location.reload()}
-            className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-2 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
-          >
-            <Icon name="refresh" size={12} />
-            Refresh
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowBootstrap(true)}
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/10 px-3 py-2 font-mono text-xs font-semibold text-accent transition-colors duration-150 hover:bg-accent/20"
+            >
+              <Icon name="terminal" size={14} />
+              Enroll Host / Bootstrap
+            </button>
+            <button
+              onClick={() => window.location.reload()}
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-2 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
+            >
+              <Icon name="refresh" size={12} />
+              Refresh
+            </button>
+          </div>
         }
       />
 
@@ -591,7 +861,11 @@ export default function AgentsPage() {
           >
             <ul className="space-y-2.5">
               {agents.map((a) => (
-                <AgentRow key={a.host_id} agent={a} />
+                <AgentRow
+                  key={a.host_id}
+                  agent={a}
+                  onOpenContainment={(hid) => setContainmentHost(hid)}
+                />
               ))}
             </ul>
           </Panel>

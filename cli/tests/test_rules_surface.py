@@ -191,3 +191,30 @@ def test_playbooks_list_and_run(monkeypatch):
     assert "playbookrun123" in out
 
 
+def test_rules_sigma_command(monkeypatch):
+    from outpost.commands.rules import sigma
+
+    wide = _wide(monkeypatch)
+    monkeypatch.setattr(
+        api_client,
+        "transpile_sigma",
+        lambda y: {
+            "rule_id": "sigma-test-123",
+            "title": "Suspicious PowerShell",
+            "severity": "high",
+            "mitre_tactics": ["Execution"],
+            "mitre_techniques": ["T1059.001"],
+            "description": "Detects download",
+            "criteria": [{"target_field": "command_line", "modifier": "contains", "value": "DownloadFile", "original_field": "CommandLine"}],
+        },
+    )
+
+    with wide.capture() as capture:
+        sigma("title: Test")
+    out = capture.get()
+    assert "Suspicious PowerShell" in out
+    assert "sigma-test-123" in out
+    assert "Execution" in out
+    assert "command_line" in out
+
+

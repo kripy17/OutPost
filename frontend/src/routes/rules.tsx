@@ -22,6 +22,7 @@ import {
   setLogPatterns,
   setTuning,
   testYaraRule,
+  transpileSigmaRule,
 } from "../lib/api";
 import { clearEnumDrafts, clearLogDrafts, clearYaraDraft, readEnumDrafts, readLogDrafts, readYaraDraft, writeEnumDrafts, writeLogDrafts, writeYaraDraft } from "./rulesDrafts";
 import type { CustomYaraRule, EnumPatternRow, FpDayPoint, LogPatternKind, RuleFpEntry, RulePack, TuningKnob, YaraTestResponse } from "../types";
@@ -882,6 +883,126 @@ function FactoryResetPanel() {
 }
 
 
+function SigmaTranspilePanel() {
+  const [yaml, setYaml] = useState("");
+  const [result, setResult] = useState<any | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const loadExample = () => {
+    setYaml(`title: Suspicious PowerShell Download C2
+id: e2b08fa1-1234-5678-abcd-000000000000
+status: experimental
+description: Detects PowerShell downloading and staging binary payloads
+level: high
+tags:
+  - attack.execution
+  - attack.t1059.001
+detection:
+  selection:
+    Image|endswith: 'powershell.exe'
+    CommandLine|contains: 'DownloadFile'
+  condition: selection
+`);
+  };
+
+  const handleTranspile = async () => {
+    if (!yaml.trim()) return;
+    setError(null);
+    setResult(null);
+    setBusy(true);
+    try {
+      const res = await transpileSigmaRule(yaml);
+      setResult(res);
+    } catch (e: any) {
+      setError(e?.message || "Transpilation failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="mt-8">
+      <div className="mb-2 flex items-center justify-between">
+        <div>
+          <p className="kicker">Sigma HQ · Transpiler</p>
+          <h2 className="mt-1 text-base font-semibold text-text-primary">Import &amp; Transpile Sigma Rules</h2>
+        </div>
+        <button
+          onClick={loadExample}
+          className="press rounded border border-border-subtle px-2.5 py-1 font-mono text-xs text-text-muted hover:text-accent"
+        >
+          Load Example
+        </button>
+      </div>
+      <Panel title="Sigma YAML to OutPost Detection Filter">
+        <textarea
+          rows={6}
+          value={yaml}
+          onChange={(e) => setYaml(e.target.value)}
+          placeholder="Paste Sigma YAML rule here (detection criteria, tags, level)..."
+          className="w-full rounded-lg border border-border-subtle bg-bg-base p-3 font-mono text-xs text-text-primary focus:border-accent/60 focus:outline-none"
+        />
+        <div className="mt-3 flex items-center justify-between">
+          <button
+            onClick={handleTranspile}
+            disabled={busy || !yaml.trim()}
+            className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/10 px-4 py-2 font-mono text-xs text-accent transition-colors hover:bg-accent/20 disabled:opacity-50"
+          >
+            <Icon name="terminal" size={14} />
+            {busy ? "Transpiling…" : "Transpile Sigma Rule"}
+          </button>
+          {result && (
+            <span className="font-mono text-xs text-risk-clean">
+              ✓ Successfully transpiled {result.transpiled_filter_count} criteria
+            </span>
+          )}
+        </div>
+        {error && <p className="mt-3 font-mono text-xs text-risk-malicious">{error}</p>}
+        {result && (
+          <div className="mt-4 space-y-3 rounded-lg border border-border-subtle bg-bg-elevated/40 p-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-mono text-xs font-bold text-text-primary">{result.title}</span>
+              <span className="rounded bg-accent/15 px-2 py-0.5 font-mono text-[10px] text-accent">
+                {result.rule_id}
+              </span>
+              <span className="rounded bg-risk-malicious/15 px-2 py-0.5 font-mono text-[10px] uppercase text-risk-malicious">
+                {result.severity}
+              </span>
+            </div>
+            <p className="text-xs text-text-muted">{result.description}</p>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="font-mono text-[10px] text-text-faint">Tactics &amp; Techniques:</span>
+              {result.mitre_tactics.map((t: string) => (
+                <span key={t} className="rounded border border-border-subtle bg-bg-base px-1.5 py-0.5 font-mono text-[10px] text-text-muted">
+                  {t}
+                </span>
+              ))}
+              {result.mitre_techniques.map((t: string) => (
+                <span key={t} className="rounded border border-accent/40 bg-accent/10 px-1.5 py-0.5 font-mono text-[10px] text-accent">
+                  {t}
+                </span>
+              ))}
+            </div>
+            <div className="mt-2 space-y-1 font-mono text-[11px]">
+              <span className="text-[10px] uppercase text-text-faint">Mapped Evaluation Criteria:</span>
+              {result.criteria.map((c: any, i: number) => (
+                <div key={i} className="flex items-center gap-2 rounded bg-bg-base px-2 py-1 text-text-primary">
+                  <span className="text-accent">{c.target_field}</span>
+                  <span className="text-text-faint">{c.modifier}</span>
+                  <span className="text-risk-clean">&quot;{c.value}&quot;</span>
+                  <span className="ml-auto text-[10px] text-text-faint">(from {c.original_field})</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </Panel>
+    </div>
+  );
+}
+
+
 export default function RulesPage() {
   const queryClient = useQueryClient();
   const { data, isLoading, isError } = useQuery({ queryKey: ["tuning"], queryFn: getTuning });
@@ -944,6 +1065,8 @@ export default function RulesPage() {
       {isError && <p className="mt-6 text-sm text-risk-malicious">Couldn't load tunables — is the backend running?</p>}
 
       <RulePackPanel />
+
+      <SigmaTranspilePanel />
 
       <FactoryResetPanel />
 

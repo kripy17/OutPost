@@ -716,3 +716,39 @@ def import_rule_pack(body: RulePackIn, request: Request) -> dict:
         "enum_patterns_applied": enum_applied,
         "fp_threshold_applied": fp_applied,
     }
+
+
+# ---------------------------------------------------------------------------
+# Sigma Transpiler & Navigator Layer Download
+# ---------------------------------------------------------------------------
+
+
+class SigmaTranspileIn(BaseModel):
+    sigma_yaml: str = Field(..., min_length=5, description="Sigma detection rule YAML content")
+
+
+@router.post("/rules/sigma/transpile", response_model=None)
+def post_sigma_transpile(body: SigmaTranspileIn) -> dict:
+    """Transpile a Sigma YAML rule definition into an OutPost detection rule definition."""
+    from ..services.rule_generator import transpile_sigma_yaml
+
+    try:
+        return transpile_sigma_yaml(body.sigma_yaml)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"Failed to transpile Sigma rule: {exc}")
+
+
+@router.get("/coverage/navigator/download", response_model=None)
+def download_navigator_layer():
+    """Download official MITRE ATT&CK Navigator JSON layer representing OutPost rule coverage."""
+    from fastapi.responses import Response
+
+    from ..services.navigator import build_navigator_layer
+
+    layer = build_navigator_layer()
+    layer_bytes = json.dumps(layer, indent=2).encode("utf-8")
+    return Response(
+        content=layer_bytes,
+        media_type="application/json",
+        headers={"Content-Disposition": 'attachment; filename="outpost-attack-navigator.json"'},
+    )

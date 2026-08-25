@@ -245,6 +245,17 @@ CREATE TABLE IF NOT EXISTS agent_heartbeats (
     last_auth_at TEXT
 );
 
+-- Active host containment & remediation: stores isolation status and queued actions.
+CREATE TABLE IF NOT EXISTS host_containment (
+    host_id TEXT PRIMARY KEY,
+    isolated INTEGER NOT NULL DEFAULT 0,
+    isolated_at TEXT,
+    isolated_by TEXT,
+    reason TEXT,
+    pending_actions TEXT NOT NULL DEFAULT '[]',
+    updated_at TEXT NOT NULL
+);
+
 -- Per-host behavioral baseline (roadmap 4.x): what binaries execute and which
 -- IPs a host talks to, learned from its own telemetry. The learner upserts
 -- counts on every ingested batch; the deviation check flags first-time

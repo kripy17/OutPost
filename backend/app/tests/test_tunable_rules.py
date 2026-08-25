@@ -296,6 +296,40 @@ def test_first_seen_storm_cap_applies_on_macos(client):
     assert client.get(f"/runs/{run}").json()["suppressed_alerts"] == {"first-seen-process": 5}
 
 
+def test_sigma_transpiler_and_navigator_download(client):
+    """Assert Sigma YAML rules transpile into valid OutPost rules and Navigator layers download."""
+    sample_sigma = """title: Suspicious PowerShell Download
+id: e2b08fa1-0000-0000-0000-000000000000
+status: experimental
+description: Detects suspicious PowerShell invocation downloading files
+level: high
+tags:
+    - attack.execution
+    - attack.t1059.001
+detection:
+    selection:
+        Image|endswith: 'powershell.exe'
+        CommandLine|contains: 'DownloadFile'
+    condition: selection
+"""
+    res = client.post("/rules/sigma/transpile", json={"sigma_yaml": sample_sigma})
+    assert res.status_code == 200
+    data = res.json()
+    assert data["title"] == "Suspicious PowerShell Download"
+    assert data["severity"] == "malicious"
+    assert "execution" in data["mitre_tactics"]
+    assert "T1059.001" in data["mitre_techniques"]
+    assert len(data["criteria"]) == 2
+
+    # Download Navigator layer
+    nav_res = client.get("/coverage/navigator/download")
+    assert nav_res.status_code == 200
+    assert nav_res.headers["content-type"].startswith("application/json")
+    nav_layer = nav_res.json()
+    assert nav_layer["name"] == "OutPost detection coverage"
+    assert len(nav_layer["techniques"]) > 0
+
+
 def _beacon_burst(run: str, ip: str, base_ts: int, pid: int) -> list[dict]:
     """Five connections to one IP at ~10s intervals (low variance → beacon)."""
     return [

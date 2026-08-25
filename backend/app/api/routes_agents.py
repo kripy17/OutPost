@@ -12,9 +12,11 @@ possible: open the Live Monitor on any machine running `outpost agent run`
 and its events land here attributed to that host.
 """
 
+import json
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request, Response
+from fastapi.responses import PlainTextResponse
 
 from ..core.db import db_session
 
@@ -70,12 +72,31 @@ def post_heartbeat(
         # next silence pages fresh.
         fleet_health.clear_notified(conn, host_id)
 
+        # Check containment status
+        containment_row = conn.execute(
+            "SELECT isolated, pending_actions FROM host_containment WHERE host_id = ?",
+            (host_id,),
+        ).fetchone()
+        isolated = bool(containment_row["isolated"]) if containment_row else False
+        pending_actions = []
+        if containment_row and containment_row["pending_actions"]:
+            try:
+                pending_actions = json.loads(containment_row["pending_actions"])
+            except Exception:
+                pending_actions = []
+
     # Live fleet push: the Agents page and Overview host panel flip this host
     # to online the moment the ping lands (polling stays as the fallback).
     from ..services import events_stream
 
     events_stream.publish_fleet_update(host_id, online=True, silent=False, last_heartbeat=now)
-    return {"status": "ok", "host_id": host_id, "last_heartbeat": now}
+    return {
+        "status": "ok",
+        "host_id": host_id,
+        "last_heartbeat": now,
+        "isolated": isolated,
+        "pending_actions": pending_actions,
+    }
 
 
 @router.get("/hosts/{host_id}/watch", response_model=None)
@@ -353,4 +374,212 @@ def get_local_monitor_status() -> dict:
     from ..services import local_monitor
 
     return local_monitor.get_local_monitor_status()
+
+
+# ---------------------------------------------------------------------------
+# 1-Click Bootstrap Agent Scripts & Containment Actions
+# ---------------------------------------------------------------------------
+
+
+@router.get("/agents/install.sh", response_class=PlainTextResponse)
+def get_agent_install_script(request: Request, backend_url: str = Query("")) -> Response:
+    """Generate universal 1-command Linux / macOS collector bootstrap script."""
+    from ..core import auth as auth_service
+
+    server = backend_url.strip() or str(request.base_url).rstrip("/")
+    token = auth_service.agent_token()
+    script = f"""#!/usr/bin/env bash
+# OutPost Agent Universal Bootstrap Installer
+# Server: {server}
+set -euo pipefail
+
+echo "[*] Setting up OutPost Security Collector..."
+OUTPOST_API_URL="{server}"
+OUTPOST_AGENT_TOKEN="{token}"
+export OUTPOST_API_URL OUTPOST_AGENT_TOKEN
+
+TMP_DIR="$(mktemp -d /tmp/outpost-agent-XXXXXX)"
+cd "$TMP_DIR"
+
+if command -v python3 >/dev/null 2>&1; then
+    PY="python3"
+elif command -v python >/dev/null 2>&1; then
+    PY="python"
+else
+    echo "[-] Python 3 is required to run OutPost collector." >&2
+    exit 1
+fi
+
+echo "[*] Launching OutPost Collector for $(hostname)..."
+exec "$PY" -m collectors.common.collector_local --backend "$OUTPOST_API_URL"
+"""
+    return PlainTextResponse(content=script, media_type="text/x-shellscript")
+
+
+@router.get("/agents/install.ps1", response_class=PlainTextResponse)
+def get_agent_install_ps1(request: Request, backend_url: str = Query("")) -> Response:
+    """Generate universal 1-command Windows PowerShell collector bootstrap script."""
+    from ..core import auth as auth_service
+
+    server = backend_url.strip() or str(request.base_url).rstrip("/")
+    token = auth_service.agent_token()
+    script = f"""# OutPost Agent Universal Bootstrap Installer (Windows PowerShell)
+# Server: {server}
+$ErrorActionPreference = "Stop"
+
+Write-Host "[*] Setting up OutPost Windows Security Collector..." -ForegroundColor Cyan
+$env:OUTPOST_API_URL = "{server}"
+$env:OUTPOST_AGENT_TOKEN = "{token}"
+
+if (-not (Get-Command python -ErrorAction SilentlyContinue)) {{
+    Write-Warning "[-] Python is required to run OutPost collector on Windows."
+    exit 1
+}}
+
+Write-Host "[*] Launching OutPost Collector for $env:COMPUTERNAME..." -ForegroundColor Green
+python -m collectors.windows.collector_win --backend "$env:OUTPOST_API_URL"
+"""
+    return PlainTextResponse(content=script, media_type="text/plain")
+
+
+@router.get("/agents/bootstrap-command", response_model=None)
+def get_agent_bootstrap_commands(request: Request) -> dict:
+    """Return 1-click copy-paste deployment commands for Linux, macOS, and Windows."""
+    from ..core import auth as auth_service
+
+    server = str(request.base_url).rstrip("/")
+    token = auth_service.agent_token()
+    return {
+        "server": server,
+        "agent_token_configured": bool(token),
+        "linux_command": f"curl -sSL {server}/api/agents/install.sh | sudo bash",
+        "macos_command": f"curl -sSL {server}/api/agents/install.sh | sudo bash",
+        "windows_command": f"irm {server}/api/agents/install.ps1 | iex",
+    }
+
+
+@router.get("/agents/{host_id}/containment", response_model=None)
+def get_host_containment(host_id: str) -> dict:
+    """Get isolation status and pending remediation actions for a host."""
+    with db_session() as conn:
+        row = conn.execute(
+            "SELECT isolated, isolated_at, isolated_by, reason, pending_actions, updated_at "
+            "FROM host_containment WHERE host_id = ?",
+            (host_id,),
+        ).fetchone()
+    if not row:
+        return {
+            "host_id": host_id,
+            "isolated": False,
+            "isolated_at": None,
+            "isolated_by": None,
+            "reason": None,
+            "pending_actions": [],
+            "updated_at": None,
+        }
+    pending = []
+    if row["pending_actions"]:
+        try:
+            pending = json.loads(row["pending_actions"])
+        except Exception:
+            pending = []
+    return {
+        "host_id": host_id,
+        "isolated": bool(row["isolated"]),
+        "isolated_at": row["isolated_at"],
+        "isolated_by": row["isolated_by"],
+        "reason": row["reason"],
+        "pending_actions": pending,
+        "updated_at": row["updated_at"],
+    }
+
+
+@router.post("/agents/{host_id}/isolate", response_model=None)
+def set_host_isolation(host_id: str, request: Request, payload: dict | None = None) -> dict:
+    """Toggle host network isolation status (active containment)."""
+    from ..core import auth as auth_service
+    from ..services import events_stream
+
+    payload = payload or {}
+    isolated = bool(payload.get("isolated", True))
+    reason = payload.get("reason", "Operator containment request")
+    actor = auth_service.role_from_request(request) or "analyst"
+    now = datetime.now(timezone.utc).isoformat()
+
+    with db_session() as conn:
+        conn.execute(
+            """
+            INSERT INTO host_containment (host_id, isolated, isolated_at, isolated_by, reason, pending_actions, updated_at)
+            VALUES (?, ?, ?, ?, ?, '[]', ?)
+            ON CONFLICT(host_id) DO UPDATE SET
+                isolated = excluded.isolated,
+                isolated_at = CASE WHEN excluded.isolated = 1 THEN excluded.isolated_at ELSE host_containment.isolated_at END,
+                isolated_by = excluded.isolated_by,
+                reason = excluded.reason,
+                updated_at = excluded.updated_at
+            """,
+            (host_id, 1 if isolated else 0, now, actor, reason, now),
+        )
+
+    events_stream.publish_fleet_update(host_id, online=True, silent=False, last_heartbeat=now)
+    return {
+        "host_id": host_id,
+        "isolated": isolated,
+        "isolated_at": now if isolated else None,
+        "isolated_by": actor,
+        "reason": reason,
+        "status": "contained" if isolated else "uncontained",
+    }
+
+
+@router.post("/agents/{host_id}/kill-process", response_model=None)
+def queue_process_kill(host_id: str, request: Request, payload: dict | None = None) -> dict:
+    """Queue a process kill action to be executed by the target host collector."""
+    from ..core import auth as auth_service
+
+    payload = payload or {}
+    pid = payload.get("pid")
+    process_name = payload.get("process_name", "")
+    if not pid and not process_name:
+        raise HTTPException(status_code=422, detail="Either 'pid' or 'process_name' is required.")
+
+    actor = auth_service.role_from_request(request) or "analyst"
+    now = datetime.now(timezone.utc).isoformat()
+    action = {
+        "action": "kill_process",
+        "pid": pid,
+        "process_name": process_name,
+        "requested_by": actor,
+        "requested_at": now,
+    }
+
+    with db_session() as conn:
+        row = conn.execute(
+            "SELECT pending_actions FROM host_containment WHERE host_id = ?",
+            (host_id,),
+        ).fetchone()
+        actions = []
+        if row and row["pending_actions"]:
+            try:
+                actions = json.loads(row["pending_actions"])
+            except Exception:
+                actions = []
+        actions.append(action)
+        conn.execute(
+            """
+            INSERT INTO host_containment (host_id, isolated, isolated_at, isolated_by, reason, pending_actions, updated_at)
+            VALUES (?, 0, NULL, NULL, NULL, ?, ?)
+            ON CONFLICT(host_id) DO UPDATE SET
+                pending_actions = excluded.pending_actions,
+                updated_at = excluded.updated_at
+            """,
+            (host_id, json.dumps(actions), now),
+        )
+
+    return {
+        "host_id": host_id,
+        "status": "queued",
+        "action": action,
+        "total_pending": len(actions),
+    }
 

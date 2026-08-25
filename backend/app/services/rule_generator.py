@@ -7,6 +7,7 @@ Phase 6 Task 27 & Standout Features #8. Template-based, deterministic, and verif
 """
 
 import hashlib
+import re
 import uuid
 from typing import Any
 
@@ -280,4 +281,96 @@ def generate_detection_suite(
         "sigma": sigma_rules,
         "suricata": suricata_rules,
         "yara": yara_rules,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Sigma Transpiler — converts Sigma YAML into OutPost heuristic rule definitions
+# ---------------------------------------------------------------------------
+
+
+def transpile_sigma_yaml(yaml_str: str) -> dict[str, Any]:
+    """Transpile a Sigma YAML detection rule into OutPost detection filter/logic."""
+    if not yaml_str or not yaml_str.strip():
+        raise ValueError("Empty Sigma rule string")
+
+    title_match = re.search(r"^title:\s*(.+)$", yaml_str, re.MULTILINE)
+    desc_match = re.search(r"^description:\s*(.+)$", yaml_str, re.MULTILINE)
+    level_match = re.search(r"^level:\s*(.+)$", yaml_str, re.MULTILINE)
+    status_match = re.search(r"^status:\s*(.+)$", yaml_str, re.MULTILINE)
+    id_match = re.search(r"^id:\s*(.+)$", yaml_str, re.MULTILINE)
+
+    title = title_match.group(1).strip().strip("'\"") if title_match else "Imported Sigma Rule"
+    description = desc_match.group(1).strip().strip("'\"") if desc_match else "Transpiled from Sigma specification"
+    level = level_match.group(1).strip().strip("'\"").lower() if level_match else "medium"
+    status = status_match.group(1).strip().strip("'\"") if status_match else "experimental"
+    sigma_id = id_match.group(1).strip().strip("'\"") if id_match else uuid.uuid4().hex[:8]
+
+    # Severity mapping
+    severity = "malicious" if level in ("critical", "high") else "suspicious"
+
+    # Extract tags (MITRE ATT&CK)
+    tags = re.findall(r"-\s*attack\.([a-zA-Z0-9_\-\.]+)", yaml_str)
+    mitre_techniques = [t.upper() for t in tags if t.startswith("t")]
+    mitre_tactics = [t.replace("_", "-") for t in tags if not t.startswith("t")]
+
+    # Parse selection fields
+    criteria: list[dict[str, Any]] = []
+    for line in yaml_str.splitlines():
+        line = line.strip()
+        if ":" not in line or line.startswith(("#", "title", "description", "status", "level", "id", "logsource", "detection", "tags", "condition", "author", "date")):
+            continue
+        key, _, val = line.partition(":")
+        key = key.strip()
+        val = val.strip().strip("'\"")
+        if not key or not val or val.startswith(("-", "{", "[")):
+            continue
+
+        target_field = "command_line"
+        modifier = "contains"
+        if "|" in key:
+            raw_field, mod = key.split("|", 1)
+            raw_field = raw_field.strip()
+            modifier = mod.strip().lower()
+        else:
+            raw_field = key
+
+        field_lower = raw_field.lower()
+        if "image" in field_lower and "parent" not in field_lower:
+            target_field = "process_name"
+        elif "parentimage" in field_lower or "parent" in field_lower:
+            target_field = "parent_name"
+        elif "commandline" in field_lower or "cmd" in field_lower:
+            target_field = "command_line"
+        elif "targetobject" in field_lower or "registry" in field_lower:
+            target_field = "registry_key"
+        elif "targetfilename" in field_lower or "file" in field_lower:
+            target_field = "file_path"
+        elif "destinationip" in field_lower or "dest_ip" in field_lower or "dst_ip" in field_lower:
+            target_field = "dest_ip"
+        elif "destinationport" in field_lower or "dest_port" in field_lower or "dst_port" in field_lower:
+            target_field = "dest_port"
+
+        criteria.append({
+            "original_field": raw_field,
+            "target_field": target_field,
+            "modifier": modifier,
+            "value": val,
+        })
+
+    rule_id = f"sigma-{re.sub(r'[^a-zA-Z0-9]', '-', title.lower())[:32].strip('-')}"
+
+    return {
+        "rule_id": rule_id,
+        "sigma_id": sigma_id,
+        "title": title,
+        "description": description,
+        "level": level,
+        "severity": severity,
+        "status": status,
+        "mitre_tactics": mitre_tactics or ["execution"],
+        "mitre_techniques": mitre_techniques or ["T1059"],
+        "criteria": criteria,
+        "transpiled_filter_count": len(criteria),
+        "source": "sigma_import",
     }

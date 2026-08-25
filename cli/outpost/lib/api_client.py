@@ -561,3 +561,28 @@ def detonate_playbook(playbook_id: str) -> dict:
     """Detonate a curated attack scenario playbook."""
     return _post("/sandbox/detonate/playbook", {"playbook_id": playbook_id})
 
+
+def get_bootstrap_commands() -> dict:
+    """Get 1-click curl and PowerShell bootstrap commands."""
+    return _get("/agents/bootstrap-command")
+
+
+def isolate_host(host_id: str, isolated: bool = True, reason: str = "") -> dict:
+    """Set active network containment / isolation for a host."""
+    return _post(f"/agents/{quote(host_id)}/isolate", {"isolated": isolated, "reason": reason})
+
+
+def kill_host_process(host_id: str, pid: int | None = None, process_name: str = "") -> dict:
+    """Queue a process kill action on an agent host."""
+    return _post(f"/agents/{quote(host_id)}/kill-process", {"pid": pid, "process_name": process_name})
+
+
+def get_similar_samples(sample_id: str, min_similarity: int = 20) -> dict:
+    """Search for binary-similar samples via imphash and fuzzy hash."""
+    return _get(f"/samples/{quote(sample_id)}/similar?min_similarity={min_similarity}")
+
+
+def transpile_sigma(sigma_yaml: str) -> dict:
+    """Transpile a Sigma YAML detection rule into OutPost rule format."""
+    return _post("/rules/sigma/transpile", {"sigma_yaml": sigma_yaml})
+

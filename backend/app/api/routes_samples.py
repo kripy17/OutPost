@@ -409,6 +409,63 @@ def get_sample_static(sample_id: str):
     }
 
 
+@router.get("/samples/{sample_id}/similar", response_model=None)
+def get_similar_samples(sample_id: str, min_similarity: int = Query(20, ge=1, le=100)):
+    """Search the sample vault for binary-similar samples based on fuzzy hashing and imphash."""
+    with db_session() as conn:
+        target_row = samples_store.get_sample(conn, sample_id)
+        if not target_row:
+            raise HTTPException(status_code=404, detail=f"Unknown sample_id: {sample_id}")
+        target_bytes = _load_bytes(sample_id)
+        if not target_bytes:
+            return {"sample_id": sample_id, "similar": []}
+
+        target_analysis = static_analysis.analyze_sample(target_bytes)
+        target_fuzzy = target_analysis.get("fuzzy_hash")
+        target_imphash = target_analysis.get("imphash")
+
+        all_samples = samples_store.list_samples(conn, limit=100)
+        similar_matches = []
+        for s in all_samples:
+            if s["sample_id"] == sample_id:
+                continue
+            other_bytes = _load_bytes(s["sample_id"])
+            if not other_bytes:
+                continue
+            other_analysis = static_analysis.analyze_sample(other_bytes)
+            other_fuzzy = other_analysis.get("fuzzy_hash")
+            other_imphash = other_analysis.get("imphash")
+
+            sim_score = 0
+            if target_fuzzy and other_fuzzy:
+                sim_score = static_analysis.compare_fuzzy_hashes(target_fuzzy, other_fuzzy)
+
+            imphash_match = bool(target_imphash and other_imphash and target_imphash == other_imphash)
+            if imphash_match:
+                sim_score = max(sim_score, 85)
+
+            if sim_score >= min_similarity or imphash_match:
+                similar_matches.append({
+                    "sample_id": s["sample_id"],
+                    "original_name": s["original_name"],
+                    "sha256": s["sha256"],
+                    "similarity": sim_score,
+                    "imphash_match": imphash_match,
+                    "imphash": other_imphash,
+                    "fuzzy_hash": other_fuzzy,
+                    "platform": s.get("detected_platform"),
+                })
+
+        similar_matches.sort(key=lambda x: x["similarity"], reverse=True)
+        return {
+            "sample_id": sample_id,
+            "target_imphash": target_imphash,
+            "target_fuzzy_hash": target_fuzzy,
+            "matches_count": len(similar_matches),
+            "similar": similar_matches,
+        }
+
+
 @router.get("/samples/{sample_id}/download")
 def download_sample(sample_id: str):
     """Hand the stored bytes back to the analyst (FileResponse).
