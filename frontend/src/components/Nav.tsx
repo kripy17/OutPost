@@ -99,20 +99,16 @@ const GROUPS: { label: string; links: NavItem[] }[] = [
   {
     label: "Sandbox & Lab",
     links: [
-      { to: "/samples", label: "Sample Vault", iconName: "box" },
+      { to: "/samples", label: "Sample Vault & Detonations", iconName: "box" },
       { to: "/monitor", label: "Simulation Lab", iconName: "activity" },
-      { to: "/analysis", label: "Analysis Tasks", iconName: "process" },
     ],
   },
   {
     label: "Detection & Intel",
     links: [
-      { to: "/rules", label: "Detection Rules", iconName: "shield" },
-      { to: "/coverage", label: "ATT&CK Matrix", iconName: "target" },
-      { to: "/campaigns", label: "Threat Campaigns", iconName: "flag" },
+      { to: "/rules", label: "Detection Engineering", iconName: "shield" },
+      { to: "/campaigns", label: "Threat Intelligence", iconName: "flag" },
       { to: "/search", label: "Forensic Search", iconName: "search" },
-      { to: "/watchlist", label: "IOC Watchlist", iconName: "star" },
-      { to: "/footprint", label: "Digital Footprint", iconName: "globe" },
     ],
   },
   {

@@ -26,8 +26,23 @@ from ..models import run as run_store
 from ..models import samples as samples_store
 from ..services import detection
 from ..services import sandbox as sandbox_service
+from ..services import screenshots as ss
+from fastapi.responses import Response
 
 router = APIRouter(tags=["sandbox"])
+
+
+@router.get("/sandbox/detonate/{run_id}/screenshots", response_model=None)
+def list_session_screenshots(run_id: str) -> dict:
+    return ss.list_shots(run_id)
+
+
+@router.get("/sandbox/detonate/{run_id}/screenshots/{name}")
+def get_session_screenshot(run_id: str, name: str):
+    data = ss.read_shot(run_id, name)
+    if not data:
+        raise HTTPException(status_code=404, detail="Screenshot not found")
+    return Response(content=data, media_type="image/png")
 
 
 def _load_bytes(sample_id: str) -> bytes | None:

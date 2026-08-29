@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
+import CoveragePage from "./coverage";
 import { Icon } from "../components/Icon";
 import { PageHeader, Panel } from "../components/ui";
 import {
@@ -1007,6 +1008,7 @@ export default function RulesPage() {
   const queryClient = useQueryClient();
   const { data, isLoading, isError } = useQuery({ queryKey: ["tuning"], queryFn: getTuning });
   const { data: fp } = useQuery({ queryKey: ["rule-fp"], queryFn: getRuleFp });
+  const [activeTab, setActiveTab] = useState<"rules" | "coverage">("rules");
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [fpDraft, setFpDraft] = useState<string>("");
 
@@ -1052,29 +1054,59 @@ export default function RulesPage() {
   return (
     <div className="mx-auto max-w-4xl px-6 py-10">
       <PageHeader
-        kicker="Operations · rules"
+        kicker="Detection & Intel · Rules"
         title={
           <>
-            Detection rules <span className="font-normal text-text-muted">— tune thresholds &amp; author signatures</span>
+            Detection Engineering <span className="font-normal text-text-muted">— rules &amp; ATT&CK coverage</span>
           </>
         }
-        lede="Three knobs: live threshold tuning, per-OS enumeration pattern tables, and the signature lab — write, test, and save YARA-style rules against the sample vault."
+        lede="Author Sigma and YARA rules, tune false-positive thresholds, and inspect Enterprise MITRE ATT&CK coverage matrices."
       />
 
-      {isLoading && <p className="mt-6 text-sm text-text-muted">Loading tunables…</p>}
-      {isError && <p className="mt-6 text-sm text-risk-malicious">Couldn't load tunables — is the backend running?</p>}
+      {/* Main Tab Switcher */}
+      <div className="mb-8 flex rounded-xl border border-border-subtle bg-bg-surface p-1 font-mono text-xs shadow-sm">
+        <button
+          onClick={() => setActiveTab("rules")}
+          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-medium transition ${
+            activeTab === "rules"
+              ? "bg-accent/15 font-bold text-accent shadow-sm"
+              : "text-text-muted hover:text-text-primary"
+          }`}
+        >
+          <Icon name="shield" size={13} />
+          <span>Detection Rules & Sigma Authoring</span>
+        </button>
+        <button
+          onClick={() => setActiveTab("coverage")}
+          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-medium transition ${
+            activeTab === "coverage"
+              ? "bg-accent/15 font-bold text-accent shadow-sm"
+              : "text-text-muted hover:text-text-primary"
+          }`}
+        >
+          <Icon name="grid" size={13} />
+          <span>MITRE ATT&CK Coverage Matrix</span>
+        </button>
+      </div>
 
-      <RulePackPanel />
+      {activeTab === "coverage" ? (
+        <CoveragePage />
+      ) : (
+        <>
+          {isLoading && <p className="mt-6 text-sm text-text-muted">Loading tunables…</p>}
+          {isError && <p className="mt-6 text-sm text-risk-malicious">Couldn't load tunables — is the backend running?</p>}
 
-      <SigmaTranspilePanel />
+          <RulePackPanel />
 
-      <FactoryResetPanel />
+          <SigmaTranspilePanel />
 
-      <YaraLab />
+          <FactoryResetPanel />
 
-      <EnumPatternsEditor />
+          <YaraLab />
 
-      <LogPatternsEditor />
+          <EnumPatternsEditor />
+
+          <LogPatternsEditor />
 
       {/* FP feedback surface — noise threshold + per-rule counters */}
       {fp && (
@@ -1210,6 +1242,8 @@ export default function RulesPage() {
             );
           })}
         </div>
+      )}
+        </>
       )}
     </div>
   );

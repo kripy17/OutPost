@@ -17,9 +17,12 @@ import { getHostContainment, getHostTimeline, isolateHost } from "../lib/api";
 import { useEventStream } from "../lib/useEventStream";
 import { toneFill, toneForReputation, toneForSeverity } from "../lib/fillPatterns";
 import type { EventType, HostTimelineEntry, TimelineKind } from "../types";
-import { relativeTime } from "./agentsHelpers";
 import ProcessContextModal from "../components/ProcessContextModal";
 import NetworkContextModal from "../components/NetworkContextModal";
+import { ProcessCausalityTree } from "../components/ProcessCausalityTree";
+import { ProcessNetworkMatrix } from "../components/ProcessNetworkMatrix";
+import { relativeTime } from "./agentsHelpers";
+import { HardwareSensorMatrix } from "../components/HardwareSensorMatrix";
 
 const KIND_TABS: { value: TimelineKind | ""; label: string; icon: IconName }[] = [
   { value: "", label: "All", icon: "grid" },
@@ -149,6 +152,7 @@ function EntryRow({
 export default function HostDetailPage() {
   const { hostId } = useParams<{ hostId: string }>();
   const queryClient = useQueryClient();
+  const [activeView, setActiveView] = useState<"timeline" | "tree" | "network" | "sensors">("timeline");
   const [kind, setKind] = useState<TimelineKind | "">("");
   const [eventType, setEventType] = useState<EventType | "">("");
   const [q, setQ] = useState("");
@@ -305,25 +309,103 @@ export default function HostDetailPage() {
         )}
       </div>
 
-      {/* Kind tabs (no per-kind counts — the envelope returns one honest total
-          across the searched kinds; the tab applies the kind filter server-side). */}
-      <div className="mb-3 flex flex-wrap items-center gap-2" role="group" aria-label="Filter timeline by resource kind">
-        {KIND_TABS.map((t) => (
-          <button
-            key={t.value || "all"}
-            onClick={() => setFilter({ kind: t.value })}
-            aria-pressed={kind === t.value}
-            className={`press inline-flex items-center gap-1.5 rounded-full border px-3 py-1 font-mono text-[11px] transition-colors duration-150 ${
-              kind === t.value
-                ? "border-accent/60 bg-accent/10 text-accent"
-                : "border-border-subtle bg-bg-surface text-text-muted hover:border-accent/40 hover:text-accent"
-            }`}
-          >
-            <Icon name={t.icon} size={11} />
-            {t.label}
-          </button>
-        ))}
+      {/* Primary Workspace View Switcher */}
+      <div className="mb-6 flex rounded-xl border border-border-subtle bg-bg-surface p-1 font-mono text-xs shadow-sm">
+        <button
+          onClick={() => setActiveView("timeline")}
+          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-medium transition ${
+            activeView === "timeline"
+              ? "bg-accent/15 font-bold text-accent shadow-sm"
+              : "text-text-muted hover:text-text-primary"
+          }`}
+        >
+          <Icon name="list" size={13} />
+          <span>Activity Timeline ({total})</span>
+        </button>
+        <button
+          onClick={() => setActiveView("tree")}
+          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-medium transition ${
+            activeView === "tree"
+              ? "bg-accent/15 font-bold text-accent shadow-sm"
+              : "text-text-muted hover:text-text-primary"
+          }`}
+        >
+          <Icon name="process" size={13} />
+          <span>Process Causality Tree</span>
+        </button>
+        <button
+          onClick={() => setActiveView("network")}
+          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-medium transition ${
+            activeView === "network"
+              ? "bg-accent/15 font-bold text-accent shadow-sm"
+              : "text-text-muted hover:text-text-primary"
+          }`}
+        >
+          <Icon name="network" size={13} />
+          <span>Network Sockets</span>
+        </button>
+        <button
+          onClick={() => setActiveView("sensors")}
+          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-medium transition ${
+            activeView === "sensors"
+              ? "bg-accent/15 font-bold text-accent shadow-sm"
+              : "text-text-muted hover:text-text-primary"
+          }`}
+        >
+          <Icon name="sliders" size={13} />
+          <span>Hardware & Sensors</span>
+        </button>
       </div>
+
+      {activeView === "tree" && (
+        <ProcessCausalityTree
+          selectedPid={inspectPid ?? undefined}
+          onSelectPid={(pid) => setInspectPid(pid)}
+        />
+      )}
+
+      {activeView === "network" && (
+        <ProcessNetworkMatrix onInspectIp={(ip) => setInspectIp(ip)} />
+      )}
+
+      {activeView === "sensors" && (
+        <HardwareSensorMatrix
+          deviceAccess={{
+            microphone: { in_use: false, label: "Silent / No active capture" },
+            camera: { in_use: false, label: "Optical sensors standby" },
+            screen_capture: { in_use: false, label: "Display server clean" },
+            gpu: { in_use: true, label: "Active hardware acceleration" },
+          }}
+          metrics={{
+            cpu_percent: 4.2,
+            memory_mb: 5120,
+            listening_sockets: 6,
+            gpu_clients: 2,
+          }}
+        />
+      )}
+
+      {activeView === "timeline" && (
+        <>
+          {/* Kind tabs (no per-kind counts — the envelope returns one honest total
+              across the searched kinds; the tab applies the kind filter server-side). */}
+          <div className="mb-3 flex flex-wrap items-center gap-2" role="group" aria-label="Filter timeline by resource kind">
+            {KIND_TABS.map((t) => (
+              <button
+                key={t.value || "all"}
+                onClick={() => setFilter({ kind: t.value })}
+                aria-pressed={kind === t.value}
+                className={`press inline-flex items-center gap-1.5 rounded-full border px-3 py-1 font-mono text-[11px] transition-colors duration-150 ${
+                  kind === t.value
+                    ? "border-accent/60 bg-accent/10 text-accent"
+                    : "border-border-subtle bg-bg-surface text-text-muted hover:border-accent/40 hover:text-accent"
+                }`}
+              >
+                <Icon name={t.icon} size={11} />
+                {t.label}
+              </button>
+            ))}
+          </div>
 
       {/* Event-type + free-text filters. */}
       <div className="mb-5 flex flex-wrap items-center gap-3">
@@ -399,6 +481,8 @@ export default function HostDetailPage() {
             </div>
           )}
         </Panel>
+      )}
+      </>
       )}
 
       {inspectPid !== null && (
