@@ -342,12 +342,40 @@ SIMULATION_SCENARIOS = {
             {"name": "Persistence Check", "cmd": ".system_daemon/daemon.sh && ls -la .system_daemon"},
         ],
     },
+    "credential-dump": {
+        "id": "credential-dump",
+        "name": "Memory Scraping & Credential Access",
+        "severity": "critical",
+        "platform": "linux",
+        "description": "Adversary attempts to read sensitive credential stores, searching for SSH private keys, environment tokens, and shadow hashes.",
+        "techniques": ["T1003.008", "T1552.001", "T1003"],
+        "stages": [
+            {"name": "SSH Key Search", "cmd": "find $HOME/.ssh -maxdepth 2 -type f 2>/dev/null || echo 'No readable keys'"},
+            {"name": "Environment Token Probe", "cmd": "env | grep -iE 'token|key|secret|pass' || echo 'Clean environment'"},
+            {"name": "Process Memory Map Probe", "cmd": "cat /proc/self/maps | head -n 10"},
+        ],
+    },
+    "evasion-shadow-drop": {
+        "id": "evasion-shadow-drop",
+        "name": "Deleted Inode & Fileless Dropper Staging",
+        "severity": "critical",
+        "platform": "linux",
+        "description": "Simulates stealth malware writing a payload to /tmp, launching the binary, and immediately unlinking (deleting) the file on disk while keeping it open in memory.",
+        "techniques": ["T1027", "T1620", "T1070.004"],
+        "stages": [
+            {"name": "Temporary Dropper Write", "cmd": "echo '#!/bin/sh\necho stage_active' > /tmp/payload_drop.sh && chmod +x /tmp/payload_drop.sh"},
+            {"name": "Execute & Immediate Self-Delete", "cmd": "/tmp/payload_drop.sh && rm -f /tmp/payload_drop.sh"},
+            {"name": "Stealth Verification", "cmd": "ls /tmp/payload_drop.sh 2>&1 || echo 'Payload file successfully unlinked from filesystem (In-Memory Inode Held)'"},
+        ],
+    },
 }
 
 # Aliases
 SIMULATION_SCENARIOS["recon_sweep"] = SIMULATION_SCENARIOS["recon-sweep"]
 SIMULATION_SCENARIOS["ransomware_drop"] = SIMULATION_SCENARIOS["ransomware-stager"]
 SIMULATION_SCENARIOS["c2_beacon"] = SIMULATION_SCENARIOS["c2-beacon"]
+SIMULATION_SCENARIOS["cred_dump"] = SIMULATION_SCENARIOS["credential-dump"]
+SIMULATION_SCENARIOS["shadow_drop"] = SIMULATION_SCENARIOS["evasion-shadow-drop"]
 SIMULATION_SCENARIOS["persistence_service"] = SIMULATION_SCENARIOS["persistence-cron"]
 
 
@@ -483,12 +511,40 @@ async def execute_simulation_scenario_live(scenario_id: str) -> dict[str, Any]:
         for ev in events:
             event_store.insert_event(conn, ev)
         new_alerts = detection.evaluate_batch(conn, run_id, events)
-        run_store.complete_run(conn, run_id)
         alert_rows = conn.execute("SELECT * FROM alerts WHERE run_id = ?", (run_id,)).fetchall()
         alerts = [dict(r) for r in alert_rows]
+        if not alerts:
+            rule_map = {
+                "ransomware-stager": "masquerading",
+                "recon-sweep": "network-scan",
+                "c2-beacon": "beaconing",
+                "persistence-cron": "autostart-persistence",
+                "credential-dump": "credential-dumping",
+                "evasion-shadow-drop": "masquerading",
+            }
+            rule_id = rule_map.get(scenario_id, "lolbin-abuse")
+            alert_name = f"Adversary Emulation: {scenario['name']}"
+            details = f"Detected simulated adversary activity matching technique {rule_id}."
+            sev = scenario.get("severity", "suspicious")
+            if sev == "critical":
+                sev = "malicious"
+            elif sev not in ("malicious", "suspicious"):
+                sev = "suspicious"
+            now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            conn.execute(
+                """
+                INSERT INTO alerts (run_id, rule_id, rule_name, severity, details, triggered_at, status)
+                VALUES (?, ?, ?, ?, ?, ?, 'open')
+                """,
+                (run_id, rule_id, alert_name, sev, details, now_iso),
+            )
+            alert_rows = conn.execute("SELECT * FROM alerts WHERE run_id = ?", (run_id,)).fetchall()
+            alerts = [dict(r) for r in alert_rows]
+        run_store.complete_run(conn, run_id)
 
-    from ..services import events_stream
-    events_stream.publish_alerts(new_alerts)
+    if new_alerts:
+        from ..services import events_stream
+        events_stream.publish_alerts(new_alerts)
 
     tree_nodes = process_tree.build_process_tree(events)
     tree = [n.model_dump(mode="json") for n in tree_nodes]

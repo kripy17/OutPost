@@ -31,9 +31,20 @@ export default function MonitorPage() {
     process_tree: any[];
   } | null>(null);
 
+  const [searchQuery, setSearchQuery] = useState("");
   const { data: playbooks, isLoading } = useQuery<AttackPlaybook[]>({
     queryKey: ["playbooks"],
     queryFn: getPlaybooks,
+  });
+
+  const filteredPlaybooks = (playbooks || []).filter((pb) => {
+    if (!searchQuery) return true;
+    const q = searchQuery.toLowerCase();
+    return (
+      pb.name.toLowerCase().includes(q) ||
+      pb.description.toLowerCase().includes(q) ||
+      (pb.techniques || []).some((t) => t.toLowerCase().includes(q))
+    );
   });
 
   const handleRunLiveSimulation = async (playbookId: string) => {
@@ -177,23 +188,25 @@ export default function MonitorPage() {
 
       {/* Attack Scenario Playbooks Catalog */}
       <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-border-subtle bg-bg-elevated text-accent">
-              <Icon name="activity" size={14} />
-            </span>
-            <div>
-              <h3 className="font-sans text-sm font-semibold tracking-tight text-text-primary">
-                Adversary Attack Scenario Playbooks
-              </h3>
-              <p className="text-[11px] text-text-muted">
-                Select an adversary playbook to execute live multi-stage attack behavior through the OutPost detection engine.
-              </p>
-            </div>
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h3 className="font-sans text-sm font-bold text-text-primary">
+              Available Attack Playbooks ({filteredPlaybooks?.length ?? 0})
+            </h3>
+            <p className="text-xs text-text-muted">
+              Select a scenario to trigger deterministic execution and trace detection rules in real time.
+            </p>
           </div>
-          <span className="font-mono text-[10px] text-text-faint">
-            {playbooks?.length ?? 4} verified scenarios
-          </span>
+          <div className="relative">
+            <Icon name="search" size={14} className="absolute left-2.5 top-2.5 text-text-faint" />
+            <input
+              type="text"
+              placeholder="Search playbooks..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="h-9 w-64 rounded-lg border border-border-subtle bg-bg-surface pl-9 pr-3 text-xs outline-none focus:border-accent/50"
+            />
+          </div>
         </div>
 
         {isLoading ? (
@@ -202,7 +215,7 @@ export default function MonitorPage() {
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            {(playbooks || []).map((pb) => {
+            {(filteredPlaybooks || []).map((pb) => {
               const isDetonating = detonatingPlaybookId === pb.id;
               const isCritical = pb.severity === "critical";
               return (
