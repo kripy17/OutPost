@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import AnalysisPage from "./analysis";
 import { Icon } from "../components/Icon";
 import { platformIconName } from "../components/iconMeta";
 import { Chip, PageHeader, Panel, Stat } from "../components/ui";
@@ -122,6 +123,7 @@ function SampleTile({ s, onDelete }: { s: SampleRow; onDelete: (id: string, name
 export default function SamplesPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const [activeTab, setActiveTab] = useState<"samples" | "analysis">("samples");
   const [q, setQ] = useState("");
   const [debounced, setDebounced] = useState("");
   const [dragOver, setDragOver] = useState(false);
@@ -208,13 +210,13 @@ export default function SamplesPage() {
   return (
     <div className="mx-auto max-w-[1400px] px-5 py-8 lg:px-8">
       <PageHeader
-        kicker="Intelligence · samples"
+        kicker="Sandbox & Lab · Samples"
         title={
           <>
-            Sample Vault <span className="font-normal text-text-muted">— malware binaries & static inspection</span>
+            Sample Vault &amp; Detonations <span className="font-normal text-text-muted">— malware binaries &amp; dynamic analysis</span>
           </>
         }
-        lede="Central vault for uploaded binaries (.exe, .elf, .dll, scripts). Inspect cryptographic hashes, Shannon entropy, section headers, extracted strings, and YARA signatures."
+        lede="Central vault for uploaded binaries (.exe, .elf, .dll, scripts), static capability triage, and dynamic detonation tasks."
         actions={
           <div className="flex items-center gap-2">
             {exportError && <span className="font-mono text-[10px] text-risk-malicious">{exportError}</span>}
@@ -259,26 +261,55 @@ export default function SamplesPage() {
           </div>
         }
       />
+      {/* Main Tab Switcher */}
+      <div className="mb-8 flex rounded-xl border border-border-subtle bg-bg-surface p-1 font-mono text-xs shadow-sm">
+        <button
+          onClick={() => setActiveTab("samples")}
+          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-medium transition ${
+            activeTab === "samples"
+              ? "bg-accent/15 font-bold text-accent shadow-sm"
+              : "text-text-muted hover:text-text-primary"
+          }`}
+        >
+          <Icon name="box" size={13} />
+          <span>Malware Sample Vault</span>
+        </button>
+        <button
+          onClick={() => setActiveTab("analysis")}
+          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-medium transition ${
+            activeTab === "analysis"
+              ? "bg-accent/15 font-bold text-accent shadow-sm"
+              : "text-text-muted hover:text-text-primary"
+          }`}
+        >
+          <Icon name="terminal" size={13} />
+          <span>Dynamic Detonations &amp; Tasks</span>
+        </button>
+      </div>
 
-      {/* Binary Upload Dropzone */}
-      <div
-        onDragOver={(e) => {
-          e.preventDefault();
-          setDragOver(true);
-        }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={(e) => {
-          e.preventDefault();
-          setDragOver(false);
-          const file = e.dataTransfer.files?.[0];
-          if (file) void handleUpload(file);
-        }}
-        className={`mb-6 flex flex-col items-center justify-center rounded-2xl border-2 border-dashed p-6 text-center transition-all duration-150 ${
-          dragOver
-            ? "border-accent bg-accent/10 shadow-[var(--glow-accent)]"
-            : "border-border-subtle bg-bg-surface/60 hover:border-accent/50 hover:bg-bg-surface"
-        }`}
-      >
+      {activeTab === "analysis" ? (
+        <AnalysisPage />
+      ) : (
+        <>
+          {/* Binary Upload Dropzone */}
+          <div
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDragOver(true);
+            }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setDragOver(false);
+              const file = e.dataTransfer.files?.[0];
+              if (file) void handleUpload(file);
+            }}
+            className={`mb-6 flex flex-col items-center justify-center rounded-2xl border-2 border-dashed p-6 text-center transition-all duration-150 ${
+              dragOver
+                ? "border-accent bg-accent/10 shadow-[var(--glow-accent)]"
+                : "border-border-subtle bg-bg-surface/60 hover:border-accent/50 hover:bg-bg-surface"
+            }`}
+          >
         <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-border-subtle bg-bg-elevated text-accent">
           <Icon name="box" size={20} />
         </div>
@@ -364,6 +395,8 @@ export default function SamplesPage() {
           </ul>
         )}
       </Panel>
+        </>
+      )}
     </div>
   );
 }

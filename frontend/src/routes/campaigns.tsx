@@ -8,6 +8,8 @@ import { EVENT_ICON, platformIconName } from "../components/iconMeta";
 import { eventDetail, TYPE_STYLE } from "../components/TimelineView/timeline";
 import { PageHeader } from "../components/ui";
 import { CAMPAIGN_SORTS, clusterBars, reputationFill, sortCampaigns, topMembers, topologyClusters, type CampaignSort, type ClusterBar } from "./campaignsHelpers";
+import WatchlistPage from "./watchlist";
+import FootprintPage from "./footprint";
 import { getCampaigns, getCampaignStix, getFootprintTopology } from "../lib/api";
 import type { Campaign, CampaignIoc, PropagationGraph, Reputation, Severity } from "../types";
 import NetworkContextModal from "../components/NetworkContextModal";
@@ -337,27 +339,71 @@ export default function CampaignsPage() {
       /* storage unavailable — ordering still applies for this visit */
     }
   }, [sort]);
+  const [activeTab, setActiveTab] = useState<"campaigns" | "watchlist" | "footprint">("campaigns");
   const [inspectIp, setInspectIp] = useState<string | null>(null);
   const sorted = useMemo(() => sortCampaigns(campaigns, sort), [campaigns, sort]);
 
   return (
     <div className="mx-auto max-w-6xl px-5 py-8 lg:px-8">
       <PageHeader
-        kicker="Hunt · campaigns"
+        kicker="Detection & Intel · Campaigns"
         title={
           <>
-            Campaigns <span className="font-normal text-text-muted">— shared infrastructure across your runs</span>
+            Threat Intelligence <span className="font-normal text-text-muted">— campaigns, watchlist &amp; attack surface</span>
           </>
         }
-        lede="Runs that touch the same IP are grouped automatically. Known-clean IPs (shared DNS, for instance) never form a campaign; watchlisted or externally-flagged infrastructure ranks first."
+        lede="Group shared adversary infrastructure, manage high-priority IOC surveillance watchlists, and map digital attack surface topology."
       />
 
-      {isLoading && (
-        <div className="mt-8 space-y-4">
-          <div className="skeleton h-24 w-full" />
-          <div className="skeleton h-64 w-full" />
-        </div>
-      )}
+      {/* Main Tab Switcher */}
+      <div className="mb-8 flex rounded-xl border border-border-subtle bg-bg-surface p-1 font-mono text-xs shadow-sm">
+        <button
+          onClick={() => setActiveTab("campaigns")}
+          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-medium transition ${
+            activeTab === "campaigns"
+              ? "bg-accent/15 font-bold text-accent shadow-sm"
+              : "text-text-muted hover:text-text-primary"
+          }`}
+        >
+          <Icon name="flag" size={13} />
+          <span>Adversary Campaigns</span>
+        </button>
+        <button
+          onClick={() => setActiveTab("watchlist")}
+          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-medium transition ${
+            activeTab === "watchlist"
+              ? "bg-accent/15 font-bold text-accent shadow-sm"
+              : "text-text-muted hover:text-text-primary"
+          }`}
+        >
+          <Icon name="search" size={13} />
+          <span>IOC Watchlist</span>
+        </button>
+        <button
+          onClick={() => setActiveTab("footprint")}
+          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-medium transition ${
+            activeTab === "footprint"
+              ? "bg-accent/15 font-bold text-accent shadow-sm"
+              : "text-text-muted hover:text-text-primary"
+          }`}
+        >
+          <Icon name="network" size={13} />
+          <span>Digital Footprint & Topology</span>
+        </button>
+      </div>
+
+      {activeTab === "watchlist" ? (
+        <WatchlistPage />
+      ) : activeTab === "footprint" ? (
+        <FootprintPage />
+      ) : (
+        <>
+          {isLoading && (
+            <div className="mt-8 space-y-4">
+              <div className="skeleton h-24 w-full" />
+              <div className="skeleton h-64 w-full" />
+            </div>
+          )}
       {isError && <p className="mt-8 text-sm text-risk-malicious">Couldn't load campaigns — is the OutPost backend running?</p>}
       {!isLoading && !isError && campaigns.length === 0 && (
         <div className="mt-10 rounded-2xl border border-dashed border-border-strong bg-bg-surface/40 p-14 text-center">
@@ -523,6 +569,8 @@ export default function CampaignsPage() {
           />
         ))}
       </div>
+        </>
+      )}
 
       {inspectIp !== null && (
         <NetworkContextModal ip={inspectIp} onClose={() => setInspectIp(null)} />

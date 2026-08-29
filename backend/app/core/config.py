@@ -25,6 +25,7 @@ DATABASE_URL = os.getenv("OUTPOST_DATABASE_URL", "").strip()
 # persisted as {sample_id}.bin here so triage can re-scan it without holding
 # the upload in memory. Tests override SAMPLES_DIR to a temp dir.
 SAMPLES_DIR = Path(os.getenv("SAMPLES_DIR", str(DATA_DIR / "samples")))
+ARTIFACTS_DIR = Path(os.getenv("ARTIFACTS_DIR", str(DATA_DIR / "artifacts")))
 
 
 def _parse_origins(raw: str) -> list[str]:
@@ -63,6 +64,14 @@ SANDBOX_PROVIDER = os.getenv("SANDBOX_PROVIDER", "").strip().lower()
 ANYRUN_API_KEY = os.getenv("ANYRUN_API_KEY", "")
 TRIAGE_API_KEY = os.getenv("TRIAGE_API_KEY", "")
 JOE_API_KEY = os.getenv("JOE_API_KEY", "")
+
+# Volatility 3 executable path (optional external tool)
+VOLATILITY_PATH = os.getenv("VOLATILITY_PATH", "").strip()
+VOLATILITY_TIMEOUT = int(os.getenv("VOLATILITY_TIMEOUT", "60"))
+
+# Screenshot capture command template (optional external tool)
+SCREENSHOT_CMD = os.getenv("SCREENSHOT_CMD", "").strip()
+SCREENSHOT_INTERVAL = float(os.getenv("SCREENSHOT_INTERVAL", "1.0"))
 
 # Enrichment cache TTL in days — free-tier quotas are small, cache aggressively.
 ENRICHMENT_TTL_DAYS = int(os.getenv("ENRICHMENT_TTL_DAYS", "7"))
