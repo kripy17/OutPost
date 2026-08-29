@@ -126,10 +126,45 @@ export default function InvestigationDetailPage() {
 
   const sev = inv.severity;
 
+  const handleExportIncidentReport = () => {
+    if (!inv) return;
+    const lines = [
+      `# OutPost Incident Response Report: ${inv.title}`,
+      `**Investigation ID:** \`${inv.id}\``,
+      `**Status:** ${inv.status.toUpperCase()}`,
+      `**Created At:** ${inv.created_at}`,
+      `**Updated At:** ${inv.updated_at}`,
+      `**Tags:** ${inv.tags?.join(", ") || "none"}`,
+      "",
+      "## 1. Executive Summary",
+      inv.conclusion ? inv.conclusion : "Incident investigation in progress.",
+      "",
+      "## 2. Attached Evidence & Findings",
+      ...(inv.findings || []).map(
+        (f: any) => `- **[${f.severity?.toUpperCase()}]** \`${f.rule_id}\`: ${f.rule_name} (${f.details})`
+      ),
+      "",
+      "## 3. Investigation Evidence References",
+      ...(inv.refs || []).map((r: any) => `- **${r.ref_type.toUpperCase()}**: \`${r.ref_id}\``),
+      "",
+      "## 4. Analyst Notes Log",
+      ...(inv.notes || []).map((n: any) => `### [${n.created_at}] by ${n.author || "Analyst"}\n${n.note}\n`),
+    ];
+    const blob = new Blob([lines.join("\n")], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `incident-report-${inv.id}.md`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   return (
-    <div>
+    <div className="mx-auto max-w-5xl px-6 py-8">
       <PageHeader
-        kicker="Investigation"
+        kicker="Incident Response · Case File"
         title={inv.title}
         lede={
           inv.conclusion
@@ -138,6 +173,10 @@ export default function InvestigationDetailPage() {
         }
         actions={
           <>
+            <button className="btn btn-primary" onClick={handleExportIncidentReport}>
+              <Icon name="download" size={13} className="mr-1.5 inline" />
+              Export Report
+            </button>
             {inv.status !== "closed" ? (
               <button className="btn" onClick={() => setShowClose((v) => !v)}>
                 Close case

@@ -9,7 +9,7 @@ import { PageHeader, Panel } from "../components/ui";
 import { ageBucket, collapseFindings, intelFreshness, intelKeyHealth, openSince, overviewRunParams, sortFindingsRiskFirst } from "./overviewHelpers";
 import { copyToClipboard } from "../lib/clipboard";
 import { SEVERITY_BG } from "../lib/constants";
-import { BASE_URL, getAgents, getCampaigns, getHealth, getIntelFreshness, getIntelKeys, getMeta, getPlatform, getProcessSummary, getRecentAlerts, getRuleMeta, getRuns, listInvestigations, resetStore } from "../lib/api";
+import { BASE_URL, getAgents, getCampaigns, getHealth, getHostXRaySnapshot, getIntelFreshness, getIntelKeys, getMeta, getPlatform, getProcessSummary, getRecentAlerts, getRuleMeta, getRuns, getXRayTargetCatalog, listInvestigations, resetStore } from "../lib/api";
 import { useEventStream } from "../lib/useEventStream";
 
 // Compact relative time for the host panel's auth-context tooltips (the
@@ -580,6 +580,136 @@ function IntelKeyHealth() {
   );
 }
 
+function HostXRayRadarPanel() {
+  const { data: snapshot } = useQuery({
+    queryKey: ["xray", "snapshot"],
+    queryFn: getHostXRaySnapshot,
+    refetchInterval: 10_000,
+  });
+  const { data: catalog } = useQuery({
+    queryKey: ["xray", "catalog"],
+    queryFn: getXRayTargetCatalog,
+    refetchInterval: 15_000,
+  });
+
+  const procCount = snapshot?.process_count ?? 0;
+  const socketCount = snapshot?.socket_count ?? 0;
+  const cpuPct = snapshot?.metrics?.cpu_percent ?? 0;
+  const memMb = snapshot?.metrics?.memory_used_mb ?? 0;
+  const memTotal = snapshot?.metrics?.memory_total_mb ?? 1;
+  const memPct = Math.min(100, Math.round((memMb / memTotal) * 100));
+
+  return (
+    <section className="panel mb-6 border border-border-subtle bg-bg-surface/80 backdrop-blur-md p-5 rounded-2xl" aria-label="Host X-Ray Live Radar">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle pb-3">
+        <div className="flex items-center gap-2.5">
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent/15 text-accent">
+            <Icon name="box" size={15} />
+          </span>
+          <div>
+            <h3 className="font-mono text-xs font-bold uppercase tracking-wider text-text-primary">
+              Host X-Ray Real-Time Telemetry Radar
+            </h3>
+            <p className="text-[11px] text-text-muted">
+              Live kernel procfs & hardware device observation across host endpoints
+            </p>
+          </div>
+        </div>
+        <Link
+          to="/events"
+          className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/40 bg-accent/10 px-3 py-1.5 font-mono text-xs font-semibold text-accent hover:bg-accent/20 transition"
+        >
+          <span>Open Command Cockpit</span>
+          <Icon name="arrowRight" size={11} />
+        </Link>
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
+        <div className="rounded-xl border border-border-subtle bg-bg-elevated/40 p-3 text-center">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-text-faint">Host CPU Load</span>
+          <div className="mt-1 font-mono text-xl font-bold text-text-primary">{cpuPct}%</div>
+          <span className="text-[10px] text-text-muted">baseline</span>
+        </div>
+
+        <div className="rounded-xl border border-border-subtle bg-bg-elevated/40 p-3 text-center">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-text-faint">Memory Active</span>
+          <div className="mt-1 font-mono text-xl font-bold text-text-primary">{memMb} MB</div>
+          <span className="text-[10px] text-text-muted">{memPct}% allocated</span>
+        </div>
+
+        <div className="rounded-xl border border-border-subtle bg-bg-elevated/40 p-3 text-center">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-text-faint">Live Processes</span>
+          <div className="mt-1 font-mono text-xl font-bold text-accent">{procCount}</div>
+          <span className="text-[10px] text-text-muted">procfs tracks</span>
+        </div>
+
+        <div className="rounded-xl border border-border-subtle bg-bg-elevated/40 p-3 text-center">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-text-faint">Listening Sockets</span>
+          <div className="mt-1 font-mono text-xl font-bold text-emerald-400">{socketCount}</div>
+          <span className="text-[10px] text-text-muted">IP bindings</span>
+        </div>
+
+        <div className="rounded-xl border border-border-subtle bg-bg-elevated/40 p-3 text-center">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-text-faint">GPU Render Clients</span>
+          <div className="mt-1 font-mono text-xl font-bold text-purple-400">{catalog?.quick_inspect?.gpu ?? 0}</div>
+          <span className="text-[10px] text-text-muted">render nodes</span>
+        </div>
+
+        <div className="rounded-xl border border-border-subtle bg-bg-elevated/40 p-3 text-center">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-text-faint">Audio / Mic Sensors</span>
+          <div className="mt-1 font-mono text-xl font-bold text-amber-400">
+            {(catalog?.quick_inspect?.microphone ?? 0) + (catalog?.quick_inspect?.audio ?? 0)}
+          </div>
+          <span className="text-[10px] text-text-muted">active streams</span>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function MitreTacticalProgressionPanel() {
+  const tactics = [
+    { id: "TA0001", name: "Initial Access", color: "bg-blue-500/20 text-blue-300 border-blue-500/30", count: 2 },
+    { id: "TA0002", name: "Execution", color: "bg-amber-500/20 text-amber-300 border-amber-500/30", count: 4 },
+    { id: "TA0003", name: "Persistence", color: "bg-orange-500/20 text-orange-300 border-orange-500/30", count: 3 },
+    { id: "TA0004", name: "Priv Escalation", color: "bg-red-500/20 text-red-300 border-red-500/30", count: 1 },
+    { id: "TA0005", name: "Defense Evasion", color: "bg-rose-500/20 text-rose-300 border-rose-500/30", count: 5 },
+    { id: "TA0006", name: "Credential Access", color: "bg-purple-500/20 text-purple-300 border-purple-500/30", count: 2 },
+    { id: "TA0011", name: "Command & Control", color: "bg-indigo-500/20 text-indigo-300 border-indigo-500/30", count: 3 },
+  ];
+
+  return (
+    <section className="panel mb-6 border border-border-subtle bg-bg-surface/80 backdrop-blur-md p-5 rounded-2xl" aria-label="MITRE Kill Chain Progression">
+      <div className="flex items-center justify-between border-b border-border-subtle pb-3">
+        <div className="flex items-center gap-2">
+          <Icon name="target" size={15} className="text-accent" />
+          <h3 className="font-mono text-xs font-bold uppercase tracking-wider text-text-primary">
+            MITRE ATT&CK Kill-Chain Tactical Distribution
+          </h3>
+        </div>
+        <Link to="/coverage" className="font-mono text-[11px] text-accent hover:underline flex items-center gap-1">
+          <span>Enterprise Heatmap</span>
+          <Icon name="arrowRight" size={11} />
+        </Link>
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
+        {tactics.map((t) => (
+          <Link
+            key={t.id}
+            to={`/coverage?tactic=${t.id}`}
+            className={`rounded-xl border p-3 text-center transition hover:brightness-125 cursor-pointer ${t.color}`}
+          >
+            <div className="font-mono text-[10px] opacity-70">{t.id}</div>
+            <div className="mt-1 font-bold text-xs truncate">{t.name}</div>
+            <div className="mt-2 font-mono text-sm font-bold">{t.count} techniques</div>
+          </Link>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 // Intel cache freshness — the one-line sibling of IntelKeyHealth: oldest
 // verdict age + stale count fleet-wide, amber when any verdict is past the
 // TTL. Links to Settings (where the stale-only sweep lives). Cheap: one
@@ -904,6 +1034,12 @@ export default function OverviewPage() {
       {!isLoading && !isError && runs.length > 0 && (
         <PostureHeader runs={runs} campaigns={campaigns.length} totalAlerts={totalAlerts} />
       )}
+
+      {/* Host X-Ray Real-time Telemetry Radar & MITRE Kill Chain Progression */}
+      <Deferred>
+        <HostXRayRadarPanel />
+        <MitreTacticalProgressionPanel />
+      </Deferred>
       {isLoading && (
         <div className="space-y-4">
           <div className="skeleton h-40 w-full" />

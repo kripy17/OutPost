@@ -19,21 +19,20 @@ interface Item {
 }
 
 const NAV_ITEMS: Item[] = [
-  { kind: "nav", label: "Overview", hint: "Console home", icon: "grid", to: "/" },
-  { kind: "nav", label: "Live Monitor", hint: "Watch this machine + detonate in real time", icon: "activity", to: "/monitor" },
-  { kind: "nav", label: "Event Log", hint: "System activity viewer", icon: "list", to: "/events" },
-  { kind: "nav", label: "Session history", hint: "All runs + compare two samples", icon: "clock", to: "/history" },
-  { kind: "nav", label: "IOC search", hint: "IP / hash / domain lookup", icon: "search", to: "/search" },
-  { kind: "nav", label: "Campaigns", hint: "Clustered by shared infrastructure", icon: "flag", to: "/campaigns" },
-  { kind: "nav", label: "Digital footprint", hint: "Passive infrastructure mapping", icon: "globe", to: "/footprint" },
-  { kind: "nav", label: "Watchlist", hint: "Track known-bad infrastructure", icon: "star", to: "/watchlist" },
-  { kind: "nav", label: "Open findings", hint: "Triage queue across every run", icon: "alert", to: "/findings" },
-  { kind: "nav", label: "Detection rules", hint: "Suricata / Sigma + tuning", icon: "shield", to: "/rules" },
-  { kind: "nav", label: "Settings", hint: "Notifications and behavior", icon: "sliders", to: "/settings" },
-  // Tools — reachable, but not destinations
-  { kind: "nav", label: "Sample vault", hint: "Uploaded binaries", icon: "box", to: "/samples" },
-  { kind: "nav", label: "ATT&CK coverage", hint: "The tactic matrix we see — and the gaps", icon: "target", to: "/coverage" },
-  { kind: "nav", label: "Audit log", hint: "Admin write trail", icon: "notes", to: "/audit" },
+  { kind: "nav", label: "Overview", hint: "Console home & threat posture", icon: "grid", to: "/" },
+  { kind: "nav", label: "Host X-Ray Command Cockpit", hint: "Deep kernel & process forensics cockpit", icon: "box", to: "/events" },
+  { kind: "nav", label: "Simulation Lab", hint: "Adversary emulation & live rule testing", icon: "activity", to: "/monitor" },
+  { kind: "nav", label: "Findings Queue", hint: "SOC alert triage & allowlisting", icon: "alert", to: "/findings" },
+  { kind: "nav", label: "Investigations", hint: "Incident response cases & evidence locker", icon: "notes", to: "/investigations" },
+  { kind: "nav", label: "Threat Campaigns", hint: "Adversary tracking & IOC graph", icon: "flag", to: "/campaigns" },
+  { kind: "nav", label: "Sample Vault", hint: "Binary static/dynamic detonation analyzer", icon: "box", to: "/samples" },
+  { kind: "nav", label: "ATT&CK Matrix", hint: "Enterprise tactic coverage & gap heatmap", icon: "target", to: "/coverage" },
+  { kind: "nav", label: "Detection Rules", hint: "Sigma / YAML rules engine & test runner", icon: "shield", to: "/rules" },
+  { kind: "nav", label: "Sensor Fleet", hint: "eBPF, Auditd & Sysmon host endpoints", icon: "terminal", to: "/agents" },
+  { kind: "nav", label: "Threat Watchlist", hint: "Real-time IOC surveillance", icon: "star", to: "/watchlist" },
+  { kind: "nav", label: "Forensic Search", hint: "Deep query syntax hunting", icon: "search", to: "/search" },
+  { kind: "nav", label: "Audit Log", hint: "Immutable write provenance trail", icon: "notes", to: "/audit" },
+  { kind: "nav", label: "Settings", hint: "Air-gap, webhooks & preferences", icon: "sliders", to: "/settings" },
 ];
 
 export default function CommandPalette({ onClose }: { onClose: () => void }) {
@@ -46,13 +45,10 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
 
   const { data: runs } = useQuery({ queryKey: ["palette", "runs"], queryFn: () => getRuns(), staleTime: 15_000 });
 
-  // The one-click client-state wipe, reachable from anywhere — same confirm
-  // and report as the Settings panel. The palette stays open so the result
-  // banner is visible; the message auto-clears.
   const handleReset = useCallback(() => {
     if (
       !window.confirm(
-        "Reset ALL client-side state? This clears the per-tab provenance split, the IOC search draft, and the YARA / enum / log-pattern drafts saved in this browser. Continue?",
+        "Reset ALL client-side state? This clears the per-tab provenance split, the IOC search draft, and saved drafts in this browser. Continue?",
       )
     )
       return;
@@ -63,7 +59,46 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
 
   const items = useMemo<Item[]>(() => {
     const q = query.trim().toLowerCase();
+    
+    // Check for direct syntax queries
+    const syntaxItems: Item[] = [];
+    if (q.startsWith("pid:") || /^\d+$/.test(q)) {
+      const pidNum = q.replace("pid:", "").trim();
+      syntaxItems.push({
+        kind: "action",
+        label: `Inspect PID ${pidNum} in Host X-Ray`,
+        hint: `Open deep kernel dossier & device access for PID ${pidNum}`,
+        icon: "process" as IconName,
+        to: `/events`,
+      });
+    }
+
+    if (q.startsWith(":") || (q.startsWith("port:") && q.length > 5)) {
+      syntaxItems.push({
+        kind: "action",
+        label: `Search Network Socket Port ${q}`,
+        hint: `Filter all listening and remote sockets on ${q}`,
+        icon: "network" as IconName,
+        to: `/events`,
+      });
+    }
+
     const base: Item[] = [
+      ...syntaxItems,
+      {
+        kind: "action",
+        label: "⚡ Run Live Adversary Emulation",
+        hint: "Trigger real-time attack simulation in the sandbox",
+        icon: "activity" as IconName,
+        to: "/monitor",
+      },
+      {
+        kind: "action",
+        label: "📦 Upload & Detonate Binary Sample",
+        hint: "Execute suspicious file in isolated dynamic environment",
+        icon: "box" as IconName,
+        to: "/samples",
+      },
       ...NAV_ITEMS,
       {
         kind: "action",
@@ -81,7 +116,7 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
       })),
     ];
     const filtered = q ? base.filter((i) => `${i.label} ${i.hint}`.toLowerCase().includes(q)) : base;
-    return filtered.slice(0, 12);
+    return filtered.slice(0, 14);
   }, [query, runs, handleReset]);
 
   useEffect(() => {

@@ -1,10 +1,10 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { DataProvenanceBadge } from "../components/DataProvenanceBadge";
 import { PageHeader, Panel } from "../components/ui";
-import { addSuppression, bulkUpdateAlertStatus, getAlertQueue, getRuleMeta } from "../lib/api";
+import { addSuppression, bulkUpdateAlertStatus, createInvestigation, getAlertQueue, getRuleMeta } from "../lib/api";
 import { useEventStream } from "../lib/useEventStream";
 import { SEVERITY_COLORS, SEVERITY_LABEL } from "../lib/constants";
 import { toneFill, toneForSeverity } from "../lib/fillPatterns";
@@ -161,6 +161,7 @@ function FindingRow({
 
 export default function FindingsPage() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const status = (searchParams.get("status") as "open" | "acknowledged" | "resolved" | "all") ?? "open";
   const sort = (searchParams.get("sort") as "aging" | "newest") ?? "aging";
@@ -361,6 +362,30 @@ export default function FindingsPage() {
     }
   };
 
+  const handleEscalateToCase = async () => {
+    const ids = [...selected];
+    if (ids.length === 0) return;
+    const selectedAlerts = alerts.filter((a) => selected.has(a.id));
+    const firstRule = selectedAlerts[0]?.rule_name || "Findings Escalation";
+    const sample = selectedAlerts[0]?.sample_name || "";
+    setBusy(true);
+    setMsg(null);
+    try {
+      const title = `Incident Case: ${firstRule}${sample ? ` (${sample})` : ""} [${ids.length} Alerts]`;
+      const inv = await createInvestigation({
+        title,
+        tags: ["escalated-finding", ...selectedAlerts.map((a) => a.rule_id).slice(0, 3)],
+      });
+      setMsg({ ok: true, text: `Created investigation case: ${title}` });
+      setSelected(new Set());
+      navigate(`/investigations/${inv.id}`);
+    } catch {
+      setMsg({ ok: false, text: "Failed to create investigation case." });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="mx-auto max-w-[1200px] px-5 py-8 lg:px-8">
       <PageHeader
@@ -502,6 +527,14 @@ export default function FindingsPage() {
             title="Suppress each selected rule for its sample or C2 — future matching runs stop firing it"
           >
             Suppress
+          </button>
+          <button
+            onClick={handleEscalateToCase}
+            disabled={busy || selected.size === 0}
+            className="press rounded-md border border-accent/40 bg-accent/15 px-2.5 py-1 font-mono text-[11px] font-semibold text-accent transition-colors hover:bg-accent/25 disabled:opacity-40"
+            title="Create a new incident investigation case from selected findings"
+          >
+            Escalate to Case
           </button>
           {selected.size > 0 && (
             <button onClick={() => setSelected(new Set())} className="press ml-auto font-mono text-[10px] text-text-faint hover:text-text-primary" title="Clear selection">
