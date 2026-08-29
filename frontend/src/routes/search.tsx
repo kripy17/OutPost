@@ -52,6 +52,8 @@ const GROUP_META = new Map(GROUPS.map((g) => [g.key, g]));
 
 function readScope(params: URLSearchParams): Scope {
   if (params.get("mode") === "global") return "global";
+  if (params.get("mode") === "ioc") return "ioc";
+  if (params.has("q") && !params.has("mode")) return "ioc";
   try {
     return localStorage.getItem(SCOPE_KEY) === "global" ? "global" : "ioc";
   } catch {
@@ -450,19 +452,19 @@ export default function SearchPage() {
                 </section>
               )}
 
-              {result.matches.length === 0 && (result.samples?.length ?? 0) === 0 ? (
+              {(result.matches?.length ?? 0) === 0 && (result.samples?.length ?? 0) === 0 ? (
                 <div className="rounded-2xl border border-dashed border-border-strong bg-bg-surface/40 p-12 text-center">
                   <Icon name="search" size={26} className="mx-auto text-text-faint" />
                   <p className="mt-3 text-sm text-text-muted">No prior runs contain this value.</p>
                 </div>
               ) : (
-                result.matches.length > 0 && (
+                (result.matches?.length ?? 0) > 0 && (
                   <section className="rounded-2xl border border-border-subtle bg-bg-surface">
                     <header className="flex items-center gap-2 border-b border-border-subtle px-4 py-2.5">
                       <Icon name="list" size={13} className="text-signal" />
                       <span className="text-xs font-semibold text-text-muted">Events across runs</span>
                       <span className="ml-auto rounded border border-border-subtle px-1.5 font-mono text-[10px] text-text-faint">
-                        {result.matches.length}
+                        {result.matches?.length ?? 0}
                       </span>
                     </header>
                     <div className="divide-y divide-border-subtle/60">
@@ -491,6 +493,36 @@ export default function SearchPage() {
               )}
             </div>
           )}
+          {!result && !loading && (
+            <div className="mt-8 rounded-2xl border border-border-subtle bg-bg-surface/50 p-6">
+              <div className="flex items-center gap-2 text-xs font-semibold text-text-primary">
+                <Icon name="search" size={14} className="text-accent" />
+                <span>Search Guidance &amp; IOC Query Filters</span>
+              </div>
+              <p className="mt-1 text-xs text-text-muted">
+                Quickly locate observable artifacts, processes, network destinations, and cryptographic hashes across all monitored host telemetry.
+              </p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {[
+                  "185.220.101.34",
+                  "powershell.exe",
+                  "cmd.exe",
+                  "mimikatz",
+                  "vssadmin",
+                  "203.0.113.88",
+                ].map((sample) => (
+                  <button
+                    key={sample}
+                    type="button"
+                    onClick={() => void runIocSearch(sample)}
+                    className="press rounded-lg border border-border-subtle bg-bg-elevated/60 px-3 py-1.5 font-mono text-xs text-text-muted transition-colors hover:border-accent/60 hover:text-accent"
+                  >
+                    {sample}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </>
       ) : (
         <>
@@ -515,6 +547,49 @@ export default function SearchPage() {
               onInspectIp={setInspectIp}
               onInspectPid={setInspectPid}
             />
+          )}
+
+          {!globalResult && !globalLoading && (
+            <div className="mt-8 rounded-2xl border border-border-subtle bg-bg-surface/50 p-6">
+              <div className="flex items-center gap-2 text-xs font-semibold text-text-primary">
+                <Icon name="target" size={14} className="text-accent" />
+                <span>Global Search Qualifiers</span>
+              </div>
+              <p className="mt-1 text-xs text-text-muted">
+                Use smart search qualifiers to target specific resources across OutPost:
+              </p>
+              <div className="mt-4 grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3 font-mono text-xs">
+                <div className="rounded-lg border border-border-subtle bg-bg-elevated/40 p-2.5">
+                  <span className="text-accent">type:</span>
+                  <span className="text-text-muted"> finding, ioc, host, case</span>
+                </div>
+                <div className="rounded-lg border border-border-subtle bg-bg-elevated/40 p-2.5">
+                  <span className="text-accent">severity:</span>
+                  <span className="text-text-muted"> malicious, suspicious</span>
+                </div>
+                <div className="rounded-lg border border-border-subtle bg-bg-elevated/40 p-2.5">
+                  <span className="text-accent">status:</span>
+                  <span className="text-text-muted"> open, ack, resolved</span>
+                </div>
+              </div>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {[
+                  "type:finding status:open",
+                  "severity:malicious",
+                  "type:host",
+                  "beaconing",
+                ].map((sample) => (
+                  <button
+                    key={sample}
+                    type="button"
+                    onClick={() => void runGlobalSearch(sample)}
+                    className="press rounded-lg border border-border-subtle bg-bg-elevated/60 px-3 py-1.5 font-mono text-xs text-text-muted transition-colors hover:border-accent/60 hover:text-accent"
+                  >
+                    {sample}
+                  </button>
+                ))}
+              </div>
+            </div>
           )}
         </>
       )}

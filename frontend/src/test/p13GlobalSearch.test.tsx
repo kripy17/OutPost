@@ -195,7 +195,7 @@ describe("P1.3 search page (routed)", () => {
     await waitFor(() => expect(screen.getByRole("tab", { name: "Global search" }).getAttribute("aria-selected")).toBe("true"), { timeout: 5000 });
     const input = screen.getByPlaceholderText(/203\.0\.113\.88/) as HTMLInputElement;
     fireEvent.change(input, { target: { value: "203.0.113.88" } });
-    fireEvent.click(screen.getByText("Search"));
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
     // Summary line.
     await waitFor(() => expect(screen.getByText(/9 matches across 7 resources/)).toBeTruthy(), { timeout: 5000 });
     // Qualifier echo.
@@ -219,7 +219,7 @@ describe("P1.3 search page (routed)", () => {
     await waitFor(() => expect(screen.getByRole("tab", { name: "Global search" }).getAttribute("aria-selected")).toBe("true"), { timeout: 5000 });
     const input = screen.getByPlaceholderText(/203\.0\.113\.88/) as HTMLInputElement;
     fireEvent.change(input, { target: { value: "zzz-no-match" } });
-    fireEvent.click(screen.getByText("Search"));
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
     await waitFor(() => expect(screen.getByText(/No matches across any resource/)).toBeTruthy(), { timeout: 5000 });
   });
 
@@ -229,7 +229,7 @@ describe("P1.3 search page (routed)", () => {
     await waitFor(() => expect(screen.getByRole("tab", { name: "Global search" }).getAttribute("aria-selected")).toBe("true"), { timeout: 5000 });
     const input = screen.getByPlaceholderText(/203\.0\.113\.88/) as HTMLInputElement;
     fireEvent.change(input, { target: { value: "203.0.113.88" } });
-    fireEvent.click(screen.getByText("Search"));
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
     await waitFor(() => expect(screen.getAllByText("beaconing").length).toBeGreaterThan(0), { timeout: 5000 });
     // Findings → run detail; IOC → pre-filled legacy search; artifact → sample.
     // (The investigation title also contains "beaconing", so find by href.)
@@ -249,7 +249,7 @@ describe("P1.3 search page (routed)", () => {
     await waitFor(() => expect(screen.getByRole("tab", { name: "Global search" }).getAttribute("aria-selected")).toBe("true"), { timeout: 5000 });
     const input = screen.getByPlaceholderText(/203\.0\.113\.88/) as HTMLInputElement;
     fireEvent.change(input, { target: { value: "203.0.113.88" } });
-    fireEvent.click(screen.getByText("Search"));
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
     // The analysis_job session hit ("evil.exe" in Sessions & jobs) links to
     // /analysis/job1; the monitoring_session hit links to /runs/runbeacon1.
     await waitFor(() => expect(screen.getAllByText("detonate-demo.sh").length).toBeGreaterThan(0), { timeout: 5000 });

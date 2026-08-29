@@ -679,7 +679,16 @@ async def run_task(task: dict, sample_bytes: bytes) -> None:
     base = datetime.datetime.now(datetime.timezone.utc)
     try:
         if task["provider"] == "demo":
-            events = demo_events(task["run_id"], task["platform"], task["sample_name"], base)
+            if sample_bytes and task.get("sample_name") != "sandbox-demo.exe" and not (sample_bytes.startswith(b"MZ") and len(sample_bytes) < 100):
+                from . import dynamic_sandbox
+                events, _, _, _ = await dynamic_sandbox.execute_bytes_sandbox(
+                    run_id=task["run_id"],
+                    sample_name=task["sample_name"],
+                    platform_hint=task["platform"],
+                    raw_bytes=sample_bytes,
+                )
+            else:
+                events = demo_events(task["run_id"], task["platform"], task["sample_name"], base)
         else:
             report = await _live_detonate(task["provider"], task, sample_bytes)
             events = normalize_report(task["provider"], report, task["run_id"], task["platform"], base)

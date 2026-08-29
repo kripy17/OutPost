@@ -13,9 +13,10 @@ import os
 import platform
 from typing import Any
 
+from ..core.db import db_session
 from ..models import event as event_store
 from ..models import run as run_store
-from ..services import detection
+from ..services import detection, events_stream
 
 try:
     import psutil
@@ -35,6 +36,11 @@ _STATS = {
     "last_poll": None,
     "monitored_pids_count": 0,
 }
+
+
+def _current_platform() -> str:
+    sys_name = platform.system().lower()
+    return "windows" if sys_name == "windows" else "linux"
 
 
 def _get_active_processes() -> list[dict[str, Any]]:
@@ -102,6 +108,8 @@ async def _monitor_loop(run_id: str, interval: float = 2.0):
     global _KNOWN_PIDS
     _KNOWN_PIDS = {p["pid"] for p in _get_active_processes()}
     _KNOWN_CONNS.clear()
+    plat = _current_platform()
+    host_name = platform.node() or "local"
 
     while True:
         try:
@@ -118,6 +126,8 @@ async def _monitor_loop(run_id: str, interval: float = 2.0):
             for pid in new_pids:
                 p = current_pid_map[pid]
                 batch.append({
+                    "run_id": run_id,
+                    "platform": plat,
                     "event_type": "process_create",
                     "timestamp": now_iso,
                     "pid": pid,
@@ -125,9 +135,8 @@ async def _monitor_loop(run_id: str, interval: float = 2.0):
                     "process_name": p["name"],
                     "command_line": p["cmdline"],
                     "exe_path": p["exe"],
-                    "username": p["username"],
-                    "run_id": run_id,
-                    "source": "live_host",
+                    "host_id": host_name,
+                    "log_source": "live_host",
                 })
 
             _KNOWN_PIDS = current_pids
@@ -140,22 +149,29 @@ async def _monitor_loop(run_id: str, interval: float = 2.0):
                     _KNOWN_CONNS.add(conn_key)
                     if not c["dest_ip"].startswith(("127.", "0.", "::1")):
                         batch.append({
+                            "run_id": run_id,
+                            "platform": plat,
                             "event_type": "network_connection",
                             "timestamp": now_iso,
                             "pid": c["pid"],
                             "dest_ip": c["dest_ip"],
                             "dest_port": c["dest_port"],
-                            "protocol": c["protocol"],
-                            "direction": c["direction"],
-                            "run_id": run_id,
-                            "source": "live_host",
+                            "protocol": c["protocol"].upper(),
+                            "host_id": host_name,
+                            "log_source": "live_host",
                         })
 
             if batch:
-                event_store.insert_events(run_id, batch)
-                alerts = detection.evaluate_batch(run_id, batch)
+                with db_session() as conn:
+                    for ev in batch:
+                        event_store.insert_event(conn, ev)
+                    alerts = detection.evaluate_batch(conn, run_id, batch)
+
                 _STATS["events_streamed"] += len(batch)
                 _STATS["alerts_triggered"] += len(alerts)
+
+                if alerts:
+                    events_stream.publish_alerts(alerts)
 
             _STATS["last_poll"] = now_iso
             _STATS["monitored_pids_count"] = len(current_pids)
@@ -173,17 +189,21 @@ def start_local_monitor(run_id: str | None = None, interval: float = 2.0) -> dic
     if _MONITOR_TASK and not _MONITOR_TASK.done():
         return get_local_monitor_status()
 
+    host = platform.node() or "local-host"
     if not run_id:
-        host = platform.node() or "local-host"
-        run_id = f"live-{host}-{datetime.date.today().isoformat()}"
-        existing = run_store.get_run(run_id)
+        run_id = f"live-{host[:12]}-{datetime.date.today().isoformat()}"
+
+    plat = _current_platform()
+    with db_session() as conn:
+        existing = run_store.get_run(conn, run_id)
         if not existing:
             run_store.create_run(
+                conn,
                 run_id=run_id,
-                name=f"Live Monitor: {host}",
+                sample_name=f"Live Host: {host}",
+                platform=plat,
                 session_type="live",
-                source="live_host",
-                environment=platform.system().lower(),
+                source="live",
             )
 
     _CURRENT_RUN_ID = run_id
@@ -197,7 +217,11 @@ def start_local_monitor(run_id: str | None = None, interval: float = 2.0) -> dic
         "monitored_pids_count": 0,
     }
 
-    loop = asyncio.get_event_loop()
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.get_event_loop()
+
     _MONITOR_TASK = loop.create_task(_monitor_loop(run_id, interval))
     return _STATS
 
@@ -209,7 +233,8 @@ def stop_local_monitor() -> dict[str, Any]:
 
     if _CURRENT_RUN_ID:
         try:
-            run_store.complete_run(_CURRENT_RUN_ID)
+            with db_session() as conn:
+                run_store.complete_run(conn, _CURRENT_RUN_ID)
         except Exception:
             pass
 

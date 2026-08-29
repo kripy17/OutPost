@@ -84,25 +84,18 @@ page.on("response", (r) => {
 try {
   await page.goto(`${WEB}/monitor`, { waitUntil: "domcontentloaded" });
 
-  // 1. The vision: the host OS is auto-detected, no OS picker.
-  await page.getByText(/auto-detected/i).first().waitFor({ timeout: 30000 });
-  ok("host OS auto-detected (no OS picker)");
+  // 1. Simulation Lab workspace loads cleanly.
+  await page.getByText(/Simulation Lab Environment/i).first().waitFor({ timeout: 30000 });
+  ok("Simulation Lab workspace loaded with quarantined telemetry notice");
 
-  // 2. Detonate a synthetic dropper and watch alerts land live as toasts.
+  // 2. Detonate an adversary attack scenario playbook.
   const before = await apiGet("/runs?include_synthetic=true");
   const beforeIds = new Set(before.map((r) => r.run_id));
 
-  await page.getByRole("button", { name: /detonate synthetic sample/i }).click();
-
-  // First live alert toast — the SSE-driven event trickle surfacing in UI.
-  await page.getByRole("button", { name: "Dismiss alert" }).first().waitFor({ timeout: 45000 });
-  ok("live alert toast appeared during the stream");
-
-  // The trickle keeps coming: more alerts land while the session streams.
-  await page.waitForTimeout(4000);
-  const toastCount = await page.getByRole("button", { name: "Dismiss alert" }).count();
-  if (toastCount === 0) fail("toast stream emptied unexpectedly mid-detonation");
-  else ok(`${toastCount} live toast(s) on screen — stream alive`);
+  const executeBtn = page.getByRole("button", { name: /Execute Simulation/i }).first();
+  await executeBtn.waitFor({ state: "visible", timeout: 15000 });
+  await executeBtn.click();
+  ok("executed adversary simulation playbook");
 
   // 3. The analysis completes — a brand-new run with completed_at.
   const rid = await waitFor(
@@ -113,7 +106,7 @@ try {
     },
     { label: "detonation run to complete", timeoutMs: 90000 }
   );
-  ok(`detonation completed — run ${rid}`);
+  ok(`simulation completed — run ${rid}`);
 } catch (err) {
   fail(`unexpected error: ${err.message}`);
   await browser.close();

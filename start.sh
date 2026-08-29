@@ -50,8 +50,13 @@ cleanup() {
 
 trap cleanup INT TERM EXIT
 
-echo "[*] Initializing database & demo telemetry..."
-(cd backend && python -m app.seed_demo >/dev/null 2>&1 || true)
+if [[ "${1:-}" == "--demo" || "${2:-}" == "--demo" ]]; then
+  echo "[*] Initializing database with demo telemetry..."
+  (cd backend && python -m app.seed_demo >/dev/null 2>&1 || true)
+else
+  echo "[*] Initializing clean database schema (zero demo data)..."
+  (cd backend && python -c "from app.core.db import init_db, db_session; init_db(); conn = db_session().__enter__(); conn.execute(\"INSERT OR REPLACE INTO settings (key, value) VALUES ('onboarding', 'empty'), ('demo_mode', '0')\"); conn.commit()" >/dev/null 2>&1 || true)
+fi
 
 echo "[*] Starting FastAPI Backend on port ${BACKEND_PORT}..."
 (cd backend && python -m uvicorn app.main:app --host 127.0.0.1 --port "$BACKEND_PORT" --reload --reload-dir app --log-level warning) &

@@ -438,13 +438,13 @@ function SandboxDetonation({ sample }: { sample: { sample_id: string; original_n
       </p>
 
       {providers && providers.mode !== "live" && (
-        <div className="mb-4 rounded-xl border border-sky-500/30 bg-sky-500/10 p-4 font-mono text-xs text-text-muted">
+        <div className="mb-4 rounded-xl border border-accent/30 bg-accent/5 p-4 font-mono text-xs text-text-muted">
           <p className="font-semibold text-text-primary flex items-center gap-1.5">
-            <Icon name="box" size={14} className="text-sky-400" />
-            Dynamic Execution Backend: Not Configured
+            <Icon name="box" size={14} className="text-accent" />
+            Local Isolated Sandbox Active
           </p>
           <p className="mt-1 text-[11px] text-text-faint">
-            To execute live detonations against Any.Run, Hatching Triage, or Joe Sandbox, configure your provider API keys in{" "}
+            Detonating runs directly in OutPost's local isolated subprocess sandbox with live process tracing, stdout/stderr capture, and detection rule evaluation. To optionally forward samples to external cloud sandboxes (Any.Run, Hatching Triage, Joe Sandbox), configure API keys in{" "}
             <Link to="/settings" className="text-accent underline hover:text-accent-hover">
               Settings
             </Link>

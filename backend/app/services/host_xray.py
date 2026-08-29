@@ -1,0 +1,1044 @@
+"""Host X-Ray Service — Live Local System & Process Inspection.
+
+Inspired by Omarchy X-Ray: deep, real-time live system inspection.
+Extracts active processes, process trees/lineage, open sockets (listening & connected),
+open file descriptors, security context, and process controls with audit logging.
+"""
+
+from __future__ import annotations
+
+import datetime
+import os
+import platform
+import re
+import signal
+from typing import Any
+
+from ..core import auth
+from ..core.db import db_session
+from ..models import audit
+
+try:
+    import psutil
+except ImportError:
+    psutil = None
+
+import subprocess
+
+_CAPABILITIES = [
+    "CHOWN", "DAC_OVERRIDE", "DAC_READ_SEARCH", "FOWNER", "FSETID",
+    "KILL", "SETGID", "SETUID", "SETPCAP", "LINUX_IMMUTABLE",
+    "NET_BIND_SERVICE", "NET_BROADCAST", "NET_ADMIN", "NET_RAW",
+    "IPC_LOCK", "IPC_OWNER", "SYS_MODULE", "SYS_RAWIO", "SYS_CHROOT",
+    "SYS_PTRACE", "SYS_PACCT", "SYS_ADMIN", "SYS_BOOT", "SYS_NICE",
+    "SYS_RESOURCE", "SYS_TIME", "SYS_TTY_CONFIG", "MKNOD", "LEASE",
+    "AUDIT_WRITE", "AUDIT_CONTROL", "SETFCAP", "MAC_OVERRIDE",
+    "MAC_ADMIN", "SYSLOG", "WAKE_ALARM", "BLOCK_SUSPEND", "AUDIT_READ",
+    "PERFMON", "BPF", "CHECKPOINT_RESTORE",
+]
+
+_DANGEROUS_CAPS = {
+    "SYS_ADMIN", "SYS_PTRACE", "SYS_MODULE", "NET_ADMIN", "NET_RAW",
+    "DAC_OVERRIDE", "AUDIT_CONTROL", "AUDIT_WRITE", "BPF",
+}
+
+
+def decode_capabilities(hex_val: str) -> list[dict[str, Any]]:
+    """Decode a Linux capability bitmask from /proc/[pid]/status into named capabilities."""
+    try:
+        mask = int(hex_val, 16)
+    except (ValueError, TypeError):
+        return []
+
+    caps = []
+    for idx, name in enumerate(_CAPABILITIES):
+        if mask & (1 << idx):
+            caps.append({
+                "name": f"CAP_{name}",
+                "raw_name": name,
+                "is_dangerous": name in _DANGEROUS_CAPS,
+            })
+    return caps
+
+
+def check_package_provenance(exe_path: str) -> dict[str, Any]:
+    """Determine whether an executable binary belongs to a system package or is an unmanaged/temp binary."""
+    if not exe_path:
+        return {"status": "unknown", "label": "No binary path", "managed": False}
+
+    suspicious_dirs = ("/tmp", "/var/tmp", "/dev/shm", "/run/user", "/home")
+    for s_dir in suspicious_dirs:
+        if exe_path.startswith(s_dir):
+            return {
+                "status": "unmanaged_suspicious",
+                "label": f"Unmanaged user/temp path ({exe_path.split('/')[1]})",
+                "managed": False,
+                "path": exe_path,
+            }
+
+    if exe_path.startswith(("/usr/bin", "/usr/sbin", "/bin", "/sbin", "/usr/lib", "/usr/libexec")):
+        if os.path.isdir("/var/lib/pacman/local"):
+            try:
+                out = subprocess.run(["pacman", "-Qo", exe_path], capture_output=True, text=True, timeout=1.0)
+                if out.returncode == 0 and "is owned by" in out.stdout:
+                    pkg = out.stdout.split("is owned by")[-1].strip()
+                    return {"status": "managed_package", "label": f"Package: {pkg}", "managed": True, "package": pkg}
+            except Exception:
+                pass
+
+        if os.path.exists("/usr/bin/dpkg-query"):
+            try:
+                out = subprocess.run(["dpkg-query", "-S", exe_path], capture_output=True, text=True, timeout=1.0)
+                if out.returncode == 0 and ":" in out.stdout:
+                    pkg = out.stdout.split(":")[0].strip()
+                    return {"status": "managed_package", "label": f"Debian/Ubuntu: {pkg}", "managed": True, "package": pkg}
+            except Exception:
+                pass
+
+        return {
+            "status": "system_binary",
+            "label": "System Directory Binary",
+            "managed": True,
+            "path": exe_path,
+        }
+
+    return {
+        "status": "custom_binary",
+        "label": "Custom Path",
+        "managed": False,
+        "path": exe_path,
+    }
+
+
+def extract_security_posture(pid: int) -> dict[str, Any]:
+    """Collect Linux security posture for a PID (capabilities, seccomp, NoNewPrivs, cgroups, namespaces)."""
+    posture: dict[str, Any] = {
+        "seccomp": "Unknown",
+        "no_new_privs": False,
+        "capabilities_effective": [],
+        "capabilities_permitted": [],
+        "uid": -1,
+        "gid": -1,
+        "groups": [],
+        "cgroup": "",
+        "service_unit": "",
+        "container_id": "",
+        "namespaces": {},
+        "mapped_libraries": [],
+        "package_provenance": {"status": "unknown", "label": "Unknown", "managed": False},
+    }
+
+    proc_dir = f"/proc/{pid}"
+    if not os.path.isdir(proc_dir):
+        return posture
+
+    status_path = f"{proc_dir}/status"
+    if os.path.exists(status_path):
+        try:
+            with open(status_path, "r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    parts = line.split(":", 1)
+                    if len(parts) != 2:
+                        continue
+                    key = parts[0].strip()
+                    val = parts[1].strip()
+
+                    if key == "Seccomp":
+                        posture["seccomp"] = {"0": "Disabled", "1": "Strict", "2": "Filtered"}.get(val, f"Code {val}")
+                    elif key == "NoNewPrivs":
+                        posture["no_new_privs"] = (val == "1")
+                    elif key == "CapEff":
+                        posture["capabilities_effective"] = decode_capabilities(val)
+                    elif key == "CapPrm":
+                        posture["capabilities_permitted"] = decode_capabilities(val)
+                    elif key == "Uid":
+                        uids = val.split()
+                        posture["uid"] = int(uids[0]) if uids and uids[0].isdigit() else -1
+                    elif key == "Gid":
+                        gids = val.split()
+                        posture["gid"] = int(gids[0]) if gids and gids[0].isdigit() else -1
+                    elif key == "Groups":
+                        posture["groups"] = [int(x) for x in val.split() if x.isdigit()]
+        except Exception:
+            pass
+
+    cgroup_path = f"{proc_dir}/cgroup"
+    if os.path.exists(cgroup_path):
+        try:
+            with open(cgroup_path, "r", encoding="utf-8", errors="replace") as f:
+                cgroup_text = f.read().strip()
+                posture["cgroup"] = cgroup_text
+                unit_match = re.search(r"([a-zA-Z0-9_\-\@\.]+\.(?:service|scope|slice))", cgroup_text)
+                if unit_match:
+                    posture["service_unit"] = unit_match.group(1)
+                docker_match = re.search(r"(?:docker|podman|libpod)-([a-f0-9]{12,64})", cgroup_text)
+                if docker_match:
+                    posture["container_id"] = docker_match.group(1)[:12]
+        except Exception:
+            pass
+
+    ns_dir = f"{proc_dir}/ns"
+    if os.path.isdir(ns_dir):
+        try:
+            for entry in os.listdir(ns_dir):
+                try:
+                    target = os.readlink(f"{ns_dir}/{entry}")
+                    posture["namespaces"][entry] = target
+                except OSError:
+                    pass
+        except Exception:
+            pass
+
+    maps_path = f"{proc_dir}/maps"
+    if os.path.exists(maps_path):
+        try:
+            libs = set()
+            with open(maps_path, "r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    parts = line.split()
+                    if len(parts) >= 6:
+                        p = parts[5].strip()
+                        if p.startswith("/") and (".so" in p or "/lib" in p):
+                            libs.add(p)
+                            if len(libs) >= 50:
+                                break
+            posture["mapped_libraries"] = sorted(libs)
+        except Exception:
+            pass
+
+    try:
+        exe_link = os.readlink(f"{proc_dir}/exe")
+        posture["package_provenance"] = check_package_provenance(exe_link)
+    except OSError:
+        pass
+
+    return posture
+
+
+def get_current_system_metrics() -> dict[str, Any]:
+    """Capture host resource pulse."""
+    cpu_pct = 0.0
+    mem_used_mb = 0.0
+    mem_total_mb = 0.0
+    mem_pct = 0.0
+    proc_count = 0
+    conn_count = 0
+
+    if psutil:
+        try:
+            cpu_pct = psutil.cpu_percent(interval=None)
+            mem = psutil.virtual_memory()
+            mem_used_mb = round(mem.used / (1024 * 1024), 1)
+            mem_total_mb = round(mem.total / (1024 * 1024), 1)
+            mem_pct = mem.percent
+            proc_count = len(psutil.pids())
+            conn_count = len(psutil.net_connections(kind="inet"))
+        except Exception:
+            pass
+    elif platform.system().lower() == "linux" and os.path.exists("/proc"):
+        try:
+            pids = [d for d in os.listdir("/proc") if d.isdigit()]
+            proc_count = len(pids)
+            if os.path.exists("/proc/meminfo"):
+                with open("/proc/meminfo", "r", encoding="utf-8") as f:
+                    meminfo = {}
+                    for line in f:
+                        parts = line.split(":")
+                        if len(parts) == 2:
+                            key = parts[0].strip()
+                            val = parts[1].strip().split()[0]
+                            meminfo[key] = int(val) if val.isdigit() else 0
+                    total = meminfo.get("MemTotal", 0) * 1024
+                    free = meminfo.get("MemFree", 0) * 1024
+                    available = meminfo.get("MemAvailable", free) * 1024
+                    used = max(0, total - available)
+                    mem_used_mb = round(used / (1024 * 1024), 1)
+                    mem_total_mb = round(total / (1024 * 1024), 1)
+                    mem_pct = round((used / total) * 100, 1) if total > 0 else 0.0
+        except Exception:
+            pass
+
+    return {
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "platform": platform.system().lower(),
+        "cpu_percent": cpu_pct,
+        "memory_used_mb": mem_used_mb,
+        "memory_total_mb": mem_total_mb,
+        "memory_percent": mem_pct,
+        "process_count": proc_count,
+        "connection_count": conn_count,
+    }
+
+
+def get_live_processes() -> list[dict[str, Any]]:
+    """Capture snapshot of all active processes on the host."""
+    processes: list[dict[str, Any]] = []
+
+    if psutil:
+        for p in psutil.process_iter([
+            "pid", "ppid", "name", "cmdline", "exe", "username", "status",
+            "cpu_percent", "memory_info", "num_threads", "create_time"
+        ]):
+            try:
+                info = p.info
+                cmdline_list = info.get("cmdline") or []
+                cmdline = " ".join(cmdline_list) if cmdline_list else (info.get("name") or "")
+                mem_rss = 0.0
+                if info.get("memory_info"):
+                    mem_rss = round(info["memory_info"].rss / (1024 * 1024), 2)
+
+                started_iso = ""
+                create_time = info.get("create_time") or 0.0
+                if create_time:
+                    started_iso = datetime.datetime.fromtimestamp(
+                        create_time, datetime.timezone.utc
+                    ).isoformat()
+
+                exe_path = info.get("exe") or ""
+                prov = check_package_provenance(exe_path)
+
+                processes.append({
+                    "pid": info["pid"],
+                    "ppid": info.get("ppid") or 1,
+                    "name": info.get("name") or "unknown",
+                    "cmdline": cmdline,
+                    "exe": exe_path,
+                    "user": info.get("username") or os.environ.get("USER", "system"),
+                    "status": info.get("status") or "running",
+                    "cpu_percent": info.get("cpu_percent") or 0.0,
+                    "memory_mb": mem_rss,
+                    "threads": info.get("num_threads") or 1,
+                    "started_at": started_iso,
+                    "create_time": create_time,
+                    "package_status": prov.get("status", "unknown"),
+                    "package_label": prov.get("label", ""),
+                })
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+    elif platform.system().lower() == "linux" and os.path.exists("/proc"):
+        for entry in os.listdir("/proc"):
+            if not entry.isdigit():
+                continue
+            pid = int(entry)
+            try:
+                proc_dir = f"/proc/{pid}"
+                name = "?"
+                comm_path = f"{proc_dir}/comm"
+                if os.path.exists(comm_path):
+                    with open(comm_path, "r", encoding="utf-8", errors="replace") as f:
+                        name = f.read().strip()
+
+                cmdline = ""
+                cmd_path = f"{proc_dir}/cmdline"
+                if os.path.exists(cmd_path):
+                    with open(cmd_path, "rb") as f:
+                        cmdline = f.read().replace(b"\x00", b" ").decode("utf-8", errors="replace").strip()
+
+                ppid = 1
+                user = os.environ.get("USER", "system")
+                status = "running"
+                status_path = f"{proc_dir}/status"
+                if os.path.exists(status_path):
+                    with open(status_path, "r", encoding="utf-8", errors="replace") as f:
+                        for line in f:
+                            if line.startswith("PPid:"):
+                                ppid = int(line.split()[1])
+                            elif line.startswith("State:"):
+                                status = line.split()[1]
+                            elif line.startswith("Uid:"):
+                                user = line.split()[1]
+
+                exe = ""
+                try:
+                    exe = os.readlink(f"{proc_dir}/exe")
+                except OSError:
+                    pass
+
+                prov = check_package_provenance(exe)
+
+                processes.append({
+                    "pid": pid,
+                    "ppid": ppid,
+                    "name": name or (cmdline.split()[0] if cmdline else f"proc_{pid}"),
+                    "cmdline": cmdline or name,
+                    "exe": exe,
+                    "user": user,
+                    "status": status,
+                    "cpu_percent": 0.0,
+                    "memory_mb": 0.0,
+                    "threads": 1,
+                    "started_at": "",
+                    "create_time": 0.0,
+                    "package_status": prov.get("status", "unknown"),
+                    "package_label": prov.get("label", ""),
+                })
+            except Exception:
+                continue
+
+    processes.sort(key=lambda x: x["pid"])
+    return processes
+
+
+def get_live_sockets() -> list[dict[str, Any]]:
+    """Capture all active listening and connected sockets on the host."""
+    sockets: list[dict[str, Any]] = []
+
+    if psutil:
+        try:
+            for c in psutil.net_connections(kind="inet"):
+                local_ip = c.laddr.ip if c.laddr else "0.0.0.0"
+                local_port = c.laddr.port if c.laddr else 0
+                remote_ip = c.raddr.ip if c.raddr else None
+                remote_port = c.raddr.port if c.raddr else None
+                proto = "tcp" if c.type == 1 else "udp"
+
+                proc_name = ""
+                if c.pid:
+                    try:
+                        p = psutil.Process(c.pid)
+                        proc_name = p.name()
+                    except Exception:
+                        pass
+
+                sockets.append({
+                    "pid": c.pid,
+                    "process_name": proc_name,
+                    "protocol": proto,
+                    "local_ip": local_ip,
+                    "local_port": local_port,
+                    "remote_ip": remote_ip,
+                    "remote_port": remote_port,
+                    "status": c.status or "ESTABLISHED",
+                })
+        except Exception:
+            pass
+
+    return sockets
+
+
+def get_process_xray_detail(pid: int) -> dict[str, Any] | None:
+    """Deep inspection for a specific PID: lineage, sockets, files, environment."""
+    proc_info: dict[str, Any] = {
+        "pid": pid,
+        "ppid": 1,
+        "name": "",
+        "cmdline": "",
+        "exe": "",
+        "user": "",
+        "status": "running",
+        "cpu_percent": 0.0,
+        "memory_mb": 0.0,
+        "threads": 1,
+        "started_at": "",
+        "cwd": "",
+        "environment": {},
+        "lineage": [],
+        "sockets": [],
+        "open_files": [],
+        "correlated_events": [],
+        "correlated_alerts": [],
+    }
+
+    # 1. Process Metadata from live system
+    if psutil and psutil.pid_exists(pid):
+        try:
+            p = psutil.Process(pid)
+            info = p.as_dict([
+                "pid", "ppid", "name", "cmdline", "exe", "username", "status",
+                "cpu_percent", "memory_info", "num_threads", "create_time", "cwd"
+            ])
+            proc_info["name"] = info.get("name") or ""
+            cmd_list = info.get("cmdline") or []
+            proc_info["cmdline"] = " ".join(cmd_list) if cmd_list else proc_info["name"]
+            proc_info["exe"] = info.get("exe") or ""
+            proc_info["user"] = info.get("username") or ""
+            proc_info["status"] = info.get("status") or "running"
+            proc_info["cpu_percent"] = info.get("cpu_percent") or 0.0
+            if info.get("memory_info"):
+                proc_info["memory_mb"] = round(info["memory_info"].rss / (1024 * 1024), 2)
+            proc_info["threads"] = info.get("num_threads") or 1
+            proc_info["ppid"] = info.get("ppid") or 1
+            proc_info["cwd"] = info.get("cwd") or ""
+            if info.get("create_time"):
+                proc_info["started_at"] = datetime.datetime.fromtimestamp(
+                    info["create_time"], datetime.timezone.utc
+                ).isoformat()
+
+            # Lineage tree (parents & children)
+            lineage = []
+            try:
+                for parent in p.parents():
+                    lineage.insert(0, {
+                        "pid": parent.pid,
+                        "name": parent.name(),
+                        "relation": "ancestor",
+                    })
+            except Exception:
+                pass
+
+            lineage.append({
+                "pid": pid,
+                "name": proc_info["name"],
+                "relation": "self",
+            })
+
+            try:
+                for child in p.children(recursive=False):
+                    lineage.append({
+                        "pid": child.pid,
+                        "name": child.name(),
+                        "relation": "child",
+                    })
+            except Exception:
+                pass
+            proc_info["lineage"] = lineage
+
+            # Sockets
+            try:
+                for conn in p.connections(kind="inet"):
+                    proc_info["sockets"].append({
+                        "protocol": "tcp" if conn.type == 1 else "udp",
+                        "local_ip": conn.laddr.ip if conn.laddr else "0.0.0.0",
+                        "local_port": conn.laddr.port if conn.laddr else 0,
+                        "remote_ip": conn.raddr.ip if conn.raddr else None,
+                        "remote_port": conn.raddr.port if conn.raddr else None,
+                        "status": conn.status or "ESTABLISHED",
+                    })
+            except Exception:
+                pass
+
+            # Open Files
+            try:
+                for f in p.open_files():
+                    proc_info["open_files"].append({
+                        "path": f.path,
+                        "fd": f.fd,
+                    })
+            except Exception:
+                pass
+
+            # Safe Environment (redacted)
+            try:
+                raw_env = p.environ()
+                safe_env = {}
+                for k, v in raw_env.items():
+                    if any(secret in k.upper() for secret in ("KEY", "SECRET", "PASS", "TOKEN", "AUTH")):
+                        safe_env[k] = "******"
+                    else:
+                        safe_env[k] = v[:200]
+                proc_info["environment"] = safe_env
+            except Exception:
+                pass
+
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+    elif platform.system().lower() == "linux" and os.path.exists(f"/proc/{pid}"):
+        try:
+            proc_dir = f"/proc/{pid}"
+            name = "?"
+            if os.path.exists(f"{proc_dir}/comm"):
+                with open(f"{proc_dir}/comm", "r", encoding="utf-8", errors="replace") as f:
+                    name = f.read().strip()
+            cmdline = ""
+            if os.path.exists(f"{proc_dir}/cmdline"):
+                with open(f"{proc_dir}/cmdline", "rb") as f:
+                    cmdline = f.read().replace(b"\x00", b" ").decode("utf-8", errors="replace").strip()
+            ppid = 1
+            user = os.environ.get("USER", "system")
+            status = "running"
+            if os.path.exists(f"{proc_dir}/status"):
+                with open(f"{proc_dir}/status", "r", encoding="utf-8", errors="replace") as f:
+                    for line in f:
+                        if line.startswith("PPid:"):
+                            ppid = int(line.split()[1])
+                        elif line.startswith("State:"):
+                            status = line.split()[1]
+                        elif line.startswith("Uid:"):
+                            user = line.split()[1]
+            exe = ""
+            try:
+                exe = os.readlink(f"{proc_dir}/exe")
+            except OSError:
+                pass
+            cwd = ""
+            try:
+                cwd = os.readlink(f"{proc_dir}/cwd")
+            except OSError:
+                pass
+
+            proc_info["name"] = name
+            proc_info["cmdline"] = cmdline or name
+            proc_info["exe"] = exe
+            proc_info["user"] = user
+            proc_info["status"] = status
+            proc_info["ppid"] = ppid
+            proc_info["cwd"] = cwd
+            proc_info["lineage"] = [
+                {"pid": ppid, "name": f"parent_{ppid}", "relation": "ancestor"},
+                {"pid": pid, "name": name, "relation": "self"},
+            ]
+        except Exception:
+            pass
+
+    # 2. Extract Security Posture (Linux Capabilities, Seccomp, Namespaces, Mapped Libraries)
+    proc_info["security"] = extract_security_posture(pid)
+
+    # 3. Correlated Events and Alerts in OutPost DB
+    with db_session() as conn:
+        events = conn.execute(
+            """
+            SELECT id, run_id, timestamp, event_type, platform,
+                   dest_ip, dest_port, file_path, command_line, host_id
+            FROM events
+            WHERE pid = ?
+            ORDER BY timestamp DESC
+            LIMIT 50
+            """,
+            (pid,),
+        ).fetchall()
+        proc_info["correlated_events"] = [dict(e) for e in events]
+
+        alerts = conn.execute(
+            """
+            SELECT id, run_id, rule_id, rule_name, severity, triggered_at,
+                   related_pid, related_ip, details
+            FROM alerts
+            WHERE related_pid = ?
+            ORDER BY triggered_at DESC
+            LIMIT 20
+            """,
+            (pid,),
+        ).fetchall()
+        proc_info["correlated_alerts"] = [dict(a) for a in alerts]
+
+        if not proc_info["name"] and events:
+            ev0 = events[0]
+            proc_info["name"] = ev0.get("command_line", "").split()[0] if ev0.get("command_line") else f"proc_{pid}"
+            proc_info["cmdline"] = ev0.get("command_line") or ""
+
+    if not proc_info["name"] and not proc_info["correlated_events"]:
+        return None
+
+    return proc_info
+
+
+def control_process(
+    pid: int,
+    action: str,
+    expected_create_time: float | None = None,
+    request_user: str = "analyst"
+) -> dict[str, Any]:
+    """Execute lifecycle controls on a process with target identity verification.
+
+    Supported actions:
+    - 'freeze' / 'pause' (SIGSTOP)
+    - 'resume' (SIGCONT)
+    - 'terminate' (SIGTERM)
+    - 'kill' (SIGKILL)
+    """
+    action_map = {
+        "freeze": signal.SIGSTOP,
+        "pause": signal.SIGSTOP,
+        "resume": signal.SIGCONT,
+        "terminate": signal.SIGTERM,
+        "kill": signal.SIGKILL,
+    }
+
+    if action not in action_map:
+        return {
+            "pid": pid,
+            "action": action,
+            "success": False,
+            "message": f"Unsupported process action: {action}. Supported: freeze, resume, terminate, kill",
+        }
+
+    sig = action_map[action]
+
+    # Target identity re-verification to prevent PID reuse race condition
+    if psutil and expected_create_time:
+        try:
+            if psutil.pid_exists(pid):
+                p = psutil.Process(pid)
+                actual_create_time = p.create_time()
+                if abs(actual_create_time - expected_create_time) > 2.0:
+                    return {
+                        "pid": pid,
+                        "action": action,
+                        "success": False,
+                        "message": "Identity verification failed: PID was recycled by another process",
+                    }
+        except Exception:
+            pass
+
+    success = False
+    message = ""
+
+    try:
+        os.kill(pid, sig)
+        success = True
+        message = f"Signal {sig.name} ({action}) successfully dispatched to PID {pid}"
+    except ProcessLookupError:
+        message = f"Process PID {pid} not found (already terminated)"
+        success = (action in ("terminate", "kill"))
+    except PermissionError:
+        message = f"Permission denied to send {sig.name} to PID {pid}"
+        success = False
+    except Exception as exc:
+        message = f"Failed to signal PID {pid}: {exc}"
+        success = False
+
+    with db_session() as conn:
+        audit.log(
+            conn,
+            role=request_user,
+            action=f"process.{action}",
+            target_type="process",
+            target_id=str(pid),
+            detail=f"Action '{action}' ({sig.name}) on PID {pid} — {message}",
+        )
+
+    return {
+        "pid": pid,
+        "action": action,
+        "signal": sig.name,
+        "success": success,
+        "message": message,
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    }
+
+
+def terminate_process(pid: int, signal_name: str = "SIGTERM", request_user: str = "analyst") -> dict[str, Any]:
+    """Safely terminate a process by PID with audit trail."""
+    action = "terminate" if signal_name == "SIGTERM" else "kill"
+    return control_process(pid, action=action, request_user=request_user)
+
+
+def resolve_target_search(query: str) -> dict[str, Any]:
+    """Universal Target Resolver (Omarchy X-Ray style).
+
+    Parses search patterns:
+    - ':port' or 'port:8000' -> match listening/connected sockets
+    - 'file:/path' or '/path' -> match open files
+    - 'service:name' -> match systemd services & cgroups
+    - 'container:name' -> match container runtime
+    - 'pid:123' or numeric -> match exact PID
+    - Generic text -> search across name, cmdline, sockets, and files
+    """
+    q = query.strip()
+    results: dict[str, Any] = {
+        "query": query,
+        "target_type": "text",
+        "matched_processes": [],
+        "matched_sockets": [],
+        "matched_files": [],
+    }
+
+    if not q:
+        return results
+
+    # 1. Port query (:8000 or port:8000)
+    port_match = re.match(r"^(?:port:)?\:?([0-9]{1,5})$", q, re.IGNORECASE)
+    if port_match:
+        target_port = int(port_match.group(1))
+        results["target_type"] = "port"
+        for s in get_live_sockets():
+            if s["local_port"] == target_port or s.get("remote_port") == target_port:
+                results["matched_sockets"].append(s)
+                if s["pid"] and s["pid"] not in [p["pid"] for p in results["matched_processes"]]:
+                    proc_detail = get_process_xray_detail(s["pid"])
+                    if proc_detail:
+                        results["matched_processes"].append(proc_detail)
+        return results
+
+    # 2. PID query (pid:1234 or numeric)
+    pid_match = re.match(r"^(?:pid:)?([0-9]+)$", q, re.IGNORECASE)
+    if pid_match:
+        target_pid = int(pid_match.group(1))
+        results["target_type"] = "pid"
+        proc_detail = get_process_xray_detail(target_pid)
+        if proc_detail:
+            results["matched_processes"].append(proc_detail)
+        return results
+
+    # 3. File query (file:/path/to/file or /path/to/file)
+    if q.startswith("file:") or q.startswith("/"):
+        file_path = q.removeprefix("file:").strip()
+        results["target_type"] = "file"
+        for p in get_live_processes():
+            detail = get_process_xray_detail(p["pid"])
+            if detail:
+                matched_f = [f for f in detail.get("open_files", []) if file_path.lower() in f.get("path", "").lower()]
+                if matched_f or file_path.lower() in detail.get("exe", "").lower():
+                    results["matched_processes"].append(detail)
+                    results["matched_files"].extend(matched_f)
+        return results
+
+    # 4. Service / Scope query (service:sshd or scope:user)
+    if q.startswith("service:") or q.startswith("scope:"):
+        svc_name = q.split(":", 1)[1].strip().lower()
+        results["target_type"] = "service"
+        for p in get_live_processes():
+            detail = get_process_xray_detail(p["pid"])
+            if detail:
+                unit = detail.get("security", {}).get("service_unit", "").lower()
+                cgroup = detail.get("security", {}).get("cgroup", "").lower()
+                if svc_name in unit or svc_name in cgroup:
+                    results["matched_processes"].append(detail)
+        return results
+
+    # 5. Generic substring search
+    q_lower = q.lower()
+    for p in get_live_processes():
+        if (
+            q_lower in str(p["pid"])
+            or q_lower in p["name"].lower()
+            or q_lower in p["cmdline"].lower()
+            or q_lower in p["user"].lower()
+            or q_lower in p.get("package_label", "").lower()
+        ):
+            results["matched_processes"].append(p)
+
+    for s in get_live_sockets():
+        if (
+            q_lower in str(s["local_port"])
+            or (s.get("remote_port") and q_lower in str(s["remote_port"]))
+            or (s.get("remote_ip") and q_lower in s["remote_ip"])
+            or q_lower in s.get("process_name", "").lower()
+        ):
+            results["matched_sockets"].append(s)
+
+    return results
+
+
+def generate_forensic_capsule(pid: int) -> dict[str, Any] | None:
+    """Generate a portable forensic capsule snapshot (.xray.json) for a process."""
+    proc_detail = get_process_xray_detail(pid)
+    if not proc_detail:
+        return None
+
+    metrics = get_current_system_metrics()
+
+    capsule = {
+        "version": "1.0.0",
+        "exported_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "exported_by": "OutPost X-Ray Forensics",
+        "target_pid": pid,
+        "host_context": {
+            "platform": metrics["platform"],
+            "cpu_percent": metrics["cpu_percent"],
+            "memory_total_mb": metrics["memory_total_mb"],
+            "memory_used_mb": metrics["memory_used_mb"],
+        },
+        "process_dossier": {
+            "pid": proc_detail["pid"],
+            "ppid": proc_detail["ppid"],
+            "name": proc_detail["name"],
+            "command_line": proc_detail["cmdline"],
+            "executable_path": proc_detail["exe"],
+            "user": proc_detail["user"],
+            "status": proc_detail["status"],
+            "threads": proc_detail["threads"],
+            "memory_mb": proc_detail["memory_mb"],
+            "started_at": proc_detail["started_at"],
+            "working_directory": proc_detail["cwd"],
+            "lineage": proc_detail["lineage"],
+            "environment_keys": list(proc_detail["environment"].keys()),
+        },
+        "security_posture": proc_detail.get("security", {}),
+        "network_sockets": proc_detail.get("sockets", []),
+        "open_file_descriptors": proc_detail.get("open_files", []),
+        "correlated_telemetry": {
+            "events_count": len(proc_detail.get("correlated_events", [])),
+            "alerts_count": len(proc_detail.get("correlated_alerts", [])),
+            "alerts": proc_detail.get("correlated_alerts", []),
+            "recent_events": proc_detail.get("correlated_events", [])[:25],
+        },
+    }
+
+    return capsule
+
+
+def get_process_tree() -> list[dict[str, Any]]:
+    """Build a complete hierarchical process causality tree."""
+    processes = get_live_processes()
+    proc_map: dict[int, dict[str, Any]] = {}
+    for p in processes:
+        proc_map[p["pid"]] = {
+            **p,
+            "children": [],
+        }
+
+    roots: list[dict[str, Any]] = []
+    for pid, node in proc_map.items():
+        ppid = node.get("ppid") or 1
+        if ppid and ppid in proc_map and ppid != pid:
+            proc_map[ppid]["children"].append(node)
+        else:
+            roots.append(node)
+
+    roots.sort(key=lambda x: x["pid"])
+    return roots
+
+
+def get_categorized_network_matrix() -> dict[str, Any]:
+    """Inspect and categorize all network sockets across threat domains."""
+    sockets = get_live_sockets()
+
+    public_listeners: list[dict[str, Any]] = []
+    loopback_listeners: list[dict[str, Any]] = []
+    outbound_connections: list[dict[str, Any]] = []
+    multicast_listeners: list[dict[str, Any]] = []
+
+    for s in sockets:
+        lip = s.get("local_ip") or ""
+        rip = s.get("remote_ip") or ""
+        status = s.get("status") or ""
+
+        # Check multicast
+        if lip.startswith("224.") or lip.startswith("239.") or lip.startswith("ff02:"):
+            multicast_listeners.append({
+                **s,
+                "category": "multicast",
+                "label": "Multicast Listener (mDNS/SSDP)",
+            })
+            continue
+
+        if status == "LISTEN":
+            if lip in ("127.0.0.1", "::1", "localhost"):
+                loopback_listeners.append({
+                    **s,
+                    "category": "loopback",
+                    "label": "Local Loopback Listener",
+                })
+            else:
+                public_listeners.append({
+                    **s,
+                    "category": "public_listener",
+                    "label": "Externally Reachable Listener" if lip in ("0.0.0.0", "::") else f"Interface Listener ({lip})",
+                    "is_public_bound": True,
+                })
+        elif rip:
+            # Outbound / active connection
+            is_external = not (
+                rip.startswith("127.") or rip == "::1" or
+                rip.startswith("10.") or rip.startswith("192.168.") or
+                (rip.startswith("172.") and len(rip.split(".")) > 1 and rip.split(".")[1].isdigit() and 16 <= int(rip.split(".")[1]) <= 31)
+            )
+            rport = s.get("remote_port") or 0
+            is_suspicious_port = rport in (4444, 1337, 31337, 8888, 9999, 6667, 7777)
+
+            outbound_connections.append({
+                **s,
+                "category": "outbound",
+                "is_external": is_external,
+                "is_suspicious_port": is_suspicious_port,
+                "endpoint_type": "Public Internet" if is_external else "Local LAN / RFC1918",
+            })
+
+    return {
+        "public_listeners": public_listeners,
+        "loopback_listeners": loopback_listeners,
+        "outbound_connections": outbound_connections,
+        "multicast_listeners": multicast_listeners,
+        "summary": {
+            "public_listeners_count": len(public_listeners),
+            "loopback_listeners_count": len(loopback_listeners),
+            "outbound_count": len(outbound_connections),
+            "multicast_count": len(multicast_listeners),
+            "total_sockets": len(sockets),
+        },
+    }
+
+
+def generate_behavioral_explanations() -> list[dict[str, Any]]:
+    """Produce automated, actionable heuristic explanation cards (Omarchy X-Ray style)."""
+    explanations: list[dict[str, Any]] = []
+
+    net_matrix = get_categorized_network_matrix()
+    processes = get_live_processes()
+
+    # 1. Check for unmanaged dropped binaries in /tmp or /dev/shm
+    temp_procs = [p for p in processes if p.get("package_status") == "unmanaged_suspicious"]
+    if temp_procs:
+        evidence = [f"PID {p['pid']} ({p['name']}): {p['exe']}" for p in temp_procs[:5]]
+        explanations.append({
+            "id": "dropped-binary-execution",
+            "tone": "critical",
+            "title": "Unmanaged Binary Executing from Temporary Directory",
+            "domain": "processes",
+            "why": "Executables running from /tmp, /dev/shm, or user directories bypass package verification and are typical of staged malware drops.",
+            "evidence": evidence,
+            "evidence_count": len(temp_procs),
+            "next_step": "Inspect process dossier or freeze execution via Process X-Ray.",
+        })
+
+    # 2. Check for public listeners bound beyond loopback
+    pub_listeners = net_matrix["public_listeners"]
+    if pub_listeners:
+        evidence = [f"{s['protocol']} {s['local_ip']}:{s['local_port']} ({s.get('process_name') or 'PID ' + str(s.get('pid'))})" for s in pub_listeners[:5]]
+        explanations.append({
+            "id": "public-listener-active",
+            "tone": "attention",
+            "title": "Public Network Listener Active",
+            "domain": "network",
+            "why": "Sockets bound to 0.0.0.0 or external interfaces accept incoming traffic from the external network.",
+            "evidence": evidence,
+            "evidence_count": len(pub_listeners),
+            "next_step": "Verify if this service requires external reachability or restrict firewall ingress.",
+        })
+
+    # 3. Check for external outbound traffic
+    ext_conns = [c for c in net_matrix["outbound_connections"] if c.get("is_external")]
+    if ext_conns:
+        evidence = [f"{c.get('process_name') or 'PID ' + str(c.get('pid'))} -> {c['remote_ip']}:{c['remote_port']} ({c['status']})" for c in ext_conns[:5]]
+        explanations.append({
+            "id": "external-outbound-connection",
+            "tone": "attention",
+            "title": "Active Outbound Public Network Connection",
+            "domain": "network",
+            "why": "Processes are currently communicating with public internet endpoints outside the local subnet.",
+            "evidence": evidence,
+            "evidence_count": len(ext_conns),
+            "next_step": "Review destination IP threat reputation and verify process identity.",
+        })
+
+    # 4. Check for suspicious high-risk ports
+    suspicious_conns = [c for c in net_matrix["outbound_connections"] if c.get("is_suspicious_port")]
+    if suspicious_conns:
+        evidence = [f"{c.get('process_name') or 'PID ' + str(c.get('pid'))} -> {c['remote_ip']}:{c['remote_port']}" for c in suspicious_conns[:5]]
+        explanations.append({
+            "id": "suspicious-port-activity",
+            "tone": "critical",
+            "title": "Suspicious Port / Possible C2 Beaconing",
+            "domain": "network",
+            "why": "Connection detected to known penetration testing / reverse shell port ranges.",
+            "evidence": evidence,
+            "evidence_count": len(suspicious_conns),
+            "next_step": "Isolate the host or terminate the initiating process immediately.",
+        })
+
+    # 5. Check for elevated dangerous capabilities
+    dangerous_procs: list[str] = []
+    for p in processes[:30]:
+        try:
+            sec = extract_security_posture(p["pid"])
+            dang_caps = [c["name"] for c in sec.get("capabilities_effective", []) if c.get("is_dangerous")]
+            if dang_caps:
+                dangerous_procs.append(f"PID {p['pid']} ({p['name']}): {', '.join(dang_caps)}")
+        except Exception:
+            pass
+
+    if dangerous_procs:
+        explanations.append({
+            "id": "elevated-capabilities-present",
+            "tone": "attention",
+            "title": "Processes Holding Dangerous Linux Capabilities",
+            "domain": "security",
+            "why": "Capabilities such as CAP_SYS_ADMIN, CAP_NET_RAW, or CAP_SYS_PTRACE permit kernel-level manipulations and container escapes.",
+            "evidence": dangerous_procs[:5],
+            "evidence_count": len(dangerous_procs),
+            "next_step": "Audit capability requirements and enable NoNewPrivs restrictions.",
+        })
+
+    return explanations
+

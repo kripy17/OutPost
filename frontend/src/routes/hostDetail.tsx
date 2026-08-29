@@ -264,14 +264,7 @@ export default function HostDetailPage() {
               className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-1.5 font-mono text-[11px] text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
             >
               <Icon name="list" size={12} />
-              Events
-            </Link>
-            <Link
-              to={`/history?host=${encodeURIComponent(hostId ?? "")}`}
-              className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-1.5 font-mono text-[11px] text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
-            >
-              <Icon name="clock" size={12} />
-              Runs
+              Event Stream
             </Link>
           </div>
         }
@@ -293,11 +286,6 @@ export default function HostDetailPage() {
 
       {/* Host context strip — platform + heartbeat from the timeline envelope. */}
       <div className="mb-5 flex flex-wrap items-center gap-3">
-        {isIsolated && (
-          <span className="rounded-full border border-risk-malicious/60 bg-risk-malicious/20 px-2.5 py-1 font-mono text-[11px] font-bold text-risk-malicious">
-            ISOLATED
-          </span>
-        )}
         {data?.platform && (
           <span className="rounded-full border border-border-subtle bg-bg-surface px-2.5 py-1 font-mono text-[11px] capitalize text-text-muted">
             {data.platform}

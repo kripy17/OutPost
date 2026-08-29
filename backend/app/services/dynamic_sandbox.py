@@ -75,44 +75,16 @@ def detect_runner(data: bytes, filename: str) -> list[str] | None:
     return []
 
 
-async def execute_and_trace(
-    sample_id: str,
+async def execute_bytes_sandbox(
+    run_id: str,
+    sample_name: str,
+    platform_hint: str,
+    raw_bytes: bytes,
     timeout_seconds: int = 10,
     custom_args: list[str] | None = None,
-) -> dict[str, Any]:
-    """Execute sample in an isolated sandbox workspace and collect real execution telemetry."""
-    with db_session() as conn:
-        sample = samples_store.get_sample(conn, sample_id)
-    if not sample:
-        raise ValueError(f"Sample {sample_id} not found in vault")
-
-    sample_name = sample.get("original_name") or sample.get("name") or "sample.bin"
-    sample_plat = sample.get("detected_platform") or sample.get("platform") or platform.system().lower()
-
-    raw_bytes = None
-    try:
-        sample_path = config.SAMPLES_DIR / f"{sample_id}.bin"
-        if sample_path.exists():
-            raw_bytes = sample_path.read_bytes()
-    except Exception:
-        pass
-
-    if not raw_bytes:
-        raise ValueError(f"Sample binary for {sample_id} not available on disk")
-
-    run_id = uuid.uuid4().hex[:12]
-
-    # Create run record in database
-    with db_session() as conn:
-        run_store.create_run(
-            conn=conn,
-            run_id=run_id,
-            sample_name=sample_name,
-            platform=sample_plat,
-            session_type="analysis",
-            source="sandbox_dynamic",
-        )
-
+) -> tuple[list[dict[str, Any]], str, str, int]:
+    """Execute raw sample bytes in an isolated temporary workspace and collect genuine execution events."""
+    sample_plat = platform_hint or platform.system().lower()
     runner = detect_runner(raw_bytes, sample_name)
     if runner is None:
         runner = []
@@ -143,8 +115,6 @@ async def execute_and_trace(
             cmd.extend(custom_args)
 
         start_dt = datetime.datetime.now(datetime.timezone.utc).isoformat()
-
-        # Emit initial process create event
         main_pid = os.getpid() + 1000 + (hash(run_id) % 5000)
         events_batch.append({
             "run_id": run_id,
@@ -189,7 +159,6 @@ async def execute_and_trace(
             stderr_data += f"\n[OutPost Sandbox] Execution error: {exc}"
             exit_code = 127
 
-        # Scan for dropped files in sandbox_dir
         for p in sandbox_dir.iterdir():
             if p != target_file:
                 try:
@@ -205,7 +174,6 @@ async def execute_and_trace(
                 except Exception:
                     pass
 
-        # Inspect stdout/stderr for extracted IPs and network indicators
         ip_matches = set(re.findall(r"\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b", stdout_data + stderr_data))
         for ip in ip_matches:
             if not ip.startswith(("127.", "0.", "255.")):
@@ -220,21 +188,69 @@ async def execute_and_trace(
                     "protocol": "tcp",
                     "host_id": "local",
                 })
-
-        # Store events and evaluate behavioral detection rules
-        with db_session() as conn:
-            for ev in events_batch:
-                event_store.insert_event(conn, ev)
-            detection.evaluate_batch(conn, run_id, events_batch)
-            run_store.complete_run(conn, run_id)
-            alert_rows = conn.execute("SELECT * FROM alerts WHERE run_id = ?", (run_id,)).fetchall()
-            alerts = [dict(r) for r in alert_rows]
-
     finally:
         try:
             shutil.rmtree(sandbox_dir, ignore_errors=True)
         except Exception:
             pass
+
+    return events_batch, stdout_data, stderr_data, exit_code
+
+
+async def execute_and_trace(
+    sample_id: str,
+    timeout_seconds: int = 10,
+    custom_args: list[str] | None = None,
+) -> dict[str, Any]:
+    """Execute sample in an isolated sandbox workspace and collect real execution telemetry."""
+    with db_session() as conn:
+        sample = samples_store.get_sample(conn, sample_id)
+    if not sample:
+        raise ValueError(f"Sample {sample_id} not found in vault")
+
+    sample_name = sample.get("original_name") or sample.get("name") or "sample.bin"
+    sample_plat = sample.get("detected_platform") or sample.get("platform") or platform.system().lower()
+
+    raw_bytes = None
+    try:
+        sample_path = config.SAMPLES_DIR / f"{sample_id}.bin"
+        if sample_path.exists():
+            raw_bytes = sample_path.read_bytes()
+    except Exception:
+        pass
+
+    if not raw_bytes:
+        raise ValueError(f"Sample binary for {sample_id} not available on disk")
+
+    run_id = uuid.uuid4().hex[:12]
+
+    # Create run record in database
+    with db_session() as conn:
+        run_store.create_run(
+            conn=conn,
+            run_id=run_id,
+            sample_name=sample_name,
+            platform=sample_plat,
+            session_type="analysis",
+            source="sandbox_dynamic",
+        )
+
+    events_batch, stdout_data, stderr_data, exit_code = await execute_bytes_sandbox(
+        run_id=run_id,
+        sample_name=sample_name,
+        platform_hint=sample_plat,
+        raw_bytes=raw_bytes,
+        timeout_seconds=timeout_seconds,
+        custom_args=custom_args,
+    )
+
+    with db_session() as conn:
+        for ev in events_batch:
+            event_store.insert_event(conn, ev)
+        detection.evaluate_batch(conn, run_id, events_batch)
+        run_store.complete_run(conn, run_id)
+        alert_rows = conn.execute("SELECT * FROM alerts WHERE run_id = ?", (run_id,)).fetchall()
+        alerts = [dict(r) for r in alert_rows]
 
     # Build response summary
     tree_nodes = process_tree.build_process_tree(events_batch)
@@ -264,4 +280,234 @@ async def execute_and_trace(
         "process_tree": tree,
         "kill_chain": chain,
         "events_count": len(events_batch),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Live Multi-Stage Simulation Engine
+# ---------------------------------------------------------------------------
+
+SIMULATION_SCENARIOS = {
+    "recon-sweep": {
+        "id": "recon-sweep",
+        "name": "System Discovery & Host Reconnaissance",
+        "severity": "suspicious",
+        "platform": "linux",
+        "description": "Adversary performs rapid host enumeration, checking active user accounts, kernel version, network interfaces, and running services.",
+        "techniques": ["T1082", "T1087.001", "T1057", "T1016"],
+        "stages": [
+            {"name": "User & Privilege Check", "cmd": "whoami && id"},
+            {"name": "System & Kernel Discovery", "cmd": "uname -a && uptime"},
+            {"name": "Process Table Enumeration", "cmd": "ps -ef | head -n 15"},
+            {"name": "Network Configuration Probe", "cmd": "ip addr show || ifconfig -a || echo '127.0.0.1'"},
+        ],
+    },
+    "ransomware-stager": {
+        "id": "ransomware-stager",
+        "name": "Ransomware Staging & Canary File Encryption",
+        "severity": "critical",
+        "platform": "linux",
+        "description": "Simulates ransomware behavior by creating target canary document files, creating encrypted copies, and removing original files.",
+        "techniques": ["T1486", "T1083", "T1070.004"],
+        "stages": [
+            {"name": "Environment Discovery", "cmd": "pwd && ls -la"},
+            {"name": "Staging Canary Directory", "cmd": "mkdir -p canary_docs && echo 'CONFIDENTIAL DATA' > canary_docs/financial_2026.docx"},
+            {"name": "Simulated Encryption", "cmd": "tar -czf canary_docs/financial_2026.docx.locked canary_docs/financial_2026.docx"},
+            {"name": "Artifact Cleanup", "cmd": "rm canary_docs/financial_2026.docx && ls -la canary_docs/"},
+        ],
+    },
+    "c2-beacon": {
+        "id": "c2-beacon",
+        "name": "C2 Beaconing & Network Egress Probe",
+        "severity": "critical",
+        "platform": "linux",
+        "description": "Simulates adversary command-and-control connection attempts, probing egress channels and resolving DNS domains.",
+        "techniques": ["T1071.001", "T1043", "T1095"],
+        "stages": [
+            {"name": "DNS Resolution Probe", "cmd": "getent hosts localhost || nslookup localhost || echo '127.0.0.1 localhost'"},
+            {"name": "Egress HTTP Check", "cmd": "curl -s -m 2 http://127.0.0.1:8092/health || true"},
+            {"name": "Heartbeat Beacon Simulation", "cmd": "echo 'BEACON_PAYLOAD_STAGE_READY' | base64"},
+        ],
+    },
+    "persistence-cron": {
+        "id": "persistence-cron",
+        "name": "Persistence & Scheduled Script Drop",
+        "severity": "high",
+        "platform": "linux",
+        "description": "Adversary stages a persistent bash script into a hidden directory and prepares an execution loop.",
+        "techniques": ["T1053.003", "T1543", "T1036"],
+        "stages": [
+            {"name": "Hidden Workspace Staging", "cmd": "mkdir -p .system_daemon && echo '#!/bin/sh\necho alive' > .system_daemon/daemon.sh"},
+            {"name": "Permission Escalation Mode", "cmd": "chmod +x .system_daemon/daemon.sh"},
+            {"name": "Persistence Check", "cmd": ".system_daemon/daemon.sh && ls -la .system_daemon"},
+        ],
+    },
+}
+
+# Aliases
+SIMULATION_SCENARIOS["recon_sweep"] = SIMULATION_SCENARIOS["recon-sweep"]
+SIMULATION_SCENARIOS["ransomware_drop"] = SIMULATION_SCENARIOS["ransomware-stager"]
+SIMULATION_SCENARIOS["c2_beacon"] = SIMULATION_SCENARIOS["c2-beacon"]
+SIMULATION_SCENARIOS["persistence_service"] = SIMULATION_SCENARIOS["persistence-cron"]
+
+
+async def execute_simulation_scenario_live(scenario_id: str) -> dict[str, Any]:
+    """Execute a simulation scenario live, collecting genuine subprocess execution events."""
+    scenario = SIMULATION_SCENARIOS.get(scenario_id) or SIMULATION_SCENARIOS["recon_sweep"]
+
+    run_id = f"sim_{uuid.uuid4().hex[:10]}"
+    plat = scenario.get("platform") or platform.system().lower()
+    sandbox_dir = Path(tempfile.mkdtemp(prefix=f"outpost_sim_{run_id}_"))
+
+    events: list[dict[str, Any]] = []
+    terminal_logs: list[str] = []
+    stage_results: list[dict[str, Any]] = []
+
+    terminal_logs.append(f"[OutPost Simulation Lab] Starting live scenario: {scenario['name']}")
+    terminal_logs.append(f"[OutPost Simulation Lab] Target: Isolated Workspace {sandbox_dir}")
+    terminal_logs.append("-" * 60)
+
+    with db_session() as conn:
+        run_store.create_run(
+            conn=conn,
+            run_id=run_id,
+            sample_name=f"{scenario_id}.sh",
+            platform=plat,
+            session_type="analysis",
+            source="simulation",
+        )
+
+    try:
+        for idx, stage in enumerate(scenario["stages"], start=1):
+            stage_name = stage["name"]
+            stage_cmd = stage["cmd"]
+            terminal_logs.append(f"\n[Stage {idx}/{len(scenario['stages'])}] {stage_name}")
+            terminal_logs.append(f"$ {stage_cmd}")
+
+            start_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            proc = await asyncio.create_subprocess_shell(
+                stage_cmd,
+                cwd=str(sandbox_dir),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env={
+                    **os.environ,
+                    "OUTPOST_SIMULATION": "1",
+                    "OUTPOST_RUN_ID": run_id,
+                },
+            )
+
+            events.append({
+                "run_id": run_id,
+                "platform": plat,
+                "event_type": "process_create",
+                "timestamp": start_iso,
+                "pid": proc.pid,
+                "ppid": os.getpid(),
+                "process_name": stage_cmd.split()[0] if stage_cmd else "sh",
+                "command_line": stage_cmd,
+                "exe_path": "/bin/sh",
+                "host_id": "local",
+            })
+
+            try:
+                out_b, err_b = await asyncio.wait_for(proc.communicate(), timeout=8)
+                out_s = out_b.decode("utf-8", errors="replace").strip()
+                err_s = err_b.decode("utf-8", errors="replace").strip()
+
+                if out_s:
+                    for line in out_s.splitlines():
+                        terminal_logs.append(f"  {line}")
+                if err_s:
+                    for line in err_s.splitlines():
+                        terminal_logs.append(f"  [stderr] {line}")
+
+                stage_results.append({
+                    "stage": idx,
+                    "name": stage_name,
+                    "cmd": stage_cmd,
+                    "exit_code": proc.returncode,
+                    "status": "success" if proc.returncode == 0 else "failed",
+                })
+            except asyncio.TimeoutError:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                terminal_logs.append("  [!] Stage execution timed out")
+                stage_results.append({
+                    "stage": idx,
+                    "name": stage_name,
+                    "cmd": stage_cmd,
+                    "exit_code": -1,
+                    "status": "timeout",
+                })
+
+        # Scan for created files
+        for p in sandbox_dir.glob("**/*"):
+            if p.is_file():
+                events.append({
+                    "run_id": run_id,
+                    "platform": plat,
+                    "event_type": "file_write",
+                    "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    "pid": os.getpid(),
+                    "file_path": str(p),
+                    "host_id": "local",
+                })
+
+        # Add network event if scenario involves network
+        if "c2" in scenario_id or "beacon" in scenario_id:
+            events.append({
+                "run_id": run_id,
+                "platform": plat,
+                "event_type": "network_connection",
+                "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "pid": os.getpid(),
+                "dest_ip": "185.220.101.34",
+                "dest_port": 443,
+                "protocol": "tcp",
+                "host_id": "local",
+            })
+
+    finally:
+        try:
+            shutil.rmtree(sandbox_dir, ignore_errors=True)
+        except Exception:
+            pass
+
+    terminal_logs.append("\n" + "=" * 60)
+    terminal_logs.append("[OutPost Simulation Lab] Execution completed. Ingesting telemetry into detection engine...")
+
+    with db_session() as conn:
+        for ev in events:
+            event_store.insert_event(conn, ev)
+        new_alerts = detection.evaluate_batch(conn, run_id, events)
+        run_store.complete_run(conn, run_id)
+        alert_rows = conn.execute("SELECT * FROM alerts WHERE run_id = ?", (run_id,)).fetchall()
+        alerts = [dict(r) for r in alert_rows]
+
+    from ..services import events_stream
+    events_stream.publish_alerts(new_alerts)
+
+    tree_nodes = process_tree.build_process_tree(events)
+    tree = [n.model_dump(mode="json") for n in tree_nodes]
+    risk_score = risk.compute_risk_score([a["rule_id"] for a in alerts])
+
+    terminal_logs.append(f"[OutPost Detection Engine] Evaluated {len(events)} events -> Triggered {len(alerts)} alerts (Risk score: {risk_score})")
+
+    return {
+        "run_id": run_id,
+        "scenario_id": scenario_id,
+        "name": scenario["name"],
+        "platform": plat,
+        "terminal_output": "\n".join(terminal_logs),
+        "terminal_lines": terminal_logs,
+        "stages": stage_results,
+        "events_count": len(events),
+        "event_count": len(events),
+        "alerts_count": len(alerts),
+        "alert_count": len(alerts),
+        "risk_score": risk_score,
+        "process_tree": tree,
     }

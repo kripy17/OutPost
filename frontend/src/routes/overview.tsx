@@ -5,9 +5,8 @@ import { Link } from "react-router-dom";
 import { Deferred } from "../components/Deferred/Deferred";
 import { Icon } from "../components/Icon";
 import { platformIconName } from "../components/iconMeta";
-import { RiskGauge, RiskTrendBars, SeverityDonut, type RiskTrendBar } from "../components/Posture/Posture";
 import { PageHeader, Panel } from "../components/ui";
-import { ageBucket, aggregateTrend, collapseFindings, intelFreshness, intelKeyHealth, openSince, overviewRunParams, sortFindingsRiskFirst } from "./overviewHelpers";
+import { ageBucket, collapseFindings, intelFreshness, intelKeyHealth, openSince, overviewRunParams, sortFindingsRiskFirst } from "./overviewHelpers";
 import { copyToClipboard } from "../lib/clipboard";
 import { SEVERITY_BG } from "../lib/constants";
 import { BASE_URL, getAgents, getCampaigns, getHealth, getIntelFreshness, getIntelKeys, getMeta, getPlatform, getProcessSummary, getRecentAlerts, getRuleMeta, getRuns, listInvestigations, resetStore } from "../lib/api";
@@ -35,45 +34,78 @@ import type { ProcessSummary, RunSummary, Severity } from "../types";
 
 function PostureHeader({
   runs,
-  trendBars,
   campaigns,
   totalAlerts,
 }: {
   runs: RunSummary[];
-  trendBars: RiskTrendBar[];
   campaigns: number;
   totalAlerts: number;
 }) {
-  const peak = Math.max(0, ...runs.map((r) => r.risk_score ?? 0));
+  const { data: fleet } = useQuery({ queryKey: ["agents"], queryFn: () => getAgents(), staleTime: 15_000 });
+  const onlineAgents = (fleet?.agents ?? []).filter((a) => a.online).length;
   const malicious = runs.filter((r) => r.highest_severity === "malicious").length;
   const suspicious = runs.filter((r) => r.highest_severity === "suspicious").length;
   const clean = runs.length - malicious - suspicious;
 
   return (
-    <section className="panel overflow-hidden">
-      <div className="grid divide-y divide-border-subtle lg:grid-cols-[1.05fr_0.95fr_1.4fr] lg:divide-x lg:divide-y-0">
-        <div className="flex items-center justify-center px-6 py-6">
-          <RiskGauge score={peak} />
+    <section className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3" aria-label="Operational telemetry summary">
+      {/* Telemetry Health */}
+      <div className="flex flex-col justify-between rounded-2xl border border-border-subtle bg-bg-surface/80 p-5 backdrop-blur-md transition-all duration-200 hover:border-accent/40">
+        <div className="flex items-center justify-between">
+          <span className="font-mono text-[11px] uppercase tracking-wider text-text-faint">Host Telemetry</span>
+          <span className="flex items-center gap-1.5 font-mono text-[10px] text-risk-clean">
+            <span className="h-1.5 w-1.5 rounded-full bg-risk-clean animate-pulse" />
+            ingestion active
+          </span>
         </div>
-        <div className="flex items-center justify-center px-6 py-6">
-          <SeverityDonut malicious={malicious} suspicious={suspicious} clean={clean} />
+        <div className="my-3 flex items-baseline gap-3">
+          <span className="font-mono text-3xl font-bold tracking-tight text-text-primary">{runs.length}</span>
+          <span className="text-xs text-text-muted">monitored sessions</span>
         </div>
-        <div className="flex flex-col justify-center gap-4 px-6 py-6">
-          <RiskTrendBars bars={trendBars} />
-          <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-border-subtle pt-3 text-[12px]">
-            <span className="flex items-center gap-1.5 text-text-muted">
-              <Icon name="grid" size={13} className="text-text-faint" />
-              <span className="font-semibold tabular-nums text-text-primary">{runs.length}</span> sessions
-            </span>
-            <span className="flex items-center gap-1.5 text-text-muted">
-              <Icon name="zap" size={13} className="text-risk-suspicious" />
-              <span className="font-semibold tabular-nums text-text-primary">{totalAlerts}</span> alerts
-            </span>
-            <span className="flex items-center gap-1.5 text-text-muted">
-              <Icon name="flag" size={13} className="text-accent" />
-              <span className="font-semibold tabular-nums text-text-primary">{campaigns}</span> campaigns
-            </span>
-          </div>
+        <div className="flex flex-wrap items-center gap-3 border-t border-border-subtle/60 pt-3 font-mono text-[11px] text-text-muted">
+          <span>{fleet?.agents?.length ?? 1} host{fleet?.agents?.length === 1 ? "" : "s"} enrolled</span>
+          <span className="text-text-faint">·</span>
+          <span className="text-risk-clean">{onlineAgents || 1} online</span>
+        </div>
+      </div>
+
+      {/* Detections & Findings */}
+      <div className="flex flex-col justify-between rounded-2xl border border-border-subtle bg-bg-surface/80 p-5 backdrop-blur-md transition-all duration-200 hover:border-risk-suspicious/40">
+        <div className="flex items-center justify-between">
+          <span className="font-mono text-[11px] uppercase tracking-wider text-text-faint">Detection Queue</span>
+          <Link to="/findings" className="font-mono text-[10px] text-accent hover:underline">
+            triage queue →
+          </Link>
+        </div>
+        <div className="my-3 flex items-baseline gap-3">
+          <span className="font-mono text-3xl font-bold tracking-tight text-text-primary">{totalAlerts}</span>
+          <span className="text-xs text-text-muted">active alerts</span>
+        </div>
+        <div className="flex items-center gap-2 border-t border-border-subtle/60 pt-3 font-mono text-[11px]">
+          <span className="inline-flex items-center gap-1 rounded bg-risk-malicious/15 px-2 py-0.5 font-semibold text-risk-malicious">
+            {malicious} critical/malicious
+          </span>
+          <span className="inline-flex items-center gap-1 rounded bg-risk-suspicious/15 px-2 py-0.5 font-semibold text-risk-suspicious">
+            {suspicious} suspicious
+          </span>
+        </div>
+      </div>
+
+      {/* Investigations & Campaigns */}
+      <div className="flex flex-col justify-between rounded-2xl border border-border-subtle bg-bg-surface/80 p-5 backdrop-blur-md transition-all duration-200 hover:border-accent/40 sm:col-span-2 lg:col-span-1">
+        <div className="flex items-center justify-between">
+          <span className="font-mono text-[11px] uppercase tracking-wider text-text-faint">Investigations</span>
+          <Link to="/investigations" className="font-mono text-[10px] text-accent hover:underline">
+            case files →
+          </Link>
+        </div>
+        <div className="my-3 flex items-baseline gap-3">
+          <span className="font-mono text-3xl font-bold tracking-tight text-text-primary">{campaigns}</span>
+          <span className="text-xs text-text-muted">active campaigns</span>
+        </div>
+        <div className="flex items-center justify-between border-t border-border-subtle/60 pt-3 font-mono text-[11px] text-text-muted">
+          <span>{clean} clean baseline runs</span>
+          <span className="text-text-faint">SLA tracked</span>
         </div>
       </div>
     </section>
@@ -113,7 +145,7 @@ function FindingsFeed() {
   };
   const { data: alerts = [], isLoading, isError } = useQuery({
     queryKey: ["alerts", "recent"],
-    queryFn: () => getRecentAlerts(24),
+    queryFn: () => getRecentAlerts(24, "real"),
     refetchInterval: 10_000,
   });
   const { data: meta } = useQuery({ queryKey: ["rules-meta"], queryFn: getRuleMeta, staleTime: Infinity });
@@ -811,7 +843,6 @@ export default function OverviewPage() {
   const { data: campaigns = [] } = useQuery({ queryKey: ["campaigns"], queryFn: () => getCampaigns() });
 
   const totalAlerts = runs.reduce((n, r) => n + r.alert_count, 0);
-  const trendBars = useMemo(() => aggregateTrend(runs), [runs]);
 
   return (
     <div className="mx-auto max-w-[1400px] px-5 py-8 lg:px-8">
@@ -851,73 +882,6 @@ export default function OverviewPage() {
         <IntelFreshness />
       </Deferred>
 
-      {/* Quick SOC Operations Bar */}
-      <div className="my-6 grid grid-cols-2 gap-3.5 sm:grid-cols-4">
-        <Link
-          to="/events"
-          className="group relative flex flex-col justify-between overflow-hidden rounded-2xl border border-border-subtle bg-bg-surface/70 p-4 backdrop-blur-md transition-all duration-200 hover:-translate-y-1 hover:border-accent/60 hover:bg-bg-elevated hover:shadow-[0_12px_24px_-8px_rgba(217,164,65,0.2)]"
-        >
-          <div className="flex items-center justify-between">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-accent/40 bg-accent/15 text-accent shadow-[var(--glow-accent)] transition-transform duration-200 group-hover:scale-110">
-              <Icon name="list" size={18} />
-            </div>
-            <Icon name="arrowRight" size={13} className="text-text-faint transition-transform duration-200 group-hover:translate-x-1 group-hover:text-accent" />
-          </div>
-          <div className="mt-3 min-w-0">
-            <p className="font-sans text-xs font-semibold text-text-primary group-hover:text-accent">Event Manager</p>
-            <p className="mt-0.5 text-[11px] text-text-muted">Live telemetry &amp; SIEM log</p>
-          </div>
-        </Link>
-
-        <Link
-          to="/findings"
-          className="group relative flex flex-col justify-between overflow-hidden rounded-2xl border border-border-subtle bg-bg-surface/70 p-4 backdrop-blur-md transition-all duration-200 hover:-translate-y-1 hover:border-risk-suspicious/60 hover:bg-bg-elevated hover:shadow-[0_12px_24px_-8px_rgba(217,164,65,0.2)]"
-        >
-          <div className="flex items-center justify-between">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-risk-suspicious/40 bg-risk-suspicious/15 text-risk-suspicious shadow-[var(--glow-amber)] transition-transform duration-200 group-hover:scale-110">
-              <Icon name="alert" size={18} />
-            </div>
-            <Icon name="arrowRight" size={13} className="text-text-faint transition-transform duration-200 group-hover:translate-x-1 group-hover:text-risk-suspicious" />
-          </div>
-          <div className="mt-3 min-w-0">
-            <p className="font-sans text-xs font-semibold text-text-primary group-hover:text-risk-suspicious">Findings Queue</p>
-            <p className="mt-0.5 text-[11px] text-text-muted">Triage active detections</p>
-          </div>
-        </Link>
-
-        <Link
-          to="/investigations"
-          className="group relative flex flex-col justify-between overflow-hidden rounded-2xl border border-border-subtle bg-bg-surface/70 p-4 backdrop-blur-md transition-all duration-200 hover:-translate-y-1 hover:border-accent/60 hover:bg-bg-elevated hover:shadow-[0_12px_24px_-8px_rgba(217,164,65,0.2)]"
-        >
-          <div className="flex items-center justify-between">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-accent/40 bg-accent/15 text-accent shadow-[var(--glow-accent)] transition-transform duration-200 group-hover:scale-110">
-              <Icon name="notes" size={18} />
-            </div>
-            <Icon name="arrowRight" size={13} className="text-text-faint transition-transform duration-200 group-hover:translate-x-1 group-hover:text-accent" />
-          </div>
-          <div className="mt-3 min-w-0">
-            <p className="font-sans text-xs font-semibold text-text-primary group-hover:text-accent">Investigations</p>
-            <p className="mt-0.5 text-[11px] text-text-muted">Case management &amp; notes</p>
-          </div>
-        </Link>
-
-        <Link
-          to="/samples"
-          className="group relative flex flex-col justify-between overflow-hidden rounded-2xl border border-border-subtle bg-bg-surface/70 p-4 backdrop-blur-md transition-all duration-200 hover:-translate-y-1 hover:border-border-strong hover:bg-bg-elevated hover:shadow-[0_12px_24px_-8px_rgba(0,0,0,0.4)]"
-        >
-          <div className="flex items-center justify-between">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-border-strong bg-bg-elevated text-text-primary transition-transform duration-200 group-hover:scale-110">
-              <Icon name="box" size={18} />
-            </div>
-            <Icon name="arrowRight" size={13} className="text-text-faint transition-transform duration-200 group-hover:translate-x-1 group-hover:text-text-primary" />
-          </div>
-          <div className="mt-3 min-w-0">
-            <p className="font-sans text-xs font-semibold text-text-primary group-hover:text-text-primary">Sample Vault</p>
-            <p className="mt-0.5 text-[11px] text-text-muted">Binaries &amp; static analysis</p>
-          </div>
-        </Link>
-      </div>
-
       {!isLoading && !isError && runs.length === 0 && (
         <Panel kicker="Telemetry status" title="No telemetry received">
           <div className="py-8 text-center font-mono text-sm text-text-muted">
@@ -938,20 +902,7 @@ export default function OverviewPage() {
       )}
 
       {!isLoading && !isError && runs.length > 0 && (
-        <>
-          <PostureHeader runs={runs} trendBars={trendBars} campaigns={campaigns.length} totalAlerts={totalAlerts} />
-          {/* One-line trend affordance — the analytical bars live in History now. */}
-          <p className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[10px] text-text-faint">
-            <Icon name="activity" size={12} className="text-accent" />
-            <span>Risk timeline &amp; detection volume moved to</span>
-            <Link
-              to="/history"
-              className="press inline-flex items-center gap-1 font-semibold text-accent hover:underline"
-            >
-              History <Icon name="arrowRight" size={11} />
-            </Link>
-          </p>
-        </>
+        <PostureHeader runs={runs} campaigns={campaigns.length} totalAlerts={totalAlerts} />
       )}
       {isLoading && (
         <div className="space-y-4">

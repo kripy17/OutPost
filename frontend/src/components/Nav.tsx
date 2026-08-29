@@ -95,7 +95,7 @@ const GROUPS: { label: string; links: NavItem[] }[] = [
       { to: "/findings", label: "Findings", iconName: "alert" },
       { to: "/agents", label: "Fleet", iconName: "terminal" },
       { to: "/investigations", label: "Investigations", iconName: "notes" },
-      { to: "/search", label: "IOC Search", iconName: "search" },
+      { to: "/search", label: "Search", iconName: "search" },
       { to: "/watchlist", label: "Watchlist", iconName: "star" },
     ],
   },
@@ -147,7 +147,7 @@ function StatusCluster({
   });
 
   const health = useQuery({ queryKey: ["health"], queryFn: getHealth, refetchInterval: 5_000 });
-  const latest = useQuery({ queryKey: ["statusbar", "latest-finding"], queryFn: () => getRecentAlerts(1), refetchInterval: 10_000 });
+  const latest = useQuery({ queryKey: ["statusbar", "latest-finding"], queryFn: () => getRecentAlerts(1, "real"), refetchInterval: 10_000 });
   // The session count mirrors the History page's toggles (synthetic + soak):
   // the status bar reads as real telemetry first, matching the archive
   // default. The 10 s poll picks up toggle changes within a few seconds.

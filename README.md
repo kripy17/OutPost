@@ -112,13 +112,19 @@ docker compose up --build
 
 ## ⌨️ OutPost CLI Reference
 
-The `outpost` command-line utility provides comprehensive SOC operations directly inside your terminal.
+OutPost provides a standalone executable CLI and interactive full-screen TUI. You can run commands directly using `./cli.sh` (Linux / macOS) or `.\cli.ps1` (Windows), or activate the virtualenv:
 
 ```bash
-# Activate the environment
-source .venv/bin/activate
-outpost --help
+# Launch interactive SOC Terminal TUI
+./cli.sh console
+
+# Or run any command directly
+./cli.sh --help
+./cli.sh watch
+./cli.sh alerts
 ```
+
+Alternatively, with the virtual environment activated (`source .venv/bin/activate`):
 
 ### 1. Live Telemetry & Fleet Operations
 ```bash

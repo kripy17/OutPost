@@ -616,7 +616,7 @@ function BaselinePanel({ agents }: { agents: AgentInfo[] }) {
         <p className="py-3 text-center text-sm text-text-muted">
           No host has crossed the baseline gate yet — a host must ship{" "}
           <code className="rounded bg-bg-elevated px-1.5 py-0.5 font-mono text-[11px]">
-            BASELINE_MIN_EVENTS
+            50
           </code>{" "}
           observations before first-times start firing.
         </p>

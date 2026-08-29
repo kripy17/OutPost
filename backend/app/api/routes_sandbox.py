@@ -139,55 +139,50 @@ async def detonate_dynamic(body: SandboxDetonateIn) -> dict:
 @router.get("/sandbox/playbooks", response_model=None)
 def get_playbooks() -> list[dict]:
     """List curated attack scenario playbooks for testing and demonstration."""
-    return sandbox_service.list_playbooks()
+    from ..services.dynamic_sandbox import SIMULATION_SCENARIOS
+
+    scenarios = []
+    seen = set()
+    for s in SIMULATION_SCENARIOS.values():
+        if s["id"] in seen:
+            continue
+        seen.add(s["id"])
+        scenarios.append({
+            "id": s["id"],
+            "name": s["name"],
+            "severity": s["severity"],
+            "platform": s["platform"],
+            "description": s["description"],
+            "techniques": s["techniques"],
+            "stages_count": len(s["stages"]),
+        })
+    return scenarios
 
 
 class PlaybookDetonateIn(BaseModel):
     playbook_id: str
+    mode: str = "live"
 
 
 @router.post("/sandbox/detonate/playbook", status_code=201, response_model=None)
 async def detonate_playbook(body: PlaybookDetonateIn) -> dict:
-    """Detonate a curated attack scenario playbook and push telemetry into a fresh run."""
-    playbooks = {p["id"]: p for p in sandbox_service.list_playbooks()}
-    playbook = playbooks.get(body.playbook_id)
-    if not playbook:
-        raise HTTPException(status_code=404, detail=f"Unknown playbook_id: {body.playbook_id}")
+    """Detonate a curated attack scenario playbook live with real subprocess execution and telemetry streaming."""
+    from ..services.dynamic_sandbox import SIMULATION_SCENARIOS, execute_simulation_scenario_live
 
-    run_id = sandbox_service.create_run_id()
-    platform: Platform = playbook["platform"]
-    sample_name = f"{playbook['id']}.exe" if platform == "windows" else f"{playbook['id']}.elf"
+    if body.playbook_id not in SIMULATION_SCENARIOS:
+        # Fallback if unknown
+        valid_keys = list(SIMULATION_SCENARIOS.keys())
+        playbook_key = valid_keys[0]
+    else:
+        playbook_key = body.playbook_id
 
-    with db_session() as conn:
-        run_store.create_run(
-            conn,
-            run_id=run_id,
-            sample_name=sample_name,
-            platform=platform,
-            session_type="analysis",
-            source=f"playbook:{playbook['id']}",
-        )
+    result = await execute_simulation_scenario_live(playbook_key)
+    return result
 
-    base = datetime.datetime.now(datetime.timezone.utc)
-    events = sandbox_service.demo_events(run_id, platform, sample_name, base, scenario_id=body.playbook_id)
 
-    with db_session() as conn:
-        for ev in events:
-            event_store.insert_event(conn, ev)
-        new_alerts = detection.evaluate_batch(conn, run_id, events)
-        run_store.complete_run(conn, run_id)
-        summary = run_store.to_summary(conn, run_store.get_run(conn, run_id))
+@router.post("/sandbox/simulate/live", status_code=201, response_model=None)
+async def simulate_live_scenario(body: PlaybookDetonateIn) -> dict:
+    """Execute live simulation with terminal output and event generation."""
+    from ..services.dynamic_sandbox import execute_simulation_scenario_live
 
-    from ..services import events_stream
-    events_stream.publish_alerts(new_alerts)
-
-    return {
-        "run_id": run_id,
-        "playbook_id": playbook["id"],
-        "name": playbook["name"],
-        "platform": platform,
-        "event_count": len(events),
-        "alert_count": len(new_alerts),
-        "risk_score": summary.risk_score,
-        "highest_severity": summary.highest_severity,
-    }
+    return await execute_simulation_scenario_live(body.playbook_id)

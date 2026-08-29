@@ -42,6 +42,7 @@ from .api.routes_samples import router as samples_router
 from .api.routes_sandbox import router as sandbox_router
 from .api.routes_search import router as search_router
 from .api.routes_setup import router as setup_router
+from .api.routes_system_xray import router as system_xray_router
 from .api.routes_watchlist import router as watchlist_router
 from .api.routes_yara import router as yara_router
 from .core import auth as auth_service
@@ -171,5 +172,6 @@ app.include_router(notifications_router)
 app.include_router(yara_router)
 app.include_router(sandbox_router)
 app.include_router(agents_router)
+app.include_router(system_xray_router)
 app.include_router(audit_router)
 app.include_router(admin_router)
