@@ -29,8 +29,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from ..core import auth
-from ..core.config import DATA_DIR, DATABASE_PATH, DATABASE_URL
+from ..core import auth, config
 from ..core.db import _backfill_events_log_source, db_session, init_db
 from ..models import audit
 from ..models import iocs as iocs_store
@@ -270,7 +269,7 @@ def _prune_old_backups(keep: int = 5) -> int:
     """Keep only the most recent N backup files in data/, removing older ones."""
     try:
         backups = sorted(
-            [p for p in DATA_DIR.glob("outpost-backup-*.db") if p.is_file()],
+            [p for p in config.DATA_DIR.glob("outpost-backup-*.db") if p.is_file()],
             key=lambda p: p.stat().st_mtime,
             reverse=True,
         )
@@ -291,13 +290,13 @@ def backup(request: Request) -> FileResponse:
     """Stream a consistent SQLite backup (the online-backup API, safe while
     the server is running). Named outpost-backup-<ts>.db for restores."""
     _actor(request)  # requires a valid session when auth is on
-    if DATABASE_URL:
+    if config.DATABASE_URL:
         raise HTTPException(
             status_code=400,
             detail="Backup is SQLite-only — on a Postgres deployment use pg_dump (docs/16).",
         )
-    tmp = DATA_DIR / f"outpost-backup-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}.db"
-    src = sqlite3.connect(DATABASE_PATH)
+    tmp = config.DATA_DIR / f"outpost-backup-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}.db"
+    src = sqlite3.connect(config.DATABASE_PATH)
     dst = sqlite3.connect(tmp)
     with dst:
         src.backup(dst)
@@ -319,26 +318,26 @@ async def restore(request: Request) -> dict:
     re-initialized (idempotent migrations) on the restored store."""
     actor = _require_admin(request)
     data = await request.body()
-    if DATABASE_URL:
+    if config.DATABASE_URL:
         raise HTTPException(
             status_code=400,
             detail="Restore is SQLite-only — on a Postgres deployment use pg_restore (docs/16).",
         )
     if not data.startswith(_SQLITE_MAGIC):
         raise HTTPException(status_code=422, detail="Not a SQLite database file")
-    db_path = Path(DATABASE_PATH)
+    db_path = Path(config.DATABASE_PATH)
     original = db_path.read_bytes() if db_path.exists() else b""
 
     # Checkpoint + close current state so the swap is clean (no stray -wal).
     try:
-        with sqlite3.connect(DATABASE_PATH) as c:
+        with sqlite3.connect(config.DATABASE_PATH) as c:
             c.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     except sqlite3.Error:
         pass  # journal mode may not be WAL — the file copy below is still fine
 
     # Safety copy of the pre-restore store (copy, not move — the live DB stays
     # in place until the new bytes are written; a failed swap never orphans it).
-    safety = DATA_DIR / f"outpost-backup-pre-restore-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}.db"
+    safety = config.DATA_DIR / f"outpost-backup-pre-restore-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}.db"
     if original:
         safety.write_bytes(original)
     for suffix in ("-wal", "-shm"):

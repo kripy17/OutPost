@@ -192,7 +192,7 @@ class OutPostTUI:
             ("5", "Hosts", "Connected fleet collectors, heartbeat health, host timeline"),
             ("6", "Campaigns", "Auto-clustered campaigns sharing C2 infrastructure"),
             ("7", "Reports", "Run summaries, Sigma/Suricata rule synthesis, STIX bundles"),
-            ("8", "Detection Rules", "37 explainable heuristics across 14 MITRE ATT&CK tactics"),
+            ("8", "Detection Rules", "38 explainable heuristics across 14 MITRE ATT&CK tactics"),
             ("9", "Settings", "Local monitor status, threat intel keys, system health"),
         ]
 
@@ -204,7 +204,7 @@ class OutPostTUI:
             "hosts": ["Online Fleet", "Collector Heartbeats", "Host Activity Timeline"],
             "campaigns": ["Campaign Clusters", "Shared C2 Infrastructure", "Evidence Graph"],
             "reports": ["Session Reports", "Synthesize Detection Suite", "STIX 2.1 Bundles"],
-            "rules": ["37 Heuristic Rules", "ATT&CK Coverage Matrix", "YARA Signatures"],
+            "rules": ["38 Heuristic Rules", "ATT&CK Coverage Matrix", "YARA Signatures"],
             "settings": ["Local Monitor Daemon", "Threat Intel Keys", "System Health & DB"],
         }
 
@@ -224,6 +224,7 @@ class OutPostTUI:
 
                 key = _get_key()
                 self.handle_input(key)
+                self.status_msg = ''
             except KeyboardInterrupt:
                 self.running = False
             except Exception as exc:
@@ -309,6 +310,139 @@ class OutPostTUI:
                 self.detail_selected += 1
             elif key == "enter":
                 self.handle_detail_enter()
+            else:
+                self._handle_action(key)
+
+    def _pause_for_action(self) -> None:
+        """Pause after a write action so the user sees the result."""
+        console.input("[dim]Press Enter to continue…[/dim]")
+
+    def _handle_action(self, key: str) -> None:
+        """View-specific write actions — makes the TUI an operator console."""
+        view = self.active_sub_view or ""
+        screen = self.current_screen
+
+        # ── Findings: triage + allowlist ──
+        if screen == "monitor" and view == "Findings":
+            alerts = _safe_get_alerts()
+            if not alerts or self.detail_selected >= len(alerts):
+                self.status_msg = "No finding selected."
+                return
+            alert = alerts[self.detail_selected]
+            alert_id = alert.get("id")
+            if key == "t":
+                transitions = {"open": "acknowledged", "acknowledged": "resolved", "resolved": "open"}
+                nxt = transitions.get(alert.get("status", "open"), "acknowledged")
+                try:
+                    api_client.update_alert_status(alert_id, nxt)
+                    self.status_msg = f"Alert {alert_id} → {nxt}"
+                except Exception as exc:
+                    self.status_msg = f"Triage failed: {exc}"
+            elif key == "a":
+                ip = alert.get("related_ip") or ""
+                if ip:
+                    try:
+                        api_client.add_run_allowlist(alert.get("run_id", ""), "ip", ip)
+                        self.status_msg = f"Allowlisted {ip}"
+                    except Exception as exc:
+                        self.status_msg = f"Allowlist failed: {exc}"
+                else:
+                    self.status_msg = "No related IP on this finding."
+
+        # ── Sample Vault: detonate ──
+        elif screen == "analyze" and view in ("Sample Vault", "Static Inspection"):
+            samples = _safe_get_samples()
+            if not samples or self.detail_selected >= len(samples):
+                self.status_msg = "No sample selected."
+                return
+            sample = samples[self.detail_selected]
+            if key == "d":
+                sid = sample.get("sample_id", "")
+                self.status_msg = f"Detonating {sample.get('name', sid)[:20]}…"
+                try:
+                    res = api_client._post("/sandbox/detonate/dynamic", {"sample_id": sid})
+                    self.selected_run_id = res.get("run_id", "")
+                    self.current_screen = "run_detail"
+                    self.status_msg = f"Detonated — verdict: {res.get('verdict', '?')}"
+                except Exception as exc:
+                    self.status_msg = f"Detonation failed: {exc}"
+
+        # ── Watchlist: add / remove ──
+        elif screen == "iocs" and view == "Threat Watchlist":
+            watchlist = _safe_get_watchlist()
+            if key == "a":
+                try:
+                    value = console.input("[bold]IOC value to watchlist:[/bold] ").strip()
+                    if value:
+                        label = console.input("[bold]Label (optional):[/bold] ").strip()
+                        api_client.watchlist_add(value, label)
+                        self.status_msg = f"Added {value} to watchlist."
+                except (Exception, KeyboardInterrupt, EOFError):
+                    self.status_msg = "Watchlist add canceled."
+            elif key == "x":
+                if watchlist and self.detail_selected < len(watchlist):
+                    entry = watchlist[self.detail_selected]
+                    try:
+                        api_client.watchlist_remove(entry["value"])
+                        self.status_msg = f"Removed {entry['value']} from watchlist."
+                    except Exception as exc:
+                        self.status_msg = f"Remove failed: {exc}"
+
+        # ── Investigations: create / close ──
+        elif screen == "investigate":
+            invs = _safe_get_investigations()
+            if key == "n":
+                try:
+                    title = console.input("[bold]Case title:[/bold] ").strip()
+                    if title:
+                        res = api_client.create_investigation(title)
+                        self.status_msg = f"Created case {res.get('id', '?')[:12]}"
+                except (Exception, KeyboardInterrupt, EOFError):
+                    self.status_msg = "Case creation canceled."
+            elif key == "c" and invs and self.detail_selected < len(invs):
+                inv = invs[self.detail_selected]
+                inv_id = inv.get("id", "")
+                if inv.get("status") not in ("closed",):
+                    try:
+                        conclusion = console.input("[bold]Conclusion:[/bold] ").strip()
+                        if conclusion:
+                            api_client.close_investigation(inv_id, conclusion)
+                            self.status_msg = f"Closed case {inv_id[:12]}"
+                    except (Exception, KeyboardInterrupt, EOFError):
+                        self.status_msg = "Close canceled."
+
+        # ── Reports: export ──
+        elif screen == "reports" and key == "e":
+            runs = _safe_get_runs()
+            if runs and self.detail_selected < len(runs):
+                rid = runs[self.detail_selected]["run_id"]
+                try:
+                    api_client.export_run(rid)
+                    self.status_msg = f"Exported report for {rid[:12]}"
+                except Exception as exc:
+                    self.status_msg = f"Export failed: {exc}"
+
+        # ── Run Detail: triage alerts + export ──
+        elif screen == "run_detail":
+            if key == "t":
+                try:
+                    detail = api_client.get_run(self.selected_run_id or "")
+                    alerts = detail.get("alerts", [])
+                    if alerts:
+                        for a in alerts:
+                            if a.get("status") == "open":
+                                api_client.update_alert_status(a["id"], "acknowledged")
+                        self.status_msg = f"Acknowledged {len(alerts)} open alert(s)."
+                    else:
+                        self.status_msg = "No open alerts."
+                except Exception as exc:
+                    self.status_msg = f"Triage failed: {exc}"
+            elif key == "e":
+                try:
+                    api_client.export_run(self.selected_run_id or "")
+                    self.status_msg = "Report exported."
+                except Exception as exc:
+                    self.status_msg = f"Export failed: {exc}"
 
     def enter_category(self):
         screen_map = [
@@ -498,7 +632,7 @@ class OutPostTUI:
                         style="reverse" if is_sel else None,
                     )
                 console.print(Panel(table, title=header, box=ROUNDED, border_style="#3FA796"))
-                console.print(Align.center(Text.from_markup("[dim][↑↓] Navigate   [Enter] Open Process Tree & Alerts   [b/Esc] Back[/dim]")))
+                console.print(Align.center(Text.from_markup(f"[dim][↑↓] Navigate  [Enter] Open  [b/Esc] Back  {self.status_msg}[/dim]")))
 
             elif view_name == "Findings":
                 alerts = _safe_get_alerts()
@@ -525,7 +659,7 @@ class OutPostTUI:
                         style="reverse" if is_sel else None,
                     )
                 console.print(Panel(table, title=header, box=ROUNDED, border_style="#3FA796"))
-                console.print(Align.center(Text.from_markup("[dim][↑↓] Navigate   [b/Esc] Back[/dim]")))
+                console.print(Align.center(Text.from_markup(f"[dim][↑↓] Navigate  [t] Triage  [a] Allowlist  [b/Esc] Back  {self.status_msg}[/dim]")))
 
             elif view_name == "Hosts":
                 self.render_hosts_table()
@@ -583,7 +717,7 @@ class OutPostTUI:
                         s.get("family") or "clean",
                     )
                 console.print(Panel(table, title=header, box=ROUNDED, border_style="#3FA796"))
-                console.print(Align.center(Text.from_markup("[dim][b/Esc] Back to Analyze[/dim]")))
+                console.print(Align.center(Text.from_markup(f"[dim][d] Detonate  [b/Esc] Back  {self.status_msg}[/dim]")))
 
         elif self.current_screen == "investigate":
             invs = _safe_get_investigations()
@@ -601,7 +735,7 @@ class OutPostTUI:
                     Text(sev.upper(), style=SEVERITY_STYLE.get(sev, "white")),
                 )
             console.print(Panel(table, title=header, box=ROUNDED, border_style="#3FA796"))
-            console.print(Align.center(Text.from_markup("[dim][b/Esc] Back to Investigate[/dim]")))
+            console.print(Align.center(Text.from_markup(f"[dim][n] New Case  [c] Close  [b/Esc] Back  {self.status_msg}[/dim]")))
 
         elif self.current_screen == "iocs":
             watchlist = _safe_get_watchlist()
@@ -612,7 +746,7 @@ class OutPostTUI:
             for w in watchlist[:10]:
                 table.add_row(w.get("value", ""), w.get("label", ""), str(w.get("created_at", ""))[:10])
             console.print(Panel(table, title=header, box=ROUNDED, border_style="#3FA796"))
-            console.print(Align.center(Text.from_markup("[dim][b/Esc] Back to IOCs[/dim]")))
+            console.print(Align.center(Text.from_markup(f"[dim][a] Add  [x] Remove  [b/Esc] Back  {self.status_msg}[/dim]")))
 
         elif self.current_screen == "hosts":
             self.render_hosts_table()
@@ -626,7 +760,7 @@ class OutPostTUI:
             for c in campaigns[:8]:
                 table.add_row(c.get("key", ""), c.get("signature_ip") or "None", str(len(c.get("runs", []))))
             console.print(Panel(table, title=header, box=ROUNDED, border_style="#3FA796"))
-            console.print(Align.center(Text.from_markup("[dim][b/Esc] Back to Campaigns[/dim]")))
+            console.print(Align.center(Text.from_markup(f"[dim][b/Esc] Back  {self.status_msg}[/dim]")))
 
         elif self.current_screen == "reports":
             runs = _safe_get_runs()
@@ -648,11 +782,11 @@ class OutPostTUI:
                     style="reverse" if is_sel else None,
                 )
             console.print(Panel(table, title=header, box=ROUNDED, border_style="#3FA796"))
-            console.print(Align.center(Text.from_markup("[dim][Enter] View Session & Synthesize Rules   [b/Esc] Back[/dim]")))
+            console.print(Align.center(Text.from_markup(f"[dim][Enter] View  [e] Export  [b/Esc] Back  {self.status_msg}[/dim]")))
 
         elif self.current_screen == "rules":
             rules = _safe_get_rules_meta()
-            table = Table(title="37 Heuristic Rules across 14 ATT&CK Tactics", box=ROUNDED, border_style="dim", expand=True)
+            table = Table(title="38 Heuristic Rules across 14 ATT&CK Tactics", box=ROUNDED, border_style="dim", expand=True)
             table.add_column("Rule ID", style="bold cyan", width=24)
             table.add_column("Rule Name", style="white")
             table.add_column("Tactic", style="bold yellow", width=18)
@@ -665,7 +799,7 @@ class OutPostTUI:
                     r.get("technique", ""),
                 )
             console.print(Panel(table, title=header, box=ROUNDED, border_style="#3FA796"))
-            console.print(Align.center(Text.from_markup("[dim][b/Esc] Back to Rules[/dim]")))
+            console.print(Align.center(Text.from_markup(f"[dim][b/Esc] Back  {self.status_msg}[/dim]")))
 
         elif self.current_screen == "settings":
             body = (
@@ -675,7 +809,7 @@ class OutPostTUI:
                 "[bold]Rule Synthesis Studio:[/bold] Ready (Sigma / Suricata / YARA)\n"
             )
             console.print(Panel(Text.from_markup(body), box=ROUNDED, border_style="dim"))
-            console.print(Align.center(Text.from_markup("[dim][b/Esc] Back to Menu[/dim]")))
+            console.print(Align.center(Text.from_markup(f"[dim][b/Esc] Back  {self.status_msg}[/dim]")))
 
     def render_hosts_table(self):
         fleet = _safe_get_fleet()
@@ -694,7 +828,7 @@ class OutPostTUI:
                 intel_age(h.get("last_seen")),
             )
         console.print(table)
-        console.print(Align.center(Text.from_markup("[dim][b/Esc] Back to Menu[/dim]")))
+        console.print(Align.center(Text.from_markup(f"[dim][b/Esc] Back  {self.status_msg}[/dim]")))
 
     def render_run_detail(self):
         if not self.selected_run_id:
@@ -739,5 +873,5 @@ class OutPostTUI:
             if network:
                 console.print(Panel(render_network_table(network[:6]), title="Network Sockets & Threat Reputation", box=ROUNDED, border_style="dim"))
 
-            console.print(Align.center(Text.from_markup("[bold cyan][g] Synthesize Sigma/Suricata/YARA Rules[/bold cyan]   [dim][b/Esc] Back to Sessions[/dim]")))
+            console.print(Align.center(Text.from_markup(f"[bold cyan][g] Synthesize Rules[/bold cyan]  [t] Triage  [e] Export  [dim][b/Esc] Back  {self.status_msg}[/dim]")))
 

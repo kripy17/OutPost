@@ -208,7 +208,9 @@ LOLBIN_SUSPICIOUS_PATTERNS = {
         (r"(IEX\s*\()|(Invoke-Expression)", "PowerShell inline expression / download cradle"),
         (r"(New-Object).*(Net\.WebClient|Net\.HttpClient)", "PowerShell WebClient download cradle"),
         (r"Invoke-WebRequest", "PowerShell Invoke-WebRequest (download cradle)"),
-        (r"certutil.*-urlcache|-decode", "certutil abused for download/decode (LOLBin)"),
+        # Alternation scoped to certutil — a bare `-decode` branch used to
+        # fire on ANY command containing it (e.g. `openssl base64 -decode`).
+        (r"certutil[^\n]*(-urlcache|-decode)", "certutil abused for download/decode (LOLBin)"),
         (r"bitsadmin\s+/transfer", "bitsadmin abused for download (LOLBin)"),
         (r"wmic\s+process\s+call\s+create", "wmic executing a remote process (LOLBin)"),
         (r"msiexec\s+/i\s+http", "msiexec installing a remote MSI (LOLBin)"),
@@ -313,10 +315,10 @@ BEACON_VARIANCE_THRESHOLD = 5.0  # seconds std-dev of intervals
 BEACON_MIN_INTERVAL_SECONDS = 1.0
 
 # Destinations that can never beacon: unspecified (0.0.0.0 — also the
-# collector's IPv6-parse artifact), loopback, multicast, and link-local.
-# Local dev traffic (frontend → backend on 127.0.0.1) is exactly the kind of
-# regular-interval polling that false-positives the rule (soak FP: 5 conns to
-# 127.0.0.1:8001 and 6 to 0.0.0.0:8001 fired).
+# collector's IPv6-parse artifact), loopback, multicast, link-local, and the
+# RFC1918 private ranges — internal traffic (10.x, 172.16/12, 192.168) is
+# lateral/topology, not external C2, and polling a private peer at regular
+# intervals is exactly what soak runs showed as benign.
 _BEACON_EXCLUDED_NETS = [
     ipaddress.ip_network("0.0.0.0/8"),      # "this network" / parse artifact
     ipaddress.ip_network("127.0.0.0/8"),    # loopback
@@ -324,6 +326,9 @@ _BEACON_EXCLUDED_NETS = [
     ipaddress.ip_network("::/128"),         # IPv6 unspecified
     ipaddress.ip_network("224.0.0.0/4"),    # multicast
     ipaddress.ip_network("169.254.0.0/16"), # link-local
+    ipaddress.ip_network("10.0.0.0/8"),     # RFC1918 private
+    ipaddress.ip_network("172.16.0.0/12"),  # RFC1918 private
+    ipaddress.ip_network("192.168.0.0/16"), # RFC1918 private
 ]
 
 
@@ -1215,11 +1220,13 @@ _ARCHIVER_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Upload / exfil command signatures (curl --upload-file / -T / -F / -Tfile
-# no-space forms, scp/rsync to a remote, nc/ncat pushing data out — both the
-# `< file` redirect and the classic `cat file | nc` pipe).
+# Upload / exfil command signatures (curl --upload-file / -T / --data-binary,
+# scp/rsync to a remote, nc/ncat pushing data out — both the `< file` redirect
+# and the classic `cat file | nc` pipe). The curl flags are whitespace-anchored
+# and flag-shaped: an unanchored `-T` used to match inside ordinary headers and
+# options (`-H "Content-Type: …"`, `--connect-timeout`) under IGNORECASE.
 _UPLOAD_RE = re.compile(
-    r"\bcurl\b[^\n]*(--upload-file|-T|-F|--data-binary)|"
+    r"\bcurl\b[^\n]*(\s--upload-file(\s|=)|\s--data-binary(\s|=)|\s-T\s*[^-\s]|\s-F\s*[^\n]*@)|"
     r"\bscp\b[^\n]+\b@\b|\bsftp\b|\brsync\b[^\n]+\b@\b|"
     r"\b(nc|ncat)\b[^\n]*<|\b(cat|dd)\s+[^\n]*\|\s*(nc|ncat)\b",
     re.IGNORECASE,
@@ -2017,8 +2024,11 @@ def check_tls_sni_suspicious(event: dict) -> Alert | None:
         "727dd56e522b3bde61704234766e1491",  # Metasploit default HTTPS payload
         "b32309a26951912be7dba376398abc3b",  # PoshC2 standard client hello
     }:
+        # Own rule_id: a `malicious` severity under tls-sni-suspicious (whose
+        # RULE_META weight/severity is suspicious) drifted the Navigator and
+        # coverage chips away from what findings actually rendered.
         return _make_alert(
-            event["run_id"], "tls-sni-suspicious",
+            event["run_id"], "tls-ja3-c2",
             "Known C2 TLS client handshake (JA3 fingerprint)",
             "malicious", event,
             f"TLS client hello matched known C2 framework JA3 hash: {ja3}",

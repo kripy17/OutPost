@@ -182,13 +182,15 @@ RULE_META: dict[str, RuleMeta] = {
         "severity": "suspicious",
     },
     "lateral-smb-share": {
-        "technique": "T1021.001",
+        # T1135 Network Share Discovery — T1021.001 is the RDP technique.
+        "technique": "T1135",
         "tactic": "Lateral Movement",
         "weight": 8,
         "severity": "suspicious",
     },
     "rdp-brute-force": {
-        "technique": "T1021.001",
+        # The behavior is password guessing against RDP, not the service use.
+        "technique": "T1110.001",
         "tactic": "Lateral Movement",
         "weight": 14,
         "severity": "suspicious",
@@ -218,7 +220,9 @@ RULE_META: dict[str, RuleMeta] = {
         "severity": "suspicious",
     },
     "dns-unusual-port": {
-        "technique": "T1071.004",
+        # Non-standard DNS port — T1571 (Non-Standard Port); T1071.004
+        # duplicated dns-tunneling's technique for a different behavior.
+        "technique": "T1571",
         "tactic": "Command and Control",
         "weight": 8,
         "severity": "suspicious",
@@ -228,6 +232,14 @@ RULE_META: dict[str, RuleMeta] = {
         "tactic": "Command and Control",
         "weight": 12,
         "severity": "suspicious",
+    },
+    "tls-ja3-c2": {
+        # Known-C2 JA3 fingerprint split out of tls-sni-suspicious so the
+        # malicious severity matches RULE_META (Navigator/coverage parity).
+        "technique": "T1071.001",
+        "tactic": "Command and Control",
+        "weight": 25,
+        "severity": "malicious",
     },
     "doh-resolver-use": {
         "technique": "T1071.004",
@@ -258,6 +270,79 @@ def compute_risk_score(rule_ids: list[str]) -> int:
     """
     total = sum(RULE_META.get(rid, {}).get("weight", 0) for rid in set(rule_ids))
     return min(100, total)
+
+
+def risk_breakdown(rule_ids: list[str]) -> dict:
+    """Per-rule contribution to the run's risk score ("why this scored N").
+
+    Returns {items: [{rule_id, rule_name, weight, technique, tactic}],
+    total, capped}. Mirrors compute_risk_score's distinct-rule summation
+    exactly: same set semantics, same weights, same cap — so breakdown sums
+    always reconcile with the headline score (capped entries are scaled,
+    not hidden).
+    """
+    distinct = sorted(set(rule_ids))
+    items = [
+        {
+            "rule_id": rid,
+            "rule_name": rule_name(rid),
+            "weight": RULE_META.get(rid, {}).get("weight", 0),
+            "technique": RULE_META.get(rid, {}).get("technique"),
+            "tactic": RULE_META.get(rid, {}).get("tactic"),
+        }
+        for rid in distinct
+    ]
+    raw_total = sum(item["weight"] for item in items)
+    if raw_total > 100:
+        # The cap kicked in — scale each contribution so the parts still add
+        # up to what the run actually scored, and say so explicitly.
+        factor = 100 / raw_total
+        for item in items:
+            item["weight"] = round(item["weight"] * factor)
+        return {"items": items, "total": 100, "capped": True}
+    return {"items": items, "total": raw_total, "capped": False}
+
+
+# ATT&CK technique names for everything RULE_META references — lets every
+# surface render "T1547.001 · Registry Run Keys" without a MITRE lookup.
+ATTACK_TECHNIQUE_NAMES: dict[str, str] = {
+    "T1003.001": "OS Credential Dumping: LSASS Memory",
+    "T1021.001": "Remote Services: Remote Desktop Protocol",
+    "T1021.002": "Remote Services: SMB/Admin Shares",
+    "T1021.006": "Remote Services: Windows Remote Management",
+    "T1036.003": "Masquerading: Rename System Utilities",
+    "T1036.005": "Masquerading: Match Legitimate Name or Location",
+    "T1048": "Exfiltration Over Alternative Protocol",
+    "T1053.005": "Scheduled Task/Job: Cron",
+    "T1059": "Command and Scripting Interpreter",
+    "T1070.001": "Indicator Removal: Clear Windows Event Logs",
+    "T1070.003": "Indicator Removal: Clear Command History",
+    "T1071.001": "Application Layer Protocol: Web Protocols",
+    "T1071.004": "Application Layer Protocol: DNS",
+    "T1082": "System Information Discovery",
+    "T1098.004": "Account Manipulation: SSH Authorized Keys",
+    "T1110.001": "Brute Force: Password Guessing",
+    "T1113": "Screen Capture",
+    "T1135": "Network Share Discovery",
+    "T1204": "User Execution",
+    "T1204.002": "User Execution: Malicious File",
+    "T1486": "Data Encrypted for Impact",
+    "T1547": "Boot or Logon Autostart Execution",
+    "T1547.001": "Registry Run Keys / Startup Folder",
+    "T1548.001": "Abuse Elevation Control Mechanism: Setuid and Setgid",
+    "T1566.002": "Phishing: Spearphishing Link",
+    "T1568.002": "Dynamic Resolution: Domain Generation Algorithms",
+    "T1571": "Non-Standard Port",
+    "T1587.001": "Develop Capabilities: Malware",
+    "T1595": "Active Scanning",
+}
+
+
+def technique_name(technique_id: str | None) -> str | None:
+    """MITRE name for a technique id; None when unknown (rendered as bare id)."""
+    if not technique_id:
+        return None
+    return ATTACK_TECHNIQUE_NAMES.get(technique_id)
 
 
 # Human rule names mirror detection.py's alert titles (single source of truth

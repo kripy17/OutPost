@@ -1,9 +1,13 @@
 """Dynamic Execution Sandbox & Process Tracing Service.
 
-Executes suspicious artifacts, scripts, and binaries within an isolated
-temporary directory with bounded execution timeouts and process tracking.
-Extracts real execution telemetry, maps process trees, network calls,
-and evaluates OutPost behavioral detection rules against real activity.
+Executes suspicious artifacts, scripts, and binaries inside a throwaway
+temporary directory with a bounded execution timeout, a sanitized payload
+filename (traversal-proof), and a minimal child environment (no operator
+secrets leak to the sample). This is containment hygiene, NOT strong
+isolation: for real isolation run OutPost inside a container/VM or dispatch
+to an external provider. Extracts execution telemetry, maps process trees,
+network calls, and evaluates OutPost behavioral detection rules against
+real activity.
 """
 
 import asyncio
@@ -23,7 +27,7 @@ from ..core.db import db_session
 from ..models import event as event_store
 from ..models import run as run_store
 from ..models import samples as samples_store
-from ..services import detection, killchain, process_tree, risk
+from ..services import detection, killchain, process_tree, risk, screenshots
 
 
 def detect_runner(data: bytes, filename: str) -> list[str] | None:
@@ -87,6 +91,12 @@ async def execute_and_trace(
         raise ValueError(f"Sample {sample_id} not found in vault")
 
     sample_name = sample.get("original_name") or sample.get("name") or "sample.bin"
+    # Defense-in-depth: never trust an operator-supplied filename for path
+    # joins. Strip to the bare basename and reject traversal-shaped names so
+    # the payload can only ever land inside the mkdtemp cage below.
+    payload_name = Path(sample_name).name
+    if not payload_name or payload_name in {".", ".."} or "/" in sample_name or "\\" in sample_name:
+        payload_name = "sample.bin"
     sample_plat = sample.get("detected_platform") or sample.get("platform") or platform.system().lower()
 
     raw_bytes = None
@@ -113,12 +123,17 @@ async def execute_and_trace(
             source="sandbox_dynamic",
         )
 
-    runner = detect_runner(raw_bytes, sample_name)
+    runner = detect_runner(raw_bytes, payload_name)
     if runner is None:
         runner = []
 
     sandbox_dir = Path(tempfile.mkdtemp(prefix=f"outpost_sandbox_{run_id}_"))
-    target_file = sandbox_dir / sample_name
+    target_file = sandbox_dir / payload_name
+
+    # Periodic screen capture while the detonation runs (docs/10 #4). A no-op
+    # unless OUTPOST_SCREENSHOT_CMD is configured — reported honestly either way.
+    shot_session = screenshots.ScreenshotSession(run_id)
+    shot_session.start()
 
     events_batch: list[dict[str, Any]] = []
     stdout_data = ""
@@ -160,18 +175,131 @@ async def execute_and_trace(
         })
 
         try:
+            # Minimal environment: the detonated sample is untrusted code, so
+            # it must never inherit operator secrets (intel API keys, sandbox
+            # provider credentials, notification webhooks).
+            child_env: dict[str, str] = {
+                key: os.environ[key]
+                for key in ("PATH", "LANG", "LC_ALL", "TMPDIR", "HOME", "SYSTEMROOT", "COMSPEC", "WINDIR")
+                if key in os.environ
+            }
+            child_env["OUTPOST_SANDBOX"] = "1"
+            child_env["OUTPOST_RUN_ID"] = run_id
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 cwd=str(sandbox_dir),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                env={
-                    **os.environ,
-                    "OUTPOST_SANDBOX": "1",
-                    "OUTPOST_RUN_ID": run_id,
-                },
+                env=child_env,
             )
             main_pid = proc.pid
+
+            # ── Real-time /proc telemetry ──────────────────────────────────
+            # Poll /proc for child processes and network connections while
+            # the sample runs — captures what a parent process can't see.
+            stop_monitoring = asyncio.Event()
+
+            # Snapshot the system's pre-existing TCP connections BEFORE the
+            # sample starts so only NEW connections are reported (otherwise
+            # the monitor floods with unrelated browser/system traffic).
+            _pre_existing_conns: set[str] = set()
+            try:
+                with open("/proc/net/tcp") as _fh:  # noqa: ASYNC230
+                    for _line in _fh.readlines()[1:]:
+                        _parts = _line.split()
+                        if len(_parts) >= 4:
+                            _pre_existing_conns.add(_parts[2])
+            except OSError:
+                pass
+
+            async def _monitor() -> None:
+                """Sample /proc for child processes + new TCP connections."""
+                seen_pids: set[int] = {main_pid}
+                seen_conns: set[str] = set(_pre_existing_conns)
+                while not stop_monitoring.is_set():
+                    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                    # ── Child processes via /proc/<pid>/task/<pid>/children ──
+                    # This kernel-provided file lists direct children — much
+                    # faster than scanning all of /proc.
+                    try:
+                        children_path = f"/proc/{main_pid}/task/{main_pid}/children"
+                        with open(children_path) as fh:  # noqa: ASYNC230
+                            child_pids = [int(x) for x in fh.read().split()]
+                    except (OSError, ValueError):
+                        child_pids = []
+                    for proc_pid in child_pids:
+                        if proc_pid in seen_pids:
+                            continue
+                        seen_pids.add(proc_pid)
+                        # Read identity immediately — short-lived processes
+                        # vanish between the children listing and the read.
+                        cmdline, exe, comm = "", "", ""
+                        try:
+                            with open(f"/proc/{proc_pid}/cmdline", "rb") as fh:  # noqa: ASYNC230
+                                cmdline = fh.read().replace(b"\x00", b" ").decode(errors="replace").strip()
+                        except OSError:
+                            pass
+                        try:
+                            with open(f"/proc/{proc_pid}/comm") as fh:  # noqa: ASYNC230
+                                comm = fh.read().strip()
+                        except OSError:
+                            pass
+                        try:
+                            exe = os.readlink(f"/proc/{proc_pid}/exe")
+                        except OSError:
+                            pass
+                        name = (
+                            os.path.basename(exe)
+                            or (cmdline.split()[0].rsplit("/", 1)[-1] if cmdline else "")
+                            or comm
+                            or f"pid_{proc_pid}"
+                        )
+                        events_batch.append({
+                            "run_id": run_id, "platform": sample_plat,
+                            "event_type": "process_create", "timestamp": now,
+                            "pid": proc_pid, "ppid": main_pid,
+                            "process_name": name, "command_line": cmdline[:2000],
+                            "exe_path": exe, "host_id": "local",
+                        })
+                    # ── New TCP connections (delta from pre-snapshot) ──
+                    try:
+                        with open("/proc/net/tcp") as fh:  # noqa: ASYNC230
+                            for line in fh.readlines()[1:]:
+                                parts = line.split()
+                                if len(parts) < 4:
+                                    continue
+                                state = parts[3]
+                                # 01=ESTABLISHED 02=SYN_SENT 03=SYN_RECV — capture
+                                # attempts too, not just completed connections.
+                                if state not in ("01", "02", "03"):
+                                    continue
+                                remote_hex = parts[2]
+                                conn_key = f"{remote_hex}:{state}"
+                                if conn_key in seen_conns:
+                                    continue
+                                seen_conns.add(conn_key)
+                                try:
+                                    ip_hex, port_hex = remote_hex.split(":")
+                                    ip = ".".join(str(int(ip_hex[i:i + 2], 16)) for i in range(6, -1, -2))
+                                    port = int(port_hex, 16)
+                                except (ValueError, IndexError):
+                                    continue
+                                if ip.startswith(("127.", "0.", "255.")):
+                                    continue
+                                events_batch.append({
+                                    "run_id": run_id, "platform": sample_plat,
+                                    "event_type": "network_connection", "timestamp": now,
+                                    "dest_ip": ip, "dest_port": port,
+                                    "protocol": "tcp", "host_id": "local",
+                                })
+                    except OSError:
+                        pass
+                    try:
+                        await asyncio.wait_for(stop_monitoring.wait(), timeout=0.3)
+                    except asyncio.TimeoutError:
+                        pass  # normal poll tick
+
+            monitor_task = asyncio.create_task(_monitor())
 
             try:
                 out_b, err_b = await asyncio.wait_for(proc.communicate(), timeout=timeout_seconds)
@@ -185,6 +313,9 @@ async def execute_and_trace(
                     pass
                 stderr_data += "\n[OutPost Sandbox] Execution timed out after limit."
                 exit_code = -1
+            finally:
+                stop_monitoring.set()
+                monitor_task.cancel()
         except Exception as exc:
             stderr_data += f"\n[OutPost Sandbox] Execution error: {exc}"
             exit_code = 127
@@ -231,6 +362,7 @@ async def execute_and_trace(
             alerts = [dict(r) for r in alert_rows]
 
     finally:
+        shot_session.stop()
         try:
             shutil.rmtree(sandbox_dir, ignore_errors=True)
         except Exception:
@@ -242,12 +374,16 @@ async def execute_and_trace(
     risk_score = risk.compute_risk_score([a["rule_id"] for a in alerts])
     chain = killchain.correlate_chain(alerts)
 
-    # Compute verdict
+    # Compute verdict — derived from detection severities only. A nonzero exit
+    # code alone is not evidence of malice (benign tools crash too); it stays
+    # visible via `exit_code` and stderr in the payload.
     verdict = "clean"
     if any(a.get("severity") == "malicious" for a in alerts):
         verdict = "malicious"
-    elif alerts or exit_code != 0:
+    elif any(a.get("severity") in ("suspicious", "elevated") for a in alerts):
         verdict = "suspicious"
+
+    shots = shot_session.shots
 
     return {
         "run_id": run_id,
@@ -264,4 +400,10 @@ async def execute_and_trace(
         "process_tree": tree,
         "kill_chain": chain,
         "events_count": len(events_batch),
+        "screenshots": {
+            "available": bool(shots),
+            "capture_status": screenshots.status(),
+            "count": len(shots),
+            "shots": shots,
+        },
     }

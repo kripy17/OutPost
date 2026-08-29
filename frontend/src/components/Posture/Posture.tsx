@@ -38,7 +38,7 @@ export function RiskGauge({ score }: { score: number }) {
       <div className="min-w-0">
         <p className="kicker">Peak risk</p>
         <p className="mt-1 text-[15px] font-semibold capitalize text-text-primary">{band.label}</p>
-        <p className="mt-0.5 text-[12px] leading-relaxed text-text-muted">Highest score across every session on this machine.</p>
+        <p className="mt-0.5 text-[12px] leading-relaxed text-text-muted">Highest score across real sessions on this machine.</p>
       </div>
     </div>
   );

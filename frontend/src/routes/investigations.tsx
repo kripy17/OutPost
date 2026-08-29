@@ -159,7 +159,7 @@ export default function InvestigationsPage() {
               <button className="btn" onClick={() => setCreating(false)}>
                 Cancel
               </button>
-              {create.isError && <span className="text-xs text-[#C4453B]">Creation failed</span>}
+              {create.isError && <span className="text-xs text-risk-malicious">Creation failed</span>}
             </div>
           </div>
         </Panel>
@@ -199,7 +199,7 @@ export default function InvestigationsPage() {
       {isLoading ? (
         <Panel><p className="py-6 text-center text-sm text-text-muted">Loading investigations…</p></Panel>
       ) : isError ? (
-        <Panel><p className="py-6 text-center text-sm text-[#C4453B]">Failed to load investigations</p></Panel>
+        <Panel><p className="py-6 text-center text-sm text-risk-malicious">Failed to load investigations</p></Panel>
       ) : (data?.investigations.length ?? 0) === 0 ? (
         <Panel>
           <div className="py-8 text-center">

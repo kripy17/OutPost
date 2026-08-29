@@ -154,10 +154,19 @@ export function SourceBadge({ source }: { source?: string }) {
 // default and the Findings queue's provenance filter uses (seed / webapp-demo
 // / legacy monitor / sandbox:demo). Sandbox detonations (anyrun/triage/joe)
 // are real external runs, so they read REAL.
-const SYNTHETIC_SOURCES = new Set(["seed", "webapp-demo", "monitor", "sandbox:demo"]);
+// Exported so pages can split real telemetry from seeded/synthetic sessions
+// (the overview renders honest posture numbers from this set).
+export const SYNTHETIC_SOURCES = new Set(["seed", "webapp-demo", "monitor", "sandbox:demo"]);
+
+/** Synthetic check incl. prefixed sources — Simulation-Lab playbooks
+ * (`playbook:<id>`) are generated scenarios, never host telemetry. */
+export function isSyntheticSource(source?: string | null): boolean {
+  const s = source ?? "monitor";
+  return SYNTHETIC_SOURCES.has(s) || s.startsWith("playbook:");
+}
 
 export function ProvenanceBadge({ source }: { source?: string }) {
-  const synthetic = SYNTHETIC_SOURCES.has(source ?? "monitor");
+  const synthetic = isSyntheticSource(source);
   return (
     <Chip
       tone={synthetic ? "accent" : "clean"}

@@ -1,11 +1,16 @@
 """Analysis job API (P0.2) — persisted jobs over the `analysis_jobs` table.
 
-- POST /analysis              — start a job: static (synchronous). watched-
-                                host / external-provider / isolated-outpost
-                                all 501: capability honesty at the contract
-                                layer — no executor exists for them yet, so
-                                the API refuses rather than persisting a
-                                queued row that would sit forever.
+- POST /analysis              — start a job: static runs synchronously;
+                                external-provider executes through the
+                                sandbox providers (the same pipeline as POST
+                                /sandbox/detonate — demo resolves inline,
+                                live providers detonate in a background task
+                                while the persisted row carries the state).
+                                watched-host / isolated-outpost still 501:
+                                capability honesty at the contract layer —
+                                no executor exists for them yet, so the API
+                                refuses rather than persisting a queued row
+                                that would sit forever.
 - GET  /analysis              — list/filter jobs (backend / status / artifact)
 - GET  /analysis/{run_id}     — one job + derived run stats (events/alerts/risk)
 - POST /analysis/{run_id}/cancel — cancel a queued/running job
@@ -19,6 +24,7 @@ Job state is PERSISTED (survives backend restarts) — the pre-P0 sandbox
 tasks stayed in memory; these rows are the durable record.
 """
 
+import asyncio
 import uuid
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -32,6 +38,7 @@ from ..models import event as event_store
 from ..models import run as run_store
 from ..models import samples as samples_store
 from ..services import events_stream, static_analysis
+from ..services import sandbox as sandbox_service
 
 router = APIRouter(tags=["analysis"])
 
@@ -39,9 +46,9 @@ _BACKENDS = ("static", "watched-host", "external-provider", "isolated-outpost")
 # Backends whose executors do not exist yet. The enum stays valid (list/filter
 # still accept them) but POST refuses to create jobs that could never run —
 # a queued row with no claiming executor is a lie, not a placeholder.
+# external-provider is NOT here: it executes through the sandbox providers.
 _UNEXECUTED = {
     "watched-host": "watched-host has no executor yet — OutPost cannot claim jobs on a designated analysis host (planned phase)",
-    "external-provider": "external-provider has no provider wiring yet — connect a sandbox provider, or use POST /sandbox/detonate for provider-backed detonation",
     "isolated-outpost": "isolated-outpost is a reserved backend — OutPost has no isolated execution environment yet",
 }
 _JOB_STATUSES = ("queued", "running", "completed", "failed", "canceled")
@@ -85,14 +92,137 @@ def _dto(conn, job: dict) -> dict:
     return out
 
 
+async def _finish_external_job(run_id: str, task_id: str, provider: str, sample_bytes: bytes | None) -> None:
+    """Drive one provider-backed job to its terminal state: run the sandbox
+    task, then persist the outcome on the job row (the durable record) and
+    emit the terminal frame exactly once. A canceled row always wins — a
+    finishing task never resurrects an operator-canceled job."""
+    task = sandbox_service.get_task(task_id)
+    if task is not None:
+        await sandbox_service.run_task(task, sample_bytes or b"")
+    else:
+        # The in-memory task vanished (backend restarted mid-flight). The
+        # persisted row is the source of truth — fail honestly there.
+        task = {
+            "task_id": task_id, "status": "error",
+            "error": "sandbox task record lost before completion (backend restart?)",
+            "events": 0, "alerts": 0, "risk_score": 0, "highest_severity": None,
+        }
+    failed = task["status"] != "completed"
+    with db_session() as conn:
+        current = jobs_store.get_job(conn, run_id)
+        if current is None or current["status"] == jobs_store.CANCELED:
+            return
+        if failed:
+            updated = jobs_store.set_status(
+                conn, run_id, jobs_store.FAILED,
+                error=task.get("error"), progress=100,
+                result={"provider": provider, "task_id": task_id, "error": task.get("error")},
+            )
+        else:
+            updated = jobs_store.set_status(
+                conn, run_id, jobs_store.COMPLETED, progress=100,
+                result={
+                    "provider": provider, "task_id": task_id,
+                    "events": task["events"], "alerts": task["alerts"],
+                    "risk_score": task["risk_score"],
+                    "highest_severity": task["highest_severity"],
+                },
+            )
+        events_stream.publish_run_update(
+            run_id, 0,
+            completed=True,
+            job_id=run_id,
+            job_status=(updated or {}).get("status") or jobs_store.FAILED,
+            progress=100,
+        )
+
+
+async def _start_provider_job(body: AnalysisJobCreateIn, request: Request) -> AnalysisJobDTO:
+    """external-provider: persist a queued job row, then execute through the
+    sandbox provider machinery (same resolve/detonate pipeline as POST
+    /sandbox/detonate). Demo resolves inline so the response is already
+    complete; live providers detonate in a background task and the GET/cancel/
+    SSE surfaces track the persisted row."""
+    if not body.sample_id:
+        raise HTTPException(
+            status_code=422,
+            detail="external-provider requires sample_id — provider detonation runs a vault sample",
+        )
+    with db_session() as conn:
+        sample = samples_store.get_sample(conn, body.sample_id)
+        if not sample:
+            raise HTTPException(status_code=404, detail=f"Unknown sample_id: {body.sample_id}")
+
+    sample_bytes = _load_bytes(body.sample_id)
+    if sample_bytes is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Sample bytes are not stored — re-upload the file to enable sandbox detonation.",
+        )
+
+    try:
+        provider = sandbox_service.resolve_provider(body.provider or "auto")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    if provider != "demo" and not sandbox_service.is_configured(provider):
+        raise HTTPException(
+            status_code=422,
+            detail=f"{provider} is not configured — set the {provider.upper()}_API_KEY env var (or use provider=demo)",
+        )
+
+    platform = body.platform or sample["detected_platform"] or "windows"
+    run_id = uuid.uuid4().hex[:12]
+    with db_session() as conn:
+        run_store.create_run(
+            conn, run_id=run_id, sample_name=sample["original_name"], platform=platform,
+            session_type="analysis", source=f"sandbox:{provider}",
+        )
+        job = jobs_store.create_job(
+            conn, run_id, "external-provider",
+            status=jobs_store.QUEUED,
+            started_at=jobs_store._now(), progress=0,
+            result={"provider": provider, "note": f"dispatching to the {provider} sandbox provider"},
+        )
+        audit.log(
+            conn, auth.role_from_request(request), "analysis.create",
+            target_type="analysis", target_id=run_id,
+            detail=f"backend external-provider · {sample['original_name']} ({platform}) via {provider}",
+        )
+        # Queued frame — subscribers see the job appear before any detonation
+        # work starts (mirrors the static path's create-frame discipline).
+        events_stream.publish_run_update(
+            run_id, 0,
+            completed=False,
+            job_id=run_id,
+            job_status=job["status"],
+            progress=job.get("progress") or 0,
+        )
+
+    task = sandbox_service.create_task(run_id, body.sample_id, sample["original_name"], provider, platform)
+    if provider == "demo":
+        await _finish_external_job(run_id, task["task_id"], provider, sample_bytes)
+    else:
+        asyncio.create_task(_finish_external_job(run_id, task["task_id"], provider, sample_bytes))
+
+    with db_session() as conn:
+        # Read the post-flight row on the SAME live session — _dto needs the
+        # connection (run-derived stats), and db_session closes on exit.
+        return AnalysisJobDTO(**_dto(conn, jobs_store.get_job(conn, run_id)))
+
+
 @router.post("/analysis", status_code=201, response_model=AnalysisJobDTO)
-def create_analysis_job(body: AnalysisJobCreateIn, request: Request) -> AnalysisJobDTO:
+async def create_analysis_job(body: AnalysisJobCreateIn, request: Request) -> AnalysisJobDTO:
     """Start an analysis job. Backends without an executor are 501 — never
-    silently substituted with a demo path or an eternally-queued row."""
+    silently substituted or left as an eternally-queued row. external-
+    provider executes via the sandbox providers; static runs synchronously."""
     if body.backend in _UNEXECUTED:
         raise HTTPException(status_code=501, detail=_UNEXECUTED[body.backend])
     if body.backend not in _BACKENDS:
         raise HTTPException(status_code=422, detail=f"backend must be one of: {', '.join(_BACKENDS)}")
+    if body.backend == "external-provider":
+        return await _start_provider_job(body, request)
 
     with db_session() as conn:
         sample_name, platform = _resolve_artifact(conn, body)

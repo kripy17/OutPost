@@ -12,8 +12,8 @@ def insert_event(conn: sqlite3.Connection, event: dict) -> int:
         INSERT INTO events (
             run_id, platform, event_type, timestamp, pid, ppid, process_name,
             command_line, exe_path, dest_ip, dest_port, protocol, file_path, registry_key,
-            host_id, raw_record, log_source, query, tls_sni
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            host_id, raw_record, log_source, query, tls_sni, ja3
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             event["run_id"],
@@ -35,6 +35,7 @@ def insert_event(conn: sqlite3.Connection, event: dict) -> int:
             event.get("log_source"),
             event.get("query"),
             event.get("tls_sni"),
+            event.get("ja3"),
         ),
     )
     return cur.lastrowid or 0
@@ -116,5 +117,39 @@ def upsert_cache(conn: sqlite3.Connection, ip: str, abuse_score, vt_malicious_co
             checked_at = excluded.checked_at
         """,
         (ip, abuse_score, vt_malicious_count, reputation, checked_at),
+    )
+    return checked_at
+
+
+def get_domain_cache(conn: sqlite3.Connection, domain: str) -> dict | None:
+    row = conn.execute("SELECT * FROM domain_cache WHERE domain = ?", (domain,)).fetchone()
+    return dict(row) if row else None
+
+
+def upsert_domain_cache(
+    conn: sqlite3.Connection,
+    domain: str,
+    urlhaus_status,
+    threatfox_malware,
+    threatfox_confidence,
+    reputation,
+) -> str:
+    """Store/refresh a domain's enrichment row (docs/08 MVP-tier). Same
+    contract as upsert_cache: returns the checked_at stamp for cache-age UI."""
+    from datetime import datetime, timezone
+
+    checked_at = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        """
+        INSERT INTO domain_cache (domain, urlhaus_status, threatfox_malware, threatfox_confidence, reputation, checked_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(domain) DO UPDATE SET
+            urlhaus_status = excluded.urlhaus_status,
+            threatfox_malware = excluded.threatfox_malware,
+            threatfox_confidence = excluded.threatfox_confidence,
+            reputation = excluded.reputation,
+            checked_at = excluded.checked_at
+        """,
+        (domain, urlhaus_status, threatfox_malware, threatfox_confidence, reputation, checked_at),
     )
     return checked_at

@@ -83,6 +83,27 @@ def backfill_channels(admin_password: str) -> dict:
 
 
 # -- runs --------------------------------------------------------------------
+def upload_sample(file_path: str) -> dict:
+    """Upload a sample binary to the vault (POST /samples?name=...).
+    Reads the file bytes and sends them as the request body."""
+    name = os.path.basename(file_path)
+    with open(file_path, "rb") as f:
+        resp = requests.post(
+            f"{BASE_URL}/samples?name={name}",
+            data=f.read(),
+            headers={**_auth_headers(), "Content-Type": "application/octet-stream"},
+            timeout=30,
+        )
+    if not resp.ok:
+        raise APIError(f"POST /samples → {resp.status_code}: {resp.text[:300]}")
+    return resp.json()
+
+
+def detonate_dynamic(sample_id: str) -> dict:
+    """Detonate a vault sample in the dynamic sandbox (POST /sandbox/detonate/dynamic)."""
+    return _post("/sandbox/detonate/dynamic", {"sample_id": sample_id})
+
+
 def create_run(sample_name: str, platform: str, session_type: str = "analysis") -> str:
     return _post(
         "/runs",

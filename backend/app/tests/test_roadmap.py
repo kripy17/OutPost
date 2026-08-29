@@ -211,6 +211,11 @@ def test_rule_pack_suppressions_are_idempotent(client):
     second = client.post("/rules/pack", json=pack).json()
     assert first["suppressions_added"] == 1
     assert second["suppressions_added"] == 0 and second["suppressions_skipped"] == 1
+    # Clean up the global suppression — shared DB: a leftover would silently
+    # kill beaconing for every later test.
+    for s in client.get("/rules/suppressions").json():
+        if s["rule_id"] == "beaconing" and s["run_id"] is None:
+            client.delete(f"/rules/suppressions/{s['id']}")
 
 
 # -- Roadmap 3.2: macOS rules ----------------------------------------------------
@@ -277,10 +282,13 @@ def test_notifications_settings_roundtrip(client):
     assert resp.status_code == 200
     assert resp.json()["enabled"] is True
     got = client.get("/notifications/settings").json()
-    assert got["webhook_url"] == "http://hook.local/x"
+    # Secrets are never echoed back — a set flag signals it exists.
+    assert got["webhook_url"] == "" and got["webhook_url_set"] is True
 
     client.put("/notifications/settings", json={"webhook_url": ""})
-    assert client.get("/notifications/settings").json()["enabled"] is False
+    final = client.get("/notifications/settings").json()
+    assert final["enabled"] is False
+    assert final["webhook_url_set"] is False
 
 
 def test_webhook_fires_on_malicious_alert(client, monkeypatch):
@@ -393,25 +401,31 @@ def test_notifications_settings_full_roundtrip_and_password_masking(client):
     got = resp.json()
     assert got["enabled"] is True
     assert got["smtp_host"] == "smtp.example.com"
-    # Password is never echoed back; a set flag signals it exists.
-    assert got["smtp_pass"] == "" and got["smtp_pass_set"] is True
+    # Secrets are never echoed back; set flags signal they exist.
+    for secret in ("smtp_pass", "telegram_bot_token", "webhook_url",
+                   "slack_webhook", "discord_webhook"):
+        assert got[secret] == "" and got[f"{secret}_set"] is True, secret
 
-    # A subsequent save with a blank password must retain the stored one.
+    # Omitting a secret (null) retains the stored one; explicit "" clears it.
     blank = client.put(
         "/notifications/settings",
-        json={"webhook_url": "http://hook.local/a", "smtp_host": "smtp.example.com", "smtp_pass": ""},
+        json={"smtp_host": "smtp.example.com", "smtp_pass": ""},
     ).json()
-    assert blank["smtp_pass_set"] is True
+    assert blank["smtp_pass_set"] is False and blank["webhook_url_set"] is True
 
-    # Clearing explicitly (new password or whitespace) updates it.
+    # Clearing explicitly (a new password) updates it.
     cleared = client.put(
         "/notifications/settings",
-        json={"webhook_url": "http://hook.local/a", "smtp_host": "smtp.example.com", "smtp_pass": "newpass"},
+        json={"smtp_host": "smtp.example.com", "smtp_pass": "newpass"},
     ).json()
     assert cleared["smtp_pass_set"] is True
 
-    # Disable everything → enabled flips off.
-    off = client.put("/notifications/settings", json={}).json()
+    # Disable every channel (explicit "" clears each secret; omitted fields
+    # would keep them).
+    off = client.put(
+        "/notifications/settings",
+        json={"webhook_url": "", "slack_webhook": "", "discord_webhook": "", "telegram_bot_token": ""},
+    ).json()
     assert off["enabled"] is False
 
 
@@ -441,6 +455,13 @@ def test_multi_channel_fanout_fires_each_configured_channel(client, monkeypatch)
     assert "embeds" in by_url["http://discord.test/wc"]["json"]
     tg = by_url["https://api.telegram.org/bot123:ABC/sendMessage"]["json"]
     assert tg["chat_id"] == "-10042" and "Beaconing" in tg["text"]
+
+    # Hygiene: clear every secret channel so later webhook tests (which only
+    # remove NOTIFY_WEBHOOK_URL) start from a silent notification state.
+    client.put(
+        "/notifications/settings",
+        json={"webhook_url": "", "slack_webhook": "", "discord_webhook": "", "telegram_bot_token": ""},
+    )
 
 
 def test_smtp_fires_via_thread_when_configured(client, monkeypatch):

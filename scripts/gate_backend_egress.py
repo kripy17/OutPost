@@ -51,6 +51,17 @@ FORBIDDEN_CLIENTS = ("requests", "aiohttp", "urllib.request", "http.client")
 # commands (tasklist / netstat / ps in common/snapshot.py); anything with a
 # network-capable binary, or any shell-out in the backend, fails.
 COLLECTOR_SHELL_SANCTIONED = {"common/snapshot.py"}
+
+# Backend modules that may shell out to LOCAL, operator-config-gated tooling:
+# CAPA (static_analysis), volatility3 (memory_forensics) and the screenshot
+# capturer (screenshots). All three take argv lists resolved via shutil.which /
+# env templates — never network binaries — and degrade honestly when the tool
+# is absent. Anything that execs curl/wget/etc still fails below.
+BACKEND_SHELL_SANCTIONED = {
+    "services/static_analysis.py",
+    "services/memory_forensics.py",
+    "services/screenshots.py",
+}
 NET_BINARIES = (
     "curl", "wget", "nc", "ncat", "socat", "ssh", "telnet", "sftp", "scp",
     "certutil", "powershell", "pwsh", "python", "python3", "bash", "sh",
@@ -157,11 +168,13 @@ def scan_backend(root: Path) -> list[str]:
             hits.append(f"{rel}: httpx outside the sanctioned egress modules ({rel})")
         if uses_socket_socket(tree):
             hits.append(f"{rel}: raw socket.socket client usage")
+        allow_backend_shell = rel in BACKEND_SHELL_SANCTIONED
         for mod in ("subprocess", "pty"):
-            if module_imports(tree, mod):
+            if module_imports(tree, mod) and not allow_backend_shell:
                 hits.append(f"{rel}: shell-out module `{mod}` — no shelling out in the backend")
-        for h in shell_out_hits(tree, allow_snapshot=False):
-            hits.append(f"{rel}: {h}")
+        if not allow_backend_shell:
+            for h in shell_out_hits(tree, allow_snapshot=False):
+                hits.append(f"{rel}: {h}")
     return hits
 
 

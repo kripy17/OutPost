@@ -118,7 +118,7 @@ export default function InvestigationDetailPage() {
   if (isError || !inv) {
     return (
       <Panel>
-        <p className="py-10 text-center text-sm text-[#C4453B]">Investigation not found</p>
+        <p className="py-10 text-center text-sm text-risk-malicious">Investigation not found</p>
         <p className="pb-6 text-center"><Link to="/investigations" className="text-accent hover:underline">← All investigations</Link></p>
       </Panel>
     );
@@ -298,7 +298,7 @@ export default function InvestigationDetailPage() {
                 <Icon name="plus" size={12} /> Add
               </button>
             </div>
-            {addRef.isError && <p className="mb-2 text-[11px] text-[#C4453B]">Ref rejected — unknown {refType} id?</p>}
+            {addRef.isError && <p className="mb-2 text-[11px] text-risk-malicious">Ref rejected — unknown {refType} id?</p>}
             {inv.refs.length === 0 ? (
               <p className="py-3 text-center text-sm text-text-muted">No evidence refs yet.</p>
             ) : (
@@ -330,7 +330,7 @@ export default function InvestigationDetailPage() {
                     )}
                     <span className="font-mono text-[9px] text-text-faint">{r.added_at}</span>
                     <button
-                      className="press text-text-faint hover:text-[#C4453B]"
+                      className="press text-text-faint hover:text-risk-malicious"
                       title="Remove ref"
                       disabled={removeRef.isPending}
                       onClick={() => removeRef.mutate(r.ref_id)}

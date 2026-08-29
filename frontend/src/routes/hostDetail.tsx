@@ -224,7 +224,7 @@ export default function HostDetailPage() {
       <div className="mx-auto max-w-5xl px-5 py-8 lg:px-8">
         <PageHeader kicker="Host investigation" title="Unknown host" />
         <Panel>
-          <p className="py-8 text-center text-sm text-[#C4453B]">
+          <p className="py-8 text-center text-sm text-risk-malicious">
             Unknown host{hostId ? ` ${hostId}` : ""} — no event, heartbeat, or snapshot carries this id.
           </p>
           <p className="pb-8 text-center text-xs text-text-faint">

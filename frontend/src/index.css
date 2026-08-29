@@ -1,96 +1,218 @@
 @import "tailwindcss";
 
-/* OutPost design system — v7 "forensics lab" (spec-aligned identity).
-   Dark-first by default: deep slate fields (#14171C), an amber signature
-   accent that doubles as the in-progress state AND as risk-suspicious
-   (deliberate reuse), desaturated brick for malicious, teal for clean, and a
-   cyan *signal* token for telemetry (live data, network, timing) so the
-   accent and the data never compete. IBM Plex Sans + Mono. :root IS dark;
-   [data-theme="light"] is the secondary opt-in. Set before first paint by
-   the inline script in index.html (fresh storage key so every user starts
-   dark). */
+/* OutPost design system — v8 "operations deck" (multi-theme).
+   Five full identities selected via <html data-theme>: midnight (default,
+   blue-black field + electric cyan), glass (violet night, frosted neon),
+   paper (light analyst), terminal (phosphor CRT), ember (the classic amber
+   lab). Every theme defines the SAME token contract — field colors, text,
+   accent/signal, risk scale, borders, shadows, glows — so components never
+   know a theme switch happened. Accent carries interaction; the *signal*
+   token carries telemetry (live data, network, timing) so the two never
+   compete. IBM Plex Sans/Mono for data, Space Grotesk for display type.
+   Set before first paint by the inline script in index.html (src/lib/themes.ts
+   is the registry). */
 
 :root {
-  /* ── Field (backgrounds) — the forensics-lab slate ─────────────────────
-     Deep slate, not pure black; surfaces step up a notch, never jump. */
+  /* ── Field — Midnight Ops: deep blue-black operations room ──────────── */
+  --bg-base: #0a0f1a;
+  --bg-surface: #0f1725;
+  --bg-elevated: #182338;
+  --bg-inset: #060a12;
+  --bg-overlay: #121c2e;
+
+  /* Atmosphere — electric cyan aurora (top-left) + abyssal indigo depth. */
+  --atmos-a: 34 211 238;
+  --atmos-b: 30 64 138;
+
+  /* ── Text ────────────────────────────────────────────────────────────── */
+  --text-primary: #e8eef8;
+  --text-muted: #93a1b8;
+  --text-faint: #64748e; /* ≥4.5:1 on --bg-base (WCAG AA for 9–11px metadata) */
+
+  /* ── Signature accent — electric cyan (interaction AND in-progress state)
+     + a lime *signal* token for telemetry so data never competes. */
+  --accent: #22d3ee;
+  --accent-soft: #67e8f9;
+  --signal: #a3e635;
+
+  /* ── Risk scale — functional, never decorative. Suspicious is a hot amber,
+     malicious a hard signal red — both read instantly on the blue field. */
+  --risk-clean: #10b981;
+  --risk-suspicious: #f59e0b;
+  --risk-malicious: #e5484d;
+
+  /* ── Structure ───────────────────────────────────────────────────────── */
+  --border-subtle: #1d2939;
+  --border-strong: #2c3a52;
+
+  /* ── Depth — layered, cool ───────────────────────────────────────────── */
+  --shadow-panel: 0 1px 2px rgba(2, 6, 16, 0.5), 0 2px 6px rgba(2, 6, 16, 0.45);
+  --shadow-raised: 0 6px 18px rgba(2, 6, 16, 0.55), 0 22px 48px -14px rgba(2, 6, 16, 0.7);
+
+  /* ── Glows — make a finding read at a glance (literal rgba per theme). ─ */
+  --glow-accent: 0 0 0 1px rgba(34, 211, 238, 0.32), 0 0 18px rgba(34, 211, 238, 0.24);
+  --glow-signal: 0 0 0 1px rgba(163, 230, 53, 0.3), 0 0 14px rgba(163, 230, 53, 0.2);
+  --glow-amber: 0 0 0 1px rgba(245, 158, 11, 0.32), 0 0 12px rgba(245, 158, 11, 0.2);
+  --glow-malicious: 0 0 0 1px rgba(229, 72, 77, 0.36), 0 0 16px rgba(229, 72, 77, 0.26);
+  --glow-clean: 0 0 0 1px rgba(16, 185, 129, 0.32), 0 0 12px rgba(16, 185, 129, 0.18);
+
+  --img-outline: rgba(148, 197, 255, 0.09);
+}
+
+/* ── Paper Analyst — the light identity. Ink on warm paper, hairlines over
+   shadows, one confident blue accent. */
+[data-theme="paper"] {
+  --bg-base: #f6f6f4;
+  --bg-surface: #ffffff;
+  --bg-elevated: #efefec;
+  --bg-inset: #eeeee9;
+  --bg-overlay: #ffffff;
+
+  --atmos-a: 214 214 205;
+  --atmos-b: 205 222 240;
+
+  --text-primary: #191c24;
+  --text-muted: #575f6e;
+  --text-faint: #6e7684;
+
+  --accent: #2456e6;
+  --accent-soft: #3b6ff0;
+  --signal: #0e7490;
+
+  --risk-clean: #067a5e;
+  --risk-suspicious: #b45309;
+  --risk-malicious: #c92a3d;
+
+  --border-subtle: #e4e4de;
+  --border-strong: #d0d0c8;
+
+  --shadow-panel: 0 1px 2px rgba(25, 28, 36, 0.04), 0 1px 3px rgba(25, 28, 36, 0.05);
+  --shadow-raised: 0 2px 4px rgba(25, 28, 36, 0.06), 0 10px 28px -10px rgba(25, 28, 36, 0.14);
+
+  --glow-accent: 0 0 0 1px rgba(36, 86, 230, 0.22), 0 0 12px rgba(36, 86, 230, 0.12);
+  --glow-signal: 0 0 0 1px rgba(14, 116, 144, 0.22), 0 0 10px rgba(14, 116, 144, 0.12);
+  --glow-amber: 0 0 0 1px rgba(180, 83, 9, 0.22), 0 0 10px rgba(180, 83, 9, 0.12);
+  --glow-malicious: 0 0 0 1px rgba(201, 42, 61, 0.26), 0 0 12px rgba(201, 42, 61, 0.14);
+  --glow-clean: 0 0 0 1px rgba(6, 122, 94, 0.2), 0 0 8px rgba(6, 122, 94, 0.12);
+
+  --img-outline: rgba(0, 0, 0, 0.1);
+}
+
+/* ── Glass Cockpit — violet night under frosted neon. Panels go properly
+   translucent (see the scoped .panel override below). */
+[data-theme="glass"] {
+  --bg-base: #0b0817;
+  --bg-surface: #150f2b;
+  --bg-elevated: #1d1538;
+  --bg-inset: #0a0716;
+  --bg-overlay: #191233;
+
+  --atmos-a: 217 70 239;
+  --atmos-b: 99 62 255;
+
+  --text-primary: #efeaff;
+  --text-muted: #a89cc8;
+  --text-faint: #7d6fa3;
+
+  --accent: #b18bff;
+  --accent-soft: #d0bfff;
+  --signal: #22d3ee;
+
+  --risk-clean: #34d399;
+  --risk-suspicious: #fbbf24;
+  --risk-malicious: #f43f5e;
+
+  --border-subtle: #251c44;
+  --border-strong: #372a63;
+
+  --shadow-panel: 0 1px 2px rgba(5, 2, 16, 0.55), 0 2px 8px rgba(5, 2, 16, 0.5);
+  --shadow-raised: 0 8px 24px rgba(5, 2, 16, 0.6), 0 26px 56px -16px rgba(88, 28, 135, 0.45);
+
+  --glow-accent: 0 0 0 1px rgba(177, 139, 255, 0.34), 0 0 18px rgba(177, 139, 255, 0.28);
+  --glow-signal: 0 0 0 1px rgba(34, 211, 238, 0.32), 0 0 14px rgba(34, 211, 238, 0.22);
+  --glow-amber: 0 0 0 1px rgba(251, 191, 36, 0.3), 0 0 12px rgba(251, 191, 36, 0.2);
+  --glow-malicious: 0 0 0 1px rgba(244, 63, 94, 0.38), 0 0 18px rgba(244, 63, 94, 0.28);
+  --glow-clean: 0 0 0 1px rgba(52, 211, 153, 0.32), 0 0 12px rgba(52, 211, 153, 0.2);
+
+  --img-outline: rgba(207, 187, 255, 0.1);
+}
+
+/* ── Terminal Heritage — phosphor green on black. The whole UI speaks mono
+   (--font-sans remapped below), edges sharpen, scanlines overlay the field. */
+[data-theme="terminal"] {
+  --bg-base: #050807;
+  --bg-surface: #0a100c;
+  --bg-elevated: #101a12;
+  --bg-inset: #030504;
+  --bg-overlay: #0c130d;
+
+  --atmos-a: 34 197 94;
+  --atmos-b: 5 46 22;
+
+  --text-primary: #86efac;
+  --text-muted: #52a06e;
+  --text-faint: #35754e;
+
+  --accent: #4ade80;
+  --accent-soft: #86efac;
+  --signal: #fbbf24;
+
+  --risk-clean: #34d399;
+  --risk-suspicious: #fbbf24;
+  --risk-malicious: #f87171;
+
+  --border-subtle: #14251a;
+  --border-strong: #1f3a28;
+
+  --shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.6);
+  --shadow-raised: 0 4px 14px rgba(0, 0, 0, 0.65);
+
+  --glow-accent: 0 0 0 1px rgba(74, 222, 128, 0.35), 0 0 14px rgba(74, 222, 128, 0.28);
+  --glow-signal: 0 0 0 1px rgba(251, 191, 36, 0.35), 0 0 12px rgba(251, 191, 36, 0.25);
+  --glow-amber: 0 0 0 1px rgba(251, 191, 36, 0.35), 0 0 12px rgba(251, 191, 36, 0.25);
+  --glow-malicious: 0 0 0 1px rgba(248, 113, 113, 0.4), 0 0 14px rgba(248, 113, 113, 0.3);
+  --glow-clean: 0 0 0 1px rgba(52, 211, 153, 0.35), 0 0 10px rgba(52, 211, 153, 0.22);
+
+  --img-outline: rgba(134, 239, 172, 0.12);
+}
+
+/* ── Ember Lab — the v7 classic kept as a selectable identity: charcoal
+   fields, amber signature accent doubling as risk-suspicious, teal signal. */
+[data-theme="ember"] {
   --bg-base: #14171c;
   --bg-surface: #1c2028;
   --bg-elevated: #242a35;
   --bg-inset: #101318;
   --bg-overlay: #1f2530;
 
-  /* Atmosphere — faint amber lab-light (top-left) + cool depth (bottom-right). */
   --atmos-a: 110 84 22;
   --atmos-b: 12 30 58;
 
-  /* ── Text ────────────────────────────────────────────────────────────── */
   --text-primary: #e4e7eb;
   --text-muted: #7a8290;
-  --text-faint: #6a7480; /* ≥4.5:1 on --bg-base (WCAG AA for 9–11px metadata) */
+  --text-faint: #6a7480;
 
-  /* ── Signature accent — amber (interaction AND in-progress state; the
-     same hue deliberately reused as risk-suspicious below) + a cyan
-     *signal* token for telemetry so data never competes with the accent. */
   --accent: #d9a441;
   --accent-soft: #e8bd6a;
   --signal: #4fd1c5;
 
-  /* ── Risk scale — functional, never decorative. Suspicious IS the accent
-     amber (reused on purpose); malicious is a desaturated brick, not neon. */
   --risk-clean: #3fa796;
   --risk-suspicious: #d9a441;
   --risk-malicious: #c4453b;
 
-  /* ── Structure ───────────────────────────────────────────────────────── */
   --border-subtle: #262c38;
   --border-strong: #333b4a;
 
-  /* ── Depth — layered, soft on dark ───────────────────────────────────── */
   --shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.5);
   --shadow-raised: 0 4px 12px rgba(0, 0, 0, 0.45), 0 18px 44px -14px rgba(0, 0, 0, 0.65);
 
-  /* ── Glows — make a finding read at a glance (literal rgba per theme). ─ */
   --glow-accent: 0 0 0 1px rgba(217, 164, 65, 0.3), 0 0 16px rgba(217, 164, 65, 0.22);
   --glow-signal: 0 0 0 1px rgba(79, 209, 197, 0.3), 0 0 14px rgba(79, 209, 197, 0.2);
   --glow-amber: 0 0 0 1px rgba(217, 164, 65, 0.3), 0 0 12px rgba(217, 164, 65, 0.2);
   --glow-malicious: 0 0 0 1px rgba(196, 69, 59, 0.35), 0 0 16px rgba(196, 69, 59, 0.26);
   --glow-clean: 0 0 0 1px rgba(63, 167, 150, 0.3), 0 0 12px rgba(63, 167, 150, 0.18);
-}
 
-/* Light — the secondary opt-in theme. */
-[data-theme="light"] {
-  --bg-base: #f4f5f7;
-  --bg-surface: #ffffff;
-  --bg-elevated: #eceef2;
-  --bg-inset: #eff1f4;
-  --bg-overlay: #ffffff;
-
-  --atmos-a: 244 231 200;
-  --atmos-b: 224 234 246;
-
-  --text-primary: #17191f;
-  --text-muted: #5b6472;
-  --text-faint: #778190;
-
-  --accent: #a16207;
-  --accent-soft: #b8771c;
-  --signal: #0e7490;
-
-  --risk-clean: #0f766e;
-  --risk-suspicious: #a16207;
-  --risk-malicious: #b23c33;
-
-  --border-subtle: #e6e9ef;
-  --border-strong: #d2d8e2;
-
-  --shadow-panel: 0 1px 2px rgba(23, 25, 31, 0.04), 0 1px 3px rgba(23, 25, 31, 0.05);
-  --shadow-raised: 0 2px 4px rgba(23, 25, 31, 0.06), 0 8px 24px -8px rgba(23, 25, 31, 0.12);
-
-  --glow-accent: 0 0 0 1px rgba(161, 98, 7, 0.25), 0 0 14px rgba(161, 98, 7, 0.14);
-  --glow-signal: 0 0 0 1px rgba(14, 116, 144, 0.25), 0 0 12px rgba(14, 116, 144, 0.14);
-  --glow-amber: 0 0 0 1px rgba(161, 98, 7, 0.25), 0 0 12px rgba(161, 98, 7, 0.13);
-  --glow-malicious: 0 0 0 1px rgba(178, 60, 51, 0.28), 0 0 14px rgba(178, 60, 51, 0.16);
-  --glow-clean: 0 0 0 1px rgba(15, 118, 110, 0.22), 0 0 10px rgba(15, 118, 110, 0.12);
+  --img-outline: rgba(255, 255, 255, 0.08);
 }
 
 /* ── Left rail — the workspace shell. --rail-w drives BOTH the rail width and
@@ -128,6 +250,8 @@ html[data-rail="collapsed"] {
 
   --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  /* Display face for page/section titles (Space Grotesk, self-hosted). */
+  --font-display: "Space Grotesk", var(--font-sans);
 }
 
 /* Smooth cross-fade when switching themes (skipped under reduced motion). */
@@ -145,14 +269,30 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* The field — deep slate-black with glowing ambient aura */
+/* The field — themed aurora light + a faint operations grid. The grid gives
+   every page the same instrument-panel texture; both layers are fixed so
+   scrolling never makes the room "move". Colors derive from --atmos-a/b so
+   each theme tints its own room. */
 body {
   background-image:
-    radial-gradient(1200px 500px at 15% -5%, rgba(217, 164, 65, 0.08), transparent 70%),
-    radial-gradient(900px 500px at 85% 10%, rgba(79, 209, 197, 0.05), transparent 65%),
-    radial-gradient(1000px 600px at 50% 110%, rgba(196, 69, 59, 0.04), transparent 70%);
+    radial-gradient(1100px 460px at 12% -6%, rgb(var(--atmos-a) / 0.09), transparent 68%),
+    radial-gradient(900px 520px at 88% 8%, rgb(var(--atmos-b) / 0.10), transparent 64%),
+    radial-gradient(1000px 600px at 50% 112%, rgb(var(--atmos-a) / 0.05), transparent 70%);
   background-attachment: fixed;
   min-height: 100vh;
+}
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgb(var(--atmos-b) / 0.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(var(--atmos-b) / 0.055) 1px, transparent 1px);
+  background-size: 36px 36px;
+  mask-image: radial-gradient(120% 90% at 50% 0%, black 30%, transparent 78%);
+  -webkit-mask-image: radial-gradient(120% 90% at 50% 0%, black 30%, transparent 78%);
 }
 
 /* ── Type utilities ───────────────────────────────────────────────────── */
@@ -180,13 +320,16 @@ body {
   flex-shrink: 0;
 }
 
-/* Display headings — tight, weight-forward, minimal tracking. */
+/* Display headings — the Space Grotesk voice: geometric, tight, confident.
+   Fluid size keeps long titles from wrapping badly on narrow viewports. */
 .display {
-  font-size: 32px;
-  line-height: 1.15;
+  font-family: var(--font-display);
+  font-size: clamp(26px, 2.4vw, 32px);
+  line-height: 1.12;
   font-weight: 700;
-  letter-spacing: -0.03em;
+  letter-spacing: -0.025em;
   color: var(--text-primary);
+  text-wrap: balance;
 }
 
 .text-balance {
@@ -196,21 +339,35 @@ body {
   text-wrap: pretty;
 }
 
-/* ── Panel — elevated glass card with fine 1px border + layered shadow ─ */
+/* ── Panel — the instrument card: glass body, hairline border, a signature
+   gradient seam across the top edge (accent → transparent) and an inset
+   highlight so the surface catches light. */
 .panel {
-  background: color-mix(in srgb, var(--bg-surface) 80%, transparent);
+  position: relative;
+  background: color-mix(in srgb, var(--bg-surface) 78%, transparent);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--border-subtle);
-  border-radius: 16px;
+  border-radius: 14px;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.05),
-    0 4px 20px -2px rgba(0, 0, 0, 0.45);
+    var(--shadow-panel);
   min-width: 0;
   transition: border-color 200ms ease, box-shadow 200ms ease;
 }
+.panel::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: 14%;
+  right: 42%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent) 65%, transparent), transparent);
+  border-radius: 1px;
+  pointer-events: none;
+}
 .panel:hover {
-  border-color: color-mix(in srgb, var(--border-strong) 85%, var(--accent) 15%);
+  border-color: color-mix(in srgb, var(--border-strong) 80%, var(--accent) 20%);
 }
 .panel-header {
   display: flex;
@@ -220,10 +377,10 @@ body {
   padding: 18px 18px 0;
 }
 .panel-title {
-  font-family: var(--font-sans);
-  font-size: 13px;
+  font-family: var(--font-display);
+  font-size: 13.5px;
   font-weight: 600;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.005em;
   color: var(--text-primary);
 }
 
@@ -232,6 +389,122 @@ body {
   background: var(--bg-inset);
   border: 1px solid var(--border-subtle);
   border-radius: 12px;
+}
+
+/* ── Motion scope — retarget-friendly state transitions ─────────────────
+   Tailwind's `transition-all` animates every property, which fights
+   mid-motion intent changes. This unlayered override narrows the utility to
+   the properties the UI actually animates (colors, shadow, transform,
+   opacity, filter) while keeping every existing `transition-all` class
+   call-site valid. Unlayered rules win over Tailwind's layered utilities. */
+.transition-all {
+  transition-property:
+    color, background-color, border-color, text-decoration-color, fill, stroke,
+    opacity, box-shadow, transform, translate, scale, rotate, filter,
+    backdrop-filter;
+}
+
+/* ── Form controls — one coherent field treatment across pages ─────────── */
+.input,
+.select {
+  width: 100%;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.4;
+  outline: none;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+.input::placeholder {
+  color: var(--text-faint);
+}
+.input:hover,
+.select:hover {
+  border-color: var(--border-strong);
+}
+.input:focus-visible,
+.select:focus-visible {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border-subtle));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.input:disabled,
+.select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+textarea.input {
+  resize: vertical;
+  min-height: 72px;
+}
+
+/* Keyboard chips — for ⌘K-style hints next to actions */
+.kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  padding: 1px 5px;
+  border: 1px solid var(--border-subtle);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: var(--bg-elevated);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
+/* ── Data tables — shared header/body rhythm for dense SOC lists ───────── */
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.data-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-inset);
+  text-align: left;
+  padding: 8px 12px;
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  border-bottom: 1px solid var(--border-subtle);
+  white-space: nowrap;
+}
+.data-table td {
+  padding: 9px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-subtle) 60%, transparent);
+  vertical-align: top;
+}
+.data-table tbody tr {
+  transition: background-color 120ms ease;
+}
+.data-table tbody tr:hover {
+  background: color-mix(in srgb, var(--bg-elevated) 55%, transparent);
+}
+.data-table tbody tr:last-child td {
+  border-bottom: none;
+}
+/* Numeric columns opt in with .num — tabular figures stop digit jitter. */
+.data-table .num {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* Images get a neutral hairline so edges don't melt into surfaces. */
+img {
+  outline: 1px solid var(--img-outline, rgba(255, 255, 255, 0.08));
+  outline-offset: -1px;
 }
 
 /* ── Keyboard focus — accent ring so it's visible on every surface ─────── */
@@ -528,75 +801,72 @@ button {
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border-subtle));
 }
 
-/* ── Dark palette candidates (Theme Lab) ─────────────────────────────────
-   data-palette on <html> re-scopes the live app; .palette-root re-scopes a
-   wrapper inside the Theme Lab so several palettes render side by side.
-   App-side rules are dark-only (html[data-theme="dark"][data-palette=…]) so
-   the light theme never inherits a palette. No data-palette attribute =
-   the default graphite palette (the :root dark values above).
+/* ── Per-theme flourishes — the identities aren't just palettes ───────────
+   Each theme may restyle surfaces/typography beyond token values. Scoped to
+   html[data-theme=…] so they apply live app-wide.
    ──────────────────────────────────────────────────────────────────────── */
 
-.palette-root[data-palette="slate"],
-html[data-theme="dark"][data-palette="slate"] {
-  --bg-base: #0e1217;
-  --bg-surface: #151b24;
-  --bg-elevated: #1c2430;
-  --bg-inset: #11151b;
-  --bg-overlay: #1b222c;
-  --atmos-a: 78 96 140;
-  --atmos-b: 16 38 78;
-  --text-primary: #e7ecf5;
-  --text-muted: #9ba9bd;
-  --text-faint: #6f7d94;
-  --accent: #8b7cf6;
-  --accent-soft: #a5b4fc;
-  --signal: #22d3ee;
-  --border-subtle: #212b3a;
-  --border-strong: #2f3b4e;
-  --glow-accent: 0 0 0 1px rgba(139, 124, 246, 0.3), 0 0 16px rgba(139, 124, 246, 0.22);
-  --glow-signal: 0 0 0 1px rgba(34, 211, 238, 0.3), 0 0 14px rgba(34, 211, 238, 0.2);
+/* Glass Cockpit: panels go properly frosted — more blur, more saturation,
+   a glossier top sheen and a violet-tinted hover. */
+html[data-theme="glass"] .panel {
+  background: color-mix(in srgb, var(--bg-surface) 55%, transparent);
+  backdrop-filter: blur(22px) saturate(1.35);
+  -webkit-backdrop-filter: blur(22px) saturate(1.35);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.09),
+    inset 0 -1px 0 rgba(177, 139, 255, 0.06),
+    var(--shadow-panel);
+}
+html[data-theme="glass"] body {
+  background-image:
+    radial-gradient(900px 480px at 18% -8%, rgba(217, 70, 239, 0.13), transparent 66%),
+    radial-gradient(820px 520px at 82% 12%, rgba(99, 62, 255, 0.16), transparent 64%),
+    radial-gradient(760px 420px at 50% 108%, rgba(34, 211, 238, 0.07), transparent 70%);
 }
 
-.palette-root[data-palette="ocean"],
-html[data-theme="dark"][data-palette="ocean"] {
-  --bg-base: #0a1120;
-  --bg-surface: #101a2c;
-  --bg-elevated: #172440;
-  --bg-inset: #0d1526;
-  --bg-overlay: #15223b;
-  --atmos-a: 40 90 180;
-  --atmos-b: 10 30 70;
-  --text-primary: #e8eefb;
-  --text-muted: #9db0cc;
-  --text-faint: #7185a6;
-  --accent: #5aa2ff;
-  --accent-soft: #7fb8ff;
-  --signal: #22d3ee;
-  --border-subtle: #1d2b44;
-  --border-strong: #2b3d5c;
-  --glow-accent: 0 0 0 1px rgba(90, 162, 255, 0.35), 0 0 16px rgba(90, 162, 255, 0.25);
-  --glow-signal: 0 0 0 1px rgba(34, 211, 238, 0.3), 0 0 14px rgba(34, 211, 238, 0.2);
+/* Terminal Heritage: everything speaks mono, edges sharpen, scanlines sweep
+   the field, and primary text carries a faint phosphor bloom. */
+html[data-theme="terminal"] {
+  --font-sans: "IBM Plex Mono", ui-monospace, monospace;
+}
+html[data-theme="terminal"] body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0.16) 0px,
+    rgba(0, 0, 0, 0.16) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+}
+html[data-theme="terminal"] .panel {
+  border-radius: 6px;
+}
+html[data-theme="terminal"] .well,
+html[data-theme="terminal"] .input,
+html[data-theme="terminal"] .select {
+  border-radius: 4px;
+}
+html[data-theme="terminal"] .display {
+  text-shadow: 0 0 14px rgb(var(--atmos-a) / 0.35);
 }
 
-.palette-root[data-palette="teal"],
-html[data-theme="dark"][data-palette="teal"] {
-  --bg-base: #0a0c11;
-  --bg-surface: #10141c;
-  --bg-elevated: #172030;
-  --bg-inset: #0d1017;
-  --bg-overlay: #161c27;
-  --atmos-a: 20 110 100;
-  --atmos-b: 12 45 70;
-  --text-primary: #e8ebf2;
-  --text-muted: #98a2b3;
-  --text-faint: #6d788e;
-  --accent: #2dd4bf;
-  --accent-soft: #5eead4;
-  --signal: #67e8f9;
-  --border-subtle: #1d2431;
-  --border-strong: #2a3242;
-  --glow-accent: 0 0 0 1px rgba(45, 212, 191, 0.32), 0 0 16px rgba(45, 212, 191, 0.24);
-  --glow-signal: 0 0 0 1px rgba(103, 232, 249, 0.32), 0 0 14px rgba(103, 232, 249, 0.22);
+/* Paper Analyst: drop the glass act — flat white cards on paper, hairline
+   borders carry the structure, shadows stay whisper-quiet. */
+html[data-theme="paper"] .panel {
+  background: var(--bg-surface);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: var(--shadow-panel);
+}
+html[data-theme="paper"] .panel::before {
+  left: 24px;
+  right: auto;
+  width: 28px;
 }
 
 /* Narrow-window notice — desk tool, best viewed wide (spec). Shown only

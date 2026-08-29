@@ -94,9 +94,12 @@ def set_status(
     *,
     error: str | None = None,
     progress: int | None = None,
+    result: dict | None = None,
 ) -> dict | None:
     """Transition a job's status, stamping finished_at on terminal states.
-    Returns the updated row (None when the job doesn't exist)."""
+    `result` (when given) replaces the JSON payload — the terminal write that
+    persists the executor's output alongside the final status. Returns the
+    updated row (None when the job doesn't exist)."""
     sets = ["status = ?"]
     values: list = [status]
     if status in (COMPLETED, FAILED, CANCELED):
@@ -108,6 +111,9 @@ def set_status(
     if progress is not None:
         sets.append("progress = ?")
         values.append(progress)
+    if result is not None:
+        sets.append("result = ?")
+        values.append(json.dumps(result))
     cur = conn.execute(
         f"UPDATE analysis_jobs SET {', '.join(sets)} WHERE run_id = ?", [*values, run_id]
     )

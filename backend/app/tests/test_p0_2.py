@@ -9,9 +9,10 @@
   disposition mutation, invalid enums.
 - Analysis job API: persisted static jobs (real static analysis with stored
   bytes), cancel transitions over store-created queued rows, unexecuted
-  backends (watched-host / external-provider / isolated-outpost) 501 at the
-  API — capability honesty: no executor, no queueable job — observations
-  (NO observations table), findings.
+  backends (watched-host / isolated-outpost) 501 at the API — capability
+  honesty; external-provider executes via the sandbox providers instead of
+  501-ing (provider wiring covered in test_analysis_provider_jobs) —
+  observations (NO observations table), findings.
 - Auth: analyst reads / writes 403, admin reads+writes, agent 403 on all
   three analyst-facing resources.
 """
@@ -403,11 +404,12 @@ def test_cancel_transitions(client, conn):
 
 def test_unexecuted_backends_return_501(client):
     """Capability honesty at the contract layer: backends with no executor
-    are refused by the API — never a queued row that would sit forever."""
+    are refused by the API — never a queued row that would sit forever.
+    (external-provider has an executor now — the sandbox providers — so it
+    is exercised in test_analysis_provider_jobs, not here.)"""
     before = client.get("/analysis").json()["total"]
     for backend, fragment in (
         ("watched-host", "no executor"),
-        ("external-provider", "no provider wiring"),
         ("isolated-outpost", "no isolated execution"),
     ):
         resp = client.post("/analysis", json={"backend": backend, "sample_name": "x.bin"})
@@ -431,7 +433,7 @@ def test_analysis_findings_uses_run_relationship(client, conn):
     assert any(a["rule_id"] == "unusual-port" for a in findings)
     assert client.get(f"/analysis/{job['run_id']}/findings")  # run relationship
     # Events of the run are the observations-shaped payload for dynamic jobs
-    # (legacy/store-created rows — POST no longer creates them).
+    # (store-created rows and provider-backed API jobs both land here).
     dyn = _queued_job(client, conn, "external-provider", "p02-aj-find-dyn.bin")
     client.post("/ingest/batch", json=[_conn(dyn["run_id"])])
     obs = client.get(f"/analysis/{dyn['run_id']}/observations").json()

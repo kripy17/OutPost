@@ -146,7 +146,8 @@ _SIGMA_TEMPLATES: dict[str, dict[str, Any]] = {
         "title": "OutPost: High-frequency C2 beacon network communication in run {run_id}",
         "logsource": {"category": "network_connection", "product": "windows"},
         "field": "DestinationPort",
-        "modifier": "contains",
+        # equals — `contains` also matched 1443 / 8443 / 44300.
+        "modifier": "equals",
         "pattern": "443",
         "level": "high",
         "tags": ["attack.command_and_control", "attack.t1071"],
@@ -182,7 +183,8 @@ def generate_sigma_rules(run_id: str, alerts: list[dict[str, Any]]) -> list[str]
         logsource = tmpl["logsource"]
         rule_yaml = (
             f"title: {tmpl['title'].format(run_id=run_id[:12])}\n"
-            f"id: {uuid.uuid4()}\n"
+            # Deterministic id: same run + same heuristic → same Sigma id.
+        f"id: {uuid.uuid5(uuid.NAMESPACE_URL, f'outpost-sigma:{run_id}:{rule_id}')}\n"
             f"status: experimental\n"
             f"description: Automatically synthesized Sigma rule generated from behavioral telemetry in run {run_id}.\n"
             f"references:\n"
@@ -304,7 +306,11 @@ def transpile_sigma_yaml(yaml_str: str) -> dict[str, Any]:
     description = desc_match.group(1).strip().strip("'\"") if desc_match else "Transpiled from Sigma specification"
     level = level_match.group(1).strip().strip("'\"").lower() if level_match else "medium"
     status = status_match.group(1).strip().strip("'\"") if status_match else "experimental"
-    sigma_id = id_match.group(1).strip().strip("'\"") if id_match else uuid.uuid4().hex[:8]
+    sigma_id = (
+        id_match.group(1).strip().strip("'\"")
+        if id_match
+        else str(uuid.uuid5(uuid.NAMESPACE_URL, f"outpost-sigma-import:{title}"))
+    )
 
     # Severity mapping
     severity = "malicious" if level in ("critical", "high") else "suspicious"
@@ -314,16 +320,28 @@ def transpile_sigma_yaml(yaml_str: str) -> dict[str, Any]:
     mitre_techniques = [t.upper() for t in tags if t.startswith("t")]
     mitre_tactics = [t.replace("_", "-") for t in tags if not t.startswith("t")]
 
-    # Parse selection fields
+    # Parse selection fields — criteria come ONLY from the `detection:` block.
+    # A flat line-walk used to leak indented logsource children (category /
+    # product) in as bogus criteria mapped onto command_line.
     criteria: list[dict[str, Any]] = []
-    for line in yaml_str.splitlines():
-        line = line.strip()
-        if ":" not in line or line.startswith(("#", "title", "description", "status", "level", "id", "logsource", "detection", "tags", "condition", "author", "date")):
+    in_detection = False
+    for raw_line in yaml_str.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if not raw_line[:1].isspace():
+            # Top-level key — toggles detection-block scope.
+            in_detection = line.split(":", 1)[0].strip() == "detection"
+            continue
+        if not in_detection or ":" not in line:
             continue
         key, _, val = line.partition(":")
         key = key.strip()
         val = val.strip().strip("'\"")
-        if not key or not val or val.startswith(("-", "{", "[")):
+        key_head = key.split("|", 1)[0].strip().lower()
+        if not key or key_head in ("condition", "timeframe"):
+            continue
+        if not val or val.startswith(("-", "{", "[")):
             continue
 
         target_field = "command_line"
@@ -358,7 +376,14 @@ def transpile_sigma_yaml(yaml_str: str) -> dict[str, Any]:
             "value": val,
         })
 
-    rule_id = f"sigma-{re.sub(r'[^a-zA-Z0-9]', '-', title.lower())[:32].strip('-')}"
+    # Identity: prefer the rule's own Sigma id (stable, collision-free); the
+    # title slug stays readable. The old 32-char truncation let distinct
+    # rules with a shared long title prefix collide on the same id.
+    base_slug = re.sub(r"[^a-zA-Z0-9]", "-", title.lower()).strip("-")
+    if id_match:
+        rule_id = f"sigma-{sigma_id}"
+    else:
+        rule_id = f"sigma-{base_slug[:80]}"
 
     return {
         "rule_id": rule_id,

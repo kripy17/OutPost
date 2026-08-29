@@ -36,6 +36,9 @@ def get_alerts(run_id: str) -> list[Alert]:
         if not run_store.get_run(conn, run_id):
             raise HTTPException(status_code=404, detail=f"Unknown run_id: {run_id}")
         rows = event_store.list_alerts_for_run(conn, run_id)
+        from ..services.alert_context import attach_intel
+
+        attach_intel(rows, conn)
     return [Alert(**row) for row in rows]
 
 
@@ -323,9 +326,12 @@ def list_recent_alerts(limit: int = 20, provenance: str | None = None) -> list[d
             """,
             (*params, limit),
         ).fetchall()
-    out = [dict(r) for r in rows]
-    for d in out:
-        _parse_related_pids(d)
+        out = [dict(r) for r in rows]
+        for d in out:
+            _parse_related_pids(d)
+        from ..services.alert_context import attach_intel
+
+        attach_intel(out, conn)
     return out
 
 

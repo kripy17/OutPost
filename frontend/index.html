@@ -3,24 +3,29 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#14171c" />
+    <meta name="theme-color" content="#0a0f1a" />
     <meta name="description" content="OutPost — cross-platform behavioral security monitoring, dynamic malware analysis, and campaign hunting." />
     <title>OutPost — Behavioral Security Monitor</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <script>
-      // Theme before first paint — dark-first. Uses a fresh storage key so any
-      // "light" saved under the old key is ignored: every session starts dark.
+      // Theme before first paint — Midnight Ops is the default identity.
+      // Legacy ids ("dark"/"light") map onto their successor themes; see
+      // src/lib/themes.ts (the registry the app reads back).
       (function () {
+        var THEMES = { midnight: 1, glass: 1, paper: 1, terminal: 1, ember: 1 };
+        var theme = "midnight";
         try {
           var saved = localStorage.getItem("outpost-theme-v2");
-          document.documentElement.dataset.theme = saved === "light" ? "light" : "dark";
-          var pal = localStorage.getItem("outpost-palette");
-          if (pal) document.documentElement.dataset.palette = pal;
-          // Icon-only rail — restore before paint so the offset never flashes.
+          if (saved === "dark") theme = "ember";
+          else if (saved === "light") theme = "paper";
+          else if (saved && THEMES[saved]) theme = saved;
+          localStorage.setItem("outpost-theme-v2", theme);
+        } catch (e) { /* storage unavailable — keep default */ }
+        document.documentElement.dataset.theme = theme;
+        // Icon-only rail — restore before paint so the offset never flashes.
+        try {
           if (localStorage.getItem("outpost-rail") === "collapsed") document.documentElement.dataset.rail = "collapsed";
-        } catch (e) {
-          document.documentElement.dataset.theme = "dark";
-        }
+        } catch (e) { /* noop */ }
       })();
     </script>
     <!-- Self-hosted IBM Plex (public/fonts/) — no external CDN dependency, so

@@ -16,12 +16,14 @@ if (-not (Test-Path ".\.venv\Scripts\python.exe")) {
 }
 
 Write-Host "[*] Initializing database & demo telemetry..." -ForegroundColor Yellow
-& ".\.venv\Scripts\python.exe" -m app.seed_demo | Out-Null
+Push-Location backend
+& "..\.venv\Scripts\python.exe" -m app.seed_demo | Out-Null
+Pop-Location
 
 $backendProc = Start-Process -FilePath ".\.venv\Scripts\python.exe" -ArgumentList "-m uvicorn app.main:app --host 127.0.0.1 --port 8001 --log-level warning" -WorkingDirectory "backend" -PassThru
-Set-Location frontend
+Push-Location frontend
 $frontendProc = Start-Process -FilePath "npm.cmd" -ArgumentList "run dev -- --port 5174" -PassThru
-Set-Location ..
+Pop-Location
 
 Start-Sleep -Seconds 3
 Write-Host "[*] Opening web browser at http://localhost:5174..." -ForegroundColor Yellow

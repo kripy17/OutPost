@@ -73,9 +73,14 @@ function TacticColumn({
                 <Link
                   to="/rules"
                   className={`flex items-baseline gap-2 rounded-lg border bg-bg-elevated/40 px-2.5 py-2 transition-colors duration-150 ${severityTone(rule.severity)} group-hover:border-accent/50 group-hover:bg-bg-elevated/70`}
-                  title={`View detection rule details for ${rule.rule_name}`}
+                  title={rule.technique_name ? `${rule.technique} · ${rule.technique_name}` : `View detection rule details for ${rule.rule_name}`}
                 >
                   <code className="shrink-0 font-mono text-[11px] font-semibold">{rule.technique}</code>
+                  {rule.technique_name && (
+                    <span className="hidden min-w-0 flex-1 truncate text-[10px] text-text-faint lg:inline" title={rule.technique_name}>
+                      {rule.technique_name}
+                    </span>
+                  )}
                   <span className="min-w-0 flex-1 truncate text-xs text-text-primary group-hover:text-accent" title={rule.rule_name}>
                     {rule.rule_name}
                   </span>

@@ -6,7 +6,7 @@ import { Deferred } from "../components/Deferred/Deferred";
 import { Icon } from "../components/Icon";
 import { platformIconName } from "../components/iconMeta";
 import { RiskGauge, RiskTrendBars, SeverityDonut, type RiskTrendBar } from "../components/Posture/Posture";
-import { PageHeader, Panel } from "../components/ui";
+import { PageHeader, Panel, isSyntheticSource } from "../components/ui";
 import { ageBucket, aggregateTrend, collapseFindings, intelFreshness, intelKeyHealth, openSince, overviewRunParams, sortFindingsRiskFirst } from "./overviewHelpers";
 import { copyToClipboard } from "../lib/clipboard";
 import { SEVERITY_BG } from "../lib/constants";
@@ -84,7 +84,7 @@ function PostureHeader({
 // Live findings feed — SSE push + duplicate collapse
 /* ──────────────────────────────────────────────────────────────────────── */
 
-function FindingsFeed() {
+function FindingsFeed({ demoRunIds, demoOnly }: { demoRunIds?: Set<string>; demoOnly?: boolean }) {
   const queryClient = useQueryClient();
   const [sevFilter, setSevFilter] = useState<Severity | "all">("all");
   // Process-jump hover preview: a fixed-position card next to the link showing
@@ -193,6 +193,13 @@ function FindingsFeed() {
         </div>
       )}
 
+      {!isLoading && !isError && demoOnly && groups.length > 0 && (
+        <p className="mb-3 flex items-center gap-2 rounded-lg border border-border-subtle bg-bg-elevated/40 px-3 py-2 font-mono text-[10px] text-text-muted">
+          <Icon name="zap" size={11} className="text-accent" />
+          All current findings come from seeded demo sessions — start a collector for real telemetry.
+        </p>
+      )}
+
       <ol className="space-y-2">
         {groups.map((g) => {
           const a = g.first;
@@ -249,6 +256,14 @@ function FindingsFeed() {
                     </Link>
                   );
                 })()}
+                {(demoRunIds?.has(a.run_id) ?? false) && (
+                  <span
+                    className="rounded border border-border-subtle bg-bg-elevated/70 px-1.5 py-px font-mono text-[9px] uppercase tracking-wide text-text-muted"
+                    title="Seeded demo session — not real host telemetry"
+                  >
+                    demo
+                  </span>
+                )}
                 {g.count > 1 && (
                   <span
                     className="rounded-full border border-border-subtle bg-bg-elevated/70 px-1.5 py-px font-mono text-[10px] tabular-nums text-text-muted"
@@ -261,9 +276,9 @@ function FindingsFeed() {
                 {rule && (
                   <span
                     className="rounded border border-border-subtle px-1.5 py-0.5 font-mono text-[10px] text-text-faint"
-                    title={`MITRE ATT&CK ${rule.tactic}`}
+                    title={`MITRE ATT&CK ${rule.technique_name ? `${rule.technique} · ${rule.technique_name}` : rule.tactic}`}
                   >
-                    {rule.technique} · {rule.tactic}
+                    {rule.technique} · {rule.technique_name ?? rule.tactic}
                   </span>
                 )}
                 <span className="ml-auto flex items-center gap-2 font-mono text-[10px] tabular-nums">
@@ -617,7 +632,7 @@ function HostMonitorPanel() {
       className={`mb-6 relative overflow-hidden rounded-2xl border p-4 backdrop-blur-xl transition-all duration-200 ${
         monitored
           ? "border-risk-clean/30 bg-gradient-to-r from-risk-clean/10 via-bg-surface/90 to-bg-surface/90 shadow-[0_4px_24px_-4px_rgba(63,167,150,0.15)]"
-          : "border-risk-suspicious/30 bg-gradient-to-r from-risk-suspicious/10 via-bg-surface/90 to-bg-surface/90 shadow-[0_4px_24px_-4px_rgba(217,164,65,0.15)]"
+          : "border-risk-suspicious/30 bg-gradient-to-r from-risk-suspicious/10 via-bg-surface/90 to-bg-surface/90 shadow-[var(--glow-amber)]"
       }`}
       aria-label="This host's monitor status"
     >
@@ -810,8 +825,17 @@ export default function OverviewPage() {
   const { data: runs = [], isLoading, isError } = useQuery({ queryKey: ["runs"], queryFn: () => getRuns(overviewRunParams()) });
   const { data: campaigns = [] } = useQuery({ queryKey: ["campaigns"], queryFn: () => getCampaigns() });
 
-  const totalAlerts = runs.reduce((n, r) => n + r.alert_count, 0);
-  const trendBars = useMemo(() => aggregateTrend(runs), [runs]);
+  // Honest-posture split: seeded/synthetic sessions never feed the risk gauge,
+  // donut, or trend — a fresh console stays dark instead of showing fabricated
+  // numbers. Demo data remains browsable in History and tagged in the feed.
+  const realRuns = useMemo(() => runs.filter((r) => !isSyntheticSource(r.source)), [runs]);
+  const demoRunIds = useMemo(
+    () => new Set(runs.filter((r) => isSyntheticSource(r.source)).map((r) => r.run_id)),
+    [runs],
+  );
+
+  const totalAlerts = realRuns.reduce((n, r) => n + r.alert_count, 0);
+  const trendBars = useMemo(() => aggregateTrend(realRuns), [realRuns]);
 
   return (
     <div className="mx-auto max-w-[1400px] px-5 py-8 lg:px-8">
@@ -855,7 +879,7 @@ export default function OverviewPage() {
       <div className="my-6 grid grid-cols-2 gap-3.5 sm:grid-cols-4">
         <Link
           to="/events"
-          className="group relative flex flex-col justify-between overflow-hidden rounded-2xl border border-border-subtle bg-bg-surface/70 p-4 backdrop-blur-md transition-all duration-200 hover:-translate-y-1 hover:border-accent/60 hover:bg-bg-elevated hover:shadow-[0_12px_24px_-8px_rgba(217,164,65,0.2)]"
+          className="group relative flex flex-col justify-between overflow-hidden rounded-2xl border border-border-subtle bg-bg-surface/70 p-4 backdrop-blur-md transition-all duration-200 hover:-translate-y-1 hover:border-accent/60 hover:bg-bg-elevated hover:shadow-[var(--glow-accent)]"
         >
           <div className="flex items-center justify-between">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-accent/40 bg-accent/15 text-accent shadow-[var(--glow-accent)] transition-transform duration-200 group-hover:scale-110">
@@ -871,7 +895,7 @@ export default function OverviewPage() {
 
         <Link
           to="/findings"
-          className="group relative flex flex-col justify-between overflow-hidden rounded-2xl border border-border-subtle bg-bg-surface/70 p-4 backdrop-blur-md transition-all duration-200 hover:-translate-y-1 hover:border-risk-suspicious/60 hover:bg-bg-elevated hover:shadow-[0_12px_24px_-8px_rgba(217,164,65,0.2)]"
+          className="group relative flex flex-col justify-between overflow-hidden rounded-2xl border border-border-subtle bg-bg-surface/70 p-4 backdrop-blur-md transition-all duration-200 hover:-translate-y-1 hover:border-risk-suspicious/60 hover:bg-bg-elevated hover:shadow-[var(--glow-accent)]"
         >
           <div className="flex items-center justify-between">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-risk-suspicious/40 bg-risk-suspicious/15 text-risk-suspicious shadow-[var(--glow-amber)] transition-transform duration-200 group-hover:scale-110">
@@ -887,7 +911,7 @@ export default function OverviewPage() {
 
         <Link
           to="/investigations"
-          className="group relative flex flex-col justify-between overflow-hidden rounded-2xl border border-border-subtle bg-bg-surface/70 p-4 backdrop-blur-md transition-all duration-200 hover:-translate-y-1 hover:border-accent/60 hover:bg-bg-elevated hover:shadow-[0_12px_24px_-8px_rgba(217,164,65,0.2)]"
+          className="group relative flex flex-col justify-between overflow-hidden rounded-2xl border border-border-subtle bg-bg-surface/70 p-4 backdrop-blur-md transition-all duration-200 hover:-translate-y-1 hover:border-accent/60 hover:bg-bg-elevated hover:shadow-[var(--glow-accent)]"
         >
           <div className="flex items-center justify-between">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-accent/40 bg-accent/15 text-accent shadow-[var(--glow-accent)] transition-transform duration-200 group-hover:scale-110">
@@ -937,7 +961,31 @@ export default function OverviewPage() {
         </Panel>
       )}
 
-      {!isLoading && !isError && runs.length > 0 && (
+      {/* Demo-only store: posture stays dark instead of charting seeded data. */}
+      {!isLoading && !isError && realRuns.length === 0 && runs.length > 0 && (
+        <Panel kicker="Telemetry status" title="No live telemetry yet — demo data only">
+          <div className="py-6 text-center font-mono text-sm text-text-muted">
+            <p className="font-semibold text-text-primary">
+              {runs.length} seeded demo session{runs.length === 1 ? "" : "s"} · 0 real sessions
+            </p>
+            <p className="mx-auto mt-1 max-w-xl text-xs leading-relaxed text-text-faint">
+              The risk gauge, severity mix, and trend stay dark until real telemetry arrives — this console never charts
+              fabricated numbers. Run <code className="font-mono text-text-muted">outpost agent run</code> on a host or
+              detonate a sample in the Simulation Lab; the demo sessions stay browsable in History.
+            </p>
+            <div className="mt-4 flex justify-center gap-3">
+              <Link to="/history" className="btn btn-primary text-xs">
+                Browse demo history
+              </Link>
+              <Link to="/monitor" className="btn text-xs">
+                Open Simulation Lab
+              </Link>
+            </div>
+          </div>
+        </Panel>
+      )}
+
+      {!isLoading && !isError && realRuns.length > 0 && (
         <>
           <PostureHeader runs={runs} trendBars={trendBars} campaigns={campaigns.length} totalAlerts={totalAlerts} />
           {/* One-line trend affordance — the analytical bars live in History now. */}
@@ -961,7 +1009,7 @@ export default function OverviewPage() {
 
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[1.6fr_1fr]">
         <Deferred>
-          <FindingsFeed />
+          <FindingsFeed demoRunIds={demoRunIds} demoOnly={realRuns.length === 0 && runs.length > 0} />
         </Deferred>
         <Deferred>
           <ActiveInvestigationsPanel />

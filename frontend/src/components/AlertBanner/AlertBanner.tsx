@@ -262,9 +262,9 @@ export default function AlertBanner({
               {rule && (
                 <span
                   className="rounded border border-border-subtle px-1.5 py-0.5 font-mono text-[10px] text-text-muted"
-                  title={`MITRE ATT&CK ${rule.tactic}`}
+                  title={`MITRE ATT&CK ${rule.technique_name ? `${rule.technique} · ${rule.technique_name}` : rule.tactic}`}
                 >
-                  {rule.technique} · {rule.tactic}
+                  {rule.technique} · {rule.technique_name ?? rule.tactic}
                 </span>
               )}
               {/* Process jump (Event-Manager parity): alerts that name a

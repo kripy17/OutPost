@@ -46,11 +46,16 @@ async def ingest_snapshot(snapshot: dict) -> dict:
     }
 
 
+_MAX_BATCH = 500
+
+
 @router.post("/ingest/batch", status_code=202)
 async def ingest_batch(events: list[EventIn]) -> dict:
     """Accept a batch of events, store them, and run detection on each."""
     if not events:
         return {"accepted": 0, "alerts": 0}
+    if len(events) > _MAX_BATCH:
+        raise HTTPException(status_code=413, detail=f"Batch exceeds the {_MAX_BATCH}-event limit — split the batch")
 
     # A batch must belong to exactly one run (collectors ship per-run batches).
     run_ids = {e.run_id for e in events}

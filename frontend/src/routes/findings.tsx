@@ -8,7 +8,7 @@ import { addSuppression, bulkUpdateAlertStatus, getAlertQueue, getRuleMeta } fro
 import { useEventStream } from "../lib/useEventStream";
 import { SEVERITY_COLORS, SEVERITY_LABEL } from "../lib/constants";
 import { toneFill, toneForSeverity } from "../lib/fillPatterns";
-import type { AlertStatus, QueueAlert, Severity } from "../types";
+import type { AlertStatus, IntelEvidence, QueueAlert, Severity } from "../types";
 import ProcessContextModal from "../components/ProcessContextModal";
 import NetworkContextModal from "../components/NetworkContextModal";
 import {
@@ -21,6 +21,48 @@ import {
   statusTabCount,
   writeSavedProvenance,
 } from "./findingsHelpers";
+
+// Threat-intel evidence joined onto the finding by the backend — one compact
+// chip per linked IOC so the verdict (and its freshness) is visible at triage
+// time without opening the intel workspace.
+function IntelChips({ intel }: { intel: IntelEvidence[] }) {
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center gap-1">
+      {intel.map((e) => {
+        const mal = e.reputation === "malicious";
+        const sus = e.reputation === "suspicious";
+        const bits = [
+          e.abuse_score != null ? `A${e.abuse_score}` : null,
+          e.vt_malicious_count != null ? `VT${e.vt_malicious_count}` : null,
+        ].filter(Boolean) as string[];
+        return (
+          <span
+            key={`${e.type}:${e.value}`}
+            className={`inline-flex items-center gap-1 rounded border px-1.5 py-px font-mono text-[9px] ${
+              mal
+                ? "border-risk-malicious/40 bg-risk-malicious/10 text-risk-malicious"
+                : sus
+                  ? "border-accent/40 bg-accent/10 text-accent"
+                  : "border-border-subtle text-text-faint"
+            }`}
+            title={[
+              `${e.type} ${e.value}`,
+              e.label || null,
+              `${e.reputation ?? "unrated"}${e.disposition ? ` · ${e.disposition}` : ""}`,
+              e.checked_at ? `checked ${ageLabel(e.checked_at)} ago` : "never checked",
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          >
+            <Icon name={mal || sus ? "alert" : "star"} size={8} className="opacity-70" />
+            {e.value}
+            {bits.length > 0 && <span className="opacity-80">{bits.join(" ")}</span>}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
 
 function FindingRow({
   a,
@@ -76,6 +118,7 @@ function FindingRow({
         <p className="mt-0.5 truncate font-mono text-[11px] text-text-muted" title={a.details}>
           {a.details}
         </p>
+        {a.intel && a.intel.length > 0 && <IntelChips intel={a.intel} />}
         <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-text-faint">
           <Link to={`/runs/${a.run_id}`} className="press inline-flex items-center gap-1 font-mono font-medium text-accent hover:underline">
             {a.sample_name}

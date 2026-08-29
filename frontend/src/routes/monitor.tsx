@@ -422,7 +422,7 @@ export default function MonitorPage() {
               return (
                 <div
                   key={pb.id}
-                  className="panel group relative flex flex-col justify-between p-5 transition-all duration-200 hover:border-accent/60 hover:shadow-[0_8px_24px_-6px_rgba(217,164,65,0.15)]"
+                  className="panel group relative flex flex-col justify-between p-5 transition-all duration-200 hover:border-accent/60 hover:shadow-[var(--glow-accent)]"
                 >
                   <div>
                     <div className="flex items-start justify-between gap-3">
