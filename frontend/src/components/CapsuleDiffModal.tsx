@@ -68,6 +68,7 @@ export function CapsuleDiffModal({ isOpen, onClose }: CapsuleDiffModalProps) {
           </div>
           <button
             onClick={onClose}
+            aria-label="Close modal"
             className="text-text-muted hover:text-text-primary text-xl font-mono leading-none cursor-pointer"
           >
             ×

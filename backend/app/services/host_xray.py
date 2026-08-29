@@ -1301,3 +1301,319 @@ def compare_two_capsules(capsule_a: dict[str, Any], capsule_b: dict[str, Any]) -
     }
 
 
+def get_process_device_access(pid: int) -> dict[str, Any]:
+    """Inspect process hardware device access (Microphone, Camera, Screen Capture, GPU, Sleep Inhibitors)."""
+    device_matrix = {
+        "microphone": {"in_use": False, "devices": [], "label": "Not in use"},
+        "camera": {"in_use": False, "devices": [], "label": "Not in use"},
+        "screen_capture": {"in_use": False, "devices": [], "label": "Not in use"},
+        "audio_capture": {"in_use": False, "devices": [], "label": "Not in use"},
+        "audio_playback": {"in_use": False, "devices": [], "label": "Not in use"},
+        "video_capture": {"in_use": False, "devices": [], "label": "Not in use"},
+        "gpu": {"in_use": False, "nodes": [], "client_count": 0, "label": "Not in use"},
+        "sleep_inhibition": {"in_use": False, "label": "Not in use"},
+    }
+
+    proc_fd_dir = f"/proc/{pid}/fd"
+    if not os.path.isdir(proc_fd_dir):
+        return device_matrix
+
+    try:
+        for entry in os.listdir(proc_fd_dir):
+            fd_path = f"{proc_fd_dir}/{entry}"
+            try:
+                target = os.readlink(fd_path)
+            except OSError:
+                continue
+
+            # Audio Capture / Microphone
+            if "/dev/snd/pcm" in target and target.endswith("c"):
+                device_matrix["microphone"]["in_use"] = True
+                device_matrix["microphone"]["devices"].append(target)
+                device_matrix["microphone"]["label"] = "Capture Active"
+                device_matrix["audio_capture"]["in_use"] = True
+                device_matrix["audio_capture"]["label"] = "In use"
+
+            # Audio Playback
+            if "/dev/snd/pcm" in target and target.endswith("p"):
+                device_matrix["audio_playback"]["in_use"] = True
+                device_matrix["audio_playback"]["devices"].append(target)
+                device_matrix["audio_playback"]["label"] = "Audio Active"
+
+            # Camera / Video Capture
+            if target.startswith(("/dev/video", "/dev/media", "/dev/v4l")):
+                device_matrix["camera"]["in_use"] = True
+                device_matrix["camera"]["devices"].append(target)
+                device_matrix["camera"]["label"] = "Camera Streaming"
+                device_matrix["video_capture"]["in_use"] = True
+                device_matrix["video_capture"]["label"] = "In use"
+
+            # GPU Render Nodes
+            if "/dev/dri/renderD" in target or "/dev/dri/card" in target or "/dev/nvidia" in target:
+                device_matrix["gpu"]["in_use"] = True
+                device_matrix["gpu"]["nodes"].append(os.path.basename(target))
+
+        if device_matrix["gpu"]["in_use"]:
+            nodes = list(set(device_matrix["gpu"]["nodes"]))
+            device_matrix["gpu"]["client_count"] = len(nodes)
+            device_matrix["gpu"]["label"] = f"{nodes[0]} +{len(nodes)-1} LIVE" if len(nodes) > 1 else f"{nodes[0]} LIVE"
+
+        # Check sleep inhibitors
+        if os.path.isdir("/run/systemd/inhibit"):
+            try:
+                for inh in os.listdir("/run/systemd/inhibit"):
+                    if str(pid) in inh:
+                        device_matrix["sleep_inhibition"]["in_use"] = True
+                        device_matrix["sleep_inhibition"]["label"] = "Active Lock"
+            except Exception:
+                pass
+
+    except Exception:
+        pass
+
+    return device_matrix
+
+
+def get_process_open_inodes(pid: int) -> list[dict[str, Any]]:
+    """Retrieve detailed open file descriptors with deleted file / anonymous memfd detection."""
+    inodes: list[dict[str, Any]] = []
+    proc_fd_dir = f"/proc/{pid}/fd"
+    if not os.path.isdir(proc_fd_dir):
+        return inodes
+
+    try:
+        for entry in sorted(os.listdir(proc_fd_dir), key=lambda x: int(x) if x.isdigit() else 99999)[:200]:
+            fd_path = f"{proc_fd_dir}/{entry}"
+            try:
+                target = os.readlink(fd_path)
+            except OSError:
+                continue
+
+            is_deleted = " (deleted)" in target
+            is_memfd = target.startswith(("/memfd:", "anon_inode:"))
+            
+            kind = "file"
+            if is_memfd:
+                kind = "memfd"
+            elif target.startswith("socket:"):
+                kind = "socket"
+            elif target.startswith("pipe:"):
+                kind = "pipe"
+            elif target.startswith("/dev/"):
+                kind = "device"
+            elif is_deleted:
+                kind = "file"
+
+            access = "read_write"
+            if is_deleted:
+                access = "DELETED"
+            elif kind == "device":
+                access = "DEV_IO"
+
+            inodes.append({
+                "fd": int(entry) if entry.isdigit() else entry,
+                "path": target,
+                "clean_path": target.replace(" (deleted)", ""),
+                "is_deleted": is_deleted,
+                "is_memfd": is_memfd,
+                "kind": kind,
+                "access": access,
+            })
+    except Exception:
+        pass
+
+    return inodes
+
+
+def get_process_launch_chain(pid: int) -> dict[str, Any]:
+    """Extract supervisor launch chain (systemd supervisor -> scope/service -> process)."""
+    cgroup_info = extract_cgroup_and_container_info(pid)
+    scope_or_service = cgroup_info.get("systemd_service") or cgroup_info.get("cgroup_scope") or cgroup_info.get("cgroup_slice") or "session.scope"
+    
+    proc_name = f"proc_{pid}"
+    try:
+        if os.path.exists(f"/proc/{pid}/comm"):
+            with open(f"/proc/{pid}/comm", "r", encoding="utf-8", errors="replace") as f:
+                proc_name = f.read().strip()
+    except Exception:
+        pass
+
+    return {
+        "supervisor": "systemd",
+        "service_scope": scope_or_service,
+        "is_grouped": bool(cgroup_info.get("systemd_service") or cgroup_info.get("cgroup_scope")),
+        "description": f"Grouped inside systemd scope {scope_or_service}",
+        "chain": [
+            {"id": "systemd", "name": "systemd", "role": "SUPERVISOR", "icon": "settings"},
+            {"id": scope_or_service, "name": scope_or_service, "role": "SERVICE", "icon": "grid"},
+            {"id": str(pid), "name": proc_name, "role": "PROCESS", "pid": pid, "icon": "process"},
+        ]
+    }
+
+
+def get_target_catalog() -> dict[str, Any]:
+    """Catalog live processes and system resources into Apps, Processes, Ports, Services, and Devices."""
+    processes = get_live_processes()
+    net_matrix = get_categorized_network_matrix()
+
+    open_apps: list[dict[str, Any]] = []
+    active_devices: list[dict[str, Any]] = []
+    quick_inspect = {
+        "audio": 0,
+        "camera": 0,
+        "gpu": 0,
+        "microphone": 0,
+    }
+
+    # Identify open desktop/interactive apps
+    for p in processes[:60]:
+        dev = get_process_device_access(p["pid"])
+        if dev["gpu"]["in_use"]:
+            quick_inspect["gpu"] += 1
+            for node in dev["gpu"]["nodes"]:
+                active_devices.append({
+                    "id": f"gpu_{p['pid']}_{node}",
+                    "name": "GPU client",
+                    "pid": p["pid"],
+                    "node": node,
+                    "process_name": p["name"],
+                })
+        if dev["microphone"]["in_use"] or dev["audio_capture"]["in_use"]:
+            quick_inspect["microphone"] += 1
+        if dev["audio_playback"]["in_use"]:
+            quick_inspect["audio"] += 1
+        if dev["camera"]["in_use"] or dev["video_capture"]["in_use"]:
+            quick_inspect["camera"] += 1
+
+        # Check if GUI or major user app
+        exe = p.get("exe") or ""
+        name = p.get("name") or ""
+        if any(keyword in exe.lower() or keyword in name.lower() for keyword in ("chrome", "brave", "firefox", "antigravity", "code", "terminal", "discord", "slack", "cursor", "spotify", "python", "vite")):
+            open_apps.append({
+                "id": str(p["pid"]),
+                "pid": p["pid"],
+                "name": name,
+                "title": p.get("package_label") or exe or name,
+                "exe": exe,
+                "user": p.get("user", "user"),
+                "memory_mb": p.get("memory_mb", 0),
+            })
+
+    return {
+        "total_targets_count": len(processes),
+        "quick_inspect": quick_inspect,
+        "open_apps": open_apps,
+        "active_devices": active_devices[:30],
+        "processes": processes[:100],
+        "ports": net_matrix.get("public_listeners", []) + net_matrix.get("loopback_listeners", []),
+    }
+
+
+def get_full_target_dossier(pid: int) -> dict[str, Any] | None:
+    """Unified full target inspection dossier (Cockpit layout)."""
+    detail = get_process_xray_detail(pid)
+    if not detail:
+        return None
+
+    device_access = get_process_device_access(pid)
+    inodes = get_process_open_inodes(pid)
+    launch_chain = get_process_launch_chain(pid)
+    tree = get_process_tree()
+
+    # Find matching sub-tree for this target
+    target_subtree: list[dict[str, Any]] = []
+    for root in tree:
+        if root.get("pid") == pid:
+            target_subtree = [root]
+            break
+        # Look in children
+        for child in root.get("children", []):
+            if child.get("pid") == pid:
+                target_subtree = [child]
+                break
+    if not target_subtree:
+        target_subtree = [{
+            "pid": pid,
+            "ppid": detail.get("ppid", 1),
+            "name": detail.get("name", "process"),
+            "cmdline": detail.get("cmdline", ""),
+            "exe": detail.get("exe", ""),
+            "user": detail.get("user", "system"),
+            "status": detail.get("status", "running"),
+            "cpu_percent": detail.get("cpu_percent", 0.0),
+            "memory_mb": detail.get("memory_mb", 0.0),
+            "threads": detail.get("threads", 1),
+            "started_at": detail.get("started_at", ""),
+            "children": [],
+        }]
+
+    # Compute target-specific findings
+    findings: list[dict[str, Any]] = []
+    deleted_inodes = [i for i in inodes if i.get("is_deleted")]
+    if deleted_inodes:
+        findings.append({
+            "id": "deleted-inodes-held",
+            "tone": "critical",
+            "title": "Deleted files are still held open in memory",
+            "why": f"{len(deleted_inodes)} deleted file descriptors held open. Disk space and old code remain accessible.",
+            "evidence": [i["path"] for i in deleted_inodes[:3]],
+        })
+
+    memfd_inodes = [i for i in inodes if i.get("is_memfd")]
+    if memfd_inodes:
+        findings.append({
+            "id": "memfd-anonymous-execution",
+            "tone": "critical",
+            "title": "Anonymous Memory Inodes (memfd_create) Active",
+            "why": "Process holds anonymous in-memory file descriptors typical of fileless payload execution.",
+            "evidence": [i["path"] for i in memfd_inodes[:3]],
+        })
+
+    sec = detail.get("security", {})
+    if sec.get("seccomp") in ("disabled", "Disabled", "Unknown"):
+        findings.append({
+            "id": "seccomp-disabled",
+            "tone": "attention",
+            "title": "Kernel syscall filtering (Seccomp) disabled",
+            "why": "Process has full unrestricted access to kernel syscall table.",
+            "evidence": ["Seccomp status: Disabled"],
+        })
+
+    # Format memory in GiB/MiB
+    mem_mb = detail.get("memory_mb") or 0.0
+    mem_gib_str = f"{(mem_mb / 1024):.2f} GiB" if mem_mb >= 1024 else f"{int(mem_mb)} MiB"
+
+    return {
+        "target": {
+            "pid": pid,
+            "ppid": detail.get("ppid", 1),
+            "name": detail.get("name", "process"),
+            "cmdline": detail.get("cmdline", ""),
+            "exe": detail.get("exe", ""),
+            "cwd": detail.get("cwd", ""),
+            "user": detail.get("user", "system"),
+            "status": detail.get("status", "running"),
+            "started_at": detail.get("started_at", ""),
+            "create_time": detail.get("create_time"),
+            "threads": detail.get("threads", 1),
+            "memory_mb": mem_mb,
+            "memory_gib_str": mem_gib_str,
+            "cpu_percent": detail.get("cpu_percent", 0.0),
+            "disk_io_str": "read + write",
+            "gpu_clients_count": device_access["gpu"]["client_count"],
+            "uptime_str": "live",
+        },
+        "launch_chain": launch_chain,
+        "device_access": device_access,
+        "security": sec,
+        "cgroup": detail.get("cgroup", {}),
+        "process_tree": target_subtree,
+        "connections": detail.get("sockets", []),
+        "files_ipc": inodes,
+        "findings": findings,
+        "correlated_events_count": len(detail.get("correlated_events", [])),
+        "correlated_alerts_count": len(detail.get("correlated_alerts", [])),
+    }
+
+
+
