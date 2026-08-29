@@ -11,50 +11,47 @@
    dark). */
 
 :root {
-  /* ── Field (backgrounds) — the forensics-lab slate ─────────────────────
-     Deep slate, not pure black; surfaces step up a notch, never jump. */
-  --bg-base: #14171c;
-  --bg-surface: #1c2028;
-  --bg-elevated: #242a35;
-  --bg-inset: #101318;
-  --bg-overlay: #1f2530;
+  /* ── Field (backgrounds) — modern Cyber Obsidian ─────────────────────
+     Rich ultra-dark obsidian with crisp surface elevations. */
+  --bg-base: #090a0f;
+  --bg-surface: #11141d;
+  --bg-elevated: #171c28;
+  --bg-inset: #06070a;
+  --bg-overlay: #191f2d;
 
-  /* Atmosphere — faint amber lab-light (top-left) + cool depth (bottom-right). */
-  --atmos-a: 110 84 22;
-  --atmos-b: 12 30 58;
+  /* Atmosphere — subtle electric indigo (top-left) + laser cyan depth (bottom-right). */
+  --atmos-a: 99 102 241;
+  --atmos-b: 6 182 212;
 
   /* ── Text ────────────────────────────────────────────────────────────── */
-  --text-primary: #e4e7eb;
-  --text-muted: #7a8290;
-  --text-faint: #6a7480; /* ≥4.5:1 on --bg-base (WCAG AA for 9–11px metadata) */
+  --text-primary: #f1f5f9;
+  --text-muted: #94a3b8;
+  --text-faint: #64748b;
 
-  /* ── Signature accent — amber (interaction AND in-progress state; the
-     same hue deliberately reused as risk-suspicious below) + a cyan
-     *signal* token for telemetry so data never competes with the accent. */
-  --accent: #d9a441;
-  --accent-soft: #e8bd6a;
-  --signal: #4fd1c5;
+  /* ── Signature accent — Electric Indigo + Laser Cyan telemetry signal ─ */
+  --accent: #6366f1;
+  --accent-soft: #818cf8;
+  --signal: #06b6d4;
 
-  /* ── Risk scale — functional, never decorative. Suspicious IS the accent
-     amber (reused on purpose); malicious is a desaturated brick, not neon. */
-  --risk-clean: #3fa796;
-  --risk-suspicious: #d9a441;
-  --risk-malicious: #c4453b;
+  /* ── Risk scale — functional, crisp high-contrast telemetry ─────────── */
+  --risk-clean: #10b981;
+  --risk-suspicious: #f59e0b;
+  --risk-malicious: #ef4444;
 
   /* ── Structure ───────────────────────────────────────────────────────── */
-  --border-subtle: #262c38;
-  --border-strong: #333b4a;
+  --border-subtle: #1e2433;
+  --border-strong: #2c3547;
 
   /* ── Depth — layered, soft on dark ───────────────────────────────────── */
-  --shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.5);
-  --shadow-raised: 0 4px 12px rgba(0, 0, 0, 0.45), 0 18px 44px -14px rgba(0, 0, 0, 0.65);
+  --shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.6);
+  --shadow-raised: 0 4px 12px rgba(0, 0, 0, 0.55), 0 18px 44px -14px rgba(0, 0, 0, 0.8);
 
-  /* ── Glows — make a finding read at a glance (literal rgba per theme). ─ */
-  --glow-accent: 0 0 0 1px rgba(217, 164, 65, 0.3), 0 0 16px rgba(217, 164, 65, 0.22);
-  --glow-signal: 0 0 0 1px rgba(79, 209, 197, 0.3), 0 0 14px rgba(79, 209, 197, 0.2);
-  --glow-amber: 0 0 0 1px rgba(217, 164, 65, 0.3), 0 0 12px rgba(217, 164, 65, 0.2);
-  --glow-malicious: 0 0 0 1px rgba(196, 69, 59, 0.35), 0 0 16px rgba(196, 69, 59, 0.26);
-  --glow-clean: 0 0 0 1px rgba(63, 167, 150, 0.3), 0 0 12px rgba(63, 167, 150, 0.18);
+  /* ── Glows — crisp laser halos ───────────────────────────────────────── */
+  --glow-accent: 0 0 0 1px rgba(99, 102, 241, 0.35), 0 0 16px rgba(99, 102, 241, 0.25);
+  --glow-signal: 0 0 0 1px rgba(6, 182, 212, 0.35), 0 0 14px rgba(6, 182, 212, 0.22);
+  --glow-amber: 0 0 0 1px rgba(245, 158, 11, 0.35), 0 0 12px rgba(245, 158, 11, 0.2);
+  --glow-malicious: 0 0 0 1px rgba(239, 68, 68, 0.35), 0 0 16px rgba(239, 68, 68, 0.26);
+  --glow-clean: 0 0 0 1px rgba(16, 185, 129, 0.35), 0 0 12px rgba(16, 185, 129, 0.2);
 }
 
 /* Light — the secondary opt-in theme. */
@@ -72,8 +69,8 @@
   --text-muted: #5b6472;
   --text-faint: #778190;
 
-  --accent: #a16207;
-  --accent-soft: #b8771c;
+  --accent: #2563eb;
+  --accent-soft: #3b82f6;
   --signal: #0e7490;
 
   --risk-clean: #0f766e;
@@ -86,11 +83,227 @@
   --shadow-panel: 0 1px 2px rgba(23, 25, 31, 0.04), 0 1px 3px rgba(23, 25, 31, 0.05);
   --shadow-raised: 0 2px 4px rgba(23, 25, 31, 0.06), 0 8px 24px -8px rgba(23, 25, 31, 0.12);
 
-  --glow-accent: 0 0 0 1px rgba(161, 98, 7, 0.25), 0 0 14px rgba(161, 98, 7, 0.14);
+  --glow-accent: 0 0 0 1px rgba(37, 99, 235, 0.25), 0 0 14px rgba(37, 99, 235, 0.14);
   --glow-signal: 0 0 0 1px rgba(14, 116, 144, 0.25), 0 0 12px rgba(14, 116, 144, 0.14);
   --glow-amber: 0 0 0 1px rgba(161, 98, 7, 0.25), 0 0 12px rgba(161, 98, 7, 0.13);
   --glow-malicious: 0 0 0 1px rgba(178, 60, 51, 0.28), 0 0 14px rgba(178, 60, 51, 0.16);
   --glow-clean: 0 0 0 1px rgba(15, 118, 110, 0.22), 0 0 10px rgba(15, 118, 110, 0.12);
+}
+
+/* ⚡ Phosphor Matrix — CRT terminal green & deep obsidian */
+[data-theme="matrix"] {
+  --bg-base: #050805;
+  --bg-surface: #0a120b;
+  --bg-elevated: #101e12;
+  --bg-inset: #060b07;
+  --bg-overlay: #132415;
+
+  --atmos-a: 16 185 129;
+  --atmos-b: 5 150 105;
+
+  --text-primary: #ecfdf5;
+  --text-muted: #a7f3d0;
+  --text-faint: #6ee7b7;
+
+  --accent: #10b981;
+  --accent-soft: #34d399;
+  --signal: #6ee7b7;
+
+  --risk-clean: #10b981;
+  --risk-suspicious: #f59e0b;
+  --risk-malicious: #ef4444;
+
+  --border-subtle: #163828;
+  --border-strong: #1e4d37;
+
+  --shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.6), 0 1px 3px rgba(0, 0, 0, 0.8);
+  --shadow-raised: 0 4px 12px rgba(0, 0, 0, 0.7), 0 18px 44px -14px rgba(0, 0, 0, 0.9);
+
+  --glow-accent: 0 0 0 1px rgba(16, 185, 129, 0.35), 0 0 16px rgba(16, 185, 129, 0.25);
+  --glow-signal: 0 0 0 1px rgba(110, 231, 183, 0.32), 0 0 14px rgba(110, 231, 183, 0.22);
+  --glow-amber: 0 0 0 1px rgba(245, 158, 11, 0.35), 0 0 12px rgba(245, 158, 11, 0.2);
+  --glow-malicious: 0 0 0 1px rgba(239, 68, 68, 0.35), 0 0 16px rgba(239, 68, 68, 0.26);
+  --glow-clean: 0 0 0 1px rgba(16, 185, 129, 0.35), 0 0 12px rgba(16, 185, 129, 0.2);
+}
+
+/* 🌆 Cyberpunk Neon — Synthwave purple abyss & electric rose */
+[data-theme="cyberpunk"] {
+  --bg-base: #0b0817;
+  --bg-surface: #140e28;
+  --bg-elevated: #1e143b;
+  --bg-inset: #0e0a1f;
+  --bg-overlay: #231845;
+
+  --atmos-a: 244 63 94;
+  --atmos-b: 168 85 247;
+
+  --text-primary: #faf5ff;
+  --text-muted: #e9d5ff;
+  --text-faint: #d8b4fe;
+
+  --accent: #f43f5e;
+  --accent-soft: #fb7185;
+  --signal: #06b6d4;
+
+  --risk-clean: #06b6d4;
+  --risk-suspicious: #f59e0b;
+  --risk-malicious: #f43f5e;
+
+  --border-subtle: #381e5e;
+  --border-strong: #4f2b84;
+
+  --shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.6), 0 1px 3px rgba(0, 0, 0, 0.8);
+  --shadow-raised: 0 4px 12px rgba(0, 0, 0, 0.7), 0 18px 44px -14px rgba(0, 0, 0, 0.9);
+
+  --glow-accent: 0 0 0 1px rgba(244, 63, 94, 0.38), 0 0 18px rgba(244, 63, 94, 0.28);
+  --glow-signal: 0 0 0 1px rgba(6, 182, 212, 0.35), 0 0 14px rgba(6, 182, 212, 0.24);
+  --glow-amber: 0 0 0 1px rgba(245, 158, 11, 0.35), 0 0 12px rgba(245, 158, 11, 0.2);
+  --glow-malicious: 0 0 0 1px rgba(244, 63, 94, 0.38), 0 0 18px rgba(244, 63, 94, 0.28);
+  --glow-clean: 0 0 0 1px rgba(6, 182, 212, 0.35), 0 0 12px rgba(6, 182, 212, 0.2);
+}
+
+/* 🛰️ Mission Control — Aerospace telemetry & command gold */
+[data-theme="mission"] {
+  --bg-base: #080e1a;
+  --bg-surface: #0f1a2e;
+  --bg-elevated: #162642;
+  --bg-inset: #0b1323;
+  --bg-overlay: #1b2f52;
+
+  --atmos-a: 245 158 11;
+  --atmos-b: 56 189 248;
+
+  --text-primary: #f0f6fc;
+  --text-muted: #93c5fd;
+  --text-faint: #60a5fa;
+
+  --accent: #f59e0b;
+  --accent-soft: #fbbf24;
+  --signal: #38bdf8;
+
+  --risk-clean: #38bdf8;
+  --risk-suspicious: #f59e0b;
+  --risk-malicious: #ef4444;
+
+  --border-subtle: #1c355e;
+  --border-strong: #274b85;
+
+  --shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.7);
+  --shadow-raised: 0 4px 12px rgba(0, 0, 0, 0.6), 0 18px 44px -14px rgba(0, 0, 0, 0.85);
+
+  --glow-accent: 0 0 0 1px rgba(245, 158, 11, 0.35), 0 0 16px rgba(245, 158, 11, 0.25);
+  --glow-signal: 0 0 0 1px rgba(56, 189, 248, 0.35), 0 0 14px rgba(56, 189, 248, 0.22);
+  --glow-amber: 0 0 0 1px rgba(245, 158, 11, 0.35), 0 0 12px rgba(245, 158, 11, 0.2);
+  --glow-malicious: 0 0 0 1px rgba(239, 68, 68, 0.35), 0 0 16px rgba(239, 68, 68, 0.25);
+  --glow-clean: 0 0 0 1px rgba(56, 189, 248, 0.35), 0 0 12px rgba(56, 189, 248, 0.2);
+}
+
+/* ❄️ Nordic Polar — Nord frost snow & aurora cyan */
+[data-theme="nordic"] {
+  --bg-base: #242933;
+  --bg-surface: #2e3440;
+  --bg-elevated: #3b4252;
+  --bg-inset: #1f232b;
+  --bg-overlay: #434c5e;
+
+  --atmos-a: 136 192 208;
+  --atmos-b: 129 161 193;
+
+  --text-primary: #eceff4;
+  --text-muted: #d8dee9;
+  --text-faint: #e5e9f0;
+
+  --accent: #88c0d0;
+  --accent-soft: #8fbcbb;
+  --signal: #81a1c1;
+
+  --risk-clean: #a3be8c;
+  --risk-suspicious: #ebcb8b;
+  --risk-malicious: #bf616a;
+
+  --border-subtle: #4c566a;
+  --border-strong: #5e81ac;
+
+  --shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.5);
+  --shadow-raised: 0 4px 12px rgba(0, 0, 0, 0.45), 0 18px 44px -14px rgba(0, 0, 0, 0.65);
+
+  --glow-accent: 0 0 0 1px rgba(136, 192, 208, 0.35), 0 0 16px rgba(136, 192, 208, 0.24);
+  --glow-signal: 0 0 0 1px rgba(129, 161, 193, 0.35), 0 0 14px rgba(129, 161, 193, 0.22);
+  --glow-amber: 0 0 0 1px rgba(235, 203, 139, 0.35), 0 0 12px rgba(235, 203, 139, 0.2);
+  --glow-malicious: 0 0 0 1px rgba(191, 97, 106, 0.35), 0 0 16px rgba(191, 97, 106, 0.25);
+  --glow-clean: 0 0 0 1px rgba(163, 190, 140, 0.35), 0 0 12px rgba(163, 190, 140, 0.2);
+}
+
+/* 🪵 Monokai Pro — Dark carbon & warm studio yellow */
+[data-theme="monokai"] {
+  --bg-base: #18181b;
+  --bg-surface: #27272a;
+  --bg-elevated: #3f3f46;
+  --bg-inset: #121215;
+  --bg-overlay: #52525b;
+
+  --atmos-a: 234 179 8;
+  --atmos-b: 34 197 94;
+
+  --text-primary: #fafafa;
+  --text-muted: #e4e4e7;
+  --text-faint: #d4d4d8;
+
+  --accent: #eab308;
+  --accent-soft: #fde047;
+  --signal: #22c55e;
+
+  --risk-clean: #22c55e;
+  --risk-suspicious: #eab308;
+  --risk-malicious: #ef4444;
+
+  --border-subtle: #3f3f46;
+  --border-strong: #71717a;
+
+  --shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.6);
+  --shadow-raised: 0 4px 12px rgba(0, 0, 0, 0.55), 0 18px 44px -14px rgba(0, 0, 0, 0.75);
+
+  --glow-accent: 0 0 0 1px rgba(234, 179, 8, 0.35), 0 0 16px rgba(234, 179, 8, 0.24);
+  --glow-signal: 0 0 0 1px rgba(34, 197, 94, 0.35), 0 0 14px rgba(34, 197, 94, 0.22);
+  --glow-amber: 0 0 0 1px rgba(234, 179, 8, 0.35), 0 0 12px rgba(234, 179, 8, 0.2);
+  --glow-malicious: 0 0 0 1px rgba(239, 68, 68, 0.35), 0 0 16px rgba(239, 68, 68, 0.25);
+  --glow-clean: 0 0 0 1px rgba(34, 197, 94, 0.35), 0 0 12px rgba(34, 197, 94, 0.2);
+}
+
+/* 🟣 Amethyst Void — Deep cyber violet & radiant magenta */
+[data-theme="amethyst"] {
+  --bg-base: #0a0714;
+  --bg-surface: #130e24;
+  --bg-elevated: #1e1638;
+  --bg-inset: #07040f;
+  --bg-overlay: #261c46;
+
+  --atmos-a: 168 85 247;
+  --atmos-b: 236 72 153;
+
+  --text-primary: #faf5ff;
+  --text-muted: #d8b4fe;
+  --text-faint: #c084fc;
+
+  --accent: #a855f7;
+  --accent-soft: #c084fc;
+  --signal: #38bdf8;
+
+  --risk-clean: #34d399;
+  --risk-suspicious: #fbbf24;
+  --risk-malicious: #f43f5e;
+
+  --border-subtle: #2d1f4e;
+  --border-strong: #452f78;
+
+  --shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.6), 0 1px 3px rgba(0, 0, 0, 0.8);
+  --shadow-raised: 0 4px 12px rgba(0, 0, 0, 0.7), 0 18px 44px -14px rgba(0, 0, 0, 0.9);
+
+  --glow-accent: 0 0 0 1px rgba(168, 85, 247, 0.4), 0 0 18px rgba(168, 85, 247, 0.28);
+  --glow-signal: 0 0 0 1px rgba(56, 189, 248, 0.35), 0 0 14px rgba(56, 189, 248, 0.22);
+  --glow-amber: 0 0 0 1px rgba(251, 191, 36, 0.35), 0 0 12px rgba(251, 191, 36, 0.2);
+  --glow-malicious: 0 0 0 1px rgba(244, 63, 94, 0.38), 0 0 18px rgba(244, 63, 94, 0.28);
+  --glow-clean: 0 0 0 1px rgba(52, 211, 153, 0.35), 0 0 12px rgba(52, 211, 153, 0.2);
 }
 
 /* ── Left rail — the workspace shell. --rail-w drives BOTH the rail width and
@@ -597,6 +810,90 @@ html[data-theme="dark"][data-palette="teal"] {
   --border-strong: #2a3242;
   --glow-accent: 0 0 0 1px rgba(45, 212, 191, 0.32), 0 0 16px rgba(45, 212, 191, 0.24);
   --glow-signal: 0 0 0 1px rgba(103, 232, 249, 0.32), 0 0 14px rgba(103, 232, 249, 0.22);
+}
+
+.palette-root[data-palette="emerald"],
+html[data-theme="dark"][data-palette="emerald"] {
+  --bg-base: #070d0a;
+  --bg-surface: #0c1611;
+  --bg-elevated: #122019;
+  --bg-inset: #08100b;
+  --bg-overlay: #14241d;
+  --atmos-a: 16 185 129;
+  --atmos-b: 5 150 105;
+  --text-primary: #ecfdf5;
+  --text-muted: #a7f3d0;
+  --text-faint: #6ee7b7;
+  --accent: #10b981;
+  --accent-soft: #34d399;
+  --signal: #6ee7b7;
+  --border-subtle: #163828;
+  --border-strong: #1e4d37;
+  --glow-accent: 0 0 0 1px rgba(16, 185, 129, 0.35), 0 0 16px rgba(16, 185, 129, 0.25);
+  --glow-signal: 0 0 0 1px rgba(110, 231, 183, 0.32), 0 0 14px rgba(110, 231, 183, 0.22);
+}
+
+.palette-root[data-palette="amber"],
+html[data-theme="dark"][data-palette="amber"] {
+  --bg-base: #0d0c07;
+  --bg-surface: #16140c;
+  --bg-elevated: #221f12;
+  --bg-inset: #100f08;
+  --bg-overlay: #262214;
+  --atmos-a: 245 158 11;
+  --atmos-b: 217 119 6;
+  --text-primary: #fffbeb;
+  --text-muted: #fde68a;
+  --text-faint: #fcd34d;
+  --accent: #f59e0b;
+  --accent-soft: #fbbf24;
+  --signal: #fde047;
+  --border-subtle: #3a3216;
+  --border-strong: #4d431d;
+  --glow-accent: 0 0 0 1px rgba(245, 158, 11, 0.35), 0 0 16px rgba(245, 158, 11, 0.25);
+  --glow-signal: 0 0 0 1px rgba(253, 224, 71, 0.32), 0 0 14px rgba(253, 224, 71, 0.22);
+}
+
+.palette-root[data-palette="amethyst"],
+html[data-theme="dark"][data-palette="amethyst"] {
+  --bg-base: #0d0714;
+  --bg-surface: #160c22;
+  --bg-elevated: #201230;
+  --bg-inset: #0f0817;
+  --bg-overlay: #241438;
+  --atmos-a: 168 85 247;
+  --atmos-b: 147 51 234;
+  --text-primary: #faf5ff;
+  --text-muted: #e9d5ff;
+  --text-faint: #d8b4fe;
+  --accent: #a855f7;
+  --accent-soft: #c084fc;
+  --signal: #e879f9;
+  --border-subtle: #3b1d5a;
+  --border-strong: #4c2674;
+  --glow-accent: 0 0 0 1px rgba(168, 85, 247, 0.35), 0 0 16px rgba(168, 85, 247, 0.25);
+  --glow-signal: 0 0 0 1px rgba(232, 121, 249, 0.32), 0 0 14px rgba(232, 121, 249, 0.22);
+}
+
+.palette-root[data-palette="rose"],
+html[data-theme="dark"][data-palette="rose"] {
+  --bg-base: #0d0709;
+  --bg-surface: #170c10;
+  --bg-elevated: #221217;
+  --bg-inset: #10080b;
+  --bg-overlay: #26141a;
+  --atmos-a: 244 63 94;
+  --atmos-b: 225 29 72;
+  --text-primary: #fff1f2;
+  --text-muted: #fecdd3;
+  --text-faint: #fda4af;
+  --accent: #f43f5e;
+  --accent-soft: #fb7185;
+  --signal: #f472b6;
+  --border-subtle: #3d1722;
+  --border-strong: #501e2c;
+  --glow-accent: 0 0 0 1px rgba(244, 63, 94, 0.35), 0 0 16px rgba(244, 63, 94, 0.25);
+  --glow-signal: 0 0 0 1px rgba(244, 114, 182, 0.32), 0 0 14px rgba(244, 114, 182, 0.22);
 }
 
 /* Narrow-window notice — desk tool, best viewed wide (spec). Shown only

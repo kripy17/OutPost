@@ -87,6 +87,128 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
       ...syntaxItems,
       {
         kind: "action",
+        label: "🌓 Toggle Theme (Dark / Light)",
+        hint: "Switch between Dark tactical mode and Clean Light mode",
+        icon: "sun" as IconName,
+        onRun: () => {
+          const cur = document.documentElement.dataset.theme === "dark" ? "dark" : "light";
+          const next = cur === "dark" ? "light" : "dark";
+          document.documentElement.dataset.theme = next;
+          localStorage.setItem("outpost-theme-v2", next);
+          if (next === "light") {
+            delete document.documentElement.dataset.palette;
+            localStorage.removeItem("outpost-palette");
+          }
+          setResult(`Theme switched to ${next.toUpperCase()} mode.`);
+        },
+      },
+      {
+        kind: "action",
+        label: "⚡ Theme: Phosphor Matrix (Hacker)",
+        hint: "CRT terminal obsidian & phosphor emerald glow",
+        icon: "sliders" as IconName,
+        onRun: () => {
+          document.documentElement.dataset.theme = "matrix";
+          localStorage.setItem("outpost-theme-v2", "matrix");
+          setResult("Switched to Phosphor Matrix theme.");
+        },
+      },
+      {
+        kind: "action",
+        label: "🌆 Theme: Cyberpunk Neon (Synthwave)",
+        hint: "Night City abyss, neon rose & laser cyan",
+        icon: "sliders" as IconName,
+        onRun: () => {
+          document.documentElement.dataset.theme = "cyberpunk";
+          localStorage.setItem("outpost-theme-v2", "cyberpunk");
+          setResult("Switched to Cyberpunk Neon theme.");
+        },
+      },
+      {
+        kind: "action",
+        label: "🛰️ Theme: Mission Control (Aerospace)",
+        hint: "Deep space navy & telemetry gold",
+        icon: "sliders" as IconName,
+        onRun: () => {
+          document.documentElement.dataset.theme = "mission";
+          localStorage.setItem("outpost-theme-v2", "mission");
+          setResult("Switched to Mission Control theme.");
+        },
+      },
+      {
+        kind: "action",
+        label: "🟣 Theme: Amethyst Void (Cyber)",
+        hint: "Royal violet obsidian & radiant magenta",
+        icon: "sliders" as IconName,
+        onRun: () => {
+          document.documentElement.dataset.theme = "amethyst";
+          localStorage.setItem("outpost-theme-v2", "amethyst");
+          setResult("Switched to Amethyst Void theme.");
+        },
+      },
+      {
+        kind: "action",
+        label: "❄️ Theme: Nordic Glacier (Nord Frost)",
+        hint: "Polar night & aurora cyan atmosphere",
+        icon: "sliders" as IconName,
+        onRun: () => {
+          document.documentElement.dataset.theme = "nordic";
+          localStorage.setItem("outpost-theme-v2", "nordic");
+          setResult("Switched to Nordic Glacier theme.");
+        },
+      },
+      {
+        kind: "action",
+        label: "🪵 Theme: Monokai Carbon (Pro Dark)",
+        hint: "Warm charcoal & studio amber gold",
+        icon: "sliders" as IconName,
+        onRun: () => {
+          document.documentElement.dataset.theme = "monokai";
+          localStorage.setItem("outpost-theme-v2", "monokai");
+          setResult("Switched to Monokai Carbon theme.");
+        },
+      },
+      {
+        kind: "action",
+        label: "🎨 Palette: Emerald (Cyber Green)",
+        hint: "High-contrast phosphor green tactical palette",
+        icon: "sliders" as IconName,
+        onRun: () => {
+          document.documentElement.dataset.theme = "dark";
+          document.documentElement.dataset.palette = "emerald";
+          localStorage.setItem("outpost-theme-v2", "dark");
+          localStorage.setItem("outpost-palette", "emerald");
+          setResult("Applied Emerald Cyber Palette.");
+        },
+      },
+      {
+        kind: "action",
+        label: "🎨 Palette: Amber (Tactical Gold)",
+        hint: "Industrial gold & tactical telemetry palette",
+        icon: "sliders" as IconName,
+        onRun: () => {
+          document.documentElement.dataset.theme = "dark";
+          document.documentElement.dataset.palette = "amber";
+          localStorage.setItem("outpost-theme-v2", "dark");
+          localStorage.setItem("outpost-palette", "amber");
+          setResult("Applied Amber Tactical Palette.");
+        },
+      },
+      {
+        kind: "action",
+        label: "🎨 Palette: Amethyst (Cyber Violet)",
+        hint: "Deep purple & neon violet palette",
+        icon: "sliders" as IconName,
+        onRun: () => {
+          document.documentElement.dataset.theme = "dark";
+          document.documentElement.dataset.palette = "amethyst";
+          localStorage.setItem("outpost-theme-v2", "dark");
+          localStorage.setItem("outpost-palette", "amethyst");
+          setResult("Applied Amethyst Violet Palette.");
+        },
+      },
+      {
+        kind: "action",
         label: "⚡ Run Live Adversary Emulation",
         hint: "Trigger real-time attack simulation in the sandbox",
         icon: "activity" as IconName,
