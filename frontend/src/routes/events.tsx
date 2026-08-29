@@ -13,6 +13,8 @@ import { NetworkContextModal } from "../components/NetworkContextModal";
 import { ProcessTreeGraph } from "../components/ProcessTreeGraph";
 import { NetworkMatrixView } from "../components/NetworkMatrixView";
 import { BehavioralExplanationsView } from "../components/BehavioralExplanationsView";
+import { DifferentialSnapshotView } from "../components/DifferentialSnapshotView";
+import { CapsuleDiffModal } from "../components/CapsuleDiffModal";
 import type { EventFeedEvent, EventSource, EventType, Platform, Severity } from "../types";
 
 const PAGE = 60;
@@ -527,8 +529,9 @@ export default function EventsPage() {
   const [newCount, setNewCount] = useState(0);
   const lastTotalRef = useRef(0);
   const [mainMode, setMainMode] = useState<"stream" | "xray">("stream");
-  const [xraySubView, setXraySubView] = useState<"processes" | "tree" | "network" | "explanations">("processes");
+  const [xraySubView, setXraySubView] = useState<"processes" | "tree" | "network" | "explanations" | "delta">("processes");
   const [xrayFilter, setXrayFilter] = useState("");
+  const [isCapsuleDiffOpen, setIsCapsuleDiffOpen] = useState(false);
 
   const { data: xraySnapshot, isLoading: isXrayLoading } = useQuery({
     queryKey: ["xray", "snapshot"],
@@ -1025,13 +1028,14 @@ export default function EventsPage() {
           </div>
 
           {/* X-Ray Sub-View Navigation Bar */}
-          <div className="flex flex-wrap items-center justify-between border-b border-border-subtle bg-bg-surface px-2">
-            <div className="flex gap-2">
+          <div className="flex flex-wrap items-center justify-between border-b border-border-subtle bg-bg-surface px-2 gap-2">
+            <div className="flex flex-wrap gap-2">
               {[
                 { k: "processes", label: `Live Processes (${xraySnapshot?.processes?.length ?? 0})`, icon: "process" },
                 { k: "tree", label: `Causality Tree (${treeData?.length ?? 0} roots)`, icon: "list" },
                 { k: "network", label: `Network Threat Matrix (${networkMatrixData?.summary?.total_sockets ?? xraySnapshot?.socket_count ?? 0})`, icon: "network" },
                 { k: "explanations", label: `Behavioral Insights (${explanationsData?.length ?? 0})`, icon: "alert" },
+                { k: "delta", label: "Differential Delta", icon: "zap" },
               ].map((sub) => (
                 <button
                   key={sub.k}
@@ -1046,6 +1050,16 @@ export default function EventsPage() {
                   {sub.label}
                 </button>
               ))}
+            </div>
+
+            <div className="py-2 pr-2">
+              <button
+                onClick={() => setIsCapsuleDiffOpen(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono font-semibold bg-panel-border/60 hover:bg-panel-border text-text-primary border border-panel-border transition cursor-pointer"
+              >
+                <Icon name="box" size={13} />
+                <span>Compare Capsules</span>
+              </button>
             </div>
           </div>
 
@@ -1279,6 +1293,13 @@ export default function EventsPage() {
           {xraySubView === "explanations" && (
             <BehavioralExplanationsView
               explanations={explanationsData || []}
+            />
+          )}
+
+          {/* SubView: Differential Delta */}
+          {xraySubView === "delta" && (
+            <DifferentialSnapshotView
+              onSelectProcess={(pid) => setInspectPid(pid)}
             />
           )}
         </div>
@@ -1771,6 +1792,11 @@ export default function EventsPage() {
       {inspectIp !== null && (
         <NetworkContextModal ip={inspectIp} onClose={() => setInspectIp(null)} />
       )}
+
+      <CapsuleDiffModal
+        isOpen={isCapsuleDiffOpen}
+        onClose={() => setIsCapsuleDiffOpen(false)}
+      />
     </div>
   );
 }

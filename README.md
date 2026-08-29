@@ -73,19 +73,31 @@ OutPost pairs real-time kernel telemetry (`auditd`/`eBPF` on Linux, `Sysmon` on 
 
 <br><br>
 
-### 🔬 4. Process X-Ray Inspector & Security Posture
+### ⚡ 4. Differential Host Baseline Delta Engine
+*Pre-detonation baseline snapshotting and real-time differential calculation tracking spawned processes, opened ports, and resource spikes.*
+<img src="demo/screenshots/fresh/22_differential_delta.png" alt="Differential Host Baseline Delta" width="85%">
+
+<br><br>
+
+### 🔍 5. Forensic Capsule Differential Comparison
+*Side-by-side comparison of `.xray.json` forensic dossiers to evaluate capability escalation and mapped library injections.*
+<img src="demo/screenshots/fresh/23_capsule_diff_modal.png" alt="Capsule Differential Comparison" width="85%">
+
+<br><br>
+
+### 🔬 6. Process X-Ray Inspector & Security Posture
 *Deep process inspection featuring Linux Capabilities bitmask decoding, Seccomp mode, shared `.so` libraries, and process freeze/kill controls.*
 <img src="demo/screenshots/fresh/16_process_xray_drawer.png" alt="Process X-Ray Drawer" width="85%">
 
 <br><br>
 
-### 🧪 5. Dynamic Sandbox Simulation Cockpit
+### 🧪 7. Dynamic Sandbox Simulation Cockpit
 *Subprocess execution cockpit streaming real-time terminal stdout/stderr and live detection rules.*
 <img src="demo/screenshots/fresh/14_live_simulation_cockpit.png" alt="Simulation Lab" width="85%">
 
 <br><br>
 
-### 🚨 6. SOC Findings Queue & Incident Cases
+### 🚨 8. SOC Findings Queue & Incident Cases
 *Triaged alerts with MITRE ATT&CK mapping, quick pivots, allowlists, and deep investigation case workflows.*
 <img src="demo/screenshots/fresh/03_findings.png" alt="Findings Queue" width="85%">
 
@@ -97,13 +109,15 @@ OutPost pairs real-time kernel telemetry (`auditd`/`eBPF` on Linux, `Sysmon` on 
 
 | Feature | Description |
 |---|---|
+| ⚡ **Differential Delta Engine** | Capture host baseline before dynamic malware detonation; automatically calculates added/removed processes, new listeners, and resource deltas. |
+| 🔍 **Capsule Diff Comparison** | 1-click side-by-side comparison of `.xray.json` forensic dossiers highlighting capability divergence and mapped library deltas. |
 | 🌳 **Process Causality Tree** | Live hierarchical process tree built directly from `/proc` PPID causality mapping with expand/collapse, search filtering, and 1-click X-Ray inspection. |
 | 🌐 **4-Domain Network Matrix** | Categorizes all host sockets into Public Listeners (`0.0.0.0`), Outbound Connections (public vs LAN with suspicious port detection: 4444, 1337, etc.), Loopback IPC, and Multicast. |
 | 💡 **Behavioral Heuristics Engine** | Heuristic reasoning cards (Critical / Attention / Info) flagging unmanaged binary drops (`/tmp`, `/dev/shm`), external listeners, and elevated capabilities with actionable next steps. |
-| 🛡️ **Runtime Security Posture** | 64-bit Linux Capabilities decoder (`CAP_SYS_ADMIN`, `CAP_NET_RAW`, `CAP_SYS_PTRACE`), Seccomp filter status, `NoNewPrivs`, and namespace isolation identifiers. |
+| 🛡️ **Runtime Security Posture** | 64-bit Linux Capabilities decoder (`CAP_SYS_ADMIN`, `CAP_NET_RAW`, `CAP_SYS_PTRACE`), Seccomp filter status, `NoNewPrivs`, and container/cgroup attribution (`Docker`, `Podman`, `K8s`, `systemd`). |
 | 🛑 **Process Lifecycle Controls** | Freeze (`SIGSTOP`), Resume (`SIGCONT`), Terminate (`SIGTERM`), and Kill (`SIGKILL`) active processes with PID start-time validation to prevent PID reuse hazards. |
 | 📦 **Package Provenance** | Resolves binaries against system package managers (`pacman`, `dpkg`, `rpm`) and highlights unmanaged binary drops. |
-| 📑 **Portable Forensic Capsule** | 1-click export of comprehensive `.xray.json` forensic dossiers containing complete process metadata, security posture, libraries, and open sockets. |
+| 📑 **Portable Forensic Capsule** | 1-click export of comprehensive `.xray.json` forensic dossiers containing sanitized process metadata, security posture, libraries, and open sockets. |
 | 🎯 **Universal Target Resolver** | Syntax search supporting `:8000` (port), `pid:123`, `file:/path`, `service:systemd`, and keyword resolution. |
 | ⌨️ **Rich SOC Terminal (TUI)** | 31 commands, interactive terminal console, and automated CLI workflows. |
 | 🔒 **Air-Gapped by Design** | Zero external CDNs, fonts, or analytics. Self-contained fonts and verified offline runtime guarantees. |

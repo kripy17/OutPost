@@ -110,6 +110,110 @@ def check_package_provenance(exe_path: str) -> dict[str, Any]:
     }
 
 
+_SECRET_PATTERNS = [
+    re.compile(r"(?i)(--?(?:password|passwd|pass|token|api[-_]?key|secret|auth|jwt|bearer)\s*[:=\s]\s*)(?:\"[^\"]*\"|'[^']*'|[^\s,;]+)"),
+    re.compile(r"(?i)(-u\s+[a-zA-Z0-9_\-\.]+):([^\s]+)"),
+    re.compile(r"(?i)(://[^:\s]+):([^@\s]+)@"),
+    re.compile(r"(?i)(authorization:\s*(?:bearer|basic)\s+)[A-Za-z0-9._~+/-]+=*", re.IGNORECASE),
+    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.DOTALL),
+]
+
+
+def redact_sensitive_content(text: str) -> str:
+    """Sanitize sensitive credentials, bearer tokens, and private keys from strings."""
+    if not text:
+        return ""
+    result = text
+    for pattern in _SECRET_PATTERNS:
+        if "PRIVATE KEY" in pattern.pattern:
+            result = pattern.sub("[REDACTED_PRIVATE_KEY]", result)
+        elif pattern.pattern.startswith("(?i)(-u") or pattern.pattern.startswith("(?i)(://"):
+            result = pattern.sub(r"\g<1>:******", result)
+        else:
+            result = pattern.sub(r"\g<1>******", result)
+    return result
+
+
+def extract_cgroup_and_container_info(pid: int) -> dict[str, Any]:
+    """Parse /proc/[pid]/cgroup to detect Container runtimes (Docker, Podman, K8s, LXC) and Systemd unit services."""
+    info: dict[str, Any] = {
+        "container_runtime": "host",
+        "container_id": None,
+        "container_short_id": None,
+        "systemd_service": None,
+        "cgroup_slice": None,
+        "cgroup_scope": None,
+        "is_containerized": False,
+        "raw_cgroup": None,
+    }
+    cgroup_path = f"/proc/{pid}/cgroup"
+    if not os.path.exists(cgroup_path):
+        return info
+
+    try:
+        with open(cgroup_path, "r", encoding="utf-8", errors="replace") as f:
+            content = f.read().strip()
+            info["raw_cgroup"] = content
+
+        for line in content.splitlines():
+            parts = line.split(":", 2)
+            path = parts[2] if len(parts) >= 3 else parts[-1]
+
+            # 1. Container detection
+            # Docker
+            docker_match = re.search(r"/docker(?:-ce)?/([0-9a-f]{12,64})", path, re.IGNORECASE) or re.search(r"docker-([0-9a-f]{12,64})\.scope", path, re.IGNORECASE)
+            if docker_match:
+                cid = docker_match.group(1)
+                info["container_runtime"] = "docker"
+                info["container_id"] = cid
+                info["container_short_id"] = cid[:12]
+                info["is_containerized"] = True
+
+            # Podman / Libpod
+            podman_match = re.search(r"/libpod-([0-9a-f]{12,64})", path, re.IGNORECASE) or re.search(r"/podman/([0-9a-f]{12,64})", path, re.IGNORECASE)
+            if podman_match:
+                cid = podman_match.group(1)
+                info["container_runtime"] = "podman"
+                info["container_id"] = cid
+                info["container_short_id"] = cid[:12]
+                info["is_containerized"] = True
+
+            # Kubernetes Pod
+            k8s_match = re.search(r"/kubepods/[^/]+/pod[^/]+/([0-9a-f]{12,64})", path, re.IGNORECASE)
+            if k8s_match:
+                cid = k8s_match.group(1)
+                info["container_runtime"] = "kubernetes"
+                info["container_id"] = cid
+                info["container_short_id"] = cid[:12]
+                info["is_containerized"] = True
+
+            # LXC
+            if "/lxc/" in path:
+                info["container_runtime"] = "lxc"
+                info["is_containerized"] = True
+
+            # 2. Systemd service & slice attribution
+            if "system.slice/" in path:
+                info["cgroup_slice"] = "system.slice"
+                service_match = re.search(r"system\.slice/(?:system-)?([a-zA-Z0-9_\-\@\.]+\.service)", path)
+                if service_match:
+                    info["systemd_service"] = service_match.group(1)
+            elif "user.slice/" in path:
+                info["cgroup_slice"] = "user.slice"
+                service_match = re.search(r"user@[0-9]+\.service/([a-zA-Z0-9_\-\@\.]+\.service)", path)
+                if service_match:
+                    info["systemd_service"] = service_match.group(1)
+
+            scope_match = re.search(r"([a-zA-Z0-9_\-\@\.]+\.scope)", path)
+            if scope_match:
+                info["cgroup_scope"] = scope_match.group(1)
+
+    except Exception:
+        pass
+
+    return info
+
+
 def extract_security_posture(pid: int) -> dict[str, Any]:
     """Collect Linux security posture for a PID (capabilities, seccomp, NoNewPrivs, cgroups, namespaces)."""
     posture: dict[str, Any] = {
@@ -1041,4 +1145,159 @@ def generate_behavioral_explanations() -> list[dict[str, Any]]:
         })
 
     return explanations
+
+
+_LAST_BASELINE_SNAPSHOT: dict[str, Any] = {}
+
+
+def capture_baseline_snapshot() -> dict[str, Any]:
+    """Capture a comprehensive baseline snapshot of all running processes, network listeners, and resource metrics."""
+    global _LAST_BASELINE_SNAPSHOT
+    procs = get_live_processes()
+    net = get_categorized_network_matrix()
+    metrics = get_current_system_metrics()
+
+    snapshot = {
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "process_count": len(procs),
+        "processes": procs,
+        "network": net,
+        "metrics": metrics,
+    }
+    _LAST_BASELINE_SNAPSHOT = snapshot
+    return snapshot
+
+
+def compute_snapshot_diff(baseline: dict[str, Any] | None = None, current: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Compute differential changes (+/-) between baseline snapshot and current live state (Omarchy X-Ray style)."""
+    global _LAST_BASELINE_SNAPSHOT
+    base = baseline or _LAST_BASELINE_SNAPSHOT
+    if not base or not base.get("processes"):
+        # Auto-capture baseline if none exists
+        base = capture_baseline_snapshot()
+
+    if current is None:
+        curr_procs = get_live_processes()
+        curr_net = get_categorized_network_matrix()
+        curr_metrics = get_current_system_metrics()
+        curr = {
+            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "process_count": len(curr_procs),
+            "processes": curr_procs,
+            "network": curr_net,
+            "metrics": curr_metrics,
+        }
+    else:
+        curr = current
+
+    base_pids = {p["pid"]: p for p in base.get("processes", [])}
+    curr_pids = {p["pid"]: p for p in curr.get("processes", [])}
+
+    added_pids = set(curr_pids.keys()) - set(base_pids.keys())
+    removed_pids = set(base_pids.keys()) - set(curr_pids.keys())
+
+    added_processes = [curr_pids[pid] for pid in sorted(added_pids)]
+    removed_processes = [base_pids[pid] for pid in sorted(removed_pids)]
+
+    # Sockets diff
+    def socket_key(s: dict) -> str:
+        return f"{s.get('protocol')}:{s.get('local_ip')}:{s.get('local_port')}:{s.get('remote_ip')}:{s.get('remote_port')}:{s.get('status')}"
+
+    base_pub = {socket_key(s): s for s in base.get("network", {}).get("public_listeners", [])}
+    curr_pub = {socket_key(s): s for s in curr.get("network", {}).get("public_listeners", [])}
+    new_listeners = [curr_pub[k] for k in curr_pub if k not in base_pub]
+    closed_listeners = [base_pub[k] for k in base_pub if k not in curr_pub]
+
+    base_out = {socket_key(s): s for s in base.get("network", {}).get("outbound_connections", [])}
+    curr_out = {socket_key(s): s for s in curr.get("network", {}).get("outbound_connections", [])}
+    new_outbound = [curr_out[k] for k in curr_out if k not in base_out]
+    closed_outbound = [base_out[k] for k in base_out if k not in curr_out]
+
+    # Temp drops in newly created processes
+    temp_drops = [p for p in added_processes if (p.get("exe") or "").startswith(("/tmp", "/dev/shm", "/var/tmp"))]
+
+    # Metrics Delta
+    base_m = base.get("metrics", {})
+    curr_m = curr.get("metrics", {})
+    cpu_delta = round((curr_m.get("cpu_percent") or 0.0) - (base_m.get("cpu_percent") or 0.0), 2)
+    mem_delta = round((curr_m.get("memory_used_mb") or 0.0) - (base_m.get("memory_used_mb") or 0.0), 2)
+
+    return {
+        "baseline_timestamp": base.get("timestamp"),
+        "current_timestamp": curr.get("timestamp"),
+        "added_processes": added_processes,
+        "removed_processes": removed_processes,
+        "new_listeners": new_listeners,
+        "closed_listeners": closed_listeners,
+        "new_outbound": new_outbound,
+        "closed_outbound": closed_outbound,
+        "temp_drops": temp_drops,
+        "metrics_delta": {
+            "cpu_delta": cpu_delta,
+            "memory_mb_delta": mem_delta,
+            "process_count_delta": len(curr_pids) - len(base_pids),
+            "socket_count_delta": len(curr_pub) + len(curr_out) - (len(base_pub) + len(base_out)),
+        },
+        "summary": {
+            "added_processes_count": len(added_processes),
+            "removed_processes_count": len(removed_processes),
+            "new_listeners_count": len(new_listeners),
+            "closed_listeners_count": len(closed_listeners),
+            "new_outbound_count": len(new_outbound),
+            "closed_outbound_count": len(closed_outbound),
+            "temp_drops_count": len(temp_drops),
+        }
+    }
+
+
+def compare_two_capsules(capsule_a: dict[str, Any], capsule_b: dict[str, Any]) -> dict[str, Any]:
+    """Compare two forensic capsules (.xray.json) side-by-side to highlight differential differences."""
+    dossier_a = capsule_a.get("process_dossier", {})
+    dossier_b = capsule_b.get("process_dossier", {})
+
+    sec_a = capsule_a.get("security_posture", {})
+    sec_b = capsule_b.get("security_posture", {})
+
+    caps_a = {c["name"] for c in sec_a.get("capabilities_effective", []) if isinstance(c, dict)}
+    caps_b = {c["name"] for c in sec_b.get("capabilities_effective", []) if isinstance(c, dict)}
+
+    libs_a = {lib["name"] for lib in sec_a.get("mapped_libraries", []) if isinstance(lib, dict)}
+    libs_b = {lib["name"] for lib in sec_b.get("mapped_libraries", []) if isinstance(lib, dict)}
+
+    return {
+        "capsule_a": {
+            "name": dossier_a.get("name"),
+            "pid": dossier_a.get("pid"),
+            "user": dossier_a.get("user"),
+            "command_line": dossier_a.get("command_line"),
+            "executable_path": dossier_a.get("executable_path"),
+            "exported_at": capsule_a.get("exported_at"),
+            "capabilities_count": len(caps_a),
+            "libraries_count": len(libs_a),
+            "seccomp": sec_a.get("seccomp"),
+        },
+        "capsule_b": {
+            "name": dossier_b.get("name"),
+            "pid": dossier_b.get("pid"),
+            "user": dossier_b.get("user"),
+            "command_line": dossier_b.get("command_line"),
+            "executable_path": dossier_b.get("executable_path"),
+            "exported_at": capsule_b.get("exported_at"),
+            "capabilities_count": len(caps_b),
+            "libraries_count": len(libs_b),
+            "seccomp": sec_b.get("seccomp"),
+        },
+        "capabilities_diff": {
+            "only_in_a": sorted(list(caps_a - caps_b)),
+            "only_in_b": sorted(list(caps_b - caps_a)),
+            "common": sorted(list(caps_a & caps_b)),
+        },
+        "libraries_diff": {
+            "only_in_a": sorted(list(libs_a - libs_b)),
+            "only_in_b": sorted(list(libs_b - libs_a)),
+            "common_count": len(libs_a & libs_b),
+        },
+        "seccomp_match": sec_a.get("seccomp") == sec_b.get("seccomp"),
+    }
+
 

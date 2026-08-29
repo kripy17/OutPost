@@ -180,6 +180,24 @@ try {
       await page.screenshot({ path: path.join(SCREENSHOT_DIR, "21_behavioral_insights.png") });
       console.log("[✓] Saved: 21_behavioral_insights.png");
     }
+
+    // Capture SubView: Differential Delta
+    const deltaTabBtn = page.getByRole("button", { name: /Differential Delta/i });
+    if (await deltaTabBtn.isVisible()) {
+      await deltaTabBtn.click();
+      await page.waitForTimeout(800);
+      await page.screenshot({ path: path.join(SCREENSHOT_DIR, "22_differential_delta.png") });
+      console.log("[✓] Saved: 22_differential_delta.png");
+    }
+
+    // Capture Capsule Diff Modal
+    const compareCapsuleBtn = page.getByRole("button", { name: /Compare Capsules/i });
+    if (await compareCapsuleBtn.isVisible()) {
+      await compareCapsuleBtn.click();
+      await page.waitForTimeout(800);
+      await page.screenshot({ path: path.join(SCREENSHOT_DIR, "23_capsule_diff_modal.png") });
+      console.log("[✓] Saved: 23_capsule_diff_modal.png");
+    }
   }
 } catch (e) {
   console.error("Interactive captures failed:", e);

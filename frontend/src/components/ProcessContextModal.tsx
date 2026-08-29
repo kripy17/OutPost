@@ -272,6 +272,31 @@ export function ProcessContextModal({
                     </div>
                   </div>
 
+                  {xrayData?.cgroup && (
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 rounded-xl border border-border-subtle bg-bg-base/40 p-4">
+                      <div className="space-y-1">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-text-faint">Container Runtime</span>
+                        <div className="flex items-center gap-2">
+                          <span className={`px-2 py-0.5 rounded text-[11px] font-bold uppercase ${
+                            xrayData.cgroup.is_containerized ? "bg-purple-500/20 text-purple-300 border border-purple-500/30" : "bg-panel-border/60 text-text-muted"
+                          }`}>
+                            {xrayData.cgroup.container_runtime}
+                          </span>
+                          {xrayData.cgroup.container_short_id && (
+                            <span className="font-mono text-text-primary text-xs">ID: {xrayData.cgroup.container_short_id}</span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="space-y-1">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-text-faint">Systemd Service / Slice</span>
+                        <div className="font-mono text-text-primary text-xs truncate">
+                          {xrayData.cgroup.systemd_service || xrayData.cgroup.cgroup_slice || "Host Process"}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   {summaryData?.run_id && (
                     <div className="flex items-center justify-between rounded-xl border border-border-subtle bg-bg-elevated/40 p-4">
                       <div>
