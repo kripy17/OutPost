@@ -197,6 +197,21 @@ try {
       await page.waitForTimeout(800);
       await page.screenshot({ path: path.join(SCREENSHOT_DIR, "23_capsule_diff_modal.png") });
       console.log("[✓] Saved: 23_capsule_diff_modal.png");
+      
+      const closeDiffBtn = page.getByLabel("Close modal");
+      if (await closeDiffBtn.isVisible()) {
+        await closeDiffBtn.click();
+        await page.waitForTimeout(400);
+      }
+    }
+
+    // Capture SubView: Command Cockpit
+    const cockpitTabBtn = page.getByRole("button", { name: /Command Cockpit/i });
+    if (await cockpitTabBtn.isVisible()) {
+      await cockpitTabBtn.click();
+      await page.waitForTimeout(1200);
+      await page.screenshot({ path: path.join(SCREENSHOT_DIR, "24_host_xray_command_cockpit.png") });
+      console.log("[✓] Saved: 24_host_xray_command_cockpit.png");
     }
   }
 } catch (e) {

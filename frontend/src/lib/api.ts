@@ -1427,4 +1427,100 @@ export async function compareForensicCapsules(capsuleA: any, capsuleB: any): Pro
   return post<any>("/system/xray/capsule/compare", { capsule_a: capsuleA, capsule_b: capsuleB });
 }
 
+/** Retrieve target catalog (Omarchy X-Ray style): Apps, Processes, Ports, Devices. */
+export async function getXRayTargetCatalog(): Promise<{
+  total_targets_count: number;
+  quick_inspect: {
+    audio: number;
+    camera: number;
+    gpu: number;
+    microphone: number;
+  };
+  open_apps: Array<{
+    id: string;
+    pid: number;
+    name: string;
+    title: string;
+    exe: string;
+    user: string;
+    memory_mb: number;
+  }>;
+  active_devices: Array<{
+    id: string;
+    name: string;
+    pid: number;
+    node: string;
+    process_name: string;
+  }>;
+  processes: any[];
+  ports: any[];
+}> {
+  return get<any>("/system/xray/catalog");
+}
+
+/** Unified full target dossier for X-Ray Command Cockpit. */
+export async function getXRayFullTargetDossier(pid: number): Promise<{
+  target: {
+    pid: number;
+    ppid: number;
+    name: string;
+    cmdline: string;
+    exe: string;
+    cwd: string;
+    user: string;
+    status: string;
+    started_at: string;
+    create_time?: number;
+    threads: number;
+    memory_mb: number;
+    memory_gib_str: string;
+    cpu_percent: number;
+    disk_io_str: string;
+    gpu_clients_count: number;
+    uptime_str: string;
+  };
+  launch_chain: {
+    supervisor: string;
+    service_scope: string;
+    is_grouped: boolean;
+    description: string;
+    chain: Array<{ id: string; name: string; role: string; pid?: number; icon: string }>;
+  };
+  device_access: {
+    microphone: { in_use: boolean; devices: string[]; label: string };
+    camera: { in_use: boolean; devices: string[]; label: string };
+    screen_capture: { in_use: boolean; label: string };
+    audio_capture: { in_use: boolean; label: string };
+    audio_playback: { in_use: boolean; devices: string[]; label: string };
+    video_capture: { in_use: boolean; label: string };
+    gpu: { in_use: boolean; nodes: string[]; client_count: number; label: string };
+    sleep_inhibition: { in_use: boolean; label: string };
+  };
+  security: any;
+  cgroup: any;
+  process_tree: any[];
+  connections: any[];
+  files_ipc: Array<{
+    fd: number;
+    path: string;
+    clean_path: string;
+    is_deleted: boolean;
+    is_memfd: boolean;
+    kind: string;
+    access: string;
+  }>;
+  findings: Array<{
+    id: string;
+    tone: string;
+    title: string;
+    why: string;
+    evidence: string[];
+  }>;
+  correlated_events_count: number;
+  correlated_alerts_count: number;
+}> {
+  return get<any>(`/system/xray/process/${pid}/full`);
+}
+
+
 

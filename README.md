@@ -55,19 +55,25 @@ OutPost pairs real-time kernel telemetry (`auditd`/`eBPF` on Linux, `Sysmon` on 
 
 <div align="center">
 
-### 🌳 1. Interactive Process Causality Tree
+### 🎛️ 1. Unified Host X-Ray Command Cockpit
+*Full-spectrum target catalog, supervisor launch chain, 8-sensor device access matrix (microphone, camera, GPU, screen capture), open file & deleted inode forensics, live process tree, and PID lifecycle controls.*
+<img src="demo/screenshots/fresh/24_host_xray_command_cockpit.png" alt="Host X-Ray Command Cockpit" width="85%">
+
+<br><br>
+
+### 🌳 2. Interactive Process Causality Tree
 *Hierarchical parent-child process graph tracking process creation, command lines, CPU/memory footprint, and package status.*
 <img src="demo/screenshots/fresh/19_process_causality_tree.png" alt="Process Causality Tree" width="85%">
 
 <br><br>
 
-### 🌐 2. Deep Network Threat Matrix
+### 🌐 3. Deep Network Threat Matrix
 *Sockets categorized into Public Listeners (0.0.0.0), Outbound C2/Remote Sockets, Loopback IPC, and Multicast discovery.*
 <img src="demo/screenshots/fresh/20_network_threat_matrix.png" alt="Network Threat Matrix" width="85%">
 
 <br><br>
 
-### 💡 3. Automated Behavioral Heuristic Explanations
+### 💡 4. Automated Behavioral Heuristic Explanations
 *Real-time reasoning cards flagging dropped binaries in temp paths, public listeners, and elevated capabilities with next-step actions.*
 <img src="demo/screenshots/fresh/21_behavioral_insights.png" alt="Behavioral Explanations" width="85%">
 

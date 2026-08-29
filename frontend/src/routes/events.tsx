@@ -15,6 +15,7 @@ import { NetworkMatrixView } from "../components/NetworkMatrixView";
 import { BehavioralExplanationsView } from "../components/BehavioralExplanationsView";
 import { DifferentialSnapshotView } from "../components/DifferentialSnapshotView";
 import { CapsuleDiffModal } from "../components/CapsuleDiffModal";
+import { HostXRayCockpit } from "../components/HostXRayCockpit";
 import type { EventFeedEvent, EventSource, EventType, Platform, Severity } from "../types";
 
 const PAGE = 60;
@@ -529,7 +530,7 @@ export default function EventsPage() {
   const [newCount, setNewCount] = useState(0);
   const lastTotalRef = useRef(0);
   const [mainMode, setMainMode] = useState<"stream" | "xray">("stream");
-  const [xraySubView, setXraySubView] = useState<"processes" | "tree" | "network" | "explanations" | "delta">("processes");
+  const [xraySubView, setXraySubView] = useState<"cockpit" | "processes" | "tree" | "network" | "explanations" | "delta">("cockpit");
   const [xrayFilter, setXrayFilter] = useState("");
   const [isCapsuleDiffOpen, setIsCapsuleDiffOpen] = useState(false);
 
@@ -1031,6 +1032,7 @@ export default function EventsPage() {
           <div className="flex flex-wrap items-center justify-between border-b border-border-subtle bg-bg-surface px-2 gap-2">
             <div className="flex flex-wrap gap-2">
               {[
+                { k: "cockpit", label: "Command Cockpit", icon: "box" },
                 { k: "processes", label: `Live Processes (${xraySnapshot?.processes?.length ?? 0})`, icon: "process" },
                 { k: "tree", label: `Causality Tree (${treeData?.length ?? 0} roots)`, icon: "list" },
                 { k: "network", label: `Network Threat Matrix (${networkMatrixData?.summary?.total_sockets ?? xraySnapshot?.socket_count ?? 0})`, icon: "network" },
@@ -1062,6 +1064,11 @@ export default function EventsPage() {
               </button>
             </div>
           </div>
+
+          {/* SubView: Command Cockpit */}
+          {xraySubView === "cockpit" && (
+            <HostXRayCockpit onInspectExternalPid={(pid) => setInspectPid(pid)} />
+          )}
 
           {/* SubView: Process Table */}
           {xraySubView === "processes" && (

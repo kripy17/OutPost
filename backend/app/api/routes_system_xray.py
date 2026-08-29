@@ -132,3 +132,22 @@ def compare_xray_forensic_capsules(body: CapsuleCompareIn) -> dict:
     """Compare two forensic capsules (.xray.json) side-by-side."""
     return host_xray.compare_two_capsules(body.capsule_a, body.capsule_b)
 
+
+@router.get("/system/xray/catalog", response_model=None)
+def get_xray_target_catalog() -> dict:
+    """Target catalog (Omarchy X-Ray style) for rapid inspection of Apps, Procs, Ports, and Devices."""
+    return host_xray.get_target_catalog()
+
+
+@router.get("/system/xray/process/{pid}/full", response_model=None)
+def get_xray_full_target_dossier(pid: int) -> dict:
+    """Unified full target dossier for X-Ray Command Cockpit."""
+    dossier = host_xray.get_full_target_dossier(pid)
+    if not dossier:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Target process PID {pid} not found on live host or in telemetry history.",
+        )
+    return dossier
+
+
