@@ -1198,6 +1198,16 @@ export async function getProcessXRay(pid: number): Promise<{
     mapped_libraries?: string[];
     package_provenance?: { status: string; label: string; managed: boolean; package?: string; path?: string };
   };
+  cgroup?: {
+    container_runtime: string;
+    container_id: string | null;
+    container_short_id: string | null;
+    systemd_service: string | null;
+    cgroup_slice: string | null;
+    cgroup_scope: string | null;
+    is_containerized: boolean;
+    raw_cgroup: string | null;
+  };
   correlated_events: any[];
   correlated_alerts: any[];
 }> {
@@ -1356,4 +1366,65 @@ export async function runLiveSimulation(scenarioId: string): Promise<{
 }> {
   return post<any>("/sandbox/simulate/live", { playbook_id: scenarioId });
 }
+
+/** Capture a new host system baseline for differential comparison. */
+export async function captureBaselineSnapshot(): Promise<{
+  timestamp: string;
+  process_count: number;
+  processes: any[];
+  network: any;
+  metrics: any;
+}> {
+  return post<any>("/system/xray/snapshot/baseline", {});
+}
+
+/** Get differential delta (+/-) between baseline and current live host state. */
+export async function getSnapshotDifferential(): Promise<{
+  baseline_timestamp: string;
+  current_timestamp: string;
+  added_processes: any[];
+  removed_processes: any[];
+  new_listeners: any[];
+  closed_listeners: any[];
+  new_outbound: any[];
+  closed_outbound: any[];
+  temp_drops: any[];
+  metrics_delta: {
+    cpu_delta: number;
+    memory_mb_delta: number;
+    process_count_delta: number;
+    socket_count_delta: number;
+  };
+  summary: {
+    added_processes_count: number;
+    removed_processes_count: number;
+    new_listeners_count: number;
+    closed_listeners_count: number;
+    new_outbound_count: number;
+    closed_outbound_count: number;
+    temp_drops_count: number;
+  };
+}> {
+  return get<any>("/system/xray/snapshot/diff");
+}
+
+/** Compare two forensic capsules (.xray.json) side-by-side. */
+export async function compareForensicCapsules(capsuleA: any, capsuleB: any): Promise<{
+  capsule_a: any;
+  capsule_b: any;
+  capabilities_diff: {
+    only_in_a: string[];
+    only_in_b: string[];
+    common: string[];
+  };
+  libraries_diff: {
+    only_in_a: string[];
+    only_in_b: string[];
+    common_count: number;
+  };
+  seccomp_match: boolean;
+}> {
+  return post<any>("/system/xray/capsule/compare", { capsule_a: capsuleA, capsule_b: capsuleB });
+}
+
 

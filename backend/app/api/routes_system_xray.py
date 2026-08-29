@@ -108,3 +108,27 @@ def get_xray_network_matrix() -> dict:
 def get_xray_behavioral_explanations() -> list[dict]:
     """Automated behavioral heuristic explanations & findings cards."""
     return host_xray.generate_behavioral_explanations()
+
+
+@router.post("/system/xray/snapshot/baseline", response_model=None)
+def capture_xray_baseline_snapshot() -> dict:
+    """Capture a new host system baseline for differential dynamic execution comparison."""
+    return host_xray.capture_baseline_snapshot()
+
+
+@router.get("/system/xray/snapshot/diff", response_model=None)
+def get_xray_snapshot_differential() -> dict:
+    """Compute differential delta (+/-) between captured baseline and current host state."""
+    return host_xray.compute_snapshot_diff()
+
+
+class CapsuleCompareIn(BaseModel):
+    capsule_a: dict
+    capsule_b: dict
+
+
+@router.post("/system/xray/capsule/compare", response_model=None)
+def compare_xray_forensic_capsules(body: CapsuleCompareIn) -> dict:
+    """Compare two forensic capsules (.xray.json) side-by-side."""
+    return host_xray.compare_two_capsules(body.capsule_a, body.capsule_b)
+
