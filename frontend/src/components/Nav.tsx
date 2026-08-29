@@ -17,9 +17,10 @@ import {
 } from "react";
 import { NavLink } from "react-router-dom";
 import CommandPalette from "./CommandPalette";
+import { ThemePalettePopover } from "./ThemePalettePopover";
 import { getHealth, getMeta, getPlatform, getRecentAlerts, getRuns } from "../lib/api";
 import { useEventStream } from "../lib/useEventStream";
-import { Icon, IconMenu, IconMoon, IconSun, type IconName } from "./Icon";
+import { Icon, IconMenu, type IconName } from "./Icon";
 import { platformIconName } from "./iconMeta";
 
 const STORAGE_KEY = "outpost-theme-v2"; // v2 key: dark-first default (index.html pre-paint)
@@ -45,8 +46,6 @@ function useTheme() {
     const next = theme === "dark" ? "light" : "dark";
     document.documentElement.dataset.theme = next;
     localStorage.setItem(STORAGE_KEY, next);
-    // Palettes are dark-only — leaving light mode clears the applied palette so
-    // toggling back to dark doesn't silently resurrect it.
     if (next === "light") {
       delete document.documentElement.dataset.palette;
       localStorage.removeItem("outpost-palette");
@@ -88,42 +87,39 @@ interface NavItem {
 
 const GROUPS: { label: string; links: NavItem[] }[] = [
   {
-    label: "Live Monitoring",
+    label: "Live Operations",
     links: [
       { to: "/", label: "Overview", iconName: "grid", end: true },
-      { to: "/events", label: "Event Manager", iconName: "list" },
-      { to: "/findings", label: "Findings", iconName: "alert" },
-      { to: "/agents", label: "Fleet", iconName: "terminal" },
-      { to: "/investigations", label: "Investigations", iconName: "notes" },
-      { to: "/search", label: "Search", iconName: "search" },
-      { to: "/watchlist", label: "Watchlist", iconName: "star" },
+      { to: "/events", label: "Host Forensics", iconName: "box" },
+      { to: "/findings", label: "Findings Queue", iconName: "alert" },
+      { to: "/investigations", label: "Case Files", iconName: "notes" },
+      { to: "/agents", label: "Sensor Fleet", iconName: "terminal" },
     ],
   },
   {
-    label: "Malware Analysis",
+    label: "Sandbox & Lab",
     links: [
       { to: "/samples", label: "Sample Vault", iconName: "box" },
-      { to: "/analysis", label: "Analysis Jobs", iconName: "process" },
-    ],
-  },
-  {
-    label: "Lab",
-    links: [
       { to: "/monitor", label: "Simulation Lab", iconName: "activity" },
+      { to: "/analysis", label: "Analysis Tasks", iconName: "process" },
     ],
   },
   {
-    label: "Detection",
+    label: "Detection & Intel",
     links: [
-      { to: "/rules", label: "Rules", iconName: "shield" },
-      { to: "/coverage", label: "ATT&CK Coverage", iconName: "target" },
+      { to: "/rules", label: "Detection Rules", iconName: "shield" },
+      { to: "/coverage", label: "ATT&CK Matrix", iconName: "target" },
+      { to: "/campaigns", label: "Threat Campaigns", iconName: "flag" },
+      { to: "/search", label: "Forensic Search", iconName: "search" },
+      { to: "/watchlist", label: "IOC Watchlist", iconName: "star" },
+      { to: "/footprint", label: "Digital Footprint", iconName: "globe" },
     ],
   },
   {
-    label: "System",
+    label: "Administration",
     links: [
+      { to: "/settings", label: "Settings", iconName: "sliders" },
       { to: "/audit", label: "Audit Log", iconName: "file" },
-      { to: "/settings", label: "Settings", iconName: "bell" },
     ],
   },
 ];
@@ -259,19 +255,6 @@ function HostOsChip({
   );
 }
 
-function ThemeToggle({ theme, toggle }: { theme: "dark" | "light"; toggle: () => void }) {
-  const next = theme === "dark" ? "light" : "dark";
-  return (
-    <button
-      onClick={toggle}
-      aria-label={`Switch to ${next} theme`}
-      title={`Switch to ${next} theme`}
-      className="press flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border-subtle bg-bg-surface text-[15px] text-text-muted transition-colors duration-150 hover:border-accent/50 hover:text-accent"
-    >
-      {theme === "dark" ? <IconSun /> : <IconMoon />}
-    </button>
-  );
-}
 
 function CommandButton({
   onClick,
@@ -503,7 +486,7 @@ export default function Nav() {
           <HostOsChip collapsed={railCollapsed} makeTip={railCollapsed ? makeTip : undefined} />
           <div className={`flex items-center gap-2 rounded-lg border border-border-subtle ${railCollapsed ? "flex-col bg-bg-elevated/30 p-1.5" : "bg-bg-elevated/30 px-2.5 py-2"}`}>
             <StatusCluster collapsed={railCollapsed} makeTip={railCollapsed ? makeTip : undefined} />
-            <ThemeToggle theme={theme} toggle={toggle} />
+            <ThemePalettePopover theme={theme} toggleTheme={toggle} />
           </div>
         </footer>
       </aside>
@@ -525,7 +508,7 @@ export default function Nav() {
             <span className="flex items-center gap-1 text-[11px] text-text-faint">
               <StatusCluster compact />
             </span>
-            <ThemeToggle theme={theme} toggle={toggle} />
+            <ThemePalettePopover theme={theme} toggleTheme={toggle} />
           </div>
         </div>
       </header>

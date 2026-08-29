@@ -76,65 +76,133 @@ function Field({
 /** Theme & palette — the former /themes Theme Lab folded into Settings.
  *  The rail footer toggles dark/light; this picks the dark accent/base
  *  palette. Applied instantly to <html data-palette> and persisted. */
-const PALETTES = [
-  { id: "", name: "Graphite", note: "deep graphite base · violet accent · cyan signal", dot: "bg-accent" },
-  { id: "slate", name: "Slate", note: "cooler blue-gray base, same violet accent", dot: "bg-sky-400" },
-  { id: "ocean", name: "Ocean", note: "deep navy base, blue accent", dot: "bg-blue-400" },
-  { id: "teal", name: "Teal", note: "graphite base, teal accent + sky signal", dot: "bg-teal-400" },
-];
+import { THEME_PRESETS, THEME_PALETTES } from "../components/ThemePalettePopover";
 
 function ThemePalettePanel() {
-  const [current, setCurrent] = useState(() => document.documentElement.dataset.palette ?? "");
+  const [activeTheme, setActiveTheme] = useState(() => document.documentElement.dataset.theme ?? "dark");
+  const [activePalette, setActivePalette] = useState(() => document.documentElement.dataset.palette ?? "");
 
-  const apply = (id: string) => {
-    document.documentElement.dataset.theme = "dark"; // palettes are dark-only
+  const applyTheme = (id: string) => {
+    document.documentElement.dataset.theme = id;
+    localStorage.setItem("outpost-theme-v2", id);
+    if (id === "light") {
+      delete document.documentElement.dataset.palette;
+      localStorage.removeItem("outpost-palette");
+      setActivePalette("");
+    }
+    setActiveTheme(id);
+  };
+
+  const applyPalette = (id: string) => {
+    if (activeTheme === "light") {
+      applyTheme("dark");
+    }
     if (id) {
       document.documentElement.dataset.palette = id;
       localStorage.setItem("outpost-palette", id);
-      localStorage.setItem("outpost-theme-v2", "dark");
     } else {
       delete document.documentElement.dataset.palette;
       localStorage.removeItem("outpost-palette");
     }
-    setCurrent(id);
+    setActivePalette(id);
   };
 
   return (
     <Panel
       kicker="Appearance"
-      title="Theme & palette"
+      title="Theme & visual customization studio"
       right={
-        <span className="font-mono text-[10px] text-text-faint">
-          {current ? `active: ${PALETTES.find((p) => p.id === current)?.name ?? current}` : "active: graphite (default)"}
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="rounded bg-accent/15 px-2 py-0.5 font-mono text-[10px] font-bold text-accent uppercase">
+            {THEME_PRESETS.find((t) => t.id === activeTheme)?.name ?? activeTheme}
+          </span>
+          {activePalette && (
+            <span className="rounded bg-bg-surface border border-border-subtle px-2 py-0.5 font-mono text-[10px] text-text-faint">
+              accent: {THEME_PALETTES.find((p) => p.id === activePalette)?.name ?? activePalette}
+            </span>
+          )}
+        </div>
       }
     >
-      <p className="mb-3 text-xs leading-relaxed text-text-muted">
-        Toggle dark/light from the rail footer. In dark mode you can swap the base/accent palette — applied instantly,
-        saved across reloads.
+      <p className="mb-4 text-xs leading-relaxed text-text-muted">
+        Select a cohesive visual identity or customize individual accent palettes. Applied instantly across the entire interface and persisted in your browser.
       </p>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        {PALETTES.map((p) => {
-          const active = current === p.id;
-          return (
-            <button
-              key={p.id || "graphite"}
-              onClick={() => apply(p.id)}
-              aria-pressed={active}
-              title={p.note}
-              className={`press rounded-lg border p-3 text-left transition-colors duration-150 ${
-                active ? "border-accent/60 bg-accent/10" : "border-border-subtle hover:border-accent/40"
-              }`}
-            >
-              <span className="flex items-center gap-2">
-                <span className={`h-3 w-3 rounded-full ${p.dot}`} aria-hidden />
-                <span className="text-xs font-semibold text-text-primary">{p.name}</span>
-              </span>
-              <span className="mt-1 block truncate font-mono text-[9px] text-text-faint">{p.note}</span>
-              {active && <span className="mt-1 block font-mono text-[9px] uppercase tracking-wide text-accent">✓ applied</span>}
-            </button>
-          );
-        })}
+
+      {/* Theme Presets */}
+      <div className="mb-5">
+        <span className="font-mono text-[11px] font-bold uppercase tracking-wider text-text-faint">
+          Full Theme Presets
+        </span>
+        <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+          {THEME_PRESETS.map((t) => {
+            const isCurrent = activeTheme === t.id;
+            return (
+              <button
+                key={t.id}
+                onClick={() => applyTheme(t.id)}
+                aria-pressed={isCurrent}
+                className={`press flex flex-col justify-between rounded-xl border p-3 text-left transition-all ${
+                  isCurrent
+                    ? "border-accent/70 bg-accent/15 shadow-[var(--glow-accent)]"
+                    : "border-border-subtle bg-bg-surface hover:border-accent/40"
+                }`}
+              >
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-base">{t.icon}</span>
+                    <span className="rounded bg-bg-elevated px-1.5 py-0.5 font-mono text-[9px] font-semibold text-text-muted uppercase">
+                      {t.badge}
+                    </span>
+                  </div>
+                  <div className="mt-2 text-xs font-bold text-text-primary">{t.name}</div>
+                  <p className="mt-0.5 text-[10px] text-text-muted">{t.desc}</p>
+                </div>
+
+                <div className="mt-3 flex items-center justify-between border-t border-border-subtle/60 pt-2">
+                  <div className="flex items-center gap-1.5">
+                    <span className={`h-3 w-3 rounded-full border border-border-strong ${t.bgDot}`} />
+                    <span className={`h-3 w-3 rounded-full ${t.accentDot}`} />
+                  </div>
+                  {isCurrent && (
+                    <span className="font-mono text-[9px] font-bold text-accent uppercase">
+                      ✓ Active
+                    </span>
+                  )}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Accent Overrides */}
+      <div>
+        <span className="font-mono text-[11px] font-bold uppercase tracking-wider text-text-faint">
+          Accent Palette Overrides
+        </span>
+        <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8">
+          {THEME_PALETTES.map((p) => {
+            const isCurrent = activePalette === p.id;
+            return (
+              <button
+                key={p.id || "default"}
+                onClick={() => applyPalette(p.id)}
+                aria-pressed={isCurrent}
+                className={`press flex flex-col items-center gap-1.5 rounded-xl border p-2.5 text-center transition ${
+                  isCurrent
+                    ? "border-accent/70 bg-accent/15 font-bold text-accent shadow-[var(--glow-accent)]"
+                    : "border-border-subtle bg-bg-surface text-text-muted hover:border-border-strong"
+                }`}
+              >
+                <span className={`h-4 w-4 rounded-full shadow-sm ${p.dot}`} />
+                <span className="text-[11px] font-medium text-text-primary truncate">{p.name}</span>
+                {isCurrent && (
+                  <span className="font-mono text-[8px] uppercase tracking-wider text-accent">Active</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
       </div>
     </Panel>
   );

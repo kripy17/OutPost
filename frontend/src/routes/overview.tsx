@@ -580,7 +580,7 @@ function IntelKeyHealth() {
   );
 }
 
-function HostXRayRadarPanel() {
+function HostForensicsRadarPanel() {
   const { data: snapshot } = useQuery({
     queryKey: ["xray", "snapshot"],
     queryFn: getHostXRaySnapshot,
@@ -600,7 +600,7 @@ function HostXRayRadarPanel() {
   const memPct = Math.min(100, Math.round((memMb / memTotal) * 100));
 
   return (
-    <section className="panel mb-6 border border-border-subtle bg-bg-surface/80 backdrop-blur-md p-5 rounded-2xl" aria-label="Host X-Ray Live Radar">
+    <section className="panel mb-6 border border-border-subtle bg-bg-surface/80 backdrop-blur-md p-5 rounded-2xl" aria-label="Host Forensics Real-Time Radar">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle pb-3">
         <div className="flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent/15 text-accent">
@@ -608,7 +608,7 @@ function HostXRayRadarPanel() {
           </span>
           <div>
             <h3 className="font-mono text-xs font-bold uppercase tracking-wider text-text-primary">
-              Host X-Ray Real-Time Telemetry Radar
+              Host Forensics Real-Time Telemetry Pulse
             </h3>
             <p className="text-[11px] text-text-muted">
               Live kernel procfs & hardware device observation across host endpoints
@@ -619,7 +619,7 @@ function HostXRayRadarPanel() {
           to="/events"
           className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/40 bg-accent/10 px-3 py-1.5 font-mono text-xs font-semibold text-accent hover:bg-accent/20 transition"
         >
-          <span>Open Command Cockpit</span>
+          <span>Open Host Forensics</span>
           <Icon name="arrowRight" size={11} />
         </Link>
       </div>
@@ -1037,7 +1037,7 @@ export default function OverviewPage() {
 
       {/* Host X-Ray Real-time Telemetry Radar & MITRE Kill Chain Progression */}
       <Deferred>
-        <HostXRayRadarPanel />
+        <HostForensicsRadarPanel />
         <MitreTacticalProgressionPanel />
       </Deferred>
       {isLoading && (

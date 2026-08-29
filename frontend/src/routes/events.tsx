@@ -15,7 +15,7 @@ import { NetworkMatrixView } from "../components/NetworkMatrixView";
 import { BehavioralExplanationsView } from "../components/BehavioralExplanationsView";
 import { DifferentialSnapshotView } from "../components/DifferentialSnapshotView";
 import { CapsuleDiffModal } from "../components/CapsuleDiffModal";
-import { HostXRayCockpit } from "../components/HostXRayCockpit";
+import { HostForensicsCockpit } from "../components/HostForensicsCockpit";
 import type { EventFeedEvent, EventSource, EventType, Platform, Severity } from "../types";
 
 const PAGE = 60;
@@ -833,13 +833,13 @@ export default function EventsPage() {
   return (
     <div className="mx-auto max-w-[1400px] px-5 py-8 lg:px-8">
       <PageHeader
-        kicker="Workspace · telemetry"
+        kicker="Workspace · host forensics & telemetry"
         title={
           <>
-            Event Manager <span className="font-normal text-text-muted">— security telemetry & activity explorer</span>
+            Host Forensics & Event Manager <span className="font-normal text-text-muted">— live system telemetry & process inspector</span>
           </>
         }
-        lede="Authoritative activity stream across hosts, sessions, and log channels (auditd, Sysmon, eBPF) — grouped by event type, leveled by severity, with realtime streaming. Select any entry for full telemetry details."
+        lede="Authoritative activity stream across hosts, sessions, and log channels (auditd, Sysmon, eBPF) — with real-time deep process causality, hardware sensor access inspection, and live telemetry feeds."
         actions={
           <div className="flex flex-wrap items-center gap-2">
             {/* Mode Switcher */}
@@ -863,8 +863,8 @@ export default function EventsPage() {
                     : "text-text-muted hover:text-text-primary"
                 }`}
               >
-                <Icon name="process" size={12} />
-                Host X-Ray Explorer
+                <Icon name="box" size={12} />
+                Deep Host Forensics
               </button>
             </div>
 
@@ -1067,7 +1067,7 @@ export default function EventsPage() {
 
           {/* SubView: Command Cockpit */}
           {xraySubView === "cockpit" && (
-            <HostXRayCockpit onInspectExternalPid={(pid) => setInspectPid(pid)} />
+            <HostForensicsCockpit onInspectExternalPid={(pid: number) => setInspectPid(pid)} />
           )}
 
           {/* SubView: Process Table */}

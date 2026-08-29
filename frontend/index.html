@@ -13,7 +13,7 @@
       (function () {
         try {
           var saved = localStorage.getItem("outpost-theme-v2");
-          document.documentElement.dataset.theme = saved === "light" ? "light" : "dark";
+          document.documentElement.dataset.theme = saved || "dark";
           var pal = localStorage.getItem("outpost-palette");
           if (pal) document.documentElement.dataset.palette = pal;
           // Icon-only rail — restore before paint so the offset never flashes.
