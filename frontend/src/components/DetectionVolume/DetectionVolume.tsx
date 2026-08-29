@@ -63,7 +63,7 @@ export default function DetectionVolume({ windowKey }: { windowKey: TrendWindow 
   const colors = useThemeColors();
   const { data: alerts = [], isLoading, isError } = useQuery({
     queryKey: ["alerts", "volume"],
-    queryFn: () => getRecentAlerts(200),
+    queryFn: () => getRecentAlerts(200, "real"),
     refetchInterval: 30_000, // live detonations show up here too
   });
 

@@ -202,21 +202,37 @@ export default function InvestigationsPage() {
         <Panel><p className="py-6 text-center text-sm text-risk-malicious">Failed to load investigations</p></Panel>
       ) : (data?.investigations.length ?? 0) === 0 ? (
         <Panel>
-          <div className="py-8 text-center">
-            <p className="text-sm text-text-muted">
-              {q || status ? "No investigations match your active filter." : "No investigations match. Investigations are optional — create one when a finding deserves a case."}
+          <div className="py-10 text-center">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl border border-border-subtle bg-bg-elevated/40 text-accent">
+              <Icon name="notes" size={22} />
+            </div>
+            <p className="mt-3 font-sans text-sm font-semibold text-text-primary">
+              {q || status ? "No matching investigations" : "No open investigation cases"}
             </p>
-            {(q || status) && (
+            <p className="mx-auto mt-1 max-w-md text-xs text-text-muted">
+              {q || status
+                ? "No cases matched your search query or status filter."
+                : "Create an investigation to correlate multiple findings, host processes, network destinations, and analyst timeline notes into a single incident case."}
+            </p>
+            {q || status ? (
               <button
                 onClick={() => {
                   setQ("");
                   setDebouncedQ("");
                   setStatus("");
                 }}
-                className="press mt-3 inline-flex items-center gap-1.5 rounded-lg border border-accent/50 px-3 py-1 font-mono text-xs text-accent hover:bg-accent/10"
+                className="press mt-4 inline-flex items-center gap-1.5 rounded-lg border border-accent/50 bg-accent/10 px-3 py-1.5 font-mono text-xs font-semibold text-accent hover:bg-accent/20"
               >
                 <Icon name="x" size={11} />
-                Clear filters
+                Clear active filters
+              </button>
+            ) : (
+              <button
+                onClick={() => setCreating(true)}
+                className="press mt-4 inline-flex items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/15 px-4 py-2 font-mono text-xs font-semibold text-accent shadow-[var(--glow-accent)] hover:bg-accent/25"
+              >
+                <Icon name="plus" size={12} />
+                Create First Investigation Case
               </button>
             )}
           </div>

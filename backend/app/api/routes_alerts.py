@@ -296,23 +296,27 @@ def bulk_update_alert_status(body: BulkStatusIn, request: Request) -> dict:
 
 
 @router.get("/alerts")
-def list_recent_alerts(limit: int = 20, provenance: str | None = None) -> list[dict]:
+def list_recent_alerts(limit: int = 20, provenance: str = "real") -> list[dict]:
     """Newest alerts across every run, with the owning sample name.
 
-    Powers the dashboard's live-findings feed. `limit` is clamped to keep the
-    payload bounded. `provenance="real"` excludes synthetic/demo sources.
+    Powers the dashboard's live-findings feed. Defaults to provenance="real"
+    so synthetic/demo sources never pollute operational feeds unless
+    explicitly requested with provenance="all" or provenance="synthetic".
     """
     limit = max(1, min(limit, 200))
     with db_session() as conn:
         where_clause = ""
         params: list = []
-        if provenance == "real":
-            marks = ",".join("?" for _ in SYNTHETIC_SOURCES)
-            where_clause = f"WHERE r.source NOT IN ({marks})"
-            params = list(SYNTHETIC_SOURCES)
+        if provenance == "all":
+            where_clause = ""
+            params = []
         elif provenance == "synthetic":
             marks = ",".join("?" for _ in SYNTHETIC_SOURCES)
             where_clause = f"WHERE r.source IN ({marks})"
+            params = list(SYNTHETIC_SOURCES)
+        else:  # "real" (default)
+            marks = ",".join("?" for _ in SYNTHETIC_SOURCES)
+            where_clause = f"WHERE r.source NOT IN ({marks})"
             params = list(SYNTHETIC_SOURCES)
 
         rows = conn.execute(

@@ -1,6 +1,8 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { DataProvenanceBadge, determineProvenance } from "../components/DataProvenanceBadge";
+import { DataProvenanceBadge } from "../components/DataProvenanceBadge";
+import { determineProvenance } from "../lib/provenance";
+
 
 describe("DataProvenanceBadge", () => {
   it("determines LIVE provenance for collector sources and log channels", () => {

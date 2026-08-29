@@ -1,7 +1,7 @@
-# OutPost — Universal Startup Script (Windows PowerShell)
-#
-# Launches Backend on port 8001, Web Console on port 5174, and auto-opens the browser.
-# Usage: .\start.ps1
+param (
+    [switch]$Demo,
+    [switch]$WithAgent
+)
 
 Write-Host "==========================================" -ForegroundColor Cyan
 Write-Host "      OutPost Security Monitor" -ForegroundColor Cyan
@@ -15,15 +15,18 @@ if (-not (Test-Path ".\.venv\Scripts\python.exe")) {
     .\setup.ps1
 }
 
-Write-Host "[*] Initializing database & demo telemetry..." -ForegroundColor Yellow
-Push-Location backend
-& "..\.venv\Scripts\python.exe" -m app.seed_demo | Out-Null
-Pop-Location
+if ($Demo) {
+    Write-Host "[*] Initializing database with demo telemetry..." -ForegroundColor Yellow
+    & ".\.venv\Scripts\python.exe" -m app.seed_demo | Out-Null
+} else {
+    Write-Host "[*] Initializing clean database schema (zero demo data)..." -ForegroundColor Yellow
+    & ".\.venv\Scripts\python.exe" -c "from app.core.db import init_db, db_session; init_db(); conn = db_session().__enter__(); conn.execute('INSERT OR REPLACE INTO settings (key, value) VALUES (''onboarding'', ''empty''), (''demo_mode'', ''0'')'); conn.commit()" | Out-Null
+}
 
 $backendProc = Start-Process -FilePath ".\.venv\Scripts\python.exe" -ArgumentList "-m uvicorn app.main:app --host 127.0.0.1 --port 8001 --log-level warning" -WorkingDirectory "backend" -PassThru
-Push-Location frontend
+Set-Location frontend
 $frontendProc = Start-Process -FilePath "npm.cmd" -ArgumentList "run dev -- --port 5174" -PassThru
-Pop-Location
+Set-Location ..
 
 Start-Sleep -Seconds 3
 Write-Host "[*] Opening web browser at http://localhost:5174..." -ForegroundColor Yellow

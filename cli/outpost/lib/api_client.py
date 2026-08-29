@@ -29,21 +29,30 @@ def _auth_headers() -> dict:
 
 
 def _get(path: str) -> Any:
-    resp = requests.get(f"{BASE_URL}{path}", headers=_auth_headers(), timeout=15)
+    try:
+        resp = requests.get(f"{BASE_URL}{path}", headers=_auth_headers(), timeout=15)
+    except requests.RequestException as exc:
+        raise APIError(f"Backend unreachable at {BASE_URL} — is OutPost running? ({exc})") from exc
     if not resp.ok:
         raise APIError(f"GET {path} → {resp.status_code}: {resp.text[:200]}")
     return resp.json()
 
 
 def _post(path: str, body: dict | None = None) -> Any:
-    resp = requests.post(f"{BASE_URL}{path}", json=body or {}, headers=_auth_headers(), timeout=15)
+    try:
+        resp = requests.post(f"{BASE_URL}{path}", json=body or {}, headers=_auth_headers(), timeout=15)
+    except requests.RequestException as exc:
+        raise APIError(f"Backend unreachable at {BASE_URL} — is OutPost running? ({exc})") from exc
     if not resp.ok:
         raise APIError(f"POST {path} → {resp.status_code}: {resp.text[:200]}")
     return resp.json()
 
 
 def _patch(path: str, body: dict | None = None) -> Any:
-    resp = requests.patch(f"{BASE_URL}{path}", json=body or {}, headers=_auth_headers(), timeout=15)
+    try:
+        resp = requests.patch(f"{BASE_URL}{path}", json=body or {}, headers=_auth_headers(), timeout=15)
+    except requests.RequestException as exc:
+        raise APIError(f"Backend unreachable at {BASE_URL} — is OutPost running? ({exc})") from exc
     if not resp.ok:
         raise APIError(f"PATCH {path} → {resp.status_code}: {resp.text[:200]}")
     return resp.json()
@@ -53,7 +62,10 @@ def _delete(path: str) -> None:
     """DELETE that accepts both 200 and 204 — the CLI parity rule for
     DELETE (mirror of the webapp's relaxed `del()`; a backend that 200s a
     DELETE with a body must not throw a misleading error)."""
-    resp = requests.delete(f"{BASE_URL}{path}", headers=_auth_headers(), timeout=15)
+    try:
+        resp = requests.delete(f"{BASE_URL}{path}", headers=_auth_headers(), timeout=15)
+    except requests.RequestException as exc:
+        raise APIError(f"Backend unreachable at {BASE_URL} — is OutPost running? ({exc})") from exc
     if resp.status_code not in (200, 204):
         raise APIError(f"DELETE {path} → {resp.status_code}: {resp.text[:200]}")
 

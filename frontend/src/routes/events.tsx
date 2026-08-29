@@ -4,12 +4,15 @@ import { Link, useSearchParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { EVENT_ICON, platformIconName } from "../components/iconMeta";
 import { PageHeader } from "../components/ui";
-import { exportEventsCsv, getEventCounts, getEvents, saveBlob } from "../lib/api";
+import { exportEventsCsv, getBehavioralExplanations, getEventCounts, getEvents, getHostXRaySnapshot, getLocalMonitorStatus, getNetworkMatrix, getProcessTree, saveBlob, startLocalMonitor, stopLocalMonitor } from "../lib/api";
 import { useEventStream } from "../lib/useEventStream";
 import { parsePids, resolveSavedFilters, type SavedFilters } from "./eventsHelpers";
 import { DataProvenanceBadge } from "../components/DataProvenanceBadge";
 import { ProcessContextModal } from "../components/ProcessContextModal";
 import { NetworkContextModal } from "../components/NetworkContextModal";
+import { ProcessTreeGraph } from "../components/ProcessTreeGraph";
+import { NetworkMatrixView } from "../components/NetworkMatrixView";
+import { BehavioralExplanationsView } from "../components/BehavioralExplanationsView";
 import type { EventFeedEvent, EventSource, EventType, Platform, Severity } from "../types";
 
 const PAGE = 60;
@@ -523,12 +526,63 @@ export default function EventsPage() {
   const [atTop, setAtTop] = useState(true);
   const [newCount, setNewCount] = useState(0);
   const lastTotalRef = useRef(0);
+  const [mainMode, setMainMode] = useState<"stream" | "xray">("stream");
+  const [xraySubView, setXraySubView] = useState<"processes" | "tree" | "network" | "explanations">("processes");
+  const [xrayFilter, setXrayFilter] = useState("");
 
-  // Effective synthetic visibility: the toggle in the "All sources" view, or
-  // any explicit provenance tab / pid drill-down (both deliberate asks that
-  // always show their full content — a seed run's process jump must not land
-  // on an empty feed).
-  const includeSynthetic = showSynthetic || source !== "" || submittedPids.length > 0;
+  const { data: xraySnapshot, isLoading: isXrayLoading } = useQuery({
+    queryKey: ["xray", "snapshot"],
+    queryFn: getHostXRaySnapshot,
+    enabled: mainMode === "xray",
+    refetchInterval: live ? 4_000 : false,
+  });
+
+  const { data: treeData } = useQuery({
+    queryKey: ["xray", "tree"],
+    queryFn: getProcessTree,
+    enabled: mainMode === "xray" && xraySubView === "tree",
+    refetchInterval: live ? 5_000 : false,
+  });
+
+  const { data: networkMatrixData } = useQuery({
+    queryKey: ["xray", "network"],
+    queryFn: getNetworkMatrix,
+    enabled: mainMode === "xray" && xraySubView === "network",
+    refetchInterval: live ? 5_000 : false,
+  });
+
+  const { data: explanationsData } = useQuery({
+    queryKey: ["xray", "explanations"],
+    queryFn: getBehavioralExplanations,
+    enabled: mainMode === "xray" && xraySubView === "explanations",
+    refetchInterval: live ? 5_000 : false,
+  });
+
+  const { data: monitorStatus, refetch: refetchMonitorStatus } = useQuery({
+    queryKey: ["agents", "local", "status"],
+    queryFn: getLocalMonitorStatus,
+    refetchInterval: 5_000,
+  });
+
+  const isLocalStreaming = monitorStatus?.running ?? false;
+
+  const handleToggleLocalStream = async () => {
+    try {
+      if (isLocalStreaming) {
+        await stopLocalMonitor();
+      } else {
+        await startLocalMonitor({ interval: 2.0 });
+      }
+      await refetchMonitorStatus();
+      void queryClient.invalidateQueries({ queryKey: ["events"] });
+      void queryClient.invalidateQueries({ queryKey: ["xray"] });
+    } catch (err) {
+      console.error("Failed to toggle local monitor:", err);
+    }
+  };
+
+  // Effective synthetic visibility: only show synthetic events when the user explicitly toggles it
+  const includeSynthetic = showSynthetic;
   const { data, isLoading, isError, isFetching } = useQuery({
     queryKey: ["events", category, severity, platform, source, submittedQ, submittedPids.join(","), offset, includeSynthetic],
     queryFn: () =>
@@ -783,7 +837,47 @@ export default function EventsPage() {
         }
         lede="Authoritative activity stream across hosts, sessions, and log channels (auditd, Sysmon, eBPF) — grouped by event type, leveled by severity, with realtime streaming. Select any entry for full telemetry details."
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Mode Switcher */}
+            <div className="flex rounded-lg border border-border-subtle bg-bg-surface p-0.5 font-mono text-xs">
+              <button
+                onClick={() => setMainMode("stream")}
+                className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 transition-colors ${
+                  mainMode === "stream"
+                    ? "bg-accent/15 font-semibold text-accent"
+                    : "text-text-muted hover:text-text-primary"
+                }`}
+              >
+                <Icon name="list" size={12} />
+                Event Log
+              </button>
+              <button
+                onClick={() => setMainMode("xray")}
+                className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 transition-colors ${
+                  mainMode === "xray"
+                    ? "bg-accent/15 font-semibold text-accent shadow-[var(--glow-accent)]"
+                    : "text-text-muted hover:text-text-primary"
+                }`}
+              >
+                <Icon name="process" size={12} />
+                Host X-Ray Explorer
+              </button>
+            </div>
+
+            {/* Stream Local Host Telemetry Button */}
+            <button
+              onClick={handleToggleLocalStream}
+              className={`press inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 font-mono text-xs transition-colors duration-150 ${
+                isLocalStreaming
+                  ? "border-signal/60 bg-signal/15 text-signal font-semibold shadow-[var(--glow-signal)]"
+                  : "border-border-subtle bg-bg-surface text-text-muted hover:border-accent/50 hover:text-accent"
+              }`}
+              title="Start or stop live in-process local host telemetry collector"
+            >
+              <span className={`h-1.5 w-1.5 rounded-full ${isLocalStreaming ? "animate-outpost-pulse bg-signal" : "bg-text-faint"}`} />
+              {isLocalStreaming ? "Streaming Local Host · Active" : "Stream Local Host"}
+            </button>
+
             <button
               onClick={() =>
                 void exportEventsCsv({
@@ -892,6 +986,303 @@ export default function EventsPage() {
         </div>
       )}
 
+      {mainMode === "xray" ? (
+        /* ── Host X-Ray Explorer View ──────────────────────────────────── */
+        <div className="space-y-6">
+          {/* Host Pulse Metrics */}
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+            <div className="rounded-2xl border border-border-subtle bg-bg-surface/80 p-4 shadow-sm backdrop-blur-sm">
+              <span className="font-mono text-[10px] font-bold uppercase tracking-wider text-text-faint">Host Platform</span>
+              <div className="mt-1 flex items-center gap-2 font-mono text-sm font-bold text-text-primary">
+                <Icon name={platformIconName(xraySnapshot?.metrics?.platform || "linux")} size={16} />
+                <span className="capitalize">{xraySnapshot?.metrics?.platform || "Linux"} Host</span>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-border-subtle bg-bg-surface/80 p-4 shadow-sm backdrop-blur-sm">
+              <span className="font-mono text-[10px] font-bold uppercase tracking-wider text-text-faint">CPU Pulse</span>
+              <div className="mt-1 flex items-center justify-between font-mono text-sm font-bold text-text-primary">
+                <span>{xraySnapshot?.metrics?.cpu_percent ?? 0}%</span>
+                <span className="text-[10px] text-text-muted">utilization</span>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-border-subtle bg-bg-surface/80 p-4 shadow-sm backdrop-blur-sm">
+              <span className="font-mono text-[10px] font-bold uppercase tracking-wider text-text-faint">Memory Active</span>
+              <div className="mt-1 flex items-center justify-between font-mono text-sm font-bold text-text-primary">
+                <span>{xraySnapshot?.metrics?.memory_used_mb ?? 0} MB</span>
+                <span className="text-[10px] text-text-muted">/ {xraySnapshot?.metrics?.memory_total_mb ?? 0} MB</span>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-border-subtle bg-bg-surface/80 p-4 shadow-sm backdrop-blur-sm">
+              <span className="font-mono text-[10px] font-bold uppercase tracking-wider text-text-faint">Active System Footprint</span>
+              <div className="mt-1 flex items-center justify-between font-mono text-sm font-bold text-text-primary">
+                <span>{xraySnapshot?.process_count ?? 0} procs</span>
+                <span className="text-[10px] text-text-muted">{xraySnapshot?.socket_count ?? 0} sockets</span>
+              </div>
+            </div>
+          </div>
+
+          {/* X-Ray Sub-View Navigation Bar */}
+          <div className="flex flex-wrap items-center justify-between border-b border-border-subtle bg-bg-surface px-2">
+            <div className="flex gap-2">
+              {[
+                { k: "processes", label: `Live Processes (${xraySnapshot?.processes?.length ?? 0})`, icon: "process" },
+                { k: "tree", label: `Causality Tree (${treeData?.length ?? 0} roots)`, icon: "list" },
+                { k: "network", label: `Network Threat Matrix (${networkMatrixData?.summary?.total_sockets ?? xraySnapshot?.socket_count ?? 0})`, icon: "network" },
+                { k: "explanations", label: `Behavioral Insights (${explanationsData?.length ?? 0})`, icon: "alert" },
+              ].map((sub) => (
+                <button
+                  key={sub.k}
+                  onClick={() => setXraySubView(sub.k as any)}
+                  className={`flex items-center gap-2 border-b-2 px-4 py-3 font-mono text-xs font-semibold transition-colors ${
+                    xraySubView === sub.k
+                      ? "border-accent text-accent"
+                      : "border-transparent text-text-muted hover:text-text-primary"
+                  }`}
+                >
+                  <Icon name={sub.icon as any} size={14} />
+                  {sub.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* SubView: Process Table */}
+          {xraySubView === "processes" && (
+            <div className="space-y-6">
+              {/* X-Ray Universal Search Bar */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-4 rounded-xl border border-border-subtle bg-bg-surface p-3 font-mono text-xs">
+                  <div className="relative flex-1">
+                    <Icon name="search" size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-faint" />
+                    <input
+                      type="text"
+                      value={xrayFilter}
+                      onChange={(e) => setXrayFilter(e.target.value)}
+                      placeholder="Universal Target Resolver: filter by :port, pid:123, file:/path, service:name, or keyword..."
+                      className="w-full rounded-lg border border-border-subtle bg-bg-base py-2 pl-9 pr-3 text-xs text-text-primary placeholder:text-text-faint focus:border-accent/60 focus:outline-none"
+                    />
+                  </div>
+                  <span className="text-text-faint text-[11px] shrink-0">
+                    {isXrayLoading ? "Scanning live system..." : "Live procfs & socket telemetry"}
+                  </span>
+                </div>
+
+                {/* Quick Syntax Chips */}
+                <div className="flex flex-wrap items-center gap-1.5 font-mono text-[11px] text-text-faint px-1">
+                  <span>Quick targets:</span>
+                  {[
+                    { label: ":8000 (Port)", val: ":8000" },
+                    { label: "pid:1", val: "pid:1" },
+                    { label: "service:systemd", val: "service:systemd" },
+                    { label: "file:/tmp", val: "file:/tmp" },
+                    { label: "python", val: "python" },
+                  ].map((chip) => (
+                    <button
+                      key={chip.val}
+                      onClick={() => setXrayFilter(chip.val)}
+                      className="rounded border border-border-subtle bg-bg-surface px-2 py-0.5 text-text-muted hover:border-accent/50 hover:text-accent"
+                    >
+                      {chip.label}
+                    </button>
+                  ))}
+                  {xrayFilter && (
+                    <button
+                      onClick={() => setXrayFilter("")}
+                      className="ml-auto text-[10px] text-text-faint hover:text-accent"
+                    >
+                      Clear filter
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Active Processes Table */}
+              <div className="panel overflow-hidden p-0">
+                <div className="border-b border-border-subtle bg-bg-elevated/40 px-5 py-3 flex items-center justify-between font-mono text-xs">
+                  <span className="font-bold text-text-primary flex items-center gap-2">
+                    <Icon name="process" size={14} className="text-accent" />
+                    Live Running Processes ({xraySnapshot?.processes?.length ?? 0})
+                  </span>
+                  <span className="text-[11px] text-text-faint">Click any row to open full Process X-Ray Inspector</span>
+                </div>
+
+                <div className="overflow-x-auto max-h-[500px]">
+                  <table className="w-full text-left font-mono text-xs">
+                    <thead className="sticky top-0 border-b border-border-subtle bg-bg-surface text-[10px] uppercase text-text-faint">
+                      <tr>
+                        <th className="p-3">PID</th>
+                        <th className="p-3">Process Name</th>
+                        <th className="p-3">User</th>
+                        <th className="p-3">Provenance / Package</th>
+                        <th className="p-3">CPU / Mem</th>
+                        <th className="p-3">Command Line</th>
+                        <th className="p-3 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border-subtle text-[11px]">
+                      {(xraySnapshot?.processes || [])
+                        .filter((p) => {
+                          if (!xrayFilter) return true;
+                          const q = xrayFilter.toLowerCase();
+                          return (
+                            String(p.pid).includes(q) ||
+                            p.name.toLowerCase().includes(q) ||
+                            p.cmdline.toLowerCase().includes(q) ||
+                            p.user.toLowerCase().includes(q) ||
+                            (p.package_label && p.package_label.toLowerCase().includes(q))
+                          );
+                        })
+                        .slice(0, 80)
+                        .map((p) => (
+                          <tr
+                            key={p.pid}
+                            onClick={() => setInspectPid(p.pid)}
+                            className="cursor-pointer hover:bg-accent/5 transition-colors"
+                          >
+                            <td className="p-3 font-bold text-accent">PID {p.pid}</td>
+                            <td className="p-3 font-semibold text-text-primary truncate max-w-[160px]">{p.name}</td>
+                            <td className="p-3 text-text-muted">{p.user}</td>
+                            <td className="p-3">
+                              {p.package_label ? (
+                                <span className={`rounded px-1.5 py-0.5 text-[9px] truncate max-w-[130px] inline-block ${
+                                  p.package_status === "managed_package" || p.package_status === "system_binary"
+                                    ? "bg-accent/10 text-accent"
+                                    : "bg-risk-suspicious/15 text-risk-suspicious font-bold"
+                                }`}>
+                                  {p.package_label}
+                                </span>
+                              ) : (
+                                <span className="text-text-faint">—</span>
+                              )}
+                            </td>
+                            <td className="p-3 text-text-muted">{p.cpu_percent}% · {p.memory_mb} MB</td>
+                            <td className="p-3 text-text-faint truncate max-w-[280px]">{p.cmdline}</td>
+                            <td className="p-3 text-right">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setInspectPid(p.pid);
+                                }}
+                                className="press rounded border border-border-subtle bg-bg-surface px-2 py-1 text-[10px] text-text-muted hover:border-accent/60 hover:text-accent"
+                              >
+                                Inspect X-Ray
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Active Listening & Connected Sockets Table */}
+              <div className="panel overflow-hidden p-0">
+                <div className="border-b border-border-subtle bg-bg-elevated/40 px-5 py-3 flex items-center justify-between font-mono text-xs">
+                  <span className="font-bold text-text-primary flex items-center gap-2">
+                    <Icon name="network" size={14} className="text-signal" />
+                    Live Network Sockets & Ports ({xraySnapshot?.sockets?.length ?? 0})
+                  </span>
+                </div>
+
+                <div className="overflow-x-auto max-h-[350px]">
+                  <table className="w-full text-left font-mono text-xs">
+                    <thead className="sticky top-0 border-b border-border-subtle bg-bg-surface text-[10px] uppercase text-text-faint">
+                      <tr>
+                        <th className="p-3">Protocol</th>
+                        <th className="p-3">Local Address</th>
+                        <th className="p-3">Remote Address</th>
+                        <th className="p-3">State</th>
+                        <th className="p-3">Owning Process</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border-subtle text-[11px]">
+                      {(xraySnapshot?.sockets || [])
+                        .filter((s) => {
+                          if (!xrayFilter) return true;
+                          const q = xrayFilter.toLowerCase();
+                          return (
+                            String(s.local_port).includes(q) ||
+                            (s.remote_port && String(s.remote_port).includes(q)) ||
+                            (s.remote_ip && s.remote_ip.includes(q)) ||
+                            s.process_name.toLowerCase().includes(q)
+                          );
+                        })
+                        .slice(0, 60)
+                        .map((s, i) => (
+                          <tr key={i} className="hover:bg-bg-elevated/30">
+                            <td className="p-3 font-bold uppercase text-accent">{s.protocol}</td>
+                            <td className="p-3 text-text-primary">{s.local_ip}:{s.local_port}</td>
+                            <td className="p-3 text-text-muted">{s.remote_ip ? `${s.remote_ip}:${s.remote_port}` : "—"}</td>
+                            <td className="p-3">
+                              <span className={`rounded px-1.5 py-0.5 text-[9px] uppercase ${
+                                s.status === "LISTEN" ? "bg-accent/15 text-accent" : "bg-bg-elevated text-text-faint"
+                              }`}>
+                                {s.status}
+                              </span>
+                            </td>
+                            <td className="p-3">
+                              {s.pid ? (
+                                <button
+                                  onClick={() => setInspectPid(s.pid!)}
+                                  className="inline-flex items-center gap-1.5 text-accent hover:underline"
+                                >
+                                  <Icon name="process" size={11} />
+                                  {s.process_name || `PID ${s.pid}`}
+                                </button>
+                              ) : (
+                                <span className="text-text-faint">—</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* SubView: Process Causality Tree */}
+          {xraySubView === "tree" && (
+            <ProcessTreeGraph
+              tree={treeData || []}
+              onInspect={(pid) => setInspectPid(pid)}
+            />
+          )}
+
+          {/* SubView: Network Threat Matrix */}
+          {xraySubView === "network" && (
+            <NetworkMatrixView
+              matrix={
+                networkMatrixData || {
+                  public_listeners: [],
+                  loopback_listeners: [],
+                  outbound_connections: [],
+                  multicast_listeners: [],
+                  summary: {
+                    public_listeners_count: 0,
+                    loopback_listeners_count: 0,
+                    outbound_count: 0,
+                    multicast_count: 0,
+                    total_sockets: 0,
+                  },
+                }
+              }
+              onInspectPid={(pid) => setInspectPid(pid)}
+            />
+          )}
+
+          {/* SubView: Behavioral Insights */}
+          {xraySubView === "explanations" && (
+            <BehavioralExplanationsView
+              explanations={explanationsData || []}
+            />
+          )}
+        </div>
+      ) : (
       <div className="grid gap-5 lg:grid-cols-[220px_minmax(0,1fr)]">
         {/* ── Log channels rail ─────────────────────────────────────────── */}
         <aside className="panel h-fit p-2 lg:sticky lg:top-20">
@@ -964,187 +1355,186 @@ export default function EventsPage() {
 
         {/* ── Timeline ──────────────────────────────────────────────────── */}
         <section className="min-w-0">
-          {/* Filter bar */}
-          <div className="mb-4 flex flex-wrap items-center gap-2">
-            {/* Focus presets — one-click noise-hiding shortcuts (Sysmon View
-                pattern): network only, new processes only, files, registry. */}
-            <div className="flex items-center gap-1 rounded-lg border border-border-subtle p-1" role="group" aria-label="Focus preset">
-              {FOCUS_PRESETS.map((p) => (
-                <button
-                  key={p.label}
-                  onClick={() => setCategory(p.type)}
-                  className={`inline-flex items-center gap-1 rounded-md px-2 py-1 font-mono text-[10px] transition-colors duration-150 ${
-                    category === p.type
-                      ? "bg-accent/10 font-medium text-accent"
-                      : "text-text-muted hover:bg-bg-elevated hover:text-text-primary"
-                  }`}
-                  title={`${p.label} — one-click focus`}
-                >
-                  <Icon name={p.icon} size={10} />
-                  {p.label}
-                </button>
-              ))}
-            </div>
-
-            {/* View mode — flat timeline or process chains */}
-            <div className="flex items-center overflow-hidden rounded-lg border border-border-subtle" role="group" aria-label="View mode">
-              {(
-                [
-                  { v: "timeline", label: "Timeline" },
-                  { v: "process", label: "By process" },
-                ] as { v: "timeline" | "process"; label: string }[]
-              ).map((m) => (
-                <button
-                  key={m.v}
-                  onClick={() => setView(m.v)}
-                  className={`px-3 py-1.5 font-mono text-[11px] transition-colors duration-150 ${
-                    view === m.v
-                      ? "bg-accent/10 font-medium text-accent"
-                      : "text-text-muted hover:bg-bg-elevated hover:text-text-primary"
-                  }`}
-                  title={m.v === "process" ? "Group this page's events into one collapsible node per process" : "Flat chronological timeline, grouped by minute"}
-                >
-                  {m.label}
-                </button>
-              ))}
-            </div>
-
-            <div className="flex items-center overflow-hidden rounded-lg border border-border-subtle" role="group" aria-label="Filter by level">
-              {(
-                [
-                  { v: "", label: "All" },
-                  { v: "suspicious", label: "Warning" },
-                  { v: "malicious", label: "Error" },
-                ] as { v: Severity | ""; label: string }[]
-              ).map((lvl) => (
-                <button
-                  key={lvl.v || "all"}
-                  onClick={() => setSeverity(lvl.v)}
-                  className={`px-3 py-1.5 font-mono text-[11px] transition-colors duration-150 ${
-                    severity === lvl.v
-                      ? "bg-accent/10 font-medium text-accent"
-                      : "text-text-muted hover:bg-bg-elevated hover:text-text-primary"
-                  }`}
-                >
-                  {lvl.label}
-                </button>
-              ))}
-            </div>
-
-            <select
-              value={platform}
-              onChange={(e) => setPlatform(e.target.value as Platform | "")}
-              className="rounded-lg border border-border-subtle bg-bg-surface px-2.5 py-1.5 font-mono text-xs text-text-primary outline-none transition-colors focus:border-accent/60"
-              aria-label="Filter by platform"
-            >
-              <option value="">All platforms</option>
-              <option value="windows">Windows</option>
-              <option value="linux">Linux</option>
-            </select>
-
-            {/* Source tabs — provenance facet: collectors vs webapp vs sandbox. */}
-            <div className="flex items-center overflow-hidden rounded-lg border border-border-subtle" role="group" aria-label="Filter by source">
-              {SOURCE_TABS.map((s) => (
-                <button
-                  key={s.v || "all"}
-                  onClick={() => setSource(s.v)}
-                  className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 font-mono text-[11px] transition-colors duration-150 ${
-                    source === s.v
-                      ? "bg-accent/10 font-medium text-accent"
-                      : "text-text-muted hover:bg-bg-elevated hover:text-text-primary"
-                  }`}
-                  title={
-                    s.v === "live"
-                      ? "Host collectors (auditd + Sysmon combined) — real telemetry"
-                      : s.v === "auditd"
-                        ? "The Linux collector's auditd stream"
-                        : s.v === "sysmon"
-                          ? "The Windows collector's Sysmon stream"
-                          : s.v === "sandbox"
-                            ? "External-sandbox detonations"
-                            : "Everything the webapp produced (synthetic detonations, CLI, seeds)"
-                  }
-                >
-                  <Icon name={s.icon} size={11} />
-                  {s.label}
-                  {/* Live per-channel count — one query feeds all six tabs. The
-                      rail is a noise-meter too: it shares the active
-                      category/severity/platform/search/pid filters AND the
-                      synthetic toggle, so it always sums to the feed's total. */}
-                  <span
-                    className="rounded-full border border-border-subtle bg-bg-elevated/60 px-1.5 py-px font-mono text-[10px] tabular-nums text-text-faint"
-                    title={channelDesc || "no active filters"}
+          {/* Structured 2-tier filter toolbar */}
+          <div className="mb-5 space-y-2.5">
+            {/* Tier 1: Provenance & Log Channel Sources */}
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border-subtle bg-bg-surface/60 p-2 backdrop-blur-sm">
+              <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Filter by source">
+                <span className="px-2 font-mono text-[10px] uppercase tracking-wider text-text-faint">Source:</span>
+                {SOURCE_TABS.map((s) => (
+                  <button
+                    key={s.v || "all"}
+                    onClick={() => setSource(s.v)}
+                    className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 font-mono text-[11px] transition-colors duration-150 ${
+                      source === s.v
+                        ? "bg-accent/15 font-semibold text-accent shadow-[var(--glow-accent)]"
+                        : "text-text-muted hover:bg-bg-elevated hover:text-text-primary"
+                    }`}
+                    title={
+                      s.v === "live"
+                        ? "Host collectors (auditd + Sysmon combined) — real telemetry"
+                        : s.v === "auditd"
+                          ? "The Linux collector's auditd stream"
+                          : s.v === "sysmon"
+                            ? "The Windows collector's Sysmon stream"
+                            : s.v === "sandbox"
+                              ? "External-sandbox detonations"
+                              : "Everything the webapp produced (synthetic detonations, CLI, seeds)"
+                    }
                   >
-                    {s.v === "" ? (countsQuery.data?.channels.total ?? "…") : (countsQuery.data?.channels[s.v] ?? "…")}
-                  </span>
-                </button>
-              ))}
-            </div>
+                    <Icon name={s.icon} size={11} />
+                    {s.label}
+                    <span
+                      className="rounded-full border border-border-subtle bg-bg-elevated/60 px-1.5 py-px font-mono text-[10px] tabular-nums text-text-faint"
+                      title={channelDesc || "no active filters"}
+                    >
+                      {s.v === "" ? (countsQuery.data?.channels.total ?? "…") : (countsQuery.data?.channels[s.v] ?? "…")}
+                    </span>
+                  </button>
+                ))}
+              </div>
 
-            {/* Synthetic-provenance toggle — the Event Log reads as real
-                telemetry first (archive parity). Hidden while a source tab is
-                active: choosing a tab is a deliberate provenance ask and
-                already shows it all. */}
-            {source === "" && (
-              <button
-                onClick={() => setShowSynthetic((v) => !v)}
-                aria-pressed={showSynthetic}
-                title={
-                  showSynthetic
-                    ? "Hide demo/synthetic events again (seeds, webapp detonations, sandbox demo)"
-                    : "Include events from seeded demo runs and webapp-synthetic detonations"
-                }
-                className={`press rounded-lg border px-2.5 py-1.5 font-mono text-[11px] transition-colors duration-150 ${
-                  showSynthetic ? "border-accent/50 bg-accent/10 text-accent" : "border-border-subtle text-text-faint hover:text-text-primary"
-                }`}
-              >
-                {showSynthetic ? "Show synthetic · on" : "Show synthetic"}
-              </button>
-            )}
-
-            <form
-              className="ml-auto flex items-center gap-2"
-              onSubmit={(e) => {
-                e.preventDefault();
-                setSubmittedQ(q.trim());
-                setSubmittedPids(parsePids(pidInput));
-              }}
-            >
-              <input
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                placeholder="Search process, path, IP, command line…"
-                className="w-52 rounded-lg border border-border-subtle bg-bg-surface px-2.5 py-1.5 font-mono text-xs text-text-primary placeholder:text-text-faint outline-none transition-colors focus:border-accent/60"
-                aria-label="Search events"
-              />
-              <input
-                value={pidInput}
-                onChange={(e) => setPidInput(e.target.value)}
-                placeholder="pid"
-                inputMode="numeric"
-                className="w-20 rounded-lg border border-border-subtle bg-bg-surface px-2.5 py-1.5 font-mono text-xs text-text-primary placeholder:text-text-faint outline-none transition-colors focus:border-accent/60"
-                aria-label="Filter by process PID"
-                title="Filter to one process — everything this PID did"
-              />
-              <button
-                type="submit"
-                className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-1.5 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
-              >
-                <Icon name="search" size={12} />
-                Search
-              </button>
-              {hasFilters && (
+              {source === "" && (
                 <button
-                  type="button"
-                  onClick={clearAllFilters}
-                  className="press inline-flex items-center gap-1 rounded-lg border border-border-subtle px-2.5 py-1.5 font-mono text-[11px] text-text-faint transition-colors duration-150 hover:border-risk-malicious/50 hover:text-risk-malicious"
-                  title="Clear every filter (type, level, platform, source, search, pid)"
+                  onClick={() => setShowSynthetic((v) => !v)}
+                  aria-pressed={showSynthetic}
+                  title={
+                    showSynthetic
+                      ? "Hide demo/synthetic events again (seeds, webapp detonations, sandbox demo)"
+                      : "Include events from seeded demo runs and webapp-synthetic detonations"
+                  }
+                  className={`press rounded-lg border px-2.5 py-1.5 font-mono text-[11px] transition-colors duration-150 ${
+                    showSynthetic ? "border-accent/50 bg-accent/10 text-accent" : "border-border-subtle text-text-faint hover:text-text-primary"
+                  }`}
                 >
-                  <Icon name="x" size={11} />
-                  Clear filters
+                  {showSynthetic ? "Show synthetic · on" : "Show synthetic"}
                 </button>
               )}
-            </form>
+            </div>
+
+            {/* Tier 2: Activity Presets, Severity, Platform & Search */}
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Focus presets */}
+              <div className="flex items-center gap-1 rounded-lg border border-border-subtle bg-bg-surface p-1" role="group" aria-label="Focus preset">
+                {FOCUS_PRESETS.map((p) => (
+                  <button
+                    key={p.label}
+                    onClick={() => setCategory(p.type)}
+                    className={`inline-flex items-center gap-1 rounded-md px-2 py-1 font-mono text-[10px] transition-colors duration-150 ${
+                      category === p.type
+                        ? "bg-accent/10 font-medium text-accent"
+                        : "text-text-muted hover:bg-bg-elevated hover:text-text-primary"
+                    }`}
+                    title={`${p.label} — one-click focus`}
+                  >
+                    <Icon name={p.icon} size={10} />
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* View mode */}
+              <div className="flex items-center overflow-hidden rounded-lg border border-border-subtle bg-bg-surface" role="group" aria-label="View mode">
+                {(
+                  [
+                    { v: "timeline", label: "Timeline" },
+                    { v: "process", label: "By process" },
+                  ] as { v: "timeline" | "process"; label: string }[]
+                ).map((m) => (
+                  <button
+                    key={m.v}
+                    onClick={() => setView(m.v)}
+                    className={`px-3 py-1.5 font-mono text-[11px] transition-colors duration-150 ${
+                      view === m.v
+                        ? "bg-accent/10 font-medium text-accent"
+                        : "text-text-muted hover:bg-bg-elevated hover:text-text-primary"
+                    }`}
+                    title={m.v === "process" ? "Group this page's events into one collapsible node per process" : "Flat chronological timeline, grouped by minute"}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Severity Level */}
+              <div className="flex items-center overflow-hidden rounded-lg border border-border-subtle bg-bg-surface" role="group" aria-label="Filter by level">
+                {(
+                  [
+                    { v: "", label: "All" },
+                    { v: "suspicious", label: "Warning" },
+                    { v: "malicious", label: "Error" },
+                  ] as { v: Severity | ""; label: string }[]
+                ).map((lvl) => (
+                  <button
+                    key={lvl.v || "all"}
+                    onClick={() => setSeverity(lvl.v)}
+                    className={`px-3 py-1.5 font-mono text-[11px] transition-colors duration-150 ${
+                      severity === lvl.v
+                        ? "bg-accent/10 font-medium text-accent"
+                        : "text-text-muted hover:bg-bg-elevated hover:text-text-primary"
+                    }`}
+                  >
+                    {lvl.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Platform */}
+              <select
+                value={platform}
+                onChange={(e) => setPlatform(e.target.value as Platform | "")}
+                className="rounded-lg border border-border-subtle bg-bg-surface px-2.5 py-1.5 font-mono text-xs text-text-primary outline-none transition-colors focus:border-accent/60"
+                aria-label="Filter by platform"
+              >
+                <option value="">All platforms</option>
+                <option value="windows">Windows</option>
+                <option value="linux">Linux</option>
+              </select>
+
+              <form
+                className="ml-auto flex items-center gap-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  setSubmittedQ(q.trim());
+                  setSubmittedPids(parsePids(pidInput));
+                }}
+              >
+                <input
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  placeholder="Search process, path, IP, cmd…"
+                  className="w-48 rounded-lg border border-border-subtle bg-bg-surface px-2.5 py-1.5 font-mono text-xs text-text-primary placeholder:text-text-faint outline-none transition-colors focus:border-accent/60"
+                  aria-label="Search events"
+                />
+                <input
+                  value={pidInput}
+                  onChange={(e) => setPidInput(e.target.value)}
+                  placeholder="pid"
+                  inputMode="numeric"
+                  className="w-16 rounded-lg border border-border-subtle bg-bg-surface px-2.5 py-1.5 font-mono text-xs text-text-primary placeholder:text-text-faint outline-none transition-colors focus:border-accent/60"
+                  aria-label="Filter by process PID"
+                  title="Filter to one process — everything this PID did"
+                />
+                <button
+                  type="submit"
+                  className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-surface px-3 py-1.5 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
+                >
+                  <Icon name="search" size={12} />
+                  Search
+                </button>
+                {hasFilters && (
+                  <button
+                    type="button"
+                    onClick={clearAllFilters}
+                    className="press inline-flex items-center gap-1 rounded-lg border border-border-subtle bg-bg-surface px-2.5 py-1.5 font-mono text-[11px] text-text-faint transition-colors duration-150 hover:border-risk-malicious/50 hover:text-risk-malicious"
+                    title="Clear every filter"
+                  >
+                    <Icon name="x" size={11} />
+                    Clear
+                  </button>
+                )}
+              </form>
+            </div>
           </div>
 
           <p className="mb-3 font-mono text-[11px] text-text-faint">
@@ -1372,6 +1762,7 @@ export default function EventsPage() {
           )}
         </section>
       </div>
+      )}
 
       {inspectPid !== null && (
         <ProcessContextModal pid={inspectPid} onClose={() => setInspectPid(null)} />

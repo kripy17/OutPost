@@ -1146,3 +1146,244 @@ export async function transpileSigmaRule(sigmaYaml: string): Promise<any> {
   return post<any>("/rules/sigma/transpile", { sigma_yaml: sigmaYaml });
 }
 
+/** Get full live host X-Ray snapshot (metrics, active processes, open sockets). */
+export async function getHostXRaySnapshot(): Promise<{
+  metrics: {
+    cpu_percent: number;
+    memory_used_mb: number;
+    memory_total_mb: number;
+    memory_percent: number;
+    process_count: number;
+    connection_count: number;
+    platform: string;
+    timestamp: string;
+  };
+  processes: Array<{
+    pid: number;
+    ppid: number;
+    name: string;
+    cmdline: string;
+    exe: string;
+    user: string;
+    status: string;
+    cpu_percent: number;
+    memory_mb: number;
+    threads: number;
+    started_at: string;
+    create_time?: number;
+    package_status?: string;
+    package_label?: string;
+  }>;
+  sockets: Array<{
+    pid: number | null;
+    process_name: string;
+    protocol: string;
+    local_ip: string;
+    local_port: number;
+    remote_ip: string | null;
+    remote_port: number | null;
+    status: string;
+  }>;
+  process_count: number;
+  socket_count: number;
+}> {
+  return get<any>("/system/xray/snapshot");
+}
+
+/** Deep inspection of a single process PID (lineage, sockets, files, environment, security posture). */
+export async function getProcessXRay(pid: number): Promise<{
+  pid: number;
+  ppid: number;
+  name: string;
+  cmdline: string;
+  exe: string;
+  user: string;
+  status: string;
+  cpu_percent: number;
+  memory_mb: number;
+  threads: number;
+  started_at: string;
+  create_time?: number;
+  cwd: string;
+  environment: Record<string, string>;
+  lineage: Array<{ pid: number; name: string; relation: "ancestor" | "self" | "child" }>;
+  sockets: Array<{
+    protocol: string;
+    local_ip: string;
+    local_port: number;
+    remote_ip: string | null;
+    remote_port: number | null;
+    status: string;
+  }>;
+  open_files: Array<{ path: string; fd: number }>;
+  security?: {
+    seccomp?: string;
+    no_new_privs?: boolean;
+    capabilities_effective?: Array<{ name: string; raw_name: string; is_dangerous: boolean }>;
+    capabilities_permitted?: Array<{ name: string; raw_name: string; is_dangerous: boolean }>;
+    service_unit?: string;
+    cgroup?: string;
+    container_id?: string;
+    namespaces?: Record<string, string>;
+    mapped_libraries?: string[];
+    package_provenance?: { status: string; label: string; managed: boolean; package?: string; path?: string };
+  };
+  correlated_events: any[];
+  correlated_alerts: any[];
+}> {
+  return get<any>(`/system/xray/process/${pid}`);
+}
+
+/** Terminate a process via Host X-Ray (POST /system/xray/process/{pid}/kill). */
+export async function killProcessXRay(pid: number, signal: "SIGTERM" | "SIGKILL" = "SIGTERM"): Promise<{
+  pid: number;
+  signal: string;
+  success: boolean;
+  message: string;
+  timestamp: string;
+}> {
+  return post<any>(`/system/xray/process/${pid}/kill`, { signal });
+}
+
+/** Lifecycle control on a process (freeze/resume/terminate/kill) with PID identity verification. */
+export async function controlProcessXRay(
+  pid: number,
+  action: "freeze" | "resume" | "terminate" | "kill",
+  expectedCreateTime?: number
+): Promise<{
+  pid: number;
+  action: string;
+  signal: string;
+  success: boolean;
+  message: string;
+  timestamp: string;
+}> {
+  return post<any>(`/system/xray/process/${pid}/action`, {
+    action,
+    expected_create_time: expectedCreateTime,
+  });
+}
+
+/** Export complete forensic snapshot (.xray.json) for a process PID. */
+export async function getForensicCapsule(pid: number): Promise<any> {
+  return get<any>(`/system/xray/process/${pid}/capsule`);
+}
+
+/** Get hierarchical process causality tree for dynamic execution analysis. */
+export async function getProcessTree(): Promise<Array<{
+  pid: number;
+  ppid: number;
+  name: string;
+  cmdline: string;
+  exe: string;
+  user: string;
+  status: string;
+  cpu_percent: number;
+  memory_mb: number;
+  threads: number;
+  started_at: string;
+  package_status?: string;
+  package_label?: string;
+  children: any[];
+}>> {
+  return get<any>("/system/xray/tree");
+}
+
+/** Get categorized network matrix across threat domains. */
+export async function getNetworkMatrix(): Promise<{
+  public_listeners: Array<{
+    protocol: string;
+    local_ip: string;
+    local_port: number;
+    remote_ip: string | null;
+    remote_port: number | null;
+    status: string;
+    pid: number | null;
+    process_name: string;
+    label?: string;
+    is_public_bound?: boolean;
+  }>;
+  loopback_listeners: Array<{
+    protocol: string;
+    local_ip: string;
+    local_port: number;
+    remote_ip: string | null;
+    remote_port: number | null;
+    status: string;
+    pid: number | null;
+    process_name: string;
+    label?: string;
+  }>;
+  outbound_connections: Array<{
+    protocol: string;
+    local_ip: string;
+    local_port: number;
+    remote_ip: string | null;
+    remote_port: number | null;
+    status: string;
+    pid: number | null;
+    process_name: string;
+    is_external?: boolean;
+    is_suspicious_port?: boolean;
+    endpoint_type?: string;
+  }>;
+  multicast_listeners: Array<{
+    protocol: string;
+    local_ip: string;
+    local_port: number;
+    remote_ip: string | null;
+    remote_port: number | null;
+    status: string;
+    pid: number | null;
+    process_name: string;
+    label?: string;
+  }>;
+  summary: {
+    public_listeners_count: number;
+    loopback_listeners_count: number;
+    outbound_count: number;
+    multicast_count: number;
+    total_sockets: number;
+  };
+}> {
+  return get<any>("/system/xray/network");
+}
+
+/** Get automated behavioral heuristic explanations & finding cards. */
+export async function getBehavioralExplanations(): Promise<Array<{
+  id: string;
+  tone: "critical" | "attention" | "info";
+  title: string;
+  domain: string;
+  why: string;
+  evidence: string[];
+  evidence_count: number;
+  next_step: string;
+}>> {
+  return get<any>("/system/xray/explanations");
+}
+
+/** Execute a simulation scenario live (POST /sandbox/simulate/live). */
+export async function runLiveSimulation(scenarioId: string): Promise<{
+  run_id: string;
+  scenario_id: string;
+  name: string;
+  platform: string;
+  terminal_output: string;
+  terminal_lines: string[];
+  stages: Array<{
+    stage: number;
+    name: string;
+    cmd: string;
+    exit_code: number;
+    status: string;
+  }>;
+  events_count: number;
+  alerts_count: number;
+  alerts: any[];
+  risk_score: number;
+  process_tree: any[];
+}> {
+  return post<any>("/sandbox/simulate/live", { playbook_id: scenarioId });
+}
+

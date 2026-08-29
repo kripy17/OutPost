@@ -1,10 +1,10 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { platformIconName } from "../components/iconMeta";
 import { Chip, PageHeader, Panel, Stat } from "../components/ui";
-import { deleteAllSamples, deleteSample, exportSamplesCsv, getSamples, saveBlob } from "../lib/api";
+import { deleteAllSamples, deleteSample, exportSamplesCsv, getSamples, saveBlob, uploadSample } from "../lib/api";
 import type { SampleRow } from "../types";
 import { formatBytes } from "./samplesHelpers";
 
@@ -120,9 +120,27 @@ function SampleTile({ s, onDelete }: { s: SampleRow; onDelete: (id: string, name
 }
 
 export default function SamplesPage() {
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [q, setQ] = useState("");
   const [debounced, setDebounced] = useState("");
+  const [dragOver, setDragOver] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
+  const handleUpload = async (file: File) => {
+    setUploading(true);
+    setUploadError(null);
+    try {
+      const meta = await uploadSample(file.name, file);
+      void queryClient.invalidateQueries({ queryKey: ["samples"] });
+      navigate(`/samples/${meta.sample_id}`);
+    } catch (err: unknown) {
+      setUploadError(err instanceof Error ? err.message : "Failed to upload sample binary");
+    } finally {
+      setUploading(false);
+    }
+  };
   // The vault reads as real artifacts first: binaries whose entire detonation
   // history is demo/synthetic are hidden unless the analyst asks (archive
   // parity with History / the Event Log). Persisted like the other toggles.
@@ -242,6 +260,51 @@ export default function SamplesPage() {
         }
       />
 
+      {/* Binary Upload Dropzone */}
+      <div
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragOver(true);
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragOver(false);
+          const file = e.dataTransfer.files?.[0];
+          if (file) void handleUpload(file);
+        }}
+        className={`mb-6 flex flex-col items-center justify-center rounded-2xl border-2 border-dashed p-6 text-center transition-all duration-150 ${
+          dragOver
+            ? "border-accent bg-accent/10 shadow-[var(--glow-accent)]"
+            : "border-border-subtle bg-bg-surface/60 hover:border-accent/50 hover:bg-bg-surface"
+        }`}
+      >
+        <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-border-subtle bg-bg-elevated text-accent">
+          <Icon name="box" size={20} />
+        </div>
+        <p className="mt-2.5 font-sans text-xs font-semibold text-text-primary">
+          Upload Sample Binary for Static & Dynamic Analysis
+        </p>
+        <p className="mt-0.5 text-[11px] text-text-muted">
+          Drag &amp; drop executable binaries (.exe, .elf, .dll, .so, scripts) or click to browse
+        </p>
+        <label className="press mt-3 inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/15 px-3.5 py-1.5 font-mono text-xs font-semibold text-accent transition-colors hover:bg-accent/25">
+          <Icon name="plus" size={12} />
+          <span>{uploading ? "Analyzing binary…" : "Select File"}</span>
+          <input
+            type="file"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) void handleUpload(file);
+            }}
+            disabled={uploading}
+            className="sr-only"
+            aria-label="Upload sample binary"
+          />
+        </label>
+        {uploadError && <p className="mt-2 font-mono text-xs text-risk-malicious">{uploadError}</p>}
+      </div>
+
       <dl className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
         {(
           [
@@ -290,7 +353,7 @@ export default function SamplesPage() {
         {isError && <p className="p-6 text-sm text-risk-malicious">Couldn't load samples — is the backend running?</p>}
         {!isLoading && !isError && samples.length === 0 && (
           <p className="p-6 text-sm text-text-muted">
-            {debounced ? "No samples match that filter." : "No samples uploaded yet — detonate one from Monitor."}
+            {debounced ? "No samples match that filter." : "No samples in vault yet. Drag & drop or upload an executable binary above to begin static analysis or dynamic execution tracing."}
           </p>
         )}
         {!isLoading && !isError && samples.length > 0 && (
