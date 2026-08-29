@@ -23,12 +23,8 @@ now prefers members with correlated chains.
 
 # Canonical attack progression — the order analysts read a chain in. Stages
 # that don't map to a rule (e.g. initial-access-only rule sets) are absent;
-# the correlation simply skips them. Reconnaissance / Resource Development
-# are first: detection's stage map emits them (recon sweeps, infra staging),
-# and leaving them unmapped made their index -1 sort them ahead of time.
+# the correlation simply skips them.
 _CANONICAL_ORDER = [
-    "Reconnaissance",
-    "Resource Development",
     "Initial Access",
     "Execution",
     "Defense Evasion",

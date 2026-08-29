@@ -13,7 +13,7 @@ _PASSTHROUGH = (
     "run_id", "platform", "event_type", "timestamp", "pid", "ppid",
     "process_name", "command_line", "exe_path", "dest_ip", "dest_port",
     "protocol", "file_path", "registry_key", "host_id", "log_source",
-    "query", "tls_sni", "ja3", "raw_record",
+    "query", "tls_sni", "raw_record",
 )
 
 

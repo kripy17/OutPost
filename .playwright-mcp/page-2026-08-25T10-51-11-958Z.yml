@@ -1,0 +1,61 @@
+- generic [ref=f16e3]:
+  - complementary [ref=f16e4]:
+    - generic [ref=f16e5]:
+      - generic [ref=f16e10]: OutPost
+      - button "Collapse rail" [ref=f16e11]
+    - navigation "Primary" [ref=f16e15]:
+      - generic [ref=f16e16]:
+        - paragraph [ref=f16e17]: Live Monitoring
+        - generic [ref=f16e18]:
+          - link [ref=f16e19] [cursor=pointer]:
+            - /url: /
+          - link [ref=f16e27] [cursor=pointer]:
+            - /url: /events
+          - link [ref=f16e35] [cursor=pointer]:
+            - /url: /findings
+          - link [ref=f16e40] [cursor=pointer]:
+            - /url: /agents
+          - link [ref=f16e46] [cursor=pointer]:
+            - /url: /investigations
+          - link [ref=f16e52] [cursor=pointer]:
+            - /url: /search
+          - link [ref=f16e58] [cursor=pointer]:
+            - /url: /watchlist
+      - generic [ref=f16e63]:
+        - paragraph [ref=f16e64]: Malware Analysis
+        - generic [ref=f16e65]:
+          - link [ref=f16e66] [cursor=pointer]:
+            - /url: /samples
+          - link [ref=f16e72] [cursor=pointer]:
+            - /url: /analysis
+      - generic [ref=f16e78]:
+        - paragraph [ref=f16e79]: Lab
+        - link [ref=f16e81] [cursor=pointer]:
+          - /url: /monitor
+      - generic [ref=f16e86]:
+        - paragraph [ref=f16e87]: Detection
+        - generic [ref=f16e88]:
+          - link [ref=f16e89] [cursor=pointer]:
+            - /url: /rules
+          - link [ref=f16e95] [cursor=pointer]:
+            - /url: /coverage
+      - generic [ref=f16e102]:
+        - paragraph [ref=f16e103]: System
+        - generic [ref=f16e104]:
+          - link [ref=f16e105] [cursor=pointer]:
+            - /url: /audit
+          - link [ref=f16e111] [cursor=pointer]:
+            - /url: /settings
+    - generic [ref=f16e117]:
+      - button "Open command palette" [ref=f16e118]:
+        - generic [ref=f16e123]: Jump to…
+        - generic [ref=f16e124]: ⌘K
+      - generic [ref=f16e125]:
+        - generic [ref=f16e127]:
+          - generic [ref=f16e130]: Connecting
+          - generic [ref=f16e131]:
+            - generic [ref=f16e132]: "9"
+            - text: sessions
+        - button "Switch to light theme" [ref=f16e133]
+  - main [ref=f16e137]:
+    - paragraph [ref=f16e140]: Loading…

@@ -15,7 +15,7 @@ from fastapi import APIRouter, HTTPException, Query, Response
 
 from ..core.db import db_session
 from ..models.run import SYNTHETIC_SOURCES
-from ..services.risk import RULE_META, RULE_REMEDIATION, rule_name, technique_name
+from ..services.risk import RULE_META, RULE_REMEDIATION, rule_name
 
 router = APIRouter(tags=["analysis"])
 
@@ -641,7 +641,6 @@ def get_rules_meta():
             "rule_id": rid,
             "rule_name": rule_name(rid),
             "remediation": RULE_REMEDIATION.get(rid, []),
-            "technique_name": technique_name(RULE_META[rid].get("technique")),
             **RULE_META[rid],
         }
         for rid in sorted(RULE_META)

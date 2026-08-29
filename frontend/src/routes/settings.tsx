@@ -24,7 +24,6 @@ import {
   setRetention,
   testIntelKey,
 } from "../lib/api";
-import { THEMES, applyTheme } from "../lib/themes";
 import { lockedIpsText, rateLimitBadge, runResetFlow } from "./settingsHelpers";
 import { anyClientState, clientStateSummary, readClientState, resetClientState, type ClientStateReport } from "./resetClientState";
 import { provenanceLabel, readSavedProvenance, STATUS_TABS } from "./findingsHelpers";
@@ -74,53 +73,65 @@ function Field({
   );
 }
 
-/** Appearance — the console's visual identities (lib/themes.ts). Applied
- *  instantly to <html data-theme> and persisted; identical list to the rail
- *  footer's theme menu. */
+/** Theme & palette — the former /themes Theme Lab folded into Settings.
+ *  The rail footer toggles dark/light; this picks the dark accent/base
+ *  palette. Applied instantly to <html data-palette> and persisted. */
+const PALETTES = [
+  { id: "", name: "Graphite", note: "deep graphite base · violet accent · cyan signal", dot: "bg-accent" },
+  { id: "slate", name: "Slate", note: "cooler blue-gray base, same violet accent", dot: "bg-sky-400" },
+  { id: "ocean", name: "Ocean", note: "deep navy base, blue accent", dot: "bg-blue-400" },
+  { id: "teal", name: "Teal", note: "graphite base, teal accent + sky signal", dot: "bg-teal-400" },
+];
+
 function ThemePalettePanel() {
-  const [current, setCurrent] = useState<string>(() => document.documentElement.dataset.theme ?? "midnight");
+  const [current, setCurrent] = useState(() => document.documentElement.dataset.palette ?? "");
 
   const apply = (id: string) => {
-    applyTheme(id);
+    document.documentElement.dataset.theme = "dark"; // palettes are dark-only
+    if (id) {
+      document.documentElement.dataset.palette = id;
+      localStorage.setItem("outpost-palette", id);
+      localStorage.setItem("outpost-theme-v2", "dark");
+    } else {
+      delete document.documentElement.dataset.palette;
+      localStorage.removeItem("outpost-palette");
+    }
     setCurrent(id);
   };
 
   return (
     <Panel
       kicker="Appearance"
-      title="Console themes"
+      title="Theme & palette"
       right={
         <span className="font-mono text-[10px] text-text-faint">
-          active: {THEMES.find((t) => t.id === current)?.name ?? current}
+          {current ? `active: ${PALETTES.find((p) => p.id === current)?.name ?? current}` : "active: graphite (default)"}
         </span>
       }
     >
       <p className="mb-3 text-xs leading-relaxed text-text-muted">
-        Each theme is a complete identity — field color, accent, telemetry signal, risk scale, even typography and
-        texture. Applied instantly, saved across reloads.
+        Toggle dark/light from the rail footer. In dark mode you can swap the base/accent palette — applied instantly,
+        saved across reloads.
       </p>
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
-        {THEMES.map((t) => {
-          const active = current === t.id;
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {PALETTES.map((p) => {
+          const active = current === p.id;
           return (
             <button
-              key={t.id}
-              onClick={() => apply(t.id)}
+              key={p.id || "graphite"}
+              onClick={() => apply(p.id)}
               aria-pressed={active}
-              className={`press rounded-xl border p-3 text-left transition-colors duration-150 ${
+              title={p.note}
+              className={`press rounded-lg border p-3 text-left transition-colors duration-150 ${
                 active ? "border-accent/60 bg-accent/10" : "border-border-subtle hover:border-accent/40"
               }`}
             >
               <span className="flex items-center gap-2">
-                <span className="flex items-center" aria-hidden>
-                  {t.swatch.map((c, i) => (
-                    <span key={c + i} className="-ml-1 h-4 w-4 rounded-full border border-bg-base first:ml-0" style={{ background: c }} />
-                  ))}
-                </span>
-                <span className="text-xs font-semibold text-text-primary">{t.name}</span>
-                {active && <span className="ml-auto font-mono text-[9px] uppercase tracking-wide text-accent">✓ applied</span>}
+                <span className={`h-3 w-3 rounded-full ${p.dot}`} aria-hidden />
+                <span className="text-xs font-semibold text-text-primary">{p.name}</span>
               </span>
-              <span className="mt-1.5 block font-mono text-[9px] leading-relaxed text-text-faint">{t.note}</span>
+              <span className="mt-1 block truncate font-mono text-[9px] text-text-faint">{p.note}</span>
+              {active && <span className="mt-1 block font-mono text-[9px] uppercase tracking-wide text-accent">✓ applied</span>}
             </button>
           );
         })}
@@ -751,7 +762,6 @@ export default function SettingsPage() {
     mutationFn: (body: NotificationSettingsIn) => setNotificationSettings(body),
     onSuccess: (fresh) => {
       setDraft(fresh);
-      setCleared({});
       void queryClient.invalidateQueries({ queryKey: ["notifications"] });
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
@@ -795,29 +805,6 @@ export default function SettingsPage() {
   // panel, stored client-side; the Layout-level listener does the rest.
   const [notifyPref, setNotifyPref] = useState(browserNotifyEnabled());
   const [perm, setPerm] = useState<NotificationPermission>(browserPermission());
-  // Secrets come back masked (blank) from GET. Track explicit "clear" intents
-  // per channel; on save, blank-and-not-cleared fields are OMITTED so the
-  // backend keeps the stored value (None=keep, ""=clear contract).
-  const [cleared, setCleared] = useState<Record<string, boolean>>({});
-  const secretSet = (field: string) =>
-    Boolean(ready?.[`${field}_set` as keyof NotificationSettings]) || Boolean((ready?.[field as keyof NotificationSettings] as string) ?? "");
-  const markCleared = (field: string) => {
-    setCleared((c) => ({ ...c, [field]: true }));
-    set({ [field]: "" } as Partial<NotificationSettingsIn>);
-  };
-  const buildBody = (): NotificationSettingsIn => {
-    const src = (draft ?? data) as NotificationSettings;
-    const secrets = ["webhook_url", "slack_webhook", "discord_webhook", "telegram_bot_token", "smtp_pass"];
-    const body: Record<string, unknown> = { ...src };
-    for (const s of secrets) {
-      if (cleared[s]) body[s] = "";
-      else {
-        const typed = (src[s as keyof NotificationSettings] as string) ?? "";
-        if (!typed) delete body[s]; // omit → keep stored value
-      }
-    }
-    return body as NotificationSettingsIn;
-  };
   const toggleNotify = () => {
     const next = !notifyPref;
     setBrowserNotifyEnabled(next);
@@ -831,10 +818,10 @@ export default function SettingsPage() {
     }
   };
 
-  const webhookActive = secretSet("webhook_url");
-  const slackActive = secretSet("slack_webhook");
-  const discordActive = secretSet("discord_webhook");
-  const telegramActive = secretSet("telegram_bot_token") && Boolean(ready?.telegram_chat_id);
+  const webhookActive = Boolean(ready?.webhook_url);
+  const slackActive = Boolean(ready?.slack_webhook);
+  const discordActive = Boolean(ready?.discord_webhook);
+  const telegramActive = Boolean(ready?.telegram_bot_token && ready?.telegram_chat_id);
   const smtpActive = Boolean(ready?.smtp_host && ready?.smtp_to);
 
   return (
@@ -976,15 +963,10 @@ export default function SettingsPage() {
             <div className="space-y-3">
               <Field
                 label="Webhook URL"
-                value={cleared.webhook_url ? "" : (ready.webhook_url ?? "")}
+                value={ready.webhook_url ?? ""}
                 onChange={(v) => set({ webhook_url: v })}
-                placeholder={secretSet("webhook_url") ? "•••••••• (stored — type to replace)" : "https://hooks.example.com/outpost"}
+                placeholder="https://hooks.example.com/outpost"
               />
-              {secretSet("webhook_url") && !cleared.webhook_url && (
-                <button className="text-[10px] font-mono text-text-faint underline hover:text-risk-malicious" onClick={() => markCleared("webhook_url")}>
-                  clear stored URL
-                </button>
-              )}
               <p className="font-mono text-[10px] text-text-faint">
                 Receives the raw JSON payload: {"{ event, severity, rule_id, rule_name, run_id, details, triggered_at }"} per
                 alert — compatible with ntfy, your own sink, or any generic receiver.
@@ -998,15 +980,10 @@ export default function SettingsPage() {
           >
             <Field
               label="Incoming webhook URL"
-              value={cleared.slack_webhook ? "" : (ready.slack_webhook ?? "")}
+              value={ready.slack_webhook ?? ""}
               onChange={(v) => set({ slack_webhook: v })}
-              placeholder={secretSet("slack_webhook") ? "•••••••• (stored — type to replace)" : "https://hooks.slack.com/services/T000/B000/XXXX"}
+              placeholder="https://hooks.slack.com/services/T000/B000/XXXX"
             />
-            {secretSet("slack_webhook") && !cleared.slack_webhook && (
-              <button className="mt-1 text-[10px] font-mono text-text-faint underline hover:text-risk-malicious" onClick={() => markCleared("slack_webhook")}>
-                clear stored URL
-              </button>
-            )}
             <p className="mt-2 font-mono text-[10px] text-text-faint">Posts a text message per finding.</p>
           </Panel>
 
@@ -1016,15 +993,10 @@ export default function SettingsPage() {
           >
             <Field
               label="Webhook URL"
-              value={cleared.discord_webhook ? "" : (ready.discord_webhook ?? "")}
+              value={ready.discord_webhook ?? ""}
               onChange={(v) => set({ discord_webhook: v })}
-              placeholder={secretSet("discord_webhook") ? "•••••••• (stored — type to replace)" : "https://discord.com/api/webhooks/…/…"}
+              placeholder="https://discord.com/api/webhooks/…/…"
             />
-            {secretSet("discord_webhook") && !cleared.discord_webhook && (
-              <button className="mt-1 text-[10px] font-mono text-text-faint underline hover:text-risk-malicious" onClick={() => markCleared("discord_webhook")}>
-                clear stored URL
-              </button>
-            )}
             <p className="mt-2 font-mono text-[10px] text-text-faint">Posts an embed colored by severity (red = malicious, amber = suspicious).</p>
           </Panel>
 
@@ -1035,15 +1007,10 @@ export default function SettingsPage() {
             <div className="grid gap-3 sm:grid-cols-2">
               <Field
                 label="Bot token"
-                value={cleared.telegram_bot_token ? "" : (ready.telegram_bot_token ?? "")}
+                value={ready.telegram_bot_token ?? ""}
                 onChange={(v) => set({ telegram_bot_token: v })}
-                placeholder={secretSet("telegram_bot_token") ? "•••••••• (stored — type to replace)" : "123456:ABC-DEF…"}
+                placeholder="123456:ABC-DEF…"
               />
-              {secretSet("telegram_bot_token") && !cleared.telegram_bot_token && (
-                <button className="text-[10px] font-mono text-text-faint underline hover:text-risk-malicious" onClick={() => markCleared("telegram_bot_token")}>
-                  clear stored token
-                </button>
-              )}
               <Field
                 label="Chat ID"
                 value={ready.telegram_chat_id ?? ""}
@@ -1077,15 +1044,10 @@ export default function SettingsPage() {
               <Field
                 label="Password"
                 type="password"
-                value={cleared.smtp_pass ? "" : ""}
+                value=""
                 onChange={(v) => set({ smtp_pass: v })}
-                placeholder={secretSet("smtp_pass") ? "•••••••• (kept — type to replace)" : "password"}
+                placeholder={ready.smtp_pass_set ? "•••••••• (kept)" : "password"}
               />
-              {secretSet("smtp_pass") && !cleared.smtp_pass && (
-                <button className="text-[10px] font-mono text-text-faint underline hover:text-risk-malicious" onClick={() => markCleared("smtp_pass")}>
-                  clear stored password
-                </button>
-              )}
               <Field
                 label="From"
                 value={ready.smtp_from ?? ""}
@@ -1107,7 +1069,7 @@ export default function SettingsPage() {
 
           <div className="flex items-center gap-3 pt-1">
             <button
-              onClick={() => save.mutate(buildBody())}
+              onClick={() => save.mutate((draft ?? (data as NotificationSettings)) as NotificationSettingsIn)}
               disabled={save.isPending || Boolean(me?.enabled && me.read_only)}
               className="press inline-flex items-center gap-2 rounded-lg border border-accent/60 bg-accent/10 px-5 py-2.5 font-mono text-sm font-medium text-accent transition-all duration-150 hover:shadow-[var(--glow-accent)] disabled:cursor-default disabled:opacity-50"
             >

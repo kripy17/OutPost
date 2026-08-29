@@ -91,21 +91,10 @@ def _agent_allowed(method: str, path: str) -> bool:
 
     Writes: event + snapshot ingestion, heartbeats, session creation and
     completion. Reads: run data (the agent lists/claims sessions and the
-    daily summary reads its own runs' alerts). Everything else — including
-    fleet containment (`/agents/*/isolate`) and process kills — is off-limits
-    to the shared agent token.
+    daily summary reads its own runs' alerts). Everything else is off-limits.
     """
-    if path.startswith("/ingest/") or path.startswith("/events/stream"):
+    if path.startswith("/ingest/") or path.startswith("/agents/"):
         return method in ("GET", "POST")
-    if path.startswith("/agents/"):
-        # Explicit allowlist only: telemetry endpoints. Never the whole
-        # /agents/ prefix — that would hand containment/kill-process routes
-        # to a leaked shared token.
-        if path.endswith("/heartbeat"):
-            return method == "POST"
-        if path.endswith("/snapshot"):
-            return method in ("GET", "POST")
-        return False
     if path.startswith("/runs"):
         if method == "GET":
             return True

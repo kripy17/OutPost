@@ -13,13 +13,8 @@ partial header yields `None` for that format, never an exception.
 """
 
 import hashlib
-import json
 import math
-import os
 import re
-import shutil
-import subprocess
-import tempfile
 
 # ---------------------------------------------------------------------------
 # Strings
@@ -87,7 +82,7 @@ def extract_strings(data: bytes) -> list[str]:
 _RE_URL = re.compile(rb"https?://[^\s\"'<>\\]{4,200}", re.IGNORECASE)
 _RE_IPV4 = re.compile(rb"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 _RE_DOMAIN = re.compile(rb"\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}\b", re.IGNORECASE)
-_RE_HASH = re.compile(rb"\b(?:[a-f0-9]{32}|[a-f0-9]{40}|[a-f0-9]{64})\b", re.IGNORECASE)
+_RE_HASH = re.compile(rb"\b(?:[a-f0-9]{32}|[a-f0-9]{40}|[a-f0-9]{64})\b")
 _RE_EMAIL = re.compile(rb"\b[\w.+-]+@[\w-]+\.[\w.-]{2,}\b")
 
 
@@ -409,114 +404,8 @@ def detect_capabilities(data: bytes, extracted_strings: list[str]) -> list[dict[
                 "category": category,
                 "matched": matched_symbols,
                 "confidence": "high" if len(matched_symbols) >= 2 else "medium",
-                "source": "heuristic",
             })
     return found
-
-
-# ---------------------------------------------------------------------------
-# CAPA (Mandiant) — optional subprocess-backed capability extraction
-# ---------------------------------------------------------------------------
-
-_CAPA_TIMEOUT = float(os.getenv("OUTPOST_CAPA_TIMEOUT", "120"))
-
-
-def parse_capa_rules(payload: dict[str, Any] | None) -> list[dict[str, Any]]:
-    """Extract capability entries from a CAPA --json report.
-
-    Handles both the modern `rules` *mapping* shape and the legacy list
-    of matches. Every entry carries `source: capa` so callers can tell a
-    rule-engine match ("did") from a heuristic string hit ("could do").
-    """
-    if not isinstance(payload, dict):
-        return []
-    rules = payload.get("rules")
-    entries: list[dict[str, Any]] = []
-
-    def _meta_entry(name: str, meta: dict[str, Any]) -> dict[str, Any]:
-        attack = [
-            f"{a.get('name', '')} ({a.get('id', '')})".strip()
-            for a in meta.get("attack") or []
-            if isinstance(a, dict)
-        ]
-        mbc = [
-            "{}::{} [{}]".format(m.get("object", ""), m.get("behavior", ""), m.get("id", ""))
-            for m in meta.get("mbc") or []
-            if isinstance(m, dict)
-        ]
-        refs = [r for r in attack + mbc if r.strip() and r.strip() != "()"]
-        return {
-            "category": str(name),
-            "matched": refs,
-            "confidence": "high",
-            "source": "capa",
-            "namespace": str(meta.get("namespace") or ""),
-            "attack": attack,
-            "mbc": mbc,
-        }
-
-    if isinstance(rules, dict):
-        for name, rule in rules.items():
-            meta = rule.get("meta") if isinstance(rule, dict) else None
-            entries.append(_meta_entry(str(name), meta if isinstance(meta, dict) else {}))
-    elif isinstance(rules, list):
-        for match in rules:
-            if not isinstance(match, dict):
-                continue
-            name = match.get("rule") or match.get("name") or ""
-            meta = match.get("meta") if isinstance(match.get("meta"), dict) else {}
-            if name:
-                entries.append(_meta_entry(str(name), meta))
-    return entries
-
-
-def run_capa(data: bytes) -> dict[str, Any]:
-    """Run Mandiant CAPA against the sample bytes via its CLI.
-
-    Requires `capa` on PATH (`pip install flare-capa`); honors
-    OUTPOST_CAPA_TIMEOUT (seconds). Never raises — any failure degrades to an
-    honest {"available": false, ...} report so triage still completes.
-    """
-    binary = shutil.which("capa")
-    if not binary:
-        return {"available": False, "error": "capa not installed", "capabilities": []}
-
-    tmp_path = ""
-    try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".bin") as tmp:
-            tmp.write(data)
-            tmp_path = tmp.name
-        proc = subprocess.run(
-            [binary, "--json", tmp_path],
-            capture_output=True,
-            text=True,
-            timeout=_CAPA_TIMEOUT,
-            check=False,
-        )
-    except FileNotFoundError:
-        return {"available": False, "error": "capa not installed", "capabilities": []}
-    except subprocess.TimeoutExpired:
-        return {"available": True, "error": f"capa timed out after {_CAPA_TIMEOUT}s", "capabilities": []}
-    finally:
-        if tmp_path:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-
-    if proc.returncode != 0:
-        detail = (proc.stderr or proc.stdout or "").strip()[:200]
-        return {
-            "available": True,
-            "error": f"capa exited {proc.returncode}" + (f": {detail}" if detail else ""),
-            "capabilities": [],
-        }
-
-    try:
-        payload = json.loads(proc.stdout)
-    except json.JSONDecodeError:
-        return {"available": True, "error": "capa output was not valid JSON", "capabilities": []}
-    return {"available": True, "capabilities": parse_capa_rules(payload)}
 
 
 # ---------------------------------------------------------------------------
@@ -643,14 +532,10 @@ def compare_fuzzy_hashes(hash1: str, hash2: str) -> int:
 
 
 def analyze_sample(data: bytes) -> dict:
-    """Full static analysis of a blob: strings, IOCs, PE/ELF metadata, entropy,
-    capabilities (heuristic + optional CAPA), imphash, fuzzy_hash."""
+    """Full static analysis of a blob: strings, IOCs, PE/ELF metadata, entropy, capabilities, imphash, fuzzy_hash."""
     strings = extract_strings(data)
     entropy = calculate_entropy(data)
     capabilities = detect_capabilities(data, strings)
-
-    capa_report = run_capa(data)
-    capabilities = capabilities + (capa_report.get("capabilities") or [])
 
     pe_info = parse_pe(data)
     elf_info = parse_elf(data)
@@ -665,7 +550,6 @@ def analyze_sample(data: bytes) -> dict:
         "entropy": entropy,
         "is_packed": entropy > 7.1,
         "capabilities": capabilities,
-        "capa": capa_report,
         "imphash": imphash,
         "fuzzy_hash": fuzzy,
     }

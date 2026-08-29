@@ -19,7 +19,6 @@ enrichment of the detection pipeline, not a single point of failure — an
 unexpected error is logged and the detection result stands.
 """
 
-import ipaddress
 import logging
 import re
 
@@ -52,41 +51,6 @@ def _valid_ipv4(value: str) -> bool:
     return not value.startswith(("127.", "0.0.0.0", "255.255.255.255"))
 
 
-def _plausible_text_ipv4(value: str) -> bool:
-    """Stricter gate for IPs harvested from free text — RFC1918 / CGNAT /
-    loopback / multicast ranges and version-number lookalikes (1.2.3.4) stay
-    out of the IOC workspace. Structured `related_ip` bypasses this gate:
-    lateral-movement provenance on a private address is a real, analyst-useful
-    indicator. Deliberately NOT a blanket `is_private` — modern Python folds
-    TEST-NET documentation ranges (198.51.100.0/24, 203.0.113.0/24, …) into
-    that flag, and OutPost's demo data uses them as stand-in public C2s."""
-    if not _valid_ipv4(value):
-        return False
-    try:
-        addr = ipaddress.ip_address(value)
-    except ValueError:
-        return False
-    return not (
-        addr.is_loopback or addr.is_link_local or addr.is_multicast
-        or addr.is_unspecified
-        or any(
-            addr in n
-            for n in (
-                ipaddress.ip_network("10.0.0.0/8"),
-                ipaddress.ip_network("172.16.0.0/12"),
-                ipaddress.ip_network("192.168.0.0/16"),
-                ipaddress.ip_network("100.64.0.0/10"),
-                ipaddress.ip_network("0.0.0.0/8"),
-            )
-        )
-    )
-
-
-# A token immediately preceded by version-ish context is software metadata,
-# not an address ("version 1.2.3.4", "v=6.7.8.9").
-_VERSION_CONTEXT_RE = re.compile(r"(?:version|ver\.?|v)\s*[:=]?\s*$", re.IGNORECASE)
-
-
 def _url_host(url: str) -> str | None:
     m = re.match(r"https?://([^/:?#]+)", url, re.IGNORECASE)
     return m.group(1) if m else None
@@ -112,13 +76,9 @@ def extract_from_alert(alert) -> list[tuple[str, str]]:
     for regex, _digest in _HASH_RES:
         found.extend((h, "hash") for h in regex.findall(text))
     found.extend((e, "email") for e in _EMAIL_RE.findall(text))
-    for m in _IPV4_RE.finditer(text):
-        ip = m.group(1)
-        prefix = text[max(0, m.start() - 12):m.start()]
-        if _VERSION_CONTEXT_RE.search(prefix):
-            continue  # version number in context — not an address
-        if _plausible_text_ipv4(ip):
-            found.append((ip, "ip"))
+    found.extend(
+        (ip, "ip") for ip in _IPV4_RE.findall(text) if _valid_ipv4(ip)
+    )
 
     seen: set[tuple[str, str]] = set()
     out: list[tuple[str, str]] = []

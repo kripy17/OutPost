@@ -38,28 +38,26 @@ _SEVERITY_RANK = {"suspicious": 1, "malicious": 2}
 
 
 class EventIn(BaseModel):
-    # Field length caps keep a hostile batch from feeding megabyte strings to
-    # ~28 regex rules per event (memory + CPU amplification).
-    run_id: str = Field(min_length=1, max_length=64)
+    run_id: str
     platform: Platform
     event_type: EventType
     timestamp: datetime
     pid: int | None = None
     ppid: int | None = None
-    process_name: str | None = Field(default=None, max_length=512)
-    command_line: str | None = Field(default=None, max_length=8000)
+    process_name: str | None = None
+    command_line: str | None = None
     # Kernel-resolved executable path (auditd's `exe=`, symlinks followed) —
     # authoritative for masquerading and immune to argv[0] spoofing. NULL for
     # events that lack it (webapp/sandbox/seed, Sysmon without Image path).
-    exe_path: str | None = Field(default=None, max_length=1024)
-    dest_ip: str | None = Field(default=None, max_length=64)
+    exe_path: str | None = None
+    dest_ip: str | None = None
     dest_port: int | None = None
     protocol: str | None = None
-    file_path: str | None = Field(default=None, max_length=2048)
-    registry_key: str | None = Field(default=None, max_length=1024)
+    file_path: str | None = None
+    registry_key: str | None = None
     # Fleet identity — which agent/host the event came from. Omitted events
     # (webapp detonations, sandbox runs) default to 'local' at normalization.
-    host_id: str | None = Field(default=None, max_length=128)
+    host_id: str | None = None
     # The exact log channel (auditd / sysmon) a collector stamped on the
     # event — the Event Log's source tabs split collectors by this. NULL for
     # webapp/sandbox/seed events.
@@ -67,23 +65,21 @@ class EventIn(BaseModel):
     # DNS query string (resolved name) — populated by Sysmon DNS events and
     # DNS-capable collectors. Feeds the DNS-channel rules (tunneling,
     # high-entropy labels, covert DNS ports).
-    query: str | None = Field(default=None, max_length=512)
+    query: str | None = None
     # TLS Server Name Indication from the handshake (Sysmon Event ID 3
     # DestinationHostname). Feeds the TLS-SNI / DNS-over-HTTPS rules.
-    tls_sni: str | None = Field(default=None, max_length=512)
-    # TLS client-hello MD5 fingerprint — feeds the known-C2 JA3 rule.
-    ja3: str | None = Field(default=None, max_length=64)
+    tls_sni: str | None = None
     # The raw source record as shipped by a collector (the exact auditd
     # line / Sysmon event) — the Event Viewer's "raw record" pane pivots a
     # normalized row back to its source. NULL for webapp/sandbox/seed events.
-    raw_record: str | None = Field(default=None, max_length=16000)
+    raw_record: str | None = None
 
 
 class EventOut(EventIn):
     id: int | None = None
     # The raw record as shipped by the collector (JSON) — the Event Viewer's
     # "raw record" pane. Null for rows ingested before the column existed.
-    raw_record: str | None = Field(default=None, max_length=16000)
+    raw_record: str | None = None
 
 
 class RunSummary(BaseModel):
@@ -121,10 +117,6 @@ class Alert(BaseModel):
     # actual actors in the process tree the moment the rule fires.
     related_pids: list[int] = []
     details: str
-    # Read-side enrichment (alert surfaces only, never stored): the IOCs
-    # observed on this finding with their enrichment state — value/type,
-    # reputation verdict, AbuseIPDB score, VT malicious count, cache age.
-    intel: list[dict] | None = None
     # Triage (analyst workflow): open → acknowledged → resolved, with the
     # optional analyst comment recorded at the transition.
     status: AlertStatus = "open"
@@ -241,12 +233,10 @@ class AnalysisJobDTO(BaseModel):
 
 class AnalysisJobCreateIn(BaseModel):
     """Start an analysis job. `backend` selects the execution backend;
-    `sample_id` (vault sample) or `sample_name` identifies the artifact.
-    `static` runs synchronously; `external-provider` executes through the
-    sandbox providers (`provider`: auto/demo/anyrun/triage/joe — demo
-    resolves inline, live providers detonate in the background);
-    `watched-host` persists queued state (its executor arrives in a later
-    phase); `isolated-outpost` is reserved and returns 501 — OutPost has no
+    `sample_id` (vault sample) or `sample_name` identifies the artifact. For
+    `static` the analysis runs synchronously; `watched-host` and
+    `external-provider` persist queued state (their executors arrive in later
+    phases); `isolated-outpost` is reserved and returns 501 — OutPost has no
     isolated execution backend yet."""
 
     backend: AnalysisBackend
@@ -255,7 +245,6 @@ class AnalysisJobCreateIn(BaseModel):
     platform: Platform | None = None
     timeout_seconds: int | None = Field(default=None, ge=1, le=86400)
     label: str | None = Field(default=None, max_length=256)
-    provider: str | None = Field(default=None, min_length=1, max_length=32)
 
 
 class AllowlistIn(BaseModel):
@@ -328,27 +317,8 @@ class NetworkConnection(BaseModel):
     checked_at: str | None = None
 
 
-class DomainIntel(BaseModel):
-    """docs/08 MVP-tier — abuse.ch enrichment for one observed hostname
-    (DNS query / TLS SNI): URLhaus host status + ThreatFox family mapping."""
-
-    domain: str
-    urlhaus_status: str | None = None
-    urlhaus_tags: list[str] = []
-    malware_family: str | None = None
-    threatfox_confidence: int | None = None
-    reputation: Reputation | None = None
-    checked_at: str | None = None
-
-
 class NoteIn(BaseModel):
     note: str = Field(min_length=1, max_length=2000)
-
-
-class MemoryScanIn(BaseModel):
-    """docs/08 #7 — which uploaded sample holds the memory dump to scan."""
-
-    dump_sample_id: str = Field(min_length=1, max_length=100)
 
 
 class RunNote(BaseModel):
@@ -374,19 +344,10 @@ class RunDetail(BaseModel):
     # Roadmap 2.2 — uploaded-sample reputation evidence, when the run's
     # sample_name matches an uploaded binary (YARA + VirusTotal).
     sample_reputation: dict | None = None
-    # docs/08 MVP-tier — abuse.ch domain intel (URLhaus + ThreatFox) over the
-    # run's observed hostnames (DNS queries / TLS SNI).
-    domains: list[DomainIntel] = []
     # Explainability: the tuning knobs that deviated from stock while this
     # run was evaluated (captured once, immutable) — "scored under" context.
     effective_tuning: dict[str, object] = {}
     suppressed_alerts: dict[str, int] = {}
-    # "Why this scored N" — per-rule weight contributions reconciling with
-    # run.risk_score (capped runs scale contributions and flag it).
-    risk_breakdown: dict | None = None
-    # Signed score change vs the same sample's most recent prior run on the
-    # same platform (None when there is no earlier run to compare).
-    delta_vs_prev_run: int | None = None
 
 
 class RunCreate(BaseModel):

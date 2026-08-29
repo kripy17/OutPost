@@ -1051,36 +1051,6 @@ export async function detonateDynamic(body: { sample_id: string }): Promise<any>
   return post<any>("/sandbox/detonate/dynamic", body);
 }
 
-/** One detonation screenshot artifact (docs/10 #4). */
-export interface DetonationScreenshot {
-  file: string;
-  size: number;
-  captured_at: string | null;
-}
-
-/** Screenshot artifact listing for a run — honest capture capability status included. */
-export interface RunScreenshots {
-  run_id: string;
-  available: boolean;
-  capture_status: { configured: boolean; available: boolean; interval_seconds: number; error?: string };
-  count: number;
-  shots: DetonationScreenshot[];
-}
-
-/** List detonation screenshot artifacts for a run (GET /sandbox/detonate/{run_id}/screenshots). */
-export async function getRunScreenshots(runId: string): Promise<RunScreenshots> {
-  return get<RunScreenshots>(`/sandbox/detonate/${encodeURIComponent(runId)}/screenshots`);
-}
-
-/** Fetch one screenshot PNG as an authenticated blob (auth header can't ride on <img src>). */
-export async function fetchScreenshotBlob(runId: string, file: string): Promise<Blob> {
-  const res = await fetch(`${BASE_URL}/sandbox/detonate/${encodeURIComponent(runId)}/screenshots/${encodeURIComponent(file)}`, {
-    headers: authHeaders(),
-  });
-  if (!res.ok) throw new Error(`GET screenshot ${file} → ${res.status}`);
-  return res.blob();
-}
-
 /** Get structured Sigma, Suricata, and YARA detection suite for a run (GET /runs/{id}/rules/suite). */
 export async function getRunDetectionSuite(runId: string): Promise<any> {
   return get<any>(`/runs/${encodeURIComponent(runId)}/rules/suite`);

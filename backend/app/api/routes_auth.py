@@ -13,8 +13,6 @@ core/auth.py. When auth is disabled, login always 404s and /auth/me reports
 zero-config local runs frictionless.
 """
 
-import ipaddress
-import os
 import time
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request
@@ -108,37 +106,6 @@ class AgentTokenIn(BaseModel):
     token: str = Field(min_length=16, max_length=200)
 
 
-def _require_bootstrap_eligible(request: Request) -> None:
-    """Gate the auth-off bootstrap path.
-
-    When auth is disabled these endpoints become a one-time remote admin
-    takeover, so restrict them to loopback callers (or an explicit
-    OUTPOST_BOOTSTRAP_TOKEN bearer) until credentials exist.
-    """
-    bootstrap_token = (os.getenv("OUTPOST_BOOTSTRAP_TOKEN") or "").strip()
-    if bootstrap_token:
-        supplied = request.headers.get("authorization", "")
-        if supplied == f"Bearer {bootstrap_token}":
-            return
-    client = request.client.host if request.client else ""
-    try:
-        ip = ipaddress.ip_address(client)
-    except ValueError:
-        # Starlette's TestClient reports the literal host "testclient"; any
-        # other unparseable peer is treated as remote.
-        if client == "testclient":
-            return
-        raise HTTPException(
-            status_code=403,
-            detail="Bootstrap is loopback-only — set OUTPOST_BOOTSTRAP_TOKEN to bootstrap remotely",
-        ) from None
-    if not ip.is_loopback:
-        raise HTTPException(
-            status_code=403,
-            detail="Bootstrap is loopback-only — set OUTPOST_BOOTSTRAP_TOKEN to bootstrap remotely",
-        )
-
-
 @router.post("/auth/agent-token", response_model=None)
 def set_agent_token(body: AgentTokenIn, request: Request) -> dict:
     """Rotate the shared agent credential (admin only).
@@ -154,8 +121,6 @@ def set_agent_token(body: AgentTokenIn, request: Request) -> dict:
         role = auth.verify_token(tok) if tok else None
         if role != "admin":
             raise HTTPException(status_code=403, detail="Only the admin role can rotate the agent token")
-    else:
-        _require_bootstrap_eligible(request)
     actor = auth.role_from_request(request)
     with db_session() as conn:
         auth.set_agent_token(conn, body.token)
@@ -177,8 +142,6 @@ def set_password(body: PasswordIn, request: Request) -> dict:
         role = auth.verify_token(tok) if tok else None
         if role != "admin":
             raise HTTPException(status_code=403, detail="Only the admin role can change passwords")
-    else:
-        _require_bootstrap_eligible(request)
     actor = auth.role_from_request(request)
     with db_session() as conn:
         auth.set_password_hash(conn, body.role, body.new_password)

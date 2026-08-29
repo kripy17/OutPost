@@ -15,7 +15,7 @@ background task the frontend polls.
 import asyncio
 import datetime
 
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from ..core import config
@@ -26,7 +26,6 @@ from ..models import run as run_store
 from ..models import samples as samples_store
 from ..services import detection
 from ..services import sandbox as sandbox_service
-from ..services import screenshots as screenshots_service
 
 router = APIRouter(tags=["sandbox"])
 
@@ -135,26 +134,6 @@ async def detonate_dynamic(body: SandboxDetonateIn) -> dict:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Dynamic detonation failed: {e}")
-
-
-@router.get("/sandbox/detonate/{run_id}/screenshots", response_model=None)
-def list_run_screenshots(run_id: str) -> dict:
-    """Detonation screenshot artifacts for one run (docs/10 #4).
-
-    Returns the honest capture capability status plus the shot manifest —
-    `available` is false both when capture is unconfigured and when the run
-    simply produced no shots.
-    """
-    return screenshots_service.list_shots(run_id)
-
-
-@router.get("/sandbox/detonate/{run_id}/screenshots/{filename}")
-def get_run_screenshot(run_id: str, filename: str) -> Response:
-    """Serve one detonation screenshot PNG as a run artifact."""
-    data = screenshots_service.read_shot(run_id, filename)
-    if data is None:
-        raise HTTPException(status_code=404, detail=f"No screenshot artifact: {filename}")
-    return Response(content=data, media_type="image/png")
 
 
 @router.get("/sandbox/playbooks", response_model=None)

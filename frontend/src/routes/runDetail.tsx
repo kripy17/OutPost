@@ -18,12 +18,11 @@ import { ProcessGraph } from "../components/ProcessGraph";
 import { DetectionStudioModal } from "../components/DetectionStudioModal";
 import { AllowlistPanel, QuickAllowlist, SuppressionPanel } from "../components/TriagePanels/TriagePanels";
 import RulesPanel from "../components/RulesPanel/RulesPanel";
-import ScreenshotsPanel from "../components/ScreenshotsPanel/ScreenshotsPanel";
 import TimelineView from "../components/TimelineView/TimelineView";
 import Topology from "../components/Topology/Topology";
 import { RISK_COLORS, enumKindsFromDetails, intelAgeLabel, riskBand } from "../lib/constants";
 import { addInvestigationRef, bulkUpdateAlertStatus, getCampaigns, getRunDetail, getRunIocsCsv, listInvestigations, markFalsePositive, reEnrichRun, refreshIpIntel, updateAlertStatus } from "../lib/api";
-import type { AlertStatus, DomainIntel, NetworkConnection, ProcessNode, Reputation, RiskBreakdown, RunDetail } from "../types";
+import type { AlertStatus, NetworkConnection, ProcessNode, Reputation, RunDetail } from "../types";
 
 /* ── Risk gauge — semicircular arc, colored by band ────────────────────── */
 
@@ -161,94 +160,6 @@ function NetworkGroups({ connections, runId }: { connections: NetworkConnection[
         );
       })}
     </div>
-  );
-}
-
-/* ── Risk explainability — which findings built the score ──────────────── */
-
-function RiskBreakdownCard({ breakdown }: { breakdown: RiskBreakdown }) {
-  const max = Math.max(...breakdown.items.map((i) => i.weight), 1);
-  return (
-    <Panel kicker="Explainability" title={`Why risk ${breakdown.total}${breakdown.capped ? " (capped)" : ""}`} className="mt-6">
-      <ul className="space-y-2.5">
-        {breakdown.items.map((item) => (
-          <li key={item.rule_id} className="flex items-center gap-3">
-            <span className="w-44 shrink-0 truncate text-[12px] text-text-primary" title={item.rule_name || item.rule_id}>
-              {item.rule_name || item.rule_id}
-            </span>
-            <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-bg-inset">
-              <span
-                className="block h-full rounded-full bg-accent/70"
-                style={{ width: `${Math.max(4, (item.weight / max) * 100)}%` }}
-              />
-            </span>
-            <span className="num w-10 text-right font-mono text-[11px] text-text-muted">+{item.weight}</span>
-            {item.technique && (
-              <span className="hidden rounded border border-border-subtle px-1.5 py-px font-mono text-[9px] text-text-faint sm:inline">
-                {item.technique}
-              </span>
-            )}
-          </li>
-        ))}
-      </ul>
-      {breakdown.capped && (
-        <p className="mt-3 text-[11px] leading-snug text-text-faint">
-          Raw score exceeded 100 and was scaled down — weights shown are post-scale.
-        </p>
-      )}
-    </Panel>
-  );
-}
-
-/* ── Domain intel — DNS/TLS destinations enriched via abuse.ch ─────────── */
-
-function DomainsPanel({ domains }: { domains: DomainIntel[] }) {
-  const verdictTone = (d: DomainIntel) =>
-    d.reputation === "malicious"
-      ? "text-risk-malicious"
-      : d.reputation === "suspicious"
-        ? "text-risk-suspicious"
-        : "text-risk-clean";
-  return (
-    <Panel kicker="Domain intel" title="DNS & TLS destinations" className="mt-6">
-      <div className="overflow-x-auto">
-        <table className="data-table w-full">
-          <thead>
-            <tr>
-              <th>Domain</th>
-              <th>Verdict</th>
-              <th>Evidence</th>
-              <th className="num">Checked</th>
-            </tr>
-          </thead>
-          <tbody>
-            {domains.map((d) => (
-              <tr key={d.domain}>
-                <td className="font-mono text-[12px] text-text-primary">{d.domain}</td>
-                <td>
-                  <span className={`font-mono text-[11px] uppercase ${verdictTone(d)}`}>{d.reputation ?? "unknown"}</span>
-                </td>
-                <td className="space-x-2 whitespace-nowrap">
-                  {d.urlhaus_status === "online" && (
-                    <span className="rounded bg-risk-malicious/15 px-1.5 py-0.5 font-mono text-[10px] text-risk-malicious">URLhaus listed</span>
-                  )}
-                  {d.malware_family && (
-                    <span className="font-mono text-[11px] text-risk-malicious">{d.malware_family}</span>
-                  )}
-                  {d.threatfox_confidence != null && (
-                    <span className="font-mono text-[10px] text-text-muted">ThreatFox {d.threatfox_confidence}%</span>
-                  )}
-                  {!d.urlhaus_status && !d.malware_family && d.threatfox_confidence == null && (
-                    <span className="text-[11px] text-text-faint">no listings</span>
-                  )}
-                </td>
-                <td className="num font-mono text-[10px] text-text-faint">{intelAgeLabel(d.checked_at)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </Panel>
   );
 }
 
@@ -573,7 +484,7 @@ export default function RunDetailPage() {
     );
   }
 
-  const { run, process_tree, network_connections, alerts, kill_chain, sample_reputation, effective_tuning = {}, suppressed_alerts = {}, domains = [], risk_breakdown, delta_vs_prev_run } = data;
+  const { run, process_tree, network_connections, alerts, kill_chain, sample_reputation, effective_tuning = {}, suppressed_alerts = {} } = data;
   const inProgress = run.completed_at === null;
   const chain = killChainStats(alerts);
   const campaign = campaigns.find((c) => c.runs.some((r) => r.run_id === runId));
@@ -649,22 +560,6 @@ export default function RunDetailPage() {
         </div>
         <div className="flex items-center gap-6">
           <RiskGauge score={run.risk_score} />
-          {delta_vs_prev_run != null && (
-            <span
-              title="Risk change vs this sample's previous run"
-              className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 font-mono text-[10px] ${
-                delta_vs_prev_run > 0
-                  ? "border-risk-malicious/30 bg-risk-malicious/10 text-risk-malicious"
-                  : delta_vs_prev_run < 0
-                    ? "border-risk-clean/30 bg-risk-clean/10 text-risk-clean"
-                    : "border-border-subtle text-text-faint"
-              }`}
-            >
-              {delta_vs_prev_run > 0 ? "▲" : delta_vs_prev_run < 0 ? "▼" : "·"}{" "}
-              {delta_vs_prev_run > 0 ? "+" : ""}
-              {delta_vs_prev_run} vs prev
-            </span>
-          )}
           <div className="flex items-center gap-2">
             <button
               onClick={() => setShowAttachCase(true)}
@@ -810,8 +705,6 @@ export default function RunDetailPage() {
         </Panel>
       )}
 
-      <ScreenshotsPanel runId={runId} source={run.source} />
-
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[3fr_2fr]">
         <div id="process-tree-panel" className="scroll-mt-24 min-w-0">
           <Panel
@@ -919,8 +812,6 @@ export default function RunDetailPage() {
 
       {sample_reputation && <SampleReputation rep={sample_reputation} />}
       <KillChainCard links={kill_chain} />
-      {risk_breakdown && risk_breakdown.items.length > 0 && <RiskBreakdownCard breakdown={risk_breakdown} />}
-      {domains.length > 0 && <DomainsPanel domains={domains} />}
 
       <DetectionStudioModal
         runId={runId}

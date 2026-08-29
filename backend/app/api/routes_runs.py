@@ -17,9 +17,7 @@ from ..core.schema import (
     Alert,
     AllowlistEntry,
     AllowlistIn,
-    DomainIntel,
     EventOut,
-    MemoryScanIn,
     NetworkConnection,
     NoteIn,
     RunDetail,
@@ -30,9 +28,7 @@ from ..models import audit
 from ..models import event as event_store
 from ..models import run as run_store
 from ..models import run_notes as notes_store
-from ..models import samples as samples_store
 from ..services import enrichment, killchain, process_tree
-from ..services import risk as risk_service
 from ..services.detection import allowlist_matches, load_run_sample_sha256
 
 router = APIRouter(tags=["runs"])
@@ -200,13 +196,6 @@ async def get_run_detail(run_id: str) -> RunDetail:
         # Enrichment does async HTTP calls; keep this connection for its
         # cache reads/writes (local SQLite — fine on the event loop thread).
         enriched = await enrichment.enrich_run(conn, run_id)
-        # docs/08 MVP-tier — abuse.ch domain intel over observed hostnames
-        # (DNS queries / TLS SNI). Cache-first like the IP pass; degrades to
-        # {} without network, never fails the run detail.
-        try:
-            domains_enriched = await enrichment.enrich_run_domains(conn, run_id)
-        except Exception:
-            domains_enriched = {}
 
         # Risk halos on the process tree (docs/07 signature visual): map each
         # pid to the IPs it reached, then annotate nodes with the worst
@@ -301,26 +290,6 @@ async def get_run_detail(run_id: str) -> RunDetail:
             except (ValueError, TypeError):
                 suppressed_alerts = {}
 
-        # "Why this scored N" — per-rule contributions reconciling with the
-        # headline risk score.
-        breakdown = risk_service.risk_breakdown(
-            [a["rule_id"] for a in alerts_rows]
-        )
-
-        # Trend context — signed delta vs this sample's most recent prior
-        # run on the same platform ("is this session worse than last time?").
-        delta_vs_prev: int | None = None
-        prev = conn.execute(
-            "SELECT run_id FROM runs WHERE sample_name = ? AND platform = ? "
-            "AND started_at < ? ORDER BY started_at DESC LIMIT 1",
-            (run_row["sample_name"], run_row["platform"], run_row["started_at"]),
-        ).fetchone()
-        if prev:
-            prev_alerts = event_store.list_alerts_for_run(conn, prev["run_id"])
-            delta_vs_prev = summary.risk_score - risk_service.compute_risk_score(
-                [a["rule_id"] for a in prev_alerts]
-            )
-
         return RunDetail(
             run=summary,
             process_tree=tree,
@@ -329,11 +298,8 @@ async def get_run_detail(run_id: str) -> RunDetail:
             alerts=[Alert(**a) for a in alerts_rows],
             kill_chain=chain,
             sample_reputation=sample_reputation,
-            domains=[DomainIntel(**d) for d in domains_enriched.values()],
             effective_tuning=effective_tuning,
             suppressed_alerts=suppressed_alerts,
-            risk_breakdown=breakdown,
-            delta_vs_prev_run=delta_vs_prev,
         )
     finally:
         conn.close()
@@ -672,38 +638,3 @@ def delete_run_allowlist(run_id: str, entry_id: int, request: Request) -> None:
             target_type="allowlist", target_id=str(entry_id),
             detail=f"run {run_id}",
         )
-
-
-# ---------------------------------------------------------------------------
-# docs/08 #7 — Volatility3 memory forensics (Phase 3 tier)
-# ---------------------------------------------------------------------------
-
-
-@router.post("/runs/{run_id}/memory-scan", response_model=None)
-def memory_scan(run_id: str, body: MemoryScanIn, request: Request) -> dict:
-    """Run Volatility3 against a hypervisor memory dump and cross-reference
-    the observed process list with this run's collected process_create
-    telemetry — a process memory sees but the collector never logged is
-    itself an interesting finding. The dump is any vaulted sample holding
-    the raw image (e.g. `VBoxManage debugvm <vm> dumpvmcore` output)."""
-    from ..services import memory_forensics as mf
-
-    with db_session() as conn:
-        if not run_store.get_run(conn, run_id):
-            raise HTTPException(status_code=404, detail=f"Unknown run: {run_id}")
-        if not samples_store.get_sample(conn, body.dump_sample_id):
-            raise HTTPException(status_code=404, detail=f"Unknown sample: {body.dump_sample_id}")
-        status = mf.vol_status()
-        if not status["available"]:
-            raise HTTPException(status_code=501, detail=status["error"])
-        result = mf.scan_run(conn, run_id, body.dump_sample_id)
-        hidden = len((result.get("cross_reference") or {}).get("hidden_processes") or [])
-        audit.log(
-            conn, auth.role_from_request(request), "run.memory-scan",
-            target_type="run", target_id=run_id,
-            detail=(
-                f"volatility3 scan of dump {body.dump_sample_id}: "
-                f"{len(result.get('processes') or [])} processes, {hidden} unexplained"
-            ),
-        )
-    return result

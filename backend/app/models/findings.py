@@ -192,12 +192,6 @@ def query_findings(
         d["host_ids"] = [h for h in (d.pop("host_ids") or "").split(",") if h]
         out.append(d)
         page_ids.append(d["id"])
-    # Intel evidence join: each row ships the enrichment state of the IOCs
-    # observed on it (reputation / abuse score / VT count / cache age) so the
-    # queue renders corroboration without a per-row follow-up request.
-    from ..services.alert_context import attach_intel
-
-    attach_intel(out, conn)
     return {
         "total": total,
         "open": total_by_status.get("open", 0),

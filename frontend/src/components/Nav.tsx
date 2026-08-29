@@ -11,7 +11,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   useEffect,
-  useRef,
   useState,
   type FocusEvent,
   type MouseEvent,
@@ -20,12 +19,11 @@ import { NavLink } from "react-router-dom";
 import CommandPalette from "./CommandPalette";
 import { getHealth, getMeta, getPlatform, getRecentAlerts, getRuns } from "../lib/api";
 import { useEventStream } from "../lib/useEventStream";
-import { Icon, IconMenu, type IconName } from "./Icon";
+import { Icon, IconMenu, IconMoon, IconSun, type IconName } from "./Icon";
 import { platformIconName } from "./iconMeta";
-import { THEMES, applyTheme, normalizeThemeId, readTheme } from "../lib/themes";
+
+const STORAGE_KEY = "outpost-theme-v2"; // v2 key: dark-first default (index.html pre-paint)
 const RAIL_KEY = "outpost-rail"; // "collapsed" | "expanded" (pre-paint restored)
-
-
 
 /** Rail tooltip wiring — hover/focus handlers attached to a rail element so
  *  the tooltip can be positioned from the element's own rect. */
@@ -39,22 +37,32 @@ type TipHandlers = (label: string) => {
 /* ── Theme ─────────────────────────────────────────────────────────────── */
 
 function useTheme() {
-  const [theme, setThemeState] = useState<string>(() => readTheme());
+  const [theme, setTheme] = useState<"dark" | "light">(() =>
+    document.documentElement.dataset.theme === "dark" ? "dark" : "light",
+  );
 
-  const setTheme = (id: string) => {
-    applyTheme(id);
-    setThemeState(id);
+  const toggle = () => {
+    const next = theme === "dark" ? "light" : "dark";
+    document.documentElement.dataset.theme = next;
+    localStorage.setItem(STORAGE_KEY, next);
+    // Palettes are dark-only — leaving light mode clears the applied palette so
+    // toggling back to dark doesn't silently resurrect it.
+    if (next === "light") {
+      delete document.documentElement.dataset.palette;
+      localStorage.removeItem("outpost-palette");
+    }
+    setTheme(next);
   };
 
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
-      if (e.key === "outpost-theme-v2" && e.newValue) setThemeState(normalizeThemeId(e.newValue));
+      if (e.key === STORAGE_KEY && (e.newValue === "light" || e.newValue === "dark")) setTheme(e.newValue);
     };
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
   }, []);
 
-  return { theme, setTheme };
+  return { theme, toggle };
 }
 
 /* ── Mark ──────────────────────────────────────────────────────────────── */
@@ -251,87 +259,17 @@ function HostOsChip({
   );
 }
 
-/** Theme picker — a popover of full visual identities (lib/themes.ts). The
- *  button previews the active theme's swatch trio; the menu lists every
- *  theme with its own preview dots. Outside click / Escape closes. */
-function ThemeMenu({ theme, setTheme, collapsed = false }: { theme: string; setTheme: (id: string) => void; collapsed?: boolean }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  const active = THEMES.find((t) => t.id === theme) ?? THEMES[0];
-
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: globalThis.MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: globalThis.KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    window.addEventListener("mousedown", onDown);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("mousedown", onDown);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-
+function ThemeToggle({ theme, toggle }: { theme: "dark" | "light"; toggle: () => void }) {
+  const next = theme === "dark" ? "light" : "dark";
   return (
-    <div ref={ref} className="relative">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        aria-label={`Theme: ${active.name} — open theme menu`}
-        aria-expanded={open}
-        title={`Theme: ${active.name}`}
-        className="press flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-border-subtle bg-bg-surface text-text-muted transition-colors duration-150 hover:border-accent/50 hover:text-accent"
-      >
-        <span className="flex items-center pl-2" aria-hidden>
-          {active.swatch.map((c) => (
-            <span key={c} className="-ml-1 h-3 w-3 rounded-full border border-bg-base first:ml-0" style={{ background: c }} />
-          ))}
-        </span>
-        {!collapsed && <span className="pr-2 font-mono text-[10px] uppercase tracking-wide">{active.name}</span>}
-        {collapsed && <span className="w-1" />}
-      </button>
-      {open && (
-        <div
-          role="menu"
-          aria-label="Console themes"
-          className="animate-palette-in absolute bottom-full right-0 z-50 mb-2 w-64 overflow-hidden rounded-xl border border-border-subtle bg-bg-overlay p-1.5 shadow-[var(--shadow-raised)]"
-        >
-          <p className="kicker px-2 pb-1.5 pt-1.5 !text-[10px]">Console themes</p>
-          {THEMES.map((t) => {
-            const isActive = t.id === theme;
-            return (
-              <button
-                key={t.id}
-                role="menuitemradio"
-                aria-checked={isActive}
-                onClick={() => {
-                  setTheme(t.id);
-                  setOpen(false);
-                }}
-                className={`flex w-full items-start gap-2.5 rounded-lg px-2 py-2 text-left transition-colors duration-150 ${
-                  isActive ? "bg-accent/15 text-accent" : "text-text-primary hover:bg-bg-elevated"
-                }`}
-              >
-                <span className="mt-0.5 flex shrink-0 items-center" aria-hidden>
-                  {t.swatch.map((c, i) => (
-                    <span key={c + i} className="-ml-1 h-3.5 w-3.5 rounded-full border border-bg-overlay first:ml-0" style={{ background: c }} />
-                  ))}
-                </span>
-                <span className="min-w-0">
-                  <span className="flex items-center gap-1.5 text-xs font-semibold">
-                    {t.name}
-                    {isActive && <span className="font-mono text-[9px] uppercase tracking-wide">✓ active</span>}
-                  </span>
-                  <span className="mt-0.5 block truncate font-mono text-[9px] text-text-faint">{t.note}</span>
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </div>
+    <button
+      onClick={toggle}
+      aria-label={`Switch to ${next} theme`}
+      title={`Switch to ${next} theme`}
+      className="press flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border-subtle bg-bg-surface text-[15px] text-text-muted transition-colors duration-150 hover:border-accent/50 hover:text-accent"
+    >
+      {theme === "dark" ? <IconSun /> : <IconMoon />}
+    </button>
   );
 }
 
@@ -424,7 +362,7 @@ interface RailTip {
 }
 
 export default function Nav() {
-  const { theme, setTheme } = useTheme();
+  const { theme, toggle } = useTheme();
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -534,7 +472,7 @@ export default function Nav() {
                     aria-label={railCollapsed ? link.label : undefined}
                     {...(railCollapsed ? makeTip(link.label) : {})}
                     className={({ isActive }) =>
-                      `relative flex items-center gap-2.5 rounded-lg transition-colors duration-150 ${railCollapsed ? "justify-center px-0 py-2" : "px-2 py-2 text-[13px]"} ${
+                      `relative flex items-center gap-2.5 rounded-lg transition-colors duration-150 ${railCollapsed ? "justify-center px-0 py-2" : "px-2 py-1.5 text-[13px]"} ${
                         isActive
                           ? "bg-accent/15 font-semibold text-accent"
                           : "font-medium text-text-muted hover:bg-bg-elevated hover:text-text-primary"
@@ -543,12 +481,9 @@ export default function Nav() {
                   >
                     {({ isActive }) => (
                       <>
-                        {/* Active-page indicator bar — accent in both rail modes. */}
-                        {isActive && (
-                          <span
-                            className={`absolute top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-full bg-accent ${railCollapsed ? "left-0" : "-left-2"}`}
-                            aria-hidden
-                          />
+                        {/* Collapsed: a violet indicator bar marks the active page. */}
+                        {railCollapsed && isActive && (
+                          <span className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-full bg-accent" aria-hidden />
                         )}
                         <span className="flex h-6 w-6 shrink-0 items-center justify-center">
                           <Icon name={link.iconName} size={railCollapsed ? 18 : 16} />
@@ -568,7 +503,7 @@ export default function Nav() {
           <HostOsChip collapsed={railCollapsed} makeTip={railCollapsed ? makeTip : undefined} />
           <div className={`flex items-center gap-2 rounded-lg border border-border-subtle ${railCollapsed ? "flex-col bg-bg-elevated/30 p-1.5" : "bg-bg-elevated/30 px-2.5 py-2"}`}>
             <StatusCluster collapsed={railCollapsed} makeTip={railCollapsed ? makeTip : undefined} />
-            <ThemeMenu theme={theme} setTheme={setTheme} />
+            <ThemeToggle theme={theme} toggle={toggle} />
           </div>
         </footer>
       </aside>
@@ -590,7 +525,7 @@ export default function Nav() {
             <span className="flex items-center gap-1 text-[11px] text-text-faint">
               <StatusCluster compact />
             </span>
-            <ThemeMenu theme={theme} setTheme={setTheme} />
+            <ThemeToggle theme={theme} toggle={toggle} />
           </div>
         </div>
       </header>

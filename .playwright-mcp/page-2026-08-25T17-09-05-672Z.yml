@@ -1,0 +1,16 @@
+- generic [ref=e3]:
+  - note [ref=e4]: Best viewed at 1024px+ — this is a desk tool, not a phone app.
+  - banner [ref=e5]:
+    - generic [ref=e6]:
+      - button "Open navigation menu" [ref=e7]
+      - generic [ref=e10]: OutPost
+      - generic [ref=e15]:
+        - generic [ref=e18]:
+          - generic [ref=e21]: Connecting
+          - generic [ref=e22]:
+            - generic [ref=e23]: "8"
+            - text: sessions
+        - 'button "Theme: Ember Lab — open theme menu" [ref=e25]':
+          - generic [ref=e30]: Ember Lab
+  - main [ref=e31]:
+    - paragraph [ref=e34]: Loading…

@@ -158,9 +158,7 @@ CREATE TABLE IF NOT EXISTS events (
     query TEXT,
     -- TLS Server Name Indication from the handshake (Sysmon Event ID 3
     -- DestinationHostname) — feeds TLS-SNI and DNS-over-HTTPS detection.
-    tls_sni TEXT,
-    -- TLS client-hello MD5 fingerprint (JA3) — feeds the known-C2 rule.
-    ja3 TEXT
+    tls_sni TEXT
 );
 
 CREATE TABLE IF NOT EXISTS enrichment_cache (
@@ -172,9 +170,6 @@ CREATE TABLE IF NOT EXISTS enrichment_cache (
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_run_id ON events(run_id);
--- Composite covering the hot paths: ingest dedup range scan + the run
--- timeline's ORDER BY timestamp (lets SQLite stop at the index, no sort).
-CREATE INDEX IF NOT EXISTS idx_events_run_ts ON events(run_id, timestamp);
 CREATE INDEX IF NOT EXISTS idx_events_dest_ip ON events(dest_ip);
 CREATE INDEX IF NOT EXISTS idx_events_run_type ON events(run_id, event_type);
 CREATE INDEX IF NOT EXISTS idx_alerts_run_id ON alerts(run_id);
@@ -311,19 +306,6 @@ CREATE TABLE IF NOT EXISTS hash_cache (
     sha256 TEXT PRIMARY KEY,
     vt_detections INTEGER,
     malware_family TEXT,
-    checked_at TEXT NOT NULL
-);
-
--- docs/08 MVP-tier — domain reputation cache (abuse.ch URLhaus host lookup +
--- ThreatFox IOC→malware-family), keyed by the observed hostname (DNS query /
--- TLS SNI). Mirrors enrichment_cache/hash_cache TTL discipline: never
--- re-query a cached domain within the window.
-CREATE TABLE IF NOT EXISTS domain_cache (
-    domain TEXT PRIMARY KEY,
-    urlhaus_status TEXT,
-    threatfox_malware TEXT,
-    threatfox_confidence INTEGER,
-    reputation TEXT,
     checked_at TEXT NOT NULL
 );
 
@@ -557,11 +539,6 @@ def _migrate_alerts_findings(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_alerts_unread ON alerts(status) WHERE seen_at IS NULL"
     )
-    # Findings queue hot path: status filter + triggered_at sort in one index.
-    # Created post-migration (status column may not exist in ancient DBs).
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_alerts_status_time ON alerts(status, triggered_at)"
-    )
     conn.commit()
 
 
@@ -680,14 +657,6 @@ def _migrate_events_tls_sni(conn: sqlite3.Connection) -> None:
     cols = _column_names(conn, "events")
     if "tls_sni" not in cols:
         conn.execute("ALTER TABLE events ADD COLUMN tls_sni TEXT")
-        conn.commit()
-
-
-def _migrate_events_ja3(conn: sqlite3.Connection) -> None:
-    """Idempotent: add the JA3 fingerprint column (known-C2 detection)."""
-    cols = _column_names(conn, "events")
-    if "ja3" not in cols:
-        conn.execute("ALTER TABLE events ADD COLUMN ja3 TEXT")
         conn.commit()
 
 
@@ -828,7 +797,6 @@ def init_db() -> None:
         _migrate_events_exe_path(conn)
         _migrate_events_query(conn)
         _migrate_events_tls_sni(conn)
-        _migrate_events_ja3(conn)
         _migrate_runs_suppressed_alerts(conn)
         _migrate_rule_suppressions_value(conn)
 

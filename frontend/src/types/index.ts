@@ -157,35 +157,6 @@ export interface RunDetail {
   // Storm guard: per-rule alert-cap suppressed counts (first-seen /
   // enumeration-burst / network-scan) held back on a long live session.
   suppressed_alerts?: Record<string, number>;
-  // Domain reputation (URLhaus / ThreatFox) for DNS queries + TLS SNI seen on
-  // this run — absent when enrichment is unreachable.
-  domains?: DomainIntel[];
-  // Why-this-score: per-rule weight breakdown behind the run's risk_score.
-  risk_breakdown?: RiskBreakdown | null;
-  // Score delta vs the previous run of the same sample + platform.
-  delta_vs_prev_run?: number | null;
-}
-
-export interface DomainIntel {
-  domain: string;
-  urlhaus_status: string | null;
-  urlhaus_tags: string[];
-  malware_family: string | null;
-  threatfox_confidence: number | null;
-  reputation: "malicious" | "suspicious" | "unknown" | null;
-  checked_at: string | null;
-}
-
-export interface RiskBreakdown {
-  items: {
-    rule_id: string;
-    rule_name: string;
-    weight: number;
-    technique: string | null;
-    tactic: string | null;
-  }[];
-  total: number;
-  capped: boolean;
 }
 
 export interface KillChainLink {
@@ -280,12 +251,6 @@ export interface NotificationSettings {
   slack_webhook: string;
   discord_webhook: string;
   telegram_bot_token: string;
-  /** Secrets are masked on GET (always blank) — these flags say whether a
-   *  value is stored server-side. */
-  webhook_url_set: boolean;
-  slack_webhook_set: boolean;
-  discord_webhook_set: boolean;
-  telegram_bot_token_set: boolean;
   telegram_chat_id: string;
   smtp_host: string;
   smtp_port: string | number;
@@ -587,8 +552,6 @@ export interface RuleMeta {
   rule_id: string;
   rule_name: string;
   technique: string;
-  /** Human ATT&CK technique name from the backend (e.g. T1547.001 → "Registry Run Keys"). */
-  technique_name?: string | null;
   tactic: string;
   weight: number;
   // The alert severity the rule actually fires with (backend RULE_META) —
@@ -766,17 +729,6 @@ export interface RuleFpResponse {
 
 // -- Triage queue (the analyst work list) -------------------------------------
 
-export interface IntelEvidence {
-  value: string;
-  type: string;
-  disposition?: string | null;
-  reputation?: string | null;
-  abuse_score?: number | null;
-  vt_malicious_count?: number | null;
-  label?: string | null;
-  checked_at?: string | null;
-}
-
 export interface QueueAlert {
   id: number;
   run_id: string;
@@ -798,8 +750,6 @@ export interface QueueAlert {
   investigation_id?: string | null;
   source?: string | null;
   run_source?: string | null;
-  // Read-side IOC enrichment joined by the backend (alert_context.attach_intel).
-  intel?: IntelEvidence[] | null;
 }
 
 export interface QueueResponse {
@@ -1313,8 +1263,6 @@ export interface AnalysisJobCreateIn {
   sample_name?: string;
   platform?: Platform;
   timeout_seconds?: number;
-  /** external-provider only: auto | demo | anyrun | triage | joe */
-  provider?: string;
 }
 
 export interface AnalysisJobsResponse {

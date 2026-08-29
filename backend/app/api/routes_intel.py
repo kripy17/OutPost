@@ -280,21 +280,3 @@ async def refresh_ip_global(ip: str, request: Request = None) -> dict:
         "reputation": data.get("reputation") or "unknown",
         "checked_at": data.get("checked_at"),
     }
-
-
-@router.get("/intel/domain/{domain}", response_model=None)
-async def intel_domain(domain: str):
-    """docs/08 MVP-tier — abuse.ch enrichment for one hostname: URLhaus host
-    reputation + ThreatFox malware-family mapping, cache-first (7d TTL).
-    422 when the value isn't domain-shaped; degrades to an all-None verdict
-    without network reachability (same honesty contract as IP enrichment)."""
-    d = domain.strip().rstrip(".").lower()
-    if not enrichment.looks_like_domain(d):
-        raise HTTPException(status_code=422, detail=f"not a plausible domain: {domain}")
-    # enrich_domain needs a DB connection for its cache reads/writes; open it
-    # around the call like every other route here.
-    with db_session() as conn:
-        async with httpx.AsyncClient() as client:
-            data = await enrichment.enrich_domain(client, conn, d)
-        conn.commit()
-    return data

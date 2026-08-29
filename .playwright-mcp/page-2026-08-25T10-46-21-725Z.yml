@@ -1,0 +1,115 @@
+- generic [ref=f9e3]:
+  - complementary [ref=f9e4]:
+    - generic [ref=f9e5]:
+      - generic [ref=f9e10]: OutPost
+      - button "Collapse rail" [ref=f9e11]
+    - navigation "Primary" [ref=f9e15]:
+      - generic [ref=f9e16]:
+        - paragraph [ref=f9e17]: Live Monitoring
+        - generic [ref=f9e18]:
+          - link [ref=f9e19] [cursor=pointer]:
+            - /url: /
+          - link [ref=f9e27] [cursor=pointer]:
+            - /url: /events
+          - link [ref=f9e35] [cursor=pointer]:
+            - /url: /findings
+          - link [ref=f9e40] [cursor=pointer]:
+            - /url: /agents
+          - link [ref=f9e46] [cursor=pointer]:
+            - /url: /investigations
+          - link [ref=f9e52] [cursor=pointer]:
+            - /url: /search
+          - link [ref=f9e58] [cursor=pointer]:
+            - /url: /watchlist
+      - generic [ref=f9e63]:
+        - paragraph [ref=f9e64]: Malware Analysis
+        - generic [ref=f9e65]:
+          - link [ref=f9e66] [cursor=pointer]:
+            - /url: /samples
+          - link [ref=f9e72] [cursor=pointer]:
+            - /url: /analysis
+      - generic [ref=f9e78]:
+        - paragraph [ref=f9e79]: Lab
+        - link [ref=f9e81] [cursor=pointer]:
+          - /url: /monitor
+      - generic [ref=f9e86]:
+        - paragraph [ref=f9e87]: Detection
+        - generic [ref=f9e88]:
+          - link [ref=f9e89] [cursor=pointer]:
+            - /url: /rules
+          - link [ref=f9e95] [cursor=pointer]:
+            - /url: /coverage
+      - generic [ref=f9e102]:
+        - paragraph [ref=f9e103]: System
+        - generic [ref=f9e104]:
+          - link [ref=f9e105] [cursor=pointer]:
+            - /url: /audit
+          - link [ref=f9e111] [cursor=pointer]:
+            - /url: /settings
+    - generic [ref=f9e117]:
+      - button "Open command palette" [ref=f9e118]:
+        - generic [ref=f9e123]: Jump to…
+        - generic [ref=f9e124]: ⌘K
+      - 'generic "Host OS auto-detected: Linux 7.1.8-arch1-3 (x86_64) · auditd" [ref=f9e141]':
+        - generic [ref=f9e146]: linux
+        - generic [ref=f9e147]: auditd
+      - generic [ref=f9e125]:
+        - generic [ref=f9e126]:
+          - generic [ref=f9e127]:
+            - generic [ref=f9e130]: Online
+            - generic [ref=f9e131]:
+              - generic [ref=f9e132]: "9"
+              - text: sessions
+          - generic [ref=f9e149]: 12:48:31 UTC
+        - button "Switch to light theme" [ref=f9e133]
+  - main [ref=f9e137]:
+    - generic [ref=f9e153]:
+      - generic [ref=f9e155]:
+        - generic [ref=f9e156]:
+          - paragraph [ref=f9e157]: Artifact analysis
+          - heading "Analysis" [level=1] [ref=f9e158]
+          - paragraph [ref=f9e159]: Submit an artifact for static triage or provider-backed detonation and follow the job through its persisted lifecycle — results land as observations and findings. Watched-host and isolated backends stay honestly unavailable (501) until their execution environments exist.
+        - button "New analysis" [active] [ref=f9e161]
+      - generic [ref=f9e177]:
+        - generic [ref=f9e179]:
+          - paragraph [ref=f9e180]: POST /analysis
+          - heading "New analysis" [level=2] [ref=f9e181]
+        - generic [ref=f9e183]:
+          - generic [ref=f9e184]:
+            - generic [ref=f9e185]: Backend
+            - generic [ref=f9e186]:
+              - button "Static Synchronous triage over the stored bytes — strings, IOCs, PE/ELF metadata" [ref=f9e187]:
+                - generic [ref=f9e188]: Static
+                - generic [ref=f9e189]: Synchronous triage over the stored bytes — strings, IOCs, PE/ELF metadata
+              - button "External provider Detonate via Any.Run / Triage / Joe Sandbox — or the built-in demo provider" [ref=f9e190]:
+                - generic [ref=f9e191]: External provider
+                - generic [ref=f9e192]: Detonate via Any.Run / Triage / Joe Sandbox — or the built-in demo provider
+              - button "Watched host Execution backend not configured — no host executor exists yet (501)" [disabled] [ref=f9e193]:
+                - generic [ref=f9e194]: Watched host
+                - generic [ref=f9e195]: Execution backend not configured — no host executor exists yet (501)
+              - button "Isolated OutPost Reserved — no isolated execution environment exists yet (501)" [disabled] [ref=f9e196]:
+                - generic [ref=f9e197]: Isolated OutPost
+                - generic [ref=f9e198]: Reserved — no isolated execution environment exists yet (501)
+          - generic [ref=f9e199]:
+            - generic [ref=f9e200]: Artifact
+            - combobox [ref=f9e201]:
+              - option "— select from the sample library —" [selected]
+            - generic [ref=f9e203]:
+              - checkbox "Manual sample name" [ref=f9e204]
+              - text: Manual sample name
+          - generic [ref=f9e205]:
+            - button "Launch analysis" [disabled] [ref=f9e206]
+            - button "Cancel" [ref=f9e207]
+      - generic [ref=f9e165]:
+        - generic [ref=f9e166]:
+          - button "All0" [ref=f9e167]
+          - button "Queued" [ref=f9e168]
+          - button "Running" [ref=f9e169]
+          - button "Completed" [ref=f9e170]
+          - button "Failed" [ref=f9e171]
+          - button "Canceled" [ref=f9e172]
+        - combobox [ref=f9e173]:
+          - option "All backends" [selected]
+          - option "Static"
+          - option "External provider"
+      - paragraph [ref=f9e176]: No analysis jobs. Launch one above to see its persisted lifecycle here.

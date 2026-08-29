@@ -271,7 +271,7 @@ export default function AnalysisDetailPage() {
       <div>
         <PageHeader kicker="Analysis workspace" title="Job not found" />
         <Panel>
-          <p className="py-6 text-center text-sm text-risk-malicious">
+          <p className="py-6 text-center text-sm text-[#C4453B]">
             Unknown analysis job{runId ? ` ${runId}` : ""} — it may have been pruned.
           </p>
         </Panel>
@@ -310,7 +310,7 @@ export default function AnalysisDetailPage() {
         }
       />
 
-      {cancelError && <p className="mb-4 text-xs text-risk-malicious">{cancelError}</p>}
+      {cancelError && <p className="mb-4 text-xs text-[#C4453B]">{cancelError}</p>}
 
       <dl className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
         <Stat label="Progress" value={`${j.progress}%`} tone={j.status === "failed" ? "malicious" : "accent"} />
@@ -341,7 +341,7 @@ export default function AnalysisDetailPage() {
 
       {j.status === "failed" && (
         <Panel className="mb-6" title="Job failed" kicker="terminal state">
-          <p className="text-sm text-risk-malicious">{j.error ?? "The job failed without a recorded error."}</p>
+          <p className="text-sm text-[#C4453B]">{j.error ?? "The job failed without a recorded error."}</p>
         </Panel>
       )}
 
@@ -357,7 +357,7 @@ export default function AnalysisDetailPage() {
             {observations.isLoading ? (
               <p className="py-4 text-center text-sm text-text-muted">Loading observations…</p>
             ) : observations.isError ? (
-              <p className="py-4 text-center text-sm text-risk-malicious">Failed to load observations</p>
+              <p className="py-4 text-center text-sm text-[#C4453B]">Failed to load observations</p>
             ) : observationsList.length === 0 ? (
               <p className="py-4 text-center text-sm text-text-muted">No observations recorded for this job.</p>
             ) : (

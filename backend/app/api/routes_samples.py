@@ -154,10 +154,6 @@ async def upload_sample(
     request: Request,
     name: str = Query("", max_length=255, description="Original file name (for display)"),
 ):
-    # Reject oversized uploads before buffering the body into memory.
-    declared = request.headers.get("content-length")
-    if declared and declared.isdigit() and int(declared) > _MAX_SIZE:
-        raise HTTPException(status_code=413, detail="Sample exceeds the 50 MB upload limit")
     body = await request.body()
     if not body:
         raise HTTPException(status_code=422, detail="Empty upload — send the sample bytes in the request body")

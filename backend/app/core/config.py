@@ -26,25 +26,6 @@ DATABASE_URL = os.getenv("OUTPOST_DATABASE_URL", "").strip()
 # the upload in memory. Tests override SAMPLES_DIR to a temp dir.
 SAMPLES_DIR = Path(os.getenv("SAMPLES_DIR", str(DATA_DIR / "samples")))
 
-# Run artifacts (detonation screenshots). Screenshots land under
-# ARTIFACTS_DIR/<run_id>/ as shot_NNNN.png + manifest.json.
-ARTIFACTS_DIR = Path(os.getenv("OUTPOST_ARTIFACTS_DIR", str(DATA_DIR / "artifacts")))
-
-# Detonation screenshot capture (docs/10-STANDOUT-FEATURES.md #4).
-# OUTPOST_SCREENSHOT_CMD is a shell-free command template whose {output}
-# placeholder is replaced by the target PNG path, e.g.:
-#   VBoxManage controlvm <vm> screenshotpng {output}
-#   grim -o DP-1 {output}     (Wayland / wlroots)
-#   scrot -z {output}         (X11)
-# Unset = capture unavailable (reported honestly, never faked).
-SCREENSHOT_CMD = os.getenv("OUTPOST_SCREENSHOT_CMD", "").strip()
-SCREENSHOT_INTERVAL = float(os.getenv("OUTPOST_SCREENSHOT_INTERVAL", "10"))
-
-# Volatility3 memory forensics (docs/08-INTEGRATIONS.md #7). OUTPOST_VOLATILITY_PATH
-# pins an explicit vol binary; empty = look up `vol` / `volatility3` on PATH.
-VOLATILITY_PATH = os.getenv("OUTPOST_VOLATILITY_PATH", "").strip()
-VOLATILITY_TIMEOUT = float(os.getenv("OUTPOST_VOLATILITY_TIMEOUT", "300"))
-
 
 def _parse_origins(raw: str) -> list[str]:
     """Accept CORS_ORIGINS as a comma list OR a JSON array of origins.
@@ -66,28 +47,12 @@ def _parse_origins(raw: str) -> list[str]:
     return [o.strip() for o in raw.split(",") if o.strip()]
 
 
-CORS_ORIGINS = [
-    # A wildcard origin combined with the middleware's allow_credentials=True
-    # is a browser-trusted cross-origin credential leak — refuse to boot with it.
-    o
-    for o in _parse_origins(
-        os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:5174,http://127.0.0.1:5173,http://127.0.0.1:5174")
-    )
-    if o != "*"
-]
+CORS_ORIGINS = _parse_origins(
+    os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:5174,http://127.0.0.1:5173,http://127.0.0.1:5174")
+)
 
 ABUSEIPDB_API_KEY = os.getenv("ABUSEIPDB_API_KEY", "")
 VIRUSTOTAL_API_KEY = os.getenv("VIRUSTOTAL_API_KEY", "")
-
-# abuse.ch feeds (URLhaus / ThreatFox) are keyless but still third-party
-# egress. Opt-in so a default install makes zero external calls (the
-# no-config egress gate asserts this); set OUTPOST_ABUSECH_ENABLED=1 to turn
-# domain/hash reputation lookups on.
-ABUSECH_ENABLED = os.getenv("OUTPOST_ABUSECH_ENABLED", "").strip().lower() in (
-    "1",
-    "true",
-    "yes",
-)
 
 # Sandbox detonation adapters (roadmap 3.3). Provider keys are optional: with
 # none configured the webapp's sandbox panel falls back to a clearly-labeled

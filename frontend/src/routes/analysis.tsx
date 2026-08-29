@@ -28,12 +28,10 @@ const STATUS_TABS: { value: AnalysisStatus | ""; label: string }[] = [
 
 const BACKENDS: { value: AnalysisBackend; label: string; hint: string; available?: boolean }[] = [
   { value: "static", label: "Static", hint: "Synchronous triage over the stored bytes — strings, IOCs, PE/ELF metadata" },
-  { value: "external-provider", label: "External provider", hint: "Detonate via Any.Run / Triage / Joe Sandbox — or the built-in demo provider" },
   { value: "watched-host", label: "Watched host", hint: "Execution backend not configured — no host executor exists yet (501)", available: false },
+  { value: "external-provider", label: "External provider", hint: "Execution backend not configured — no sandbox provider wired yet (501); use Sandbox detonate", available: false },
   { value: "isolated-outpost", label: "Isolated OutPost", hint: "Reserved — no isolated execution environment exists yet (501)", available: false },
 ];
-
-const PROVIDERS = ["auto", "demo", "anyrun", "triage", "joe"] as const;
 
 const STATUS_TONE: Record<AnalysisStatus, "muted" | "accent" | "clean" | "malicious"> = {
   queued: "muted",
@@ -96,7 +94,6 @@ export default function AnalysisPage() {
 
   // Launch form state.
   const [launchBackend, setLaunchBackend] = useState<AnalysisBackend>("static");
-  const [provider, setProvider] = useState<string>("demo");
   const [sampleId, setSampleId] = useState("");
   const [sampleName, setSampleName] = useState("");
   const [timeoutSeconds, setTimeoutSeconds] = useState("120");
@@ -122,7 +119,6 @@ export default function AnalysisPage() {
         sample_id: sampleId || undefined,
         sample_name: manualName || !sampleId ? sampleName.trim() || undefined : undefined,
         timeout_seconds: launchBackend === "static" ? undefined : Number(timeoutSeconds) || undefined,
-        provider: launchBackend === "external-provider" ? provider : undefined,
       }),
     onSuccess: (job) => {
       setCreating(false);
@@ -152,7 +148,7 @@ export default function AnalysisPage() {
       <PageHeader
         kicker="Artifact analysis"
         title="Analysis"
-        lede="Submit an artifact for static triage or provider-backed detonation and follow the job through its persisted lifecycle — results land as observations and findings. Watched-host and isolated backends stay honestly unavailable (501) until their execution environments exist."
+        lede="Submit an artifact for static triage and follow the job through its persisted lifecycle — results land as observations and findings. Dynamic backends (watched host, external provider, isolated) are listed but not yet executable — the API refuses them rather than queueing jobs that could never run."
         actions={
           <button className="btn btn-primary" onClick={() => setCreating((v) => !v)}>
             <Icon name="plus" size={14} /> New analysis
@@ -223,26 +219,6 @@ export default function AnalysisPage() {
               )}
             </div>
 
-            {launchBackend === "external-provider" && (
-              <div className="max-w-40">
-                <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-text-muted">Provider</label>
-                <select
-                  className="w-full rounded-lg border border-border-subtle bg-bg-surface px-3 py-2 text-sm outline-none focus:border-accent/50"
-                  value={provider}
-                  onChange={(e) => setProvider(e.target.value)}
-                >
-                  {PROVIDERS.map((p) => (
-                    <option key={p} value={p}>
-                      {p}
-                    </option>
-                  ))}
-                </select>
-                <p className="mt-1 text-[10px] leading-snug text-text-faint">
-                  live providers need their API key env var; demo needs nothing
-                </p>
-              </div>
-            )}
-
             {launchBackend !== "static" && (
               <div className="max-w-40">
                 <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-text-muted">
@@ -258,7 +234,7 @@ export default function AnalysisPage() {
               </div>
             )}
 
-            {error && <p className="text-xs text-risk-malicious">{error}</p>}
+            {error && <p className="text-xs text-[#C4453B]">{error}</p>}
 
             <div className="flex items-center gap-2">
               <button
@@ -313,7 +289,7 @@ export default function AnalysisPage() {
       {isLoading ? (
         <Panel><p className="py-6 text-center text-sm text-text-muted">Loading analysis jobs…</p></Panel>
       ) : isError ? (
-        <Panel><p className="py-6 text-center text-sm text-risk-malicious">Failed to load analysis jobs</p></Panel>
+        <Panel><p className="py-6 text-center text-sm text-[#C4453B]">Failed to load analysis jobs</p></Panel>
       ) : (data?.jobs.length ?? 0) === 0 ? (
         <Panel>
           <p className="py-6 text-center text-sm text-text-muted">

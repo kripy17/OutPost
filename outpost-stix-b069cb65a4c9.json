@@ -1,0 +1,124 @@
+{
+  "type": "bundle",
+  "id": "bundle--980d4ada-55b6-453a-640a-6400d38d5bda",
+  "spec_version": "2.1",
+  "objects": [
+    {
+      "type": "x-outpost-run",
+      "id": "x-outpost-run--980d4ada-55b6-453a-640a-6400d38d5bda",
+      "spec_version": "2.1",
+      "name": "lolbin-credential-dump.exe",
+      "platform": "windows",
+      "started_at": "2026-08-26T07:48:36.405658+00:00",
+      "completed_at": "2026-08-26T07:48:36.412915+00:00"
+    },
+    {
+      "type": "observed-data",
+      "id": "observed-data--b4eeecf3-48fe-3b33-980b-f7e1980bab70",
+      "spec_version": "2.1",
+      "created": "2026-08-26T07:48:36.405658+00:00",
+      "modified": "2026-08-26T07:49:10.797288+00:00",
+      "first_observed": "2026-08-26T07:48:36.410301+00:00",
+      "last_observed": "2026-08-26T07:48:36.410301+00:00",
+      "number_observed": 1,
+      "labels": [
+        "malicious"
+      ],
+      "x_outpost": {
+        "rule_id": "suspicious-parent-child",
+        "rule_name": "Suspicious parent-child process relationship",
+        "details": "winword.exe spawned cmd.exe \u2014 common macro-malware pattern"
+      }
+    },
+    {
+      "type": "observed-data",
+      "id": "observed-data--b17e2900-2be0-f7dc-28e7-4600500b714d",
+      "spec_version": "2.1",
+      "created": "2026-08-26T07:48:36.405658+00:00",
+      "modified": "2026-08-26T07:49:10.797288+00:00",
+      "first_observed": "2026-08-26T07:48:36.410373+00:00",
+      "last_observed": "2026-08-26T07:48:36.410373+00:00",
+      "number_observed": 1,
+      "labels": [
+        "malicious"
+      ],
+      "x_outpost": {
+        "rule_id": "lolbin-abuse",
+        "rule_name": "Living-off-the-land binary abuse",
+        "details": "base64-encoded PowerShell command"
+      }
+    },
+    {
+      "type": "observed-data",
+      "id": "observed-data--4101e1d7-bd51-a10d-612d-f59ab77e2b20",
+      "spec_version": "2.1",
+      "created": "2026-08-26T07:48:36.405658+00:00",
+      "modified": "2026-08-26T07:49:10.797288+00:00",
+      "first_observed": "2026-08-26T07:48:36.410448+00:00",
+      "last_observed": "2026-08-26T07:48:36.410448+00:00",
+      "number_observed": 1,
+      "labels": [
+        "malicious"
+      ],
+      "x_outpost": {
+        "rule_id": "document-dropper",
+        "rule_name": "Document viewer spawned a script interpreter (spearphishing)",
+        "details": "winword.exe spawned cmd.exe \u2014 macro/attachment drop pattern"
+      }
+    },
+    {
+      "type": "observed-data",
+      "id": "observed-data--15578304-53b1-4c81-55ad-e7a46e8370de",
+      "spec_version": "2.1",
+      "created": "2026-08-26T07:48:36.405658+00:00",
+      "modified": "2026-08-26T07:49:10.797288+00:00",
+      "first_observed": "2026-08-26T07:48:36.411165+00:00",
+      "last_observed": "2026-08-26T07:48:36.411165+00:00",
+      "number_observed": 1,
+      "labels": [
+        "malicious"
+      ],
+      "x_outpost": {
+        "rule_id": "credential-dump",
+        "rule_name": "Credential dumping",
+        "details": "comsvcs.dll MiniDump of lsass (credential theft)"
+      }
+    },
+    {
+      "type": "observed-data",
+      "id": "observed-data--f81f4ca4-09c3-5203-7cfc-7f2587946472",
+      "spec_version": "2.1",
+      "created": "2026-08-26T07:48:36.405658+00:00",
+      "modified": "2026-08-26T07:49:10.797288+00:00",
+      "first_observed": "2026-08-26T07:48:36.411273+00:00",
+      "last_observed": "2026-08-26T07:48:36.411273+00:00",
+      "number_observed": 1,
+      "labels": [
+        "suspicious"
+      ],
+      "x_outpost": {
+        "rule_id": "first-seen-process",
+        "rule_name": "First-seen process (novelty)",
+        "details": "rundll32.exe has not been observed in any prior session (spawned by cmd.exe)"
+      }
+    },
+    {
+      "type": "observed-data",
+      "id": "observed-data--fd011005-0981-bf63-227c-8c149bb4ef20",
+      "spec_version": "2.1",
+      "created": "2026-08-26T07:48:36.405658+00:00",
+      "modified": "2026-08-26T07:49:10.797288+00:00",
+      "first_observed": "2026-08-26T07:48:36.412704+00:00",
+      "last_observed": "2026-08-26T07:48:36.412704+00:00",
+      "number_observed": 1,
+      "labels": [
+        "malicious"
+      ],
+      "x_outpost": {
+        "rule_id": "attack-chain",
+        "rule_name": "Coordinated attack chain",
+        "details": "3 distinct kill-chain stages observed \u2014 Credential Access, Execution, Initial Access"
+      }
+    }
+  ]
+}
