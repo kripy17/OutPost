@@ -21,6 +21,14 @@ memory-dumps/
 
 # Playwright artifacts (keep screenshots/*.png — they're README assets)
 demo/.deck-video/
+.playwright-mcp/
+
+# Exported reports & artifacts
+outpost-report-*
+outpost-stix-*
+outpost-iocs-*
+*.jpeg
+*.jpg
 
 # Internal build-context docs (spec/AI handoff — never published to GitHub)
 /AGENTS.md
