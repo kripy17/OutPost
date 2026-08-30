@@ -12,7 +12,7 @@ export default function MonitorPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [detonatingPlaybookId, setDetonatingPlaybookId] = useState<string | null>(null);
-  const [simViewMode, setSimViewMode] = useState<"terminal" | "tree" | "alerts">("terminal");
+  const [simViewMode, setSimViewMode] = useState<"terminal" | "tree" | "alerts" | "delta">("terminal");
   const [activeResult, setActiveResult] = useState<{
     run_id: string;
     scenario_id: string;
@@ -32,6 +32,7 @@ export default function MonitorPage() {
     alerts: any[];
     risk_score: number;
     process_tree: any[];
+    detonation_delta?: any;
   } | null>(null);
 
   const [searchQuery, setSearchQuery] = useState("");
@@ -208,6 +209,17 @@ export default function MonitorPage() {
               <Icon name="alert" size={12} />
               <span>Triggered Detections ({(activeResult.alerts || []).length})</span>
             </button>
+            <button
+              onClick={() => setSimViewMode("delta")}
+              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 transition ${
+                simViewMode === "delta"
+                  ? "bg-accent/15 font-bold text-accent"
+                  : "text-text-muted hover:text-text-primary"
+              }`}
+            >
+              <Icon name="grid" size={12} />
+              <span>Detonation Baseline Delta</span>
+            </button>
           </div>
 
           {/* SubView 1: Terminal Console Output */}
@@ -267,6 +279,60 @@ export default function MonitorPage() {
                       </span>
                     </div>
                   ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* SubView 4: Detonation Baseline Delta */}
+          {simViewMode === "delta" && (
+            <div className="space-y-4 font-mono text-xs">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-text-primary">Pre/Post Detonation System Delta</span>
+                <span className="text-[10px] text-text-faint">Host state differential captured before vs after execution</span>
+              </div>
+
+              {activeResult.detonation_delta ? (
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <div className="rounded-xl border border-border-subtle bg-bg-base/40 p-4 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-signal">+ Spawned / Resident Processes ({activeResult.detonation_delta.new_processes?.length ?? 0})</span>
+                    </div>
+                    {(activeResult.detonation_delta.new_processes || []).length > 0 ? (
+                      <div className="space-y-1.5 max-h-56 overflow-y-auto">
+                        {activeResult.detonation_delta.new_processes.map((np: any, idx: number) => (
+                          <div key={idx} className="flex items-center justify-between rounded-lg border border-signal/30 bg-signal/5 p-2 text-[11px]">
+                            <span className="font-bold text-text-primary">{np.name}</span>
+                            <span className="text-[10px] text-text-faint">PID {np.pid} · {np.user}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-[11px] text-text-faint">No resident processes remained running after execution.</p>
+                    )}
+                  </div>
+
+                  <div className="rounded-xl border border-border-subtle bg-bg-base/40 p-4 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-accent">+ Newly Opened Sockets ({activeResult.detonation_delta.new_sockets?.length ?? 0})</span>
+                    </div>
+                    {(activeResult.detonation_delta.new_sockets || []).length > 0 ? (
+                      <div className="space-y-1.5 max-h-56 overflow-y-auto">
+                        {activeResult.detonation_delta.new_sockets.map((ns: any, idx: number) => (
+                          <div key={idx} className="flex items-center justify-between rounded-lg border border-accent/30 bg-accent/5 p-2 text-[11px]">
+                            <span className="font-mono text-text-primary">{ns.local_ip}:{ns.local_port}</span>
+                            <span className="text-[10px] uppercase font-bold text-accent">{ns.protocol} ({ns.status})</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-[11px] text-text-faint">No open listening or remote network sockets lingered.</p>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-border-subtle bg-bg-elevated/20 p-6 text-center text-text-faint">
+                  Baseline snapshot captured; zero anomalous system state drift detected after completion.
                 </div>
               )}
             </div>

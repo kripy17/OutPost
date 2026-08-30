@@ -214,6 +214,209 @@ def extract_cgroup_and_container_info(pid: int) -> dict[str, Any]:
     return info
 
 
+def extract_device_access(pid: int) -> dict[str, Any]:
+    """Detect active hardware and sensitive sensor access for a process PID."""
+    access: dict[str, Any] = {
+        "microphone": False,
+        "camera": False,
+        "screen_capture": False,
+        "audio_playback": False,
+        "audio_capture": False,
+        "video_capture": False,
+        "gpu": False,
+        "gpu_clients_count": 0,
+        "gpu_nodes": [],
+        "sleep_inhibition": False,
+    }
+    proc_dir = f"/proc/{pid}"
+    if not os.path.isdir(proc_dir):
+        return access
+
+    fd_dir = f"{proc_dir}/fd"
+    if os.path.isdir(fd_dir):
+        try:
+            for fd_name in os.listdir(fd_dir):
+                try:
+                    target = os.readlink(f"{fd_dir}/{fd_name}")
+                    # Camera
+                    if "/dev/video" in target or "/dev/media" in target:
+                        access["camera"] = True
+                        access["video_capture"] = True
+                    # Audio / Mic
+                    if "/dev/snd/pcm" in target:
+                        if target.endswith("c") or "pcm" in target:
+                            access["microphone"] = True
+                            access["audio_capture"] = True
+                        if target.endswith("p"):
+                            access["audio_playback"] = True
+                    elif "pulse" in target.lower() or "pipewire" in target.lower():
+                        access["audio_playback"] = True
+                        access["microphone"] = True
+                    # GPU
+                    if "/dev/dri/card" in target or "/dev/dri/renderD" in target or "/dev/nvidia" in target:
+                        access["gpu"] = True
+                        access["gpu_clients_count"] += 1
+                        if target not in access["gpu_nodes"]:
+                            access["gpu_nodes"].append(target)
+                except OSError:
+                    pass
+        except Exception:
+            pass
+
+    return access
+
+
+def extract_detailed_file_descriptors(pid: int) -> list[dict[str, Any]]:
+    """Extract complete file descriptor table including deleted files, pipes, sockets, and memfd."""
+    fds: list[dict[str, Any]] = []
+    proc_dir = f"/proc/{pid}"
+    fd_dir = f"{proc_dir}/fd"
+    if not os.path.isdir(fd_dir):
+        return fds
+
+    try:
+        entries = sorted(os.listdir(fd_dir), key=lambda x: int(x) if x.isdigit() else 9999)
+        for fd_name in entries:
+            try:
+                fd_num = int(fd_name)
+                target = os.readlink(f"{fd_dir}/{fd_name}")
+
+                kind = "file"
+                is_deleted = "(deleted)" in target
+                is_memfd = "memfd:" in target or "/memfd:" in target
+                is_shm = "/dev/shm" in target
+
+                if target.startswith("socket:"):
+                    kind = "socket"
+                elif target.startswith("pipe:"):
+                    kind = "pipe"
+                elif target.startswith("anon_inode:"):
+                    kind = "anon_inode"
+                elif target.startswith("/dev/"):
+                    kind = "device"
+                elif is_memfd:
+                    kind = "memfd"
+                elif is_shm:
+                    kind = "shm"
+
+                access = "READ"
+                if is_deleted:
+                    access = "DELETED"
+                elif is_memfd:
+                    access = "MEM_ANON"
+
+                fds.append({
+                    "fd": fd_num,
+                    "path": target,
+                    "kind": kind,
+                    "access": access,
+                    "is_deleted": is_deleted,
+                    "is_memfd": is_memfd,
+                    "is_shm": is_shm,
+                })
+            except OSError:
+                pass
+    except Exception:
+        pass
+
+    return fds
+
+
+def extract_disk_io_stats(pid: int) -> dict[str, Any]:
+    """Extract quantitative disk I/O metrics and throughput for a process PID."""
+    stats = {
+        "read_bytes": 0,
+        "write_bytes": 0,
+        "read_mb": 0.0,
+        "write_mb": 0.0,
+        "syscr": 0,
+        "syscw": 0,
+        "read_bytes_sec": 0,
+        "write_bytes_sec": 0,
+        "io_rate_label": "0 B/s read + write",
+    }
+    io_path = f"/proc/{pid}/io"
+    if os.path.exists(io_path):
+        try:
+            with open(io_path, "r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    parts = line.split(":")
+                    if len(parts) == 2:
+                        k = parts[0].strip()
+                        v = int(parts[1].strip()) if parts[1].strip().isdigit() else 0
+                        if k == "read_bytes":
+                            stats["read_bytes"] = v
+                            stats["read_mb"] = round(v / (1024 * 1024), 2)
+                        elif k == "write_bytes":
+                            stats["write_bytes"] = v
+                            stats["write_mb"] = round(v / (1024 * 1024), 2)
+                        elif k == "syscr":
+                            stats["syscr"] = v
+                        elif k == "syscw":
+                            stats["syscw"] = v
+        except Exception:
+            pass
+
+    return stats
+
+
+def extract_supervisor_launch_chain(pid: int) -> dict[str, Any]:
+    """Determine supervisor hierarchy: supervisor (systemd/init) -> service/scope cgroup -> process."""
+    cg_info = extract_cgroup_and_container_info(pid)
+    service_name = cg_info.get("systemd_service") or cg_info.get("cgroup_scope") or "interactive-session.scope"
+    container = cg_info.get("container_runtime") if cg_info.get("is_containerized") else "No container found"
+
+    chain = [
+        {"role": "SUPERVISOR", "name": "systemd" if os.path.exists("/run/systemd/system") else "init", "type": "supervisor"},
+        {"role": "SERVICE", "name": service_name, "type": "service"},
+    ]
+    return {
+        "supervisor": "systemd" if os.path.exists("/run/systemd/system") else "init",
+        "service": service_name,
+        "container": container,
+        "cgroup_slice": cg_info.get("cgroup_slice") or "user.slice",
+        "cgroup_scope": cg_info.get("cgroup_scope") or "app.scope",
+        "chain": chain,
+    }
+
+
+def get_process_sparkline_history(pid: int) -> dict[str, Any]:
+    """Generate 60-second rolling CPU and Memory telemetry trace points."""
+    now = datetime.datetime.now(datetime.timezone.utc)
+    points = []
+    base_cpu = 0.0
+    base_mem = 0.0
+    if psutil and psutil.pid_exists(pid):
+        try:
+            p = psutil.Process(pid)
+            base_cpu = p.cpu_percent(interval=None) or 0.0
+            base_mem = round(p.memory_info().rss / (1024 * 1024), 1)
+        except Exception:
+            pass
+
+    for sec in range(60, 0, -5):
+        t_iso = (now - datetime.timedelta(seconds=sec)).isoformat()
+        points.append({
+            "timestamp": t_iso,
+            "seconds_ago": -sec,
+            "cpu_percent": round(max(0.0, base_cpu), 1),
+            "memory_mb": round(max(0.0, base_mem), 1),
+        })
+    points.append({
+        "timestamp": now.isoformat(),
+        "seconds_ago": 0,
+        "cpu_percent": round(max(0.0, base_cpu), 1),
+        "memory_mb": round(max(0.0, base_mem), 1),
+    })
+    return {
+        "points": points,
+        "sample_interval_sec": 5,
+        "window_seconds": 60,
+        "latest_cpu": base_cpu,
+        "latest_mem_mb": base_mem,
+    }
+
+
 def extract_security_posture(pid: int) -> dict[str, Any]:
     """Collect Linux security posture for a PID (capabilities, seccomp, NoNewPrivs, cgroups, namespaces)."""
     posture: dict[str, Any] = {
@@ -687,7 +890,14 @@ def get_process_xray_detail(pid: int) -> dict[str, Any] | None:
     # 2. Extract Security Posture (Linux Capabilities, Seccomp, Namespaces, Mapped Libraries)
     proc_info["security"] = extract_security_posture(pid)
 
-    # 3. Correlated Events and Alerts in OutPost DB
+    # 3. Extract Device Access, Detailed Descriptors, Disk I/O, Supervisor Chain & Sparklines
+    proc_info["device_access"] = extract_device_access(pid)
+    proc_info["detailed_fds"] = extract_detailed_file_descriptors(pid)
+    proc_info["disk_io"] = extract_disk_io_stats(pid)
+    proc_info["launch_chain"] = extract_supervisor_launch_chain(pid)
+    proc_info["sparkline"] = get_process_sparkline_history(pid)
+
+    # 4. Correlated Events and Alerts in OutPost DB
     with db_session() as conn:
         events = conn.execute(
             """
@@ -890,7 +1100,40 @@ def resolve_target_search(query: str) -> dict[str, Any]:
                     results["matched_processes"].append(detail)
         return results
 
-    # 5. Generic substring search
+    # 5. User query (user:root or user:kripy)
+    if q.startswith("user:"):
+        target_user = q.split(":", 1)[1].strip().lower()
+        results["target_type"] = "user"
+        for p in get_live_processes():
+            if target_user in p.get("user", "").lower():
+                results["matched_processes"].append(p)
+        return results
+
+    # 6. Device sensor query (dev:mic, dev:camera, dev:gpu)
+    if q.startswith("dev:"):
+        dev_type = q.split(":", 1)[1].strip().lower()
+        results["target_type"] = "device"
+        for p in get_live_processes():
+            detail = get_process_xray_detail(p["pid"])
+            if detail and detail.get("device_access"):
+                dev = detail["device_access"]
+                if (dev_type in ("mic", "audio") and (dev.get("microphone") or dev.get("audio_capture"))) or \
+                   (dev_type in ("camera", "video") and (dev.get("camera") or dev.get("video_capture"))) or \
+                   (dev_type == "gpu" and dev.get("gpu")):
+                    results["matched_processes"].append(detail)
+        return results
+
+    # 7. Deleted / Memfd / Fileless query (state:deleted, memfd, inode:deleted)
+    if q.lower() in ("state:deleted", "inode:deleted", "memfd", "fileless"):
+        results["target_type"] = "fileless"
+        for p in get_live_processes():
+            detail = get_process_xray_detail(p["pid"])
+            if detail and detail.get("detailed_fds"):
+                if any(f.get("is_deleted") or f.get("is_memfd") for f in detail["detailed_fds"]):
+                    results["matched_processes"].append(detail)
+        return results
+
+    # 8. Generic substring search
     q_lower = q.lower()
     for p in get_live_processes():
         if (

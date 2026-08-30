@@ -118,3 +118,105 @@ def test_tui_forensics_subview(monkeypatch):
 
     assert "DEEP FORENSICS" in out
     assert "systemd" in out
+
+
+def test_forensics_fds_cli(monkeypatch):
+    monkeypatch.setattr(
+        api_client,
+        "get_forensics_process",
+        lambda pid: {
+            "pid": pid,
+            "name": "malware_proc",
+            "detailed_fds": [
+                {"fd": 3, "path": "/memfd:pulseaudio (deleted)", "kind": "memfd", "access": "DELETED", "is_deleted": True, "is_memfd": True},
+                {"fd": 4, "path": "/dev/shm/.stealth", "kind": "shm", "access": "READ", "is_deleted": False, "is_memfd": False},
+            ],
+        },
+    )
+
+    res = runner.invoke(app, ["fds", "101"])
+    assert res.exit_code == 0
+    assert "Open File Descriptors & Memory Inodes" in res.stdout
+    assert "DELETED" in res.stdout
+    assert "MEMFD" in res.stdout
+
+
+def test_forensics_devices_cli(monkeypatch):
+    monkeypatch.setattr(
+        api_client,
+        "get_forensics_snapshot",
+        lambda: {
+            "processes": [{"pid": 505, "name": "audio_app", "user": "kripy"}],
+        },
+    )
+    monkeypatch.setattr(
+        api_client,
+        "get_forensics_process",
+        lambda pid: {
+            "pid": pid,
+            "name": "audio_app",
+            "user": "kripy",
+            "device_access": {
+                "microphone": True,
+                "camera": False,
+                "screen_capture": False,
+                "gpu": True,
+                "gpu_clients_count": 2,
+            },
+        },
+    )
+
+    res = runner.invoke(app, ["devices"])
+    assert res.exit_code == 0
+    assert "Active Hardware Device & Sensor Handles" in res.stdout
+    assert "audio_app" in res.stdout
+    assert "ACTIVE" in res.stdout
+
+
+def test_forensics_caps_cli(monkeypatch):
+    monkeypatch.setattr(
+        api_client,
+        "get_forensics_process",
+        lambda pid: {
+            "pid": pid,
+            "name": "pcap_sniffer",
+            "security": {
+                "seccomp": "Filtered",
+                "capabilities_effective": [
+                    {"name": "CAP_NET_RAW", "raw_name": "NET_RAW", "is_dangerous": True},
+                ],
+            },
+        },
+    )
+
+    res = runner.invoke(app, ["caps", "202"])
+    assert res.exit_code == 0
+    assert "Linux Security Capabilities" in res.stdout
+    assert "CAP_NET_RAW" in res.stdout
+    assert "DANGEROUS" in res.stdout
+
+
+def test_forensics_io_cli(monkeypatch):
+    monkeypatch.setattr(
+        api_client,
+        "get_forensics_process",
+        lambda pid: {
+            "pid": pid,
+            "name": "encryptor",
+            "disk_io": {
+                "read_bytes": 10485760,
+                "write_bytes": 52428800,
+                "read_mb": 10.0,
+                "write_mb": 50.0,
+                "syscr": 1200,
+                "syscw": 5400,
+            },
+        },
+    )
+
+    res = runner.invoke(app, ["io", "303"])
+    assert res.exit_code == 0
+    assert "Disk I/O Velocity & Throughput" in res.stdout
+    assert "10.00 MB" in res.stdout
+    assert "50.00 MB" in res.stdout
+

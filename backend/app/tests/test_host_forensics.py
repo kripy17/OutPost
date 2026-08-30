@@ -3,13 +3,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.services import host_xray
+from app.services import host_forensics
 
 client = TestClient(app)
 
 
 def test_system_metrics():
-    metrics = host_xray.get_current_system_metrics()
+    metrics = host_forensics.get_current_system_metrics()
     assert "cpu_percent" in metrics
     assert "memory_used_mb" in metrics
     assert "process_count" in metrics
@@ -17,7 +17,7 @@ def test_system_metrics():
 
 
 def test_live_processes():
-    procs = host_xray.get_live_processes()
+    procs = host_forensics.get_live_processes()
     assert isinstance(procs, list)
     assert len(procs) > 0
     # Must find current process or init
