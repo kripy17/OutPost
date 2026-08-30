@@ -1,15 +1,18 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { platformIconName } from "../components/iconMeta";
 import { PageHeader } from "../components/ui";
 import { getPlaybooks, runLiveSimulation } from "../lib/api";
+import { ProcessCausalityTree } from "../components/ProcessCausalityTree";
 import type { AttackPlaybook } from "../types";
 
 export default function MonitorPage() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [detonatingPlaybookId, setDetonatingPlaybookId] = useState<string | null>(null);
+  const [simViewMode, setSimViewMode] = useState<"terminal" | "tree" | "alerts">("terminal");
   const [activeResult, setActiveResult] = useState<{
     run_id: string;
     scenario_id: string;
@@ -49,9 +52,38 @@ export default function MonitorPage() {
 
   const handleRunLiveSimulation = async (playbookId: string) => {
     setDetonatingPlaybookId(playbookId);
+    const pb = (playbooks || []).find((p) => p.id === playbookId);
+    
+    // Set immediate active feedback
+    setActiveResult({
+      run_id: "executing...",
+      scenario_id: playbookId,
+      name: pb?.name || playbookId,
+      platform: "linux",
+      terminal_output: `[OutPost Simulation Lab] Initializing sandbox environment...\n[OutPost Simulation Lab] Launching playbook: ${pb?.name || playbookId}\n[OutPost Simulation Lab] Spawning subprocesses and monitoring kernel telemetry...`,
+      terminal_lines: [],
+      stages: (pb?.techniques || []).map((t, idx) => ({
+        stage: idx + 1,
+        name: t,
+        cmd: "executing stage command in sandbox...",
+        exit_code: 0,
+        status: "running",
+      })),
+      events_count: 0,
+      alerts_count: 0,
+      alerts: [],
+      risk_score: 0,
+      process_tree: [],
+    });
+
     try {
       const res = await runLiveSimulation(playbookId);
       setActiveResult(res);
+      void queryClient.invalidateQueries({ queryKey: ["events"] });
+      void queryClient.invalidateQueries({ queryKey: ["alerts"] });
+      void queryClient.invalidateQueries({ queryKey: ["runs"] });
+      void queryClient.invalidateQueries({ queryKey: ["statusbar"] });
+      void queryClient.invalidateQueries({ queryKey: ["forensics"] });
     } catch (err: unknown) {
       console.error("Live simulation failed:", err);
     } finally {
@@ -141,46 +173,102 @@ export default function MonitorPage() {
             ))}
           </div>
 
-          {/* Terminal Console Output */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between font-mono text-[11px] text-text-faint">
-              <span className="flex items-center gap-1.5">
-                <span className="h-2 w-2 rounded-full bg-accent animate-pulse" />
-                Live Subprocess Terminal Output (stdout/stderr)
-              </span>
-              <span>{activeResult.events_count ?? 0} events captured · {activeResult.alerts_count ?? 0} alerts</span>
-            </div>
-            <pre className="max-h-80 overflow-y-auto rounded-xl border border-border-subtle bg-[#0a0c10] p-4 font-mono text-xs leading-relaxed text-[#c9d1d9] shadow-inner selection:bg-accent selection:text-black">
-              {activeResult.terminal_output || "Awaiting execution trace..."}
-            </pre>
+          {/* Cockpit Sub-View Tabs */}
+          <div className="flex items-center gap-2 border-b border-border-subtle pb-2 font-mono text-xs">
+            <button
+              onClick={() => setSimViewMode("terminal")}
+              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 transition ${
+                simViewMode === "terminal"
+                  ? "bg-accent/15 font-bold text-accent"
+                  : "text-text-muted hover:text-text-primary"
+              }`}
+            >
+              <Icon name="terminal" size={12} />
+              <span>Live Terminal Stream</span>
+            </button>
+            <button
+              onClick={() => setSimViewMode("tree")}
+              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 transition ${
+                simViewMode === "tree"
+                  ? "bg-accent/15 font-bold text-accent"
+                  : "text-text-muted hover:text-text-primary"
+              }`}
+            >
+              <Icon name="process" size={12} />
+              <span>Process Causality Tree ({(activeResult.process_tree || []).length})</span>
+            </button>
+            <button
+              onClick={() => setSimViewMode("alerts")}
+              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 transition ${
+                simViewMode === "alerts"
+                  ? "bg-accent/15 font-bold text-accent"
+                  : "text-text-muted hover:text-text-primary"
+              }`}
+            >
+              <Icon name="alert" size={12} />
+              <span>Triggered Detections ({(activeResult.alerts || []).length})</span>
+            </button>
           </div>
 
-          {/* Live Alerts Radar */}
-          {(activeResult.alerts || []).length > 0 && (
+          {/* SubView 1: Terminal Console Output */}
+          {simViewMode === "terminal" && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between font-mono text-[11px] text-text-faint">
+                <span className="flex items-center gap-1.5">
+                  <span className="h-2 w-2 rounded-full bg-accent animate-pulse" />
+                  Live Subprocess Terminal Output (stdout/stderr)
+                </span>
+                <span>{activeResult.events_count ?? 0} events captured · {activeResult.alerts_count ?? 0} alerts</span>
+              </div>
+              <pre className="max-h-80 overflow-y-auto rounded-xl border border-border-subtle bg-[#0a0c10] p-4 font-mono text-xs leading-relaxed text-[#c9d1d9] shadow-inner selection:bg-accent selection:text-black">
+                {activeResult.terminal_output || "Awaiting execution trace..."}
+              </pre>
+            </div>
+          )}
+
+          {/* SubView 2: Process Causality Tree */}
+          {simViewMode === "tree" && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between font-mono text-[11px] text-text-faint">
+                <span>Subprocess Parent-Child Lineage spawned during scenario execution</span>
+                <span>{activeResult.process_tree?.length ?? 0} root nodes</span>
+              </div>
+              <div className="rounded-xl border border-border-subtle bg-bg-base/80 p-4">
+                <ProcessCausalityTree nodes={activeResult.process_tree || []} />
+              </div>
+            </div>
+          )}
+
+          {/* SubView 3: Live Alerts Radar */}
+          {simViewMode === "alerts" && (
             <div className="space-y-3 font-mono text-xs">
               <h4 className="font-semibold text-text-primary flex items-center gap-2">
                 <Icon name="alert" size={14} className="text-risk-malicious" />
                 Triggered Detections ({(activeResult.alerts || []).length})
               </h4>
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                {(activeResult.alerts || []).map((al: any, i: number) => (
-                  <div
-                    key={i}
-                    className="flex items-start justify-between rounded-xl border border-risk-malicious/30 bg-risk-malicious/10 p-3.5"
-                  >
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-text-primary">{al.rule_name}</span>
-                        <span className="text-[10px] text-text-faint">({al.rule_id})</span>
+              {(activeResult.alerts || []).length === 0 ? (
+                <p className="text-xs text-text-muted">No alerts triggered for this execution yet.</p>
+              ) : (
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  {(activeResult.alerts || []).map((al: any, i: number) => (
+                    <div
+                      key={i}
+                      className="flex items-start justify-between rounded-xl border border-risk-malicious/30 bg-risk-malicious/10 p-3.5"
+                    >
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-text-primary">{al.rule_name}</span>
+                          <span className="text-[10px] text-text-faint">({al.rule_id})</span>
+                        </div>
+                        <p className="mt-1 text-[11px] text-text-muted">{al.details}</p>
                       </div>
-                      <p className="mt-1 text-[11px] text-text-muted">{al.details}</p>
+                      <span className="rounded border border-risk-malicious/50 bg-risk-malicious/20 px-2 py-0.5 text-[9px] font-bold uppercase text-risk-malicious">
+                        {al.severity}
+                      </span>
                     </div>
-                    <span className="rounded border border-risk-malicious/50 bg-risk-malicious/20 px-2 py-0.5 text-[9px] font-bold uppercase text-risk-malicious">
-                      {al.severity}
-                    </span>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>

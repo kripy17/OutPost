@@ -27,6 +27,7 @@ import {
 import { lockedIpsText, rateLimitBadge, runResetFlow } from "./settingsHelpers";
 import { anyClientState, clientStateSummary, readClientState, resetClientState, type ClientStateReport } from "./resetClientState";
 import { provenanceLabel, readSavedProvenance, STATUS_TABS } from "./findingsHelpers";
+import AuditPage from "./audit";
 import type { NotificationSettings, NotificationSettingsIn } from "../types";
 
 const inputCls =
@@ -810,6 +811,7 @@ function ClientStatePanel() {
 
 export default function SettingsPage() {
   const queryClient = useQueryClient();
+  const [activeTab, setActiveTab] = useState<"settings" | "audit">("settings");
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: getMe, staleTime: 30_000 });
   const { data, isLoading, isError } = useQuery({
     queryKey: ["notifications"],
@@ -895,15 +897,45 @@ export default function SettingsPage() {
   return (
     <div className="mx-auto max-w-3xl px-6 py-10">
       <PageHeader
-        kicker="Operations · settings"
+        kicker="Administration · settings & governance"
         title={
           <>
-            Settings <span className="font-normal text-text-muted">— look, access, store, and alert channels</span>
+            Settings &amp; Audit <span className="font-normal text-text-muted">— preferences, integrations &amp; governance</span>
           </>
         }
-        lede="Tune the console: theme, access & passwords, data retention and intel keys, and where findings are routed. Everything here is optional — the zero-config default just works."
+        lede="Tune theme styling and telemetry settings, manage threat-intel API credentials, configure alert webhooks, and inspect the tamper-evident audit log."
       />
 
+      {/* Main Tab Switcher */}
+      <div className="mb-8 flex rounded-xl border border-border-subtle bg-bg-surface p-1 font-mono text-xs shadow-sm">
+        <button
+          onClick={() => setActiveTab("settings")}
+          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2.5 font-medium transition ${
+            activeTab === "settings"
+              ? "bg-accent/15 font-bold text-accent shadow-sm"
+              : "text-text-muted hover:text-text-primary"
+          }`}
+        >
+          <Icon name="sliders" size={13} />
+          <span>Console Settings &amp; Themes</span>
+        </button>
+        <button
+          onClick={() => setActiveTab("audit")}
+          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2.5 font-medium transition ${
+            activeTab === "audit"
+              ? "bg-accent/15 font-bold text-accent shadow-sm"
+              : "text-text-muted hover:text-text-primary"
+          }`}
+        >
+          <Icon name="file" size={13} />
+          <span>System Audit Log</span>
+        </button>
+      </div>
+
+      {activeTab === "audit" ? (
+        <AuditPage />
+      ) : (
+        <>
       <SectionHeader n="01" title="Look & feel" desc="Theme, palette, and client-side triage preferences — the instrument-panel look." />
       <div className="mb-6">
         <ThemePalettePanel />
@@ -1183,6 +1215,8 @@ export default function SettingsPage() {
             </div>
           </Panel>
         </div>
+      )}
+        </>
       )}
 
     </div>

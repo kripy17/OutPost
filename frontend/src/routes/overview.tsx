@@ -961,6 +961,137 @@ function DemoBanner() {
   );
 }
 
+function WorkflowQuickstartPanel() {
+  const [dismissed, setDismissed] = useState(() => {
+    try {
+      return localStorage.getItem("outpost-workflow-quickstart-dismissed") === "1";
+    } catch {
+      return false;
+    }
+  });
+
+  if (dismissed) return null;
+
+  return (
+    <div className="mb-6 rounded-2xl border border-accent/40 bg-gradient-to-r from-accent/10 via-bg-surface/95 to-bg-surface/95 p-5 shadow-sm backdrop-blur-md">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border-subtle/80 pb-3">
+        <div className="flex items-center gap-2.5">
+          <span className="flex h-8 w-8 items-center justify-center rounded-xl border border-accent/50 bg-accent/20 text-accent shadow-[var(--glow-accent)]">
+            <Icon name="shield" size={16} />
+          </span>
+          <div>
+            <h3 className="font-mono text-xs font-bold uppercase tracking-wider text-text-primary">
+              Interactive Operational Workflow
+            </h3>
+            <p className="text-[11px] text-text-muted">
+              Get started with OutPost in four core operational steps
+            </p>
+          </div>
+        </div>
+        <button
+          onClick={() => {
+            try {
+              localStorage.setItem("outpost-workflow-quickstart-dismissed", "1");
+            } catch {
+              /* ignore */
+            }
+            setDismissed(true);
+          }}
+          className="press text-text-faint hover:text-text-primary text-[11px] font-mono"
+        >
+          Dismiss guide ✕
+        </button>
+      </div>
+
+      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <Link
+          to="/monitor"
+          className="group flex flex-col justify-between rounded-xl border border-border-subtle bg-bg-base/70 p-4 transition-all duration-200 hover:border-accent/60 hover:bg-bg-elevated/80"
+        >
+          <div>
+            <div className="flex items-center justify-between">
+              <span className="font-mono text-[10px] font-bold text-accent">STEP 01</span>
+              <Icon name="activity" size={14} className="text-text-faint group-hover:text-accent transition" />
+            </div>
+            <h4 className="mt-2 font-mono text-xs font-bold text-text-primary group-hover:text-accent transition">
+              Launch Simulation
+            </h4>
+            <p className="mt-1 text-[11px] leading-relaxed text-text-muted">
+              Execute a live multi-stage adversary scenario in the sandbox.
+            </p>
+          </div>
+          <span className="mt-3 inline-flex items-center gap-1 font-mono text-[10px] text-accent">
+            Run scenario →
+          </span>
+        </Link>
+
+        <Link
+          to="/events"
+          className="group flex flex-col justify-between rounded-xl border border-border-subtle bg-bg-base/70 p-4 transition-all duration-200 hover:border-accent/60 hover:bg-bg-elevated/80"
+        >
+          <div>
+            <div className="flex items-center justify-between">
+              <span className="font-mono text-[10px] font-bold text-signal">STEP 02</span>
+              <Icon name="terminal" size={14} className="text-text-faint group-hover:text-signal transition" />
+            </div>
+            <h4 className="mt-2 font-mono text-xs font-bold text-text-primary group-hover:text-signal transition">
+              Live Host Telemetry
+            </h4>
+            <p className="mt-1 text-[11px] leading-relaxed text-text-muted">
+              Stream live procfs and socket events from your local host.
+            </p>
+          </div>
+          <span className="mt-3 inline-flex items-center gap-1 font-mono text-[10px] text-signal">
+            Open live feed →
+          </span>
+        </Link>
+
+        <Link
+          to="/events?tab=forensics"
+          className="group flex flex-col justify-between rounded-xl border border-border-subtle bg-bg-base/70 p-4 transition-all duration-200 hover:border-accent/60 hover:bg-bg-elevated/80"
+        >
+          <div>
+            <div className="flex items-center justify-between">
+              <span className="font-mono text-[10px] font-bold text-purple-400">STEP 03</span>
+              <Icon name="process" size={14} className="text-text-faint group-hover:text-purple-400 transition" />
+            </div>
+            <h4 className="mt-2 font-mono text-xs font-bold text-text-primary group-hover:text-purple-400 transition">
+              Process Causality
+            </h4>
+            <p className="mt-1 text-[11px] leading-relaxed text-text-muted">
+              Inspect parent-child trees, unlinked inodes &amp; hardware sensors.
+            </p>
+          </div>
+          <span className="mt-3 inline-flex items-center gap-1 font-mono text-[10px] text-purple-400">
+            Inspect forensics →
+          </span>
+        </Link>
+
+        <Link
+          to="/findings"
+          className="group flex flex-col justify-between rounded-xl border border-border-subtle bg-bg-base/70 p-4 transition-all duration-200 hover:border-accent/60 hover:bg-bg-elevated/80"
+        >
+          <div>
+            <div className="flex items-center justify-between">
+              <span className="font-mono text-[10px] font-bold text-risk-malicious">STEP 04</span>
+              <Icon name="alert" size={14} className="text-text-faint group-hover:text-risk-malicious transition" />
+            </div>
+            <h4 className="mt-2 font-mono text-xs font-bold text-text-primary group-hover:text-risk-malicious transition">
+              Triage &amp; Case Files
+            </h4>
+            <p className="mt-1 text-[11px] leading-relaxed text-text-muted">
+              Review behavioral alerts and escalate to incident dossiers.
+            </p>
+          </div>
+          <span className="mt-3 inline-flex items-center gap-1 font-mono text-[10px] text-risk-malicious">
+            Triage queue →
+          </span>
+        </Link>
+      </div>
+    </div>
+  );
+}
+
 /* ──────────────────────────────────────────────────────────────────────── */
 // Page
 /* ──────────────────────────────────────────────────────────────────────── */
@@ -1004,6 +1135,7 @@ export default function OverviewPage() {
         }
       />
 
+      <WorkflowQuickstartPanel />
       <DemoBanner />
       <Deferred>
         <HostMonitorPanel />

@@ -229,6 +229,12 @@ RULE_META: dict[str, RuleMeta] = {
         "weight": 12,
         "severity": "suspicious",
     },
+    "tls-ja3-c2": {
+        "technique": "T1071.001",
+        "tactic": "Command and Control",
+        "weight": 20,
+        "severity": "malicious",
+    },
     "doh-resolver-use": {
         "technique": "T1071.004",
         "tactic": "Command and Control",
@@ -297,6 +303,7 @@ RULE_NAMES: dict[str, str] = {
     "dns-long-label": "Long / high-entropy DNS query (DGA or tunneling)",
     "dns-unusual-port": "DNS query on a non-standard port",
     "tls-sni-suspicious": "TLS handshake with IP-literal or DGA-style SNI",
+    "tls-ja3-c2": "Known C2 TLS client handshake (JA3 fingerprint)",
     "doh-resolver-use": "DNS-over-HTTPS from a script host",
     "fanout-contact": "Coordinated contact with one destination",
     "fanout-recurring": "Recurring coordinated fan-out",
@@ -347,6 +354,7 @@ RULE_REMEDIATION: dict[str, list[str]] = {
     "dns-long-label": ["Block the DGA domain", "Hunt for sibling DGA domains"],
     "dns-unusual-port": ["Block the non-standard DNS port", "Inspect the process doing covert DNS"],
     "tls-sni-suspicious": ["Block the SNI/destination at the egress proxy", "Inspect the TLS client process and its cert chain"],
+    "tls-ja3-c2": ["Block the remote C2 IP and JA3 signature on firewall / proxy", "Isolate endpoint and inspect process memory for injected C2 beacon"],
     "doh-resolver-use": ["Review the script host's intent — DoH hides DNS from inspection", "Block the resolver at the firewall if unauthorized"],
     "fanout-contact": ["Block the shared destination IP", "Treat every contacting process as potentially compromised"],
     "fanout-recurring": [

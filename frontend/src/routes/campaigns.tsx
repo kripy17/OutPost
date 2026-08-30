@@ -10,6 +10,7 @@ import { PageHeader } from "../components/ui";
 import { CAMPAIGN_SORTS, clusterBars, reputationFill, sortCampaigns, topMembers, topologyClusters, type CampaignSort, type ClusterBar } from "./campaignsHelpers";
 import WatchlistPage from "./watchlist";
 import FootprintPage from "./footprint";
+import SearchPage from "./search";
 import { getCampaigns, getCampaignStix, getFootprintTopology } from "../lib/api";
 import type { Campaign, CampaignIoc, PropagationGraph, Reputation, Severity } from "../types";
 import NetworkContextModal from "../components/NetworkContextModal";
@@ -377,7 +378,7 @@ export default function CampaignsPage() {
           }`}
         >
           <Icon name="search" size={13} />
-          <span>IOC Watchlist</span>
+          <span>IOC Search &amp; Watchlist</span>
         </button>
         <button
           onClick={() => setActiveTab("footprint")}
@@ -393,7 +394,12 @@ export default function CampaignsPage() {
       </div>
 
       {activeTab === "watchlist" ? (
-        <WatchlistPage />
+        <div className="space-y-10">
+          <SearchPage />
+          <div className="border-t border-border-subtle pt-6">
+            <WatchlistPage />
+          </div>
+        </div>
       ) : activeTab === "footprint" ? (
         <FootprintPage />
       ) : (

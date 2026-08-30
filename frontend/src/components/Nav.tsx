@@ -90,10 +90,8 @@ const GROUPS: { label: string; links: NavItem[] }[] = [
     label: "Live Operations",
     links: [
       { to: "/", label: "Overview", iconName: "grid", end: true },
-      { to: "/events", label: "Host Forensics", iconName: "box" },
-      { to: "/findings", label: "Findings Queue", iconName: "alert" },
-      { to: "/investigations", label: "Case Files", iconName: "notes" },
-      { to: "/agents", label: "Sensor Fleet", iconName: "terminal" },
+      { to: "/events", label: "Host Forensics & Fleet", iconName: "box" },
+      { to: "/findings", label: "Incident Findings", iconName: "alert" },
     ],
   },
   {
@@ -108,14 +106,12 @@ const GROUPS: { label: string; links: NavItem[] }[] = [
     links: [
       { to: "/rules", label: "Detection Engineering", iconName: "shield" },
       { to: "/campaigns", label: "Threat Intelligence", iconName: "flag" },
-      { to: "/search", label: "Forensic Search", iconName: "search" },
     ],
   },
   {
     label: "Administration",
     links: [
-      { to: "/settings", label: "Settings", iconName: "sliders" },
-      { to: "/audit", label: "Audit Log", iconName: "file" },
+      { to: "/settings", label: "Settings & Audit", iconName: "sliders" },
     ],
   },
 ];

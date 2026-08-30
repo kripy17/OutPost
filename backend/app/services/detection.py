@@ -319,6 +319,9 @@ BEACON_MIN_INTERVAL_SECONDS = 1.0
 # 127.0.0.1:8001 and 6 to 0.0.0.0:8001 fired).
 _BEACON_EXCLUDED_NETS = [
     ipaddress.ip_network("0.0.0.0/8"),      # "this network" / parse artifact
+    ipaddress.ip_network("10.0.0.0/8"),     # RFC 1918 private
+    ipaddress.ip_network("172.16.0.0/12"),  # RFC 1918 private
+    ipaddress.ip_network("192.168.0.0/16"), # RFC 1918 private
     ipaddress.ip_network("127.0.0.0/8"),    # loopback
     ipaddress.ip_network("::1/128"),        # IPv6 loopback
     ipaddress.ip_network("::/128"),         # IPv6 unspecified
@@ -328,9 +331,7 @@ _BEACON_EXCLUDED_NETS = [
 
 
 def _is_routable_dest(ip: str) -> bool:
-    """True for routable destinations only — excludes the non-routable / local
-    ranges that fire the network rules on normal host traffic (soak-discovered:
-    loopback dev-stack polling, 0.0.0.0 parse artifacts, etc.)."""
+    """True for routable public destinations only — excludes private/local/RFC1918."""
     if not ip:
         return False
     try:
@@ -430,6 +431,7 @@ _KILL_CHAIN_STAGE = {
     "dns-long-label": "Command and Control",
     "dns-unusual-port": "Command and Control",
     "tls-sni-suspicious": "Command and Control",
+    "tls-ja3-c2": "Command and Control",
     "doh-resolver-use": "Command and Control",
     "fanout-contact": "Command and Control",
     "fanout-recurring": "Command and Control",
@@ -1219,7 +1221,7 @@ _ARCHIVER_RE = re.compile(
 # no-space forms, scp/rsync to a remote, nc/ncat pushing data out — both the
 # `< file` redirect and the classic `cat file | nc` pipe).
 _UPLOAD_RE = re.compile(
-    r"\bcurl\b[^\n]*(--upload-file|-T|-F|--data-binary)|"
+    r"\bcurl\b[^\n]*(?:\s--upload-file\b|\s-T\S*|\s-F\S*@|\s--data-binary\s+@)|"
     r"\bscp\b[^\n]+\b@\b|\bsftp\b|\brsync\b[^\n]+\b@\b|"
     r"\b(nc|ncat)\b[^\n]*<|\b(cat|dd)\s+[^\n]*\|\s*(nc|ncat)\b",
     re.IGNORECASE,
@@ -1992,6 +1994,20 @@ def check_tls_sni_suspicious(event: dict) -> Alert | None:
     """
     if event.get("event_type") != "network_connection":
         return None
+
+    ja3 = (event.get("ja3") or event.get("tls_ja3") or "").strip().lower()
+    if ja3 and ja3 in {
+        "a0e9f5d64349fb13191bc781f81f42e1",  # Cobalt Strike default
+        "727dd56e522b3bde61704234766e1491",  # Metasploit default HTTPS payload
+        "b32309a26951912be7dba376398abc3b",  # PoshC2 standard client hello
+    }:
+        return _make_alert(
+            event["run_id"], "tls-ja3-c2",
+            "Known C2 TLS client handshake (JA3 fingerprint)",
+            "malicious", event,
+            f"TLS client hello matched known C2 framework JA3 hash: {ja3}",
+        )
+
     sni = (event.get("tls_sni") or "").strip().lower()
     if not sni:
         return None
@@ -2011,18 +2027,6 @@ def check_tls_sni_suspicious(event: dict) -> Alert | None:
                 "suspicious", event,
                 f"TLS SNI with suspicious label: {sni}",
             )
-    ja3 = (event.get("ja3") or event.get("tls_ja3") or "").strip().lower()
-    if ja3 and ja3 in {
-        "a0e9f5d64349fb13191bc781f81f42e1",  # Cobalt Strike default
-        "727dd56e522b3bde61704234766e1491",  # Metasploit default HTTPS payload
-        "b32309a26951912be7dba376398abc3b",  # PoshC2 standard client hello
-    }:
-        return _make_alert(
-            event["run_id"], "tls-sni-suspicious",
-            "Known C2 TLS client handshake (JA3 fingerprint)",
-            "malicious", event,
-            f"TLS client hello matched known C2 framework JA3 hash: {ja3}",
-        )
     return None
 
 

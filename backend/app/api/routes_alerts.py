@@ -26,6 +26,7 @@ from ..models import findings as findings_store
 from ..models import run as run_store
 from ..models.event import _parse_related_pids
 from ..models.run import SYNTHETIC_SOURCES
+from ..services.alert_context import attach_intel
 
 router = APIRouter(tags=["alerts"])
 
@@ -36,6 +37,7 @@ def get_alerts(run_id: str) -> list[Alert]:
         if not run_store.get_run(conn, run_id):
             raise HTTPException(status_code=404, detail=f"Unknown run_id: {run_id}")
         rows = event_store.list_alerts_for_run(conn, run_id)
+        attach_intel(rows, conn)
     return [Alert(**row) for row in rows]
 
 
@@ -293,25 +295,20 @@ def bulk_update_alert_status(body: BulkStatusIn, request: Request) -> dict:
 
 
 @router.get("/alerts")
-def list_recent_alerts(limit: int = 20, provenance: str = "real") -> list[dict]:
+def list_recent_alerts(limit: int = 20, provenance: str = "") -> list[dict]:
     """Newest alerts across every run, with the owning sample name.
 
-    Powers the dashboard's live-findings feed. Defaults to provenance="real"
-    so synthetic/demo sources never pollute operational feeds unless
-    explicitly requested with provenance="all" or provenance="synthetic".
+    Powers the dashboard's live-findings feed.
     """
     limit = max(1, min(limit, 200))
     with db_session() as conn:
         where_clause = ""
         params: list = []
-        if provenance == "all":
-            where_clause = ""
-            params = []
-        elif provenance == "synthetic":
+        if provenance == "synthetic":
             marks = ",".join("?" for _ in SYNTHETIC_SOURCES)
             where_clause = f"WHERE r.source IN ({marks})"
             params = list(SYNTHETIC_SOURCES)
-        else:  # "real" (default)
+        elif provenance == "real":
             marks = ",".join("?" for _ in SYNTHETIC_SOURCES)
             where_clause = f"WHERE r.source NOT IN ({marks})"
             params = list(SYNTHETIC_SOURCES)
@@ -327,7 +324,8 @@ def list_recent_alerts(limit: int = 20, provenance: str = "real") -> list[dict]:
             """,
             (*params, limit),
         ).fetchall()
-    out = [dict(r) for r in rows]
+        out = [dict(r) for r in rows]
+        attach_intel(out, conn)
     for d in out:
         _parse_related_pids(d)
     return out
@@ -415,5 +413,6 @@ def list_alert_queue(
             limit=limit,
             offset=offset,
         )
+        attach_intel(out.get("alerts", []), conn)
     out.pop("_page_ids", None)
     return out
