@@ -12,6 +12,9 @@ export default function MonitorPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [detonatingPlaybookId, setDetonatingPlaybookId] = useState<string | null>(null);
+  const [executionError, setExecutionError] = useState<string | null>(null);
+  const [platformFilter, setPlatformFilter] = useState<string>("all");
+  const [severityFilter, setSeverityFilter] = useState<string>("all");
   const [simViewMode, setSimViewMode] = useState<"terminal" | "tree" | "alerts" | "delta">("terminal");
   const [activeResult, setActiveResult] = useState<{
     run_id: string;
@@ -42,6 +45,8 @@ export default function MonitorPage() {
   });
 
   const filteredPlaybooks = (playbooks || []).filter((pb) => {
+    if (platformFilter !== "all" && pb.platform !== platformFilter) return false;
+    if (severityFilter !== "all" && pb.severity !== severityFilter) return false;
     if (!searchQuery) return true;
     const q = searchQuery.toLowerCase();
     return (
@@ -53,30 +58,7 @@ export default function MonitorPage() {
 
   const handleRunLiveSimulation = async (playbookId: string) => {
     setDetonatingPlaybookId(playbookId);
-    const pb = (playbooks || []).find((p) => p.id === playbookId);
-    
-    // Set immediate active feedback
-    setActiveResult({
-      run_id: "executing...",
-      scenario_id: playbookId,
-      name: pb?.name || playbookId,
-      platform: "linux",
-      terminal_output: `[OutPost Simulation Lab] Initializing sandbox environment...\n[OutPost Simulation Lab] Launching playbook: ${pb?.name || playbookId}\n[OutPost Simulation Lab] Spawning subprocesses and monitoring kernel telemetry...`,
-      terminal_lines: [],
-      stages: (pb?.techniques || []).map((t, idx) => ({
-        stage: idx + 1,
-        name: t,
-        cmd: "executing stage command in sandbox...",
-        exit_code: 0,
-        status: "running",
-      })),
-      events_count: 0,
-      alerts_count: 0,
-      alerts: [],
-      risk_score: 0,
-      process_tree: [],
-    });
-
+    setExecutionError(null);
     try {
       const res = await runLiveSimulation(playbookId);
       setActiveResult(res);
@@ -86,6 +68,8 @@ export default function MonitorPage() {
       void queryClient.invalidateQueries({ queryKey: ["statusbar"] });
       void queryClient.invalidateQueries({ queryKey: ["forensics"] });
     } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Execution failed. Check backend sandbox status.";
+      setExecutionError(msg);
       console.error("Live simulation failed:", err);
     } finally {
       setDetonatingPlaybookId(null);
@@ -111,6 +95,35 @@ export default function MonitorPage() {
         </p>
       </div>
 
+      {executionError && (
+        <div className="rounded-2xl border border-risk-malicious/50 bg-risk-malicious/10 p-4 font-mono text-xs text-risk-malicious flex items-start gap-3">
+          <Icon name="alert" size={16} className="shrink-0 mt-0.5" />
+          <div>
+            <span className="font-bold">Detonation Execution Error</span>
+            <p className="mt-1 text-[11px] text-text-muted">{executionError}</p>
+          </div>
+        </div>
+      )}
+
+      {/* Active Detonation Loading Bar */}
+      {detonatingPlaybookId !== null && (
+        <div className="rounded-2xl border border-accent/50 bg-accent/10 p-5 font-mono text-xs space-y-3">
+          <div className="flex items-center justify-between text-accent">
+            <span className="flex items-center gap-2 font-bold">
+              <Icon name="refresh" size={14} className="animate-spin" />
+              Executing live subprocesses in sandbox container...
+            </span>
+            <span className="text-[11px] opacity-80">Scenario: {detonatingPlaybookId}</span>
+          </div>
+          <div className="h-1.5 w-full bg-border-subtle rounded-full overflow-hidden">
+            <div className="h-full bg-accent animate-pulse w-3/4 transition-all duration-300" />
+          </div>
+          <p className="text-[11px] text-text-muted">
+            Monitoring syscalls, inspecting process causality lineage, and evaluating real-time SigmaHQ rules...
+          </p>
+        </div>
+      )}
+
       {/* Live Execution Cockpit (When active or completed) */}
       {activeResult && (
         <div className="panel overflow-hidden border-accent/60 p-6 space-y-6 shadow-[0_12px_32px_-8px_rgba(217,164,65,0.2)]">
@@ -126,7 +139,7 @@ export default function MonitorPage() {
                     Run {activeResult.run_id}
                   </span>
                   <span className="rounded-full bg-accent/20 px-2 py-0.5 font-mono text-[10px] font-bold text-accent">
-                    Risk Score: {activeResult.risk_score}
+                    Risk Score: {activeResult.risk_score}/100
                   </span>
                 </div>
                 <h3 className="font-sans text-base font-bold text-text-primary">
@@ -144,6 +157,16 @@ export default function MonitorPage() {
                 View in Event Manager
               </button>
 
+              {(activeResult.alerts || []).length > 0 && (
+                <Link
+                  to={`/investigations?create=1&run_id=${activeResult.run_id}&title=${encodeURIComponent(activeResult.name + " Detonation")}`}
+                  className="press inline-flex items-center gap-1.5 rounded-lg border border-risk-malicious/50 bg-risk-malicious/15 px-3 py-1.5 font-mono text-xs font-semibold text-risk-malicious hover:bg-risk-malicious/25"
+                >
+                  <Icon name="shield" size={12} />
+                  Escalate to Case Dossier
+                </Link>
+              )}
+
               <Link
                 to={`/runs/${activeResult.run_id}`}
                 className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/15 px-3.5 py-1.5 font-mono text-xs font-semibold text-accent hover:bg-accent/25"
@@ -156,22 +179,40 @@ export default function MonitorPage() {
 
           {/* Stage Progress Stepper */}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            {(activeResult.stages || []).map((stg) => (
-              <div
-                key={stg.stage}
-                className="rounded-xl border border-border-subtle bg-bg-base/60 p-3 font-mono text-xs space-y-1.5"
-              >
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-bold uppercase text-text-faint">Stage {stg.stage}</span>
-                  <span className="inline-flex items-center gap-1 rounded bg-accent/15 px-1.5 py-0.5 text-[9px] font-bold text-accent">
-                    <Icon name="check" size={10} />
-                    {stg.status}
-                  </span>
+            {(activeResult.stages || []).map((stg) => {
+              const isPassed = stg.status === "success" || stg.exit_code === 0;
+              const isFailed = stg.status === "failed" || (stg.exit_code !== 0 && stg.exit_code !== -1);
+              return (
+                <div
+                  key={stg.stage}
+                  className={`rounded-xl border p-3 font-mono text-xs space-y-1.5 ${
+                    isPassed
+                      ? "border-risk-clean/30 bg-risk-clean/5"
+                      : isFailed
+                        ? "border-risk-malicious/30 bg-risk-malicious/5"
+                        : "border-border-subtle bg-bg-base/60"
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold uppercase text-text-faint">Stage {stg.stage}</span>
+                    <span
+                      className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase ${
+                        isPassed
+                          ? "bg-risk-clean/20 text-risk-clean"
+                          : isFailed
+                            ? "bg-risk-malicious/20 text-risk-malicious"
+                            : "bg-accent/20 text-accent"
+                      }`}
+                    >
+                      <Icon name={isPassed ? "check" : isFailed ? "x" : "activity"} size={10} />
+                      {stg.status} (exit {stg.exit_code})
+                    </span>
+                  </div>
+                  <p className="font-semibold text-text-primary truncate">{stg.name}</p>
+                  <p className="text-[10px] text-text-muted truncate font-mono">$ {stg.cmd}</p>
                 </div>
-                <p className="font-semibold text-text-primary truncate">{stg.name}</p>
-                <p className="text-[10px] text-text-muted truncate">$ {stg.cmd}</p>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           {/* Cockpit Sub-View Tabs */}
@@ -351,15 +392,51 @@ export default function MonitorPage() {
               Select a scenario to trigger deterministic execution and trace detection rules in real time.
             </p>
           </div>
-          <div className="relative">
-            <Icon name="search" size={14} className="absolute left-2.5 top-2.5 text-text-faint" />
-            <input
-              type="text"
-              placeholder="Search playbooks..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="h-9 w-64 rounded-lg border border-border-subtle bg-bg-surface pl-9 pr-3 text-xs outline-none focus:border-accent/50"
-            />
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Platform filter */}
+            <div className="flex items-center rounded-lg border border-border-subtle bg-bg-surface p-0.5 font-mono text-[11px]">
+              {(["all", "linux", "windows", "macos"] as const).map((p) => (
+                <button
+                  key={p}
+                  onClick={() => setPlatformFilter(p)}
+                  className={`rounded-md px-2.5 py-1 capitalize transition ${
+                    platformFilter === p
+                      ? "bg-accent/20 font-bold text-accent shadow-sm"
+                      : "text-text-muted hover:text-text-primary"
+                  }`}
+                >
+                  {p}
+                </button>
+              ))}
+            </div>
+
+            {/* Severity filter */}
+            <div className="flex items-center rounded-lg border border-border-subtle bg-bg-surface p-0.5 font-mono text-[11px]">
+              {(["all", "critical", "suspicious"] as const).map((s) => (
+                <button
+                  key={s}
+                  onClick={() => setSeverityFilter(s)}
+                  className={`rounded-md px-2.5 py-1 capitalize transition ${
+                    severityFilter === s
+                      ? "bg-accent/20 font-bold text-accent shadow-sm"
+                      : "text-text-muted hover:text-text-primary"
+                  }`}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+
+            <div className="relative">
+              <Icon name="search" size={14} className="absolute left-2.5 top-2.5 text-text-faint" />
+              <input
+                type="text"
+                placeholder="Search playbooks..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="h-8 w-52 rounded-lg border border-border-subtle bg-bg-surface pl-8 pr-3 text-xs outline-none focus:border-accent/50 font-mono"
+              />
+            </div>
           </div>
         </div>
 
