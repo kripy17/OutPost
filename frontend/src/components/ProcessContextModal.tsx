@@ -98,7 +98,7 @@ export function ProcessContextModal({
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="font-mono text-[10px] font-bold uppercase tracking-wider text-accent">Process X-Ray</span>
+                <span className="font-mono text-[10px] font-bold uppercase tracking-wider text-accent">Process Forensics</span>
                 <span className="rounded-full border border-border-subtle bg-bg-surface px-2 py-0.5 font-mono text-[10px] text-text-faint">
                   PID {pid}
                 </span>
@@ -117,7 +117,7 @@ export function ProcessContextModal({
                   </span>
                 )}
               </div>
-              <h2 id="xray-process-title" className="font-mono text-base font-bold text-text-primary">
+              <h2 id="process-forensics-title" className="font-mono text-base font-bold text-text-primary">
                 {procName}
               </h2>
             </div>
@@ -176,7 +176,7 @@ export function ProcessContextModal({
             <button
               onClick={onClose}
               className="press ml-1 rounded-lg p-1.5 text-text-faint hover:bg-bg-elevated hover:text-text-primary"
-              aria-label="Close Process X-Ray inspector"
+              aria-label="Close Process Forensics inspector"
             >
               <Icon name="x" size={18} />
             </button>

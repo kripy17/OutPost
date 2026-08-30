@@ -20,7 +20,7 @@ interface Item {
 
 const NAV_ITEMS: Item[] = [
   { kind: "nav", label: "Overview", hint: "Console home & threat posture", icon: "grid", to: "/" },
-  { kind: "nav", label: "Host X-Ray Command Cockpit", hint: "Deep kernel & process forensics cockpit", icon: "box", to: "/events" },
+  { kind: "nav", label: "Host Forensics & Telemetry", hint: "Deep kernel & process forensics cockpit", icon: "box", to: "/events" },
   { kind: "nav", label: "Simulation Lab", hint: "Adversary emulation & live rule testing", icon: "activity", to: "/monitor" },
   { kind: "nav", label: "Findings Queue", hint: "SOC alert triage & allowlisting", icon: "alert", to: "/findings" },
   { kind: "nav", label: "Investigations", hint: "Incident response cases & evidence locker", icon: "notes", to: "/investigations" },
@@ -66,7 +66,7 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
       const pidNum = q.replace("pid:", "").trim();
       syntaxItems.push({
         kind: "action",
-        label: `Inspect PID ${pidNum} in Host X-Ray`,
+        label: `Inspect PID ${pidNum} in Host Forensics`,
         hint: `Open deep kernel dossier & device access for PID ${pidNum}`,
         icon: "process" as IconName,
         to: `/events`,

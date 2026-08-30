@@ -9,7 +9,7 @@ import { PageHeader, Panel } from "../components/ui";
 import { ageBucket, collapseFindings, intelFreshness, intelKeyHealth, openSince, overviewRunParams, sortFindingsRiskFirst } from "./overviewHelpers";
 import { copyToClipboard } from "../lib/clipboard";
 import { SEVERITY_BG } from "../lib/constants";
-import { BASE_URL, getAgents, getCampaigns, getHealth, getHostXRaySnapshot, getIntelFreshness, getIntelKeys, getMeta, getPlatform, getProcessSummary, getRecentAlerts, getRuleMeta, getRuns, getXRayTargetCatalog, listInvestigations, resetStore } from "../lib/api";
+import { BASE_URL, getAgents, getCampaigns, getHealth, getHostXRaySnapshot, getIntelFreshness, getIntelKeys, getMeta, getPlatform, getProcessSummary, getRecentAlerts, getRuleMeta, getRuns, getXRayTargetCatalog, listInvestigations, resetStore, runLiveSimulation } from "../lib/api";
 import { useEventStream } from "../lib/useEventStream";
 
 // Compact relative time for the host panel's auth-context tooltips (the
@@ -1092,6 +1092,174 @@ function WorkflowQuickstartPanel() {
   );
 }
 
+function LiveDetonationPlayground() {
+  const queryClient = useQueryClient();
+  const [runningId, setRunningId] = useState<string | null>(null);
+  const [lastResult, setLastResult] = useState<{
+    run_id: string;
+    scenario_id: string;
+    name: string;
+    platform: string;
+    terminal_output: string;
+    terminal_lines: string[];
+    stages: Array<{ stage: number; name: string; cmd: string; exit_code: number; status: string }>;
+    events_count: number;
+    alerts_count: number;
+    alerts: any[];
+    risk_score: number;
+  } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const SCENARIOS = [
+    {
+      id: "discovery_recon",
+      name: "Discovery & Recon",
+      icon: "search" as const,
+      desc: "Enumerates users, network interfaces & services (T1082, T1087)",
+    },
+    {
+      id: "ransomware_burst",
+      name: "Ransomware Encryption",
+      icon: "alert" as const,
+      desc: "High-velocity file encryption and shadow tampering (T1486)",
+    },
+    {
+      id: "c2_beaconing",
+      name: "C2 Beaconing",
+      icon: "globe" as const,
+      desc: "Periodic outbound callbacks to suspicious external IPs (T1071)",
+    },
+    {
+      id: "persistence_cron",
+      name: "Cron Persistence",
+      icon: "terminal" as const,
+      desc: "Installs backdoor cron job & autorun persistence (T1053)",
+    },
+  ];
+
+  const handleDetonate = async (scenarioId: string) => {
+    setRunningId(scenarioId);
+    setError(null);
+    try {
+      const res = await runLiveSimulation(scenarioId);
+      setLastResult(res);
+      void queryClient.invalidateQueries({ queryKey: ["events"] });
+      void queryClient.invalidateQueries({ queryKey: ["alerts"] });
+      void queryClient.invalidateQueries({ queryKey: ["runs"] });
+      void queryClient.invalidateQueries({ queryKey: ["statusbar"] });
+      void queryClient.invalidateQueries({ queryKey: ["forensics"] });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Check backend status";
+      setError("Detonation execution failed: " + msg);
+    } finally {
+      setRunningId(null);
+    }
+  };
+
+  return (
+    <div className="rounded-2xl border border-accent/40 bg-bg-surface/90 p-5 shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2.5">
+          <span className="flex h-8 w-8 items-center justify-center rounded-xl border border-accent/40 bg-accent/15 text-accent shadow-[var(--glow-accent)]">
+            <Icon name="zap" size={15} />
+          </span>
+          <div>
+            <h3 className="font-mono text-xs font-bold uppercase tracking-wider text-text-primary">
+              Live Adversary Detonation Playground
+            </h3>
+            <p className="text-[11px] text-text-muted">
+              Trigger real-time attack scenarios in the sandbox to observe live telemetry and detection heuristics
+            </p>
+          </div>
+        </div>
+        <Link to="/monitor" className="press inline-flex items-center gap-1 font-mono text-xs text-accent hover:underline">
+          Advanced Simulation Lab <Icon name="external" size={10} />
+        </Link>
+      </div>
+
+      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {SCENARIOS.map((s) => (
+          <div
+            key={s.id}
+            className="flex flex-col justify-between rounded-xl border border-border-subtle bg-bg-base/60 p-3.5 transition-all duration-150 hover:border-accent/50"
+          >
+            <div>
+              <div className="flex items-center justify-between">
+                <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-border-subtle bg-bg-elevated text-accent">
+                  <Icon name={s.icon} size={13} />
+                </span>
+                {runningId === s.id && (
+                  <span className="flex items-center gap-1 font-mono text-[10px] text-accent animate-pulse">
+                    <Icon name="refresh" size={10} className="animate-spin" /> executing...
+                  </span>
+                )}
+              </div>
+              <h4 className="mt-2 font-mono text-xs font-bold text-text-primary">{s.name}</h4>
+              <p className="mt-1 text-[11px] leading-relaxed text-text-muted">{s.desc}</p>
+            </div>
+
+            <button
+              onClick={() => void handleDetonate(s.id)}
+              disabled={runningId !== null}
+              className="press mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-accent/60 bg-accent/10 py-1.5 font-mono text-xs font-semibold text-accent transition-colors hover:bg-accent/20 disabled:opacity-50"
+            >
+              <Icon name="zap" size={11} />
+              <span>{runningId === s.id ? "Detonating..." : "Detonate Live"}</span>
+            </button>
+          </div>
+        ))}
+      </div>
+
+      {error && <p className="mt-3 font-mono text-xs text-risk-malicious">{error}</p>}
+
+      {lastResult && (
+        <div className="mt-4 rounded-xl border border-accent/40 bg-accent/10 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <span className="h-2 w-2 rounded-full bg-signal animate-ping" />
+              <span className="font-mono text-xs font-bold text-text-primary">
+                Detonation Complete: {lastResult.name}
+              </span>
+              <span className="rounded bg-accent/20 px-2 py-0.5 font-mono text-[10px] font-semibold text-accent">
+                Risk Score: {lastResult.risk_score}/100
+              </span>
+            </div>
+            <div className="flex items-center gap-3 font-mono text-xs">
+              <Link
+                to={`/runs/${lastResult.run_id}`}
+                className="font-semibold text-accent underline hover:text-accent/80"
+              >
+                Inspect Run Dossier →
+              </Link>
+              <Link to="/events" className="font-semibold text-signal underline hover:text-signal/80">
+                View in Event Stream ({lastResult.events_count} events) →
+              </Link>
+            </div>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4 font-mono text-[11px]">
+            <div className="rounded bg-bg-surface/80 p-2 border border-border-subtle">
+              <span className="text-text-faint text-[10px] uppercase">Telemetry</span>
+              <p className="font-bold text-text-primary">{lastResult.events_count} events generated</p>
+            </div>
+            <div className="rounded bg-bg-surface/80 p-2 border border-border-subtle">
+              <span className="text-text-faint text-[10px] uppercase">Detections</span>
+              <p className="font-bold text-risk-malicious">{lastResult.alerts_count} alerts triggered</p>
+            </div>
+            <div className="rounded bg-bg-surface/80 p-2 border border-border-subtle">
+              <span className="text-text-faint text-[10px] uppercase">Stages Executed</span>
+              <p className="font-bold text-text-primary">{(lastResult.stages || []).length} attack phases</p>
+            </div>
+            <div className="rounded bg-bg-surface/80 p-2 border border-border-subtle">
+              <span className="text-text-faint text-[10px] uppercase">Platform Sandbox</span>
+              <p className="font-bold text-text-primary capitalize">{lastResult.platform || "linux"}</p>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ──────────────────────────────────────────────────────────────────────── */
 // Page
 /* ──────────────────────────────────────────────────────────────────────── */
@@ -1106,7 +1274,7 @@ export default function OverviewPage() {
   const totalAlerts = runs.reduce((n, r) => n + r.alert_count, 0);
 
   return (
-    <div className="mx-auto max-w-[1400px] px-5 py-8 lg:px-8">
+    <div className="mx-auto max-w-[1400px] px-5 py-8 lg:px-8 space-y-6">
       <PageHeader
         kicker="Workspace · overview"
         title={
@@ -1136,6 +1304,7 @@ export default function OverviewPage() {
       />
 
       <WorkflowQuickstartPanel />
+      <LiveDetonationPlayground />
       <DemoBanner />
       <Deferred>
         <HostMonitorPanel />
