@@ -187,9 +187,10 @@ def test_linux_connect_halves_merged():
 class _StubRecord:
     """Minimal stand-in for a win32evtlog record."""
 
-    def __init__(self, event_id, data, ts=1721234567.0):
+    def __init__(self, event_id, data=None, ts=1721234567.0, string_inserts=None):
         self.EventID = event_id
-        self.Data = data
+        self.Data = data or []
+        self.StringInserts = string_inserts
         self.TimeGenerated = _StubTime(ts)
 
 
@@ -223,6 +224,35 @@ def test_windows_sysmon_process_create():
     assert ev["ppid"] == 4199
     assert ev["command_line"] == "cmd.exe /c whoami"
     assert ev["log_source"] == "sysmon"  # the collector stamps its own channel
+
+
+def test_windows_sysmon_string_inserts_decoding():
+    from collector_win import parse_sysmon_event
+
+    # Sysmon Event 8 (CreateRemoteThread) via StringInserts
+    inserts = ["RuleName", "2026-08-30 06:00:00.000", "{GUID}", "1000", "C:\\malware.exe", "{TARGET_GUID}", "2000", "C:\\Windows\\explorer.exe"]
+    rec = _StubRecord(8, string_inserts=inserts)
+    ev = parse_sysmon_event(rec)
+    assert ev is not None
+    assert ev["event_type"] == "remote_thread"
+    assert ev["process_name"] == "malware.exe"
+    assert ev["file_path"] == "C:\\Windows\\explorer.exe"
+
+
+def test_windows_sysmon_process_access_and_driver_load():
+    from collector_win import parse_sysmon_event
+
+    # Sysmon Event 10 (ProcessAccess)
+    rec10 = _StubRecord(10, ["Image", "C:\\tools\\mimikatz.exe", "TargetImage", "C:\\Windows\\System32\\lsass.exe", "ProcessId", "5000", "TargetProcessId", "650"])
+    ev10 = parse_sysmon_event(rec10)
+    assert ev10 is not None
+    assert ev10["event_type"] == "process_access"
+
+    # Sysmon Event 6 (DriverLoad)
+    rec6 = _StubRecord(6, ["Image", "C:\\Windows\\System32\\drivers\\rootkit.sys", "ProcessId", "4"])
+    ev6 = parse_sysmon_event(rec6)
+    assert ev6 is not None
+    assert ev6["event_type"] == "driver_load"
 
 
 def test_windows_sysmon_network_connection():
