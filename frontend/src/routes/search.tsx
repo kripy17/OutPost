@@ -168,13 +168,33 @@ function GlobalResults({
     );
   }
 
+  const exportGlobalResults = () => {
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `outpost-search-${encodeURIComponent(data.q)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="mt-8 space-y-6">
-      <p className="flex items-center gap-2 text-xs text-text-muted">
-        <Icon name="zap" size={12} className="text-signal" />
-        {totalMatches} match{totalMatches === 1 ? "" : "es"} across {groupsWithHits.length} resource
-        {groupsWithHits.length === 1 ? "" : "s"} for <span className="font-mono text-text-primary">{data.q}</span>
-      </p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="flex items-center gap-2 text-xs text-text-muted">
+          <Icon name="zap" size={12} className="text-signal" />
+          {totalMatches} match{totalMatches === 1 ? "" : "es"} across {groupsWithHits.length} resource
+          {groupsWithHits.length === 1 ? "" : "s"} for <span className="font-mono text-text-primary">{data.q}</span>
+        </p>
+        <button
+          onClick={exportGlobalResults}
+          className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-surface px-3 py-1.5 font-mono text-xs text-text-muted hover:border-accent/60 hover:text-accent"
+          title="Export search results as JSON"
+        >
+          <Icon name="download" size={12} />
+          Export JSON
+        </button>
+      </div>
 
       {quals.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5">
@@ -408,6 +428,34 @@ export default function SearchPage() {
               {(scope === "global" ? globalLoading : loading) ? "Searching…" : "Search"}
             </button>
           </form>
+
+          {scope === "global" && (
+            <div className="mt-2.5 flex flex-wrap items-center gap-1.5 font-mono text-[10px]">
+              <span className="text-text-faint">Syntax filters:</span>
+              {[
+                "type:finding",
+                "type:ioc",
+                "type:host",
+                "type:session",
+                "status:open",
+                "severity:malicious",
+                "severity:suspicious",
+              ].map((filterChip) => (
+                <button
+                  key={filterChip}
+                  type="button"
+                  onClick={() => {
+                    const nextVal = value ? `${value} ${filterChip}` : filterChip;
+                    setValue(nextVal);
+                    void runGlobalSearch(nextVal);
+                  }}
+                  className="press rounded border border-border-subtle bg-bg-surface px-2 py-0.5 text-text-muted hover:border-accent/50 hover:text-accent"
+                >
+                  +{filterChip}
+                </button>
+              ))}
+            </div>
+          )}
 
       {scope === "ioc" ? (
         <>
