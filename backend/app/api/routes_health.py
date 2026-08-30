@@ -60,9 +60,7 @@ def platform_info() -> dict:
     """
     system = _platform.system().lower()  # "windows" | "linux" | "darwin"
     os_name = "macos" if system == "darwin" else ("windows" if system == "windows" else "linux")
-    # Focus is Windows/Linux (the two shipped collectors). macOS hosts are
-    # honest: no collector ships for them yet — "unsupported", not a fake one.
-    collector = {"windows": "sysmon", "linux": "auditd", "macos": "unsupported"}[os_name]
+    collector = {"windows": "sysmon", "linux": "auditd", "macos": "endpoint_security"}[os_name]
     return {
         "os": os_name,
         "name": _platform.system(),
