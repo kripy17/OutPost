@@ -20,15 +20,15 @@ from ..services.risk import RULE_META, RULE_REMEDIATION, rule_name
 router = APIRouter(tags=["analysis"])
 
 _EVENT_TYPES = {"process_create", "network_connection", "file_write", "registry_write"}
-_PLATFORMS = {"windows", "linux"}
+_PLATFORMS = {"windows", "linux", "macos"}
 _SEVERITIES = {"suspicious", "malicious"}
 # Provenance facets for the Event Log's source tabs: `live` = host collectors
-# (auditd/Sysmon), `sandbox` = external-sandbox detonations, `webapp` =
+# (auditd/Sysmon/EndpointSecurity), `sandbox` = external-sandbox detonations, `webapp` =
 # everything else (webapp synthetic detonations, CLI runs, seeds). The
 # collectors stamp each shipped event with its exact channel (`log_source`:
-# auditd / sysmon), so `auditd` and `sysmon` split the collector stream by
-# log source — not by inference from the platform.
-_SOURCES = {"live", "webapp", "sandbox", "auditd", "sysmon"}
+# auditd / ebpf / sysmon / endpointsecurity), so `auditd`, `ebpf`, `sysmon`, and `endpointsecurity`
+# split the collector stream by log source — not by inference from the platform.
+_SOURCES = {"live", "webapp", "sandbox", "auditd", "ebpf", "sysmon", "endpointsecurity"}
 _DEFAULT_LIMIT = 100
 _MAX_LIMIT = 500
 
@@ -37,7 +37,7 @@ def _source_clause(source: str) -> tuple[str, list]:
     """WHERE fragment for a provenance facet, mirroring how runs record it:
     live sessions are forced to `source='live'` server-side; sandbox runs are
     `sandbox:<provider>`; webapp/CLI/seeds carry their own marker. The
-    channel facets (`auditd` / `sysmon`) filter on the event's own
+    channel facets (`auditd` / `ebpf` / `sysmon` / `endpointsecurity`) filter on the event's own
     log_source tag, so they work across any run type."""
     if source == "live":
         return "r.source = 'live'", []
@@ -45,8 +45,12 @@ def _source_clause(source: str) -> tuple[str, list]:
         return "r.source LIKE 'sandbox:%'", []
     if source == "auditd":
         return "e.log_source = 'auditd'", []
+    if source == "ebpf":
+        return "e.log_source = 'ebpf'", []
     if source == "sysmon":
         return "e.log_source = 'sysmon'", []
+    if source == "endpointsecurity":
+        return "e.log_source IN ('endpointsecurity', 'eslogger')", []
     return "r.source != 'live' AND r.source NOT LIKE 'sandbox:%'", []
 
 
@@ -284,8 +288,12 @@ def event_counts(
                   AS sandbox,
               SUM(CASE WHEN {type_clause} AND COALESCE(e.log_source, '') = 'auditd'
                        THEN 1 ELSE 0 END)                                               AS auditd,
+              SUM(CASE WHEN {type_clause} AND COALESCE(e.log_source, '') = 'ebpf'
+                       THEN 1 ELSE 0 END)                                               AS ebpf,
               SUM(CASE WHEN {type_clause} AND COALESCE(e.log_source, '') = 'sysmon'
                        THEN 1 ELSE 0 END)                                               AS sysmon,
+              SUM(CASE WHEN {type_clause} AND COALESCE(e.log_source, '') IN ('endpointsecurity', 'eslogger')
+                       THEN 1 ELSE 0 END)                                               AS endpointsecurity,
               SUM(CASE WHEN {type_clause} AND r.source != 'live'
                        AND r.source NOT LIKE 'sandbox:%' THEN 1 ELSE 0 END)             AS webapp
             FROM events e
@@ -310,7 +318,9 @@ def event_counts(
             "sandbox": row["sandbox"],
             "webapp": row["webapp"],
             "auditd": row["auditd"],
+            "ebpf": row["ebpf"],
             "sysmon": row["sysmon"],
+            "endpointsecurity": row["endpointsecurity"],
         },
     }
 
@@ -335,11 +345,10 @@ def event_channel_counts(
       live    — r.source = 'live'            (host collectors)
       sandbox — r.source LIKE 'sandbox:%'    (external sandboxes)
       webapp  — everything else              (webapp detonations, CLI, seeds)
-      auditd / sysmon — the event's own log_source stamp (cross-cutting: a
-                        live collector event counts in live AND its channel)
+      auditd / ebpf / sysmon / endpointsecurity — the event's own log_source stamp
 
     `total` is the grand count across all buckets (the "All sources" tab).
-    The buckets are facets, not a partition — auditd/sysmon deliberately
+    The buckets are facets, not a partition — collector channels deliberately
     overlap live, so the channel values need not sum to total."""
     _validate_event_filters(event_type, platform, severity, None)
     pids = _parse_pids(pid)
@@ -354,7 +363,9 @@ def event_channel_counts(
               SUM(CASE WHEN r.source = 'live' THEN 1 ELSE 0 END)                       AS live,
               SUM(CASE WHEN r.source LIKE 'sandbox:%' THEN 1 ELSE 0 END)               AS sandbox,
               SUM(CASE WHEN COALESCE(e.log_source, '') = 'auditd' THEN 1 ELSE 0 END)   AS auditd,
+              SUM(CASE WHEN COALESCE(e.log_source, '') = 'ebpf' THEN 1 ELSE 0 END)     AS ebpf,
               SUM(CASE WHEN COALESCE(e.log_source, '') = 'sysmon' THEN 1 ELSE 0 END)   AS sysmon,
+              SUM(CASE WHEN COALESCE(e.log_source, '') IN ('endpointsecurity', 'eslogger') THEN 1 ELSE 0 END) AS endpointsecurity,
               SUM(CASE WHEN r.source != 'live' AND r.source NOT LIKE 'sandbox:%'
                        THEN 1 ELSE 0 END)                                              AS webapp
             FROM events e
@@ -364,7 +375,7 @@ def event_channel_counts(
             params,
         ).fetchone()
 
-    channels = {k: int(row[k] or 0) for k in ("live", "auditd", "sysmon", "webapp", "sandbox")}
+    channels = {k: int(row[k] or 0) for k in ("live", "auditd", "ebpf", "sysmon", "endpointsecurity", "webapp", "sandbox")}
     return {"total": int(row["total"] or 0), "channels": channels}
 
 

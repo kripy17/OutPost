@@ -1003,7 +1003,7 @@ export interface EventFeedResponse {
   events: EventFeedEvent[];
 }
 
-export type EventSource = "live" | "webapp" | "sandbox" | "auditd" | "sysmon";
+export type EventSource = "live" | "webapp" | "sandbox" | "auditd" | "ebpf" | "sysmon" | "endpointsecurity";
 
 /** Per-channel totals for the Event Log's source-tab rail — one query for all
  *  six tabs. `total` is the grand count (the "All sources" tab); `channels`
@@ -1032,7 +1032,9 @@ export interface EventCountsResponse {
     sandbox: number;
     webapp: number;
     auditd: number;
+    ebpf: number;
     sysmon: number;
+    endpointsecurity: number;
   };
 }
 
