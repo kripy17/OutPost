@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import CoveragePage from "./coverage";
 import { Icon } from "../components/Icon";
 import { PageHeader, Panel } from "../components/ui";
@@ -888,6 +889,7 @@ function FactoryResetPanel() {
 
 
 function SigmaTranspilePanel() {
+  const [searchParams] = useSearchParams();
   const [yaml, setYaml] = useState("");
   const [result, setResult] = useState<any | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -908,8 +910,63 @@ function SigmaTranspilePanel() {
     },
   });
 
-  const loadExample = () => {
-    setYaml(`title: Suspicious PowerShell Download C2
+  // Auto-initialize when redirected from MITRE coverage gap with ?create=1&tactic=...
+  useEffect(() => {
+    const tacticParam = searchParams.get("tactic");
+    if (searchParams.get("create") === "1" && tacticParam && !yaml) {
+      const sanitized = tacticParam.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+      setYaml(`title: Custom Rule for ${tacticParam}
+id: e2b08fa1-custom-${Date.now().toString(16)}
+status: experimental
+description: Custom detection rule covering MITRE ATT&CK tactic ${tacticParam}
+level: medium
+tags:
+  - attack.${sanitized}
+detection:
+  selection:
+    CommandLine|contains:
+      - 'suspicious_command'
+  condition: selection
+`);
+    }
+  }, [searchParams]);
+
+  const loadExample = (type: "windows" | "linux" | "macos" = "windows") => {
+    if (type === "linux") {
+      setYaml(`title: Linux Base64 Pipe Execution
+id: e2b08fa1-0002-4000-8000-000000000002
+status: experimental
+description: Detects base64 decoded payloads piped directly into sh/bash
+level: high
+tags:
+  - attack.execution
+  - attack.t1059.004
+detection:
+  selection:
+    CommandLine|contains:
+      - 'base64 -d | sh'
+      - 'base64 -d | bash'
+      - 'base64 --decode | bash'
+  condition: selection
+`);
+    } else if (type === "macos") {
+      setYaml(`title: macOS LaunchDaemon Persistence
+id: e2b08fa1-0003-4000-8000-000000000003
+status: experimental
+description: Detects creation or modification of launch daemons on macOS
+level: medium
+tags:
+  - attack.persistence
+  - attack.t1543.001
+detection:
+  selection:
+    TargetFilename|startswith:
+      - '/Library/LaunchDaemons/'
+      - '/Library/LaunchAgents/'
+  condition: selection
+`);
+    } else {
+      setYaml(`title: Suspicious PowerShell Download C2
 id: e2b08fa1-1234-5678-abcd-000000000000
 status: experimental
 description: Detects PowerShell downloading and staging binary payloads
@@ -920,9 +977,15 @@ tags:
 detection:
   selection:
     Image|endswith: 'powershell.exe'
-    CommandLine|contains: 'DownloadFile'
+    CommandLine|contains:
+      - 'DownloadFile'
+      - 'DownloadString'
+      - 'IEX'
   condition: selection
 `);
+    }
+    setError(null);
+    setResult(null);
   };
 
   const handleTranspile = async () => {
@@ -1032,19 +1095,33 @@ detection:
           <p className="kicker">Sigma HQ · Community Engine</p>
           <h2 className="mt-1 text-base font-semibold text-text-primary">Import &amp; Transpile Sigma Rules</h2>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-1.5 font-mono text-[11px]">
           <button
             onClick={() => setShowCatalog(true)}
-            className="press inline-flex items-center gap-1 rounded-lg border border-accent/50 bg-accent/10 px-2.5 py-1 font-mono text-xs font-semibold text-accent hover:bg-accent/20"
+            className="press inline-flex items-center gap-1 rounded-lg border border-accent/50 bg-accent/10 px-2.5 py-1 font-semibold text-accent hover:bg-accent/20"
           >
             <Icon name="grid" size={12} />
-            <span>Browse SigmaHQ Catalog</span>
+            <span>Browse Catalog</span>
+          </button>
+          <span className="text-text-faint">|</span>
+          <span className="text-text-muted text-[10px]">Presets:</span>
+          <button
+            onClick={() => loadExample("windows")}
+            className="press rounded border border-border-subtle bg-bg-surface px-2 py-0.5 text-text-muted hover:border-accent/50 hover:text-accent"
+          >
+            Win Sysmon
           </button>
           <button
-            onClick={loadExample}
-            className="press rounded border border-border-subtle px-2.5 py-1 font-mono text-xs text-text-muted hover:text-accent"
+            onClick={() => loadExample("linux")}
+            className="press rounded border border-border-subtle bg-bg-surface px-2 py-0.5 text-text-muted hover:border-accent/50 hover:text-accent"
           >
-            Load Example
+            Linux eBPF
+          </button>
+          <button
+            onClick={() => loadExample("macos")}
+            className="press rounded border border-border-subtle bg-bg-surface px-2 py-0.5 text-text-muted hover:border-accent/50 hover:text-accent"
+          >
+            macOS ES
           </button>
         </div>
       </div>
