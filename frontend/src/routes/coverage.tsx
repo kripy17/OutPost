@@ -28,14 +28,27 @@ function NavigatorExportButton() {
 function TacticColumn({
   tactic,
   rules,
+  searchQuery = "",
   unknown = false,
 }: {
   tactic: string;
   rules: RuleMeta[];
+  searchQuery?: string;
   unknown?: boolean;
 }) {
   const isGap = rules.length === 0;
   const totalWeight = rules.reduce((n, r) => n + r.weight, 0);
+  const q = searchQuery.toLowerCase().trim();
+
+  const filteredRules = q
+    ? rules.filter(
+        (r) =>
+          r.rule_name.toLowerCase().includes(q) ||
+          r.technique.toLowerCase().includes(q) ||
+          r.rule_id.toLowerCase().includes(q),
+      )
+    : rules;
+
   return (
     <Panel
       kicker={unknown ? `${tactic} · not in canonical list` : tactic}
@@ -54,26 +67,37 @@ function TacticColumn({
       className={isGap ? "opacity-70" : ""}
     >
       {isGap ? (
-        <div className="flex min-h-[108px] flex-col gap-3">
+        <div className="flex min-h-[108px] flex-col justify-between gap-3">
           <p className="text-xs leading-relaxed text-text-muted">
             {TACTIC_BLURB[tactic] ?? "A tactic OutPost does not yet observe."}
           </p>
-          <p className="mt-auto flex items-center gap-1.5 font-mono text-[10px] text-risk-suspicious">
-            <span className="inline-block h-1.5 w-1.5 rounded-full bg-risk-suspicious/70" />
-            uncovered — candidate for the next rule
-          </p>
+          <div className="space-y-2">
+            <p className="flex items-center gap-1.5 font-mono text-[10px] text-risk-suspicious">
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-risk-suspicious/70" />
+              uncovered — candidate for the next rule
+            </p>
+            <Link
+              to={`/rules?create=1&tactic=${encodeURIComponent(tactic)}`}
+              className="press inline-flex items-center gap-1 rounded-md border border-accent/40 bg-accent/10 px-2.5 py-1 font-mono text-[10px] font-semibold text-accent hover:bg-accent/20"
+            >
+              <Icon name="plus" size={10} />
+              Author Rule for {tactic}
+            </Link>
+          </div>
         </div>
+      ) : filteredRules.length === 0 && q ? (
+        <p className="py-4 text-center font-mono text-[11px] text-text-faint">No rules match query</p>
       ) : (
         <ul className="space-y-2">
-          {rules
+          {filteredRules
             .slice()
             .sort((a, b) => b.weight - a.weight)
             .map((rule) => (
               <li key={rule.rule_id} className="group">
                 <Link
-                  to="/rules"
+                  to={`/rules?rule_id=${encodeURIComponent(rule.rule_id)}`}
                   className={`flex items-baseline gap-2 rounded-lg border bg-bg-elevated/40 px-2.5 py-2 transition-colors duration-150 ${severityTone(rule.severity)} group-hover:border-accent/50 group-hover:bg-bg-elevated/70`}
-                  title={`View detection rule details for ${rule.rule_name}`}
+                  title={`Open ${rule.rule_name} (${rule.rule_id}) in Detection Rule Workbench`}
                 >
                   <code className="shrink-0 font-mono text-[11px] font-semibold">{rule.technique}</code>
                   <span className="min-w-0 flex-1 truncate text-xs text-text-primary group-hover:text-accent" title={rule.rule_name}>
@@ -90,6 +114,7 @@ function TacticColumn({
 }
 
 export default function CoveragePage() {
+  const [searchQuery, setSearchQuery] = useState("");
   const { data = [], isLoading, isError } = useQuery({
     queryKey: ["rules-meta"],
     queryFn: getRuleMeta,
@@ -132,35 +157,48 @@ export default function CoveragePage() {
       {!isLoading && !isError && (
         <>
           {/* Summary strip — coverage at a glance, gaps called out. */}
-          <div className="mt-6 flex flex-wrap items-center gap-x-6 gap-y-2 font-mono text-[11px] text-text-faint">
-            <span>
-              <span className="font-semibold text-text-primary">{covered.length}</span> / {TACTICS.length} tactics covered
-            </span>
-            <span>
-              <span className="font-semibold text-text-primary">{data.length}</span> rules
-            </span>
-            <span>
-              <span className="font-semibold text-text-primary">{techniques}</span> techniques
-            </span>
-            {gaps.length > 0 && (
-              <span className="rounded-full border border-risk-suspicious/30 px-2 py-0.5 text-risk-suspicious">
-                {gaps.length} gap{gaps.length === 1 ? "" : "s"}: {gaps.join(" · ")}
+          <div className="mt-6 flex flex-wrap items-center justify-between gap-4 font-mono text-[11px] text-text-faint">
+            <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+              <span>
+                <span className="font-semibold text-text-primary">{covered.length}</span> / {TACTICS.length} tactics covered
               </span>
-            )}
-            <button
-              onClick={() => setGapsOnly((v) => !v)}
-              aria-pressed={gapsOnly}
-              className={`press inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 transition-colors duration-150 ${
-                gapsOnly ? "border-accent/50 bg-accent/10 text-accent" : "border-border-subtle text-text-muted hover:text-text-primary"
-              }`}
-              title={gapsOnly ? "Show every tactic, covered or not" : "Hide covered tactics — focus on the blind spots"}
-            >
-              {gapsOnly && <Icon name="eye" size={10} />}
-              gaps only
-            </button>
-            <span className="ml-auto">
+              <span>
+                <span className="font-semibold text-text-primary">{data.length}</span> rules
+              </span>
+              <span>
+                <span className="font-semibold text-text-primary">{techniques}</span> techniques
+              </span>
+              {gaps.length > 0 && (
+                <span className="rounded-full border border-risk-suspicious/30 px-2 py-0.5 text-risk-suspicious">
+                  {gaps.length} gap{gaps.length === 1 ? "" : "s"}: {gaps.join(" · ")}
+                </span>
+              )}
+              <button
+                onClick={() => setGapsOnly((v) => !v)}
+                aria-pressed={gapsOnly}
+                className={`press inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 transition-colors duration-150 ${
+                  gapsOnly ? "border-accent/50 bg-accent/10 text-accent" : "border-border-subtle text-text-muted hover:text-text-primary"
+                }`}
+                title={gapsOnly ? "Show every tactic, covered or not" : "Hide covered tactics — focus on the blind spots"}
+              >
+                {gapsOnly && <Icon name="eye" size={10} />}
+                gaps only
+              </button>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <div className="relative">
+                <Icon name="search" size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-text-faint" />
+                <input
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Filter techniques & rules…"
+                  className="w-52 rounded-lg border border-border-subtle bg-bg-surface py-1 pl-8 pr-3 font-mono text-xs text-text-primary placeholder:text-text-faint focus:border-accent/60 focus:outline-none"
+                  aria-label="Filter techniques and detection rules"
+                />
+              </div>
               <NavigatorExportButton />
-            </span>
+            </div>
           </div>
 
           {/* The matrix — one column per tactic, canonical order. In "gaps only"
@@ -176,13 +214,19 @@ export default function CoveragePage() {
           ) : (
             <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
               {(gapsOnly ? gaps : TACTICS).map((tactic) => (
-                <TacticColumn key={tactic} tactic={tactic} rules={byTactic.get(tactic) ?? []} />
+                <TacticColumn
+                  key={tactic}
+                  tactic={tactic}
+                  rules={byTactic.get(tactic) ?? []}
+                  searchQuery={searchQuery}
+                />
               ))}
               {unknownTactics.map((tactic) => (
                 <TacticColumn
                   key={tactic}
                   tactic={tactic}
                   rules={byTactic.get(tactic) ?? []}
+                  searchQuery={searchQuery}
                   unknown
                 />
               ))}
