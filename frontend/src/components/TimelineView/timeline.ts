@@ -15,6 +15,16 @@ export function eventDetail(ev: EventOut): string {
       return ev.file_path ?? "-";
     case "registry_write":
       return ev.registry_key ?? "-";
+    case "remote_thread":
+      return `Remote thread injected into ${ev.process_name || ev.file_path || "process"}`;
+    case "process_access":
+      return `Process memory access on ${ev.process_name || "target"}`;
+    case "driver_load":
+      return `Kernel driver loaded: ${ev.file_path || ev.process_name || "driver"}`;
+    case "module_load":
+      return `Module loaded: ${ev.file_path || ev.process_name || "DLL"}`;
+    case "file_delete":
+      return `File deleted: ${ev.file_path ?? "-"}`;
     default:
       return "-";
   }
@@ -26,4 +36,9 @@ export const TYPE_STYLE: Record<EventOut["event_type"], string> = {
   network_connection: "text-accent",
   file_write: "text-text-muted",
   registry_write: "text-text-muted",
+  remote_thread: "text-[#A78BFA]",
+  process_access: "text-[#F472B6]",
+  driver_load: "text-[#F87171]",
+  module_load: "text-[#60A5FA]",
+  file_delete: "text-[#FBBF24]",
 };

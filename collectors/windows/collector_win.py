@@ -32,10 +32,15 @@ CHANNEL = "Microsoft-Windows-Sysmon/Operational"
 EVENT_TYPE_MAP = {
     1: "process_create",
     3: "network_connection",
+    6: "driver_load",
+    7: "module_load",
+    8: "remote_thread",
+    10: "process_access",
     11: "file_write",
     12: "registry_write",
     13: "registry_write",
     14: "registry_write",
+    23: "file_delete",
 }
 
 

@@ -261,7 +261,7 @@ function BootstrapModal({ onClose }: { onClose: () => void }) {
               <div className="flex items-center justify-between mb-1.5">
                 <span className="font-mono text-xs font-semibold text-text-primary flex items-center gap-1.5">
                   <Icon name="terminal" size={13} className="text-accent" />
-                  Windows (PowerShell)
+                  Windows (PowerShell + SwiftOnSecurity Sysmon)
                 </span>
                 <button
                   onClick={() => copyToClipboard(data?.windows_command || "", "windows")}
@@ -277,12 +277,12 @@ function BootstrapModal({ onClose }: { onClose: () => void }) {
             </div>
 
             <div className="rounded-lg border border-border-subtle bg-bg-elevated/30 p-3 text-[11px] text-text-muted">
-              <p className="font-medium text-text-primary mb-1">What this script does:</p>
+              <p className="font-medium text-text-primary mb-1">Automated Setup Capabilities:</p>
               <ul className="list-disc list-inside space-y-0.5 text-text-faint">
-                <li>Configures backend URL to <code className="text-text-primary">{data?.server}</code></li>
-                <li>Pings collector liveness heartbeats every 60s</li>
-                <li>Streams process creation, network sockets, file writes, and registry changes</li>
-                <li>Applies network isolation &amp; process containment instructions from the console</li>
+                <li><strong className="text-text-primary">Windows:</strong> Automatically provisions Microsoft Sysmon and applies the industry-standard <strong>SwiftOnSecurity</strong> configuration profile.</li>
+                <li><strong className="text-text-primary">Linux/macOS:</strong> Hooks native <code className="text-text-primary">auditd</code> / <code className="text-text-primary">ebpf</code> kernel telemetry channels.</li>
+                <li>Pings collector liveness heartbeats every 60s and streams real-time process, network, and registry events to <code className="text-text-primary">{data?.server}</code>.</li>
+                <li>Enables active network isolation &amp; process kill containment directly from the SOC console.</li>
               </ul>
             </div>
           </div>

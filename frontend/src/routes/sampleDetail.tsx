@@ -889,9 +889,33 @@ function PeElfTable({ st }: { st: SampleStatic }) {
               imphash: {pe.imphash}
             </span>
           )}
+          {pe.authenticode && (
+            <span className={`rounded border px-2 py-0.5 font-mono text-[10px] font-bold ${
+              pe.authenticode.signed
+                ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400"
+                : "border-border-subtle bg-bg-elevated/40 text-text-faint"
+            }`}>
+              {pe.authenticode.signed ? `Authenticode Signed (${pe.authenticode.cert_size} B)` : "Unsigned Binary"}
+            </span>
+          )}
+          {pe.rich_header?.present && (
+            <span className="rounded border border-purple-500/40 bg-purple-500/10 px-2 py-0.5 font-mono text-[10px] text-purple-300" title={`XOR Key ${pe.rich_header.xor_key} · ${pe.rich_header.records_count} compiler entries`}>
+              Rich Hash: {pe.rich_header.hash.slice(0, 10)}…
+            </span>
+          )}
           <span className="font-mono text-[10px] text-text-faint">
             {pe.imports.length} import DLL{pe.imports.length === 1 ? "" : "s"}
           </span>
+        </div>
+      )}
+      {pe?.mitigations && pe.mitigations.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5 pt-1">
+          <span className="font-mono text-[10px] uppercase font-bold text-text-faint">Exploit Mitigations:</span>
+          {pe.mitigations.map((m) => (
+            <span key={m} className="rounded border border-signal/40 bg-signal/10 px-2 py-0.5 font-mono text-[10px] font-medium text-signal">
+              ✓ {m}
+            </span>
+          ))}
         </div>
       )}
       {pe && pe.sections.length > 0 && (

@@ -418,28 +418,75 @@ exec "$PY" -m collectors.common.collector_local --backend "$OUTPOST_API_URL"
 
 @router.get("/agents/install.ps1", response_class=PlainTextResponse)
 def get_agent_install_ps1(request: Request, backend_url: str = Query("")) -> Response:
-    """Generate universal 1-command Windows PowerShell collector bootstrap script."""
+    """Generate universal 1-command Windows PowerShell collector bootstrap script with SwiftOnSecurity Sysmon."""
     from ..core import auth as auth_service
 
     server = backend_url.strip() or str(request.base_url).rstrip("/")
     token = auth_service.agent_token()
-    script = f"""# OutPost Agent Universal Bootstrap Installer (Windows PowerShell)
-# Server: {server}
+    script = f"""# OutPost Windows Agent & SwiftOnSecurity Sysmon Universal Installer
+# Target Server: {server}
 $ErrorActionPreference = "Stop"
 
-Write-Host "[*] Setting up OutPost Windows Security Collector..." -ForegroundColor Cyan
+Write-Host "=================================================================" -ForegroundColor Cyan
+Write-Host "  OutPost Windows Security Collector & SwiftOnSecurity Sysmon     " -ForegroundColor White
+Write-Host "=================================================================" -ForegroundColor Cyan
+
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $isAdmin) {{
+    Write-Warning "[!] Running without elevation. For complete kernel/Sysmon event visibility, run as Administrator."
+}}
+
 $env:OUTPOST_API_URL = "{server}"
 $env:OUTPOST_AGENT_TOKEN = "{token}"
+
+$InstallDir = "$env:ProgramData\\OutPost"
+if (-not (Test-Path $InstallDir)) {{
+    New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
+}}
+
+# Check Sysmon installation
+$sysmonService = Get-Service -Name "Sysmon", "Sysmon64" -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($sysmonService -and $sysmonService.Status -eq "Running") {{
+    Write-Host "[+] Microsoft Sysmon service is active ($($sysmonService.Name))." -ForegroundColor Green
+}} else {{
+    if ($isAdmin) {{
+        Write-Host "[*] Provisioning Microsoft Sysmon with SwiftOnSecurity baseline..." -ForegroundColor Yellow
+        $SysmonZip = "$InstallDir\\Sysmon.zip"
+        $SysmonDir = "$InstallDir\\Sysmon"
+        $ConfigFile = "$InstallDir\\sysmonconfig-export.xml"
+
+        try {{
+            Invoke-WebRequest -Uri "https://download.sysinternals.com/files/Sysmon.zip" -OutFile $SysmonZip -UseBasicParsing
+            Expand-Archive -Path $SysmonZip -DestinationPath $SysmonDir -Force
+            $SysmonExe = if (Test-Path "$SysmonDir\\Sysmon64.exe") {{ "$SysmonDir\\Sysmon64.exe" }} else {{ "$SysmonDir\\Sysmon.exe" }}
+
+            Invoke-WebRequest -Uri "https://raw.githubusercontent.com/SwiftOnSecurity/sysmon-config/master/sysmonconfig-export.xml" -OutFile $ConfigFile -UseBasicParsing
+            Start-Process -FilePath $SysmonExe -ArgumentList "-accepteula -i `"$ConfigFile`"" -Wait -NoNewWindow
+            Write-Host "[+] Sysmon configured with SwiftOnSecurity profile." -ForegroundColor Green
+        }} catch {{
+            Write-Warning "[-] Sysmon auto-download encountered an error: $_"
+        }}
+    }} else {{
+        Write-Warning "[!] Sysmon not installed. Run this installer as Administrator to auto-provision SwiftOnSecurity Sysmon."
+    }}
+}}
 
 if (-not (Get-Command python -ErrorAction SilentlyContinue)) {{
     Write-Warning "[-] Python is required to run OutPost collector on Windows."
     exit 1
 }}
 
-Write-Host "[*] Launching OutPost Collector for $env:COMPUTERNAME..." -ForegroundColor Green
-python -m collectors.windows.collector_win --backend "$env:OUTPOST_API_URL"
+Write-Host "[*] Installing collector Python dependencies (requests, psutil, pywin32)..." -ForegroundColor Cyan
+try {{
+    & python -m pip install --quiet requests psutil pywin32
+}} catch {{}}
+
+Write-Host "[*] Launching OutPost Windows Collector for $env:COMPUTERNAME..." -ForegroundColor Green
+Write-Host "    Target Backend: $env:OUTPOST_API_URL" -ForegroundColor White
+python -m collectors.windows.collector_win --backend-url "$env:OUTPOST_API_URL" --mode live
 """
     return PlainTextResponse(content=script, media_type="text/plain")
+
 
 
 @router.get("/agents/bootstrap-command", response_model=None)

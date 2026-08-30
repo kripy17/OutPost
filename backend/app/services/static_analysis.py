@@ -182,6 +182,43 @@ def _rva_to_offset(sections: list[dict], rva: int) -> int | None:
     return None
 
 
+def _parse_rich_header(data: bytes, pe_offset: int) -> dict | None:
+    """Extract Microsoft Rich Header toolchain fingerprint."""
+    if pe_offset < 0x80 or len(data) < pe_offset:
+        return None
+    stub = data[0x40:pe_offset]
+    rich_idx = stub.find(b"Rich")
+    if rich_idx == -1 or rich_idx + 8 > len(stub):
+        return None
+    xor_key_bytes = stub[rich_idx + 4 : rich_idx + 8]
+    xor_key = int.from_bytes(xor_key_bytes, "little")
+    if xor_key == 0:
+        return None
+
+    decrypted = bytearray()
+    for i in range(0, rich_idx, 4):
+        chunk = stub[i : i + 4]
+        if len(chunk) == 4:
+            dw = int.from_bytes(chunk, "little") ^ xor_key
+            decrypted.extend(dw.to_bytes(4, "little"))
+
+    dans_pos = decrypted.find(b"DanS")
+    if dans_pos == -1:
+        dans_pos = decrypted.find(b"danS")
+
+    if dans_pos != -1:
+        rich_data = decrypted[dans_pos:]
+        rich_hash = hashlib.md5(rich_data).hexdigest()
+        records_count = (len(rich_data) - 16) // 8 if len(rich_data) >= 16 else 0
+        return {
+            "present": True,
+            "hash": rich_hash,
+            "xor_key": f"0x{xor_key:08X}",
+            "records_count": max(0, records_count),
+        }
+    return None
+
+
 def parse_pe(data: bytes) -> dict | None:
     """Parse a PE (MZ…) into machine / sections / imports metadata.
 
@@ -205,6 +242,35 @@ def parse_pe(data: bytes) -> dict | None:
     entry_rva = None
     if bits and opt_off + 24 <= len(data):
         entry_rva = int.from_bytes(data[opt_off + 16 : opt_off + 20], "little")
+
+    mitigations: list[str] = []
+    if bits and opt_off + 72 <= len(data):
+        dll_chars = int.from_bytes(data[opt_off + 70 : opt_off + 72], "little")
+        if dll_chars & 0x0040:
+            mitigations.append("ASLR (Dynamic Base)")
+        if dll_chars & 0x0020:
+            mitigations.append("High Entropy 64-bit ASLR")
+        if dll_chars & 0x0100:
+            mitigations.append("DEP / NX Compat")
+        if dll_chars & 0x4000:
+            mitigations.append("Control Flow Guard (CFG)")
+        if dll_chars & 0x0400:
+            mitigations.append("No SEH")
+
+    authenticode = {"signed": False, "cert_size": 0}
+    if bits:
+        cert_dd_off = opt_off + (144 if bits == 64 else 128)
+        if cert_dd_off + 8 <= len(data):
+            cert_rva = int.from_bytes(data[cert_dd_off : cert_dd_off + 4], "little")
+            cert_size = int.from_bytes(data[cert_dd_off + 4 : cert_dd_off + 8], "little")
+            if cert_size > 0 and cert_rva > 0:
+                authenticode = {
+                    "signed": True,
+                    "cert_size": cert_size,
+                    "cert_offset": cert_rva,
+                }
+
+    rich_header = _parse_rich_header(data, pe_off)
 
     sections: list[dict] = []
     sect_off = opt_off + opt_size
@@ -264,7 +330,11 @@ def parse_pe(data: bytes) -> dict | None:
         "sections": sections,
         "imports": imports,
         "imphash": compute_imphash(imports),
+        "mitigations": mitigations,
+        "authenticode": authenticode,
+        "rich_header": rich_header,
     }
+
 
 
 # ---------------------------------------------------------------------------

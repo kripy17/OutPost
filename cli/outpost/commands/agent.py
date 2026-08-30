@@ -586,3 +586,30 @@ def unisolate(
     except Exception as exc:
         console.print(f"[red]Failed to un-isolate host {host_id}: {exc}[/red]")
         raise typer.Exit(1)
+
+
+@app.command("setup")
+def setup(
+    platform_name: str = typer.Option(None, "--platform", "-p", help="windows | linux | macos"),
+    backend_url: str = typer.Option(None, "--backend-url", "-b", help="OutPost backend URL"),
+) -> None:
+    """Guided agent & Sysmon / auditd setup generator for Windows, Linux, and macOS."""
+    target_plat = (platform_name or monitor.detect_platform()).lower()
+    url = backend_url or _backend_url()
+
+    console.print(f"[bold #3B82F6]OutPost Sensor Setup Guide[/bold #3B82F6] — [bold white]{target_plat.upper()}[/bold white]\n")
+    if target_plat == "windows":
+        console.print("[bold yellow]Windows SwiftOnSecurity Sysmon & Sensor Deployment:[/bold yellow]")
+        console.print("1. Open an elevated PowerShell session (Run as Administrator).")
+        console.print("2. Run the automated 1-click bootstrap:")
+        console.print(f"   [bold green]irm {url}/api/agents/install.ps1 | iex[/bold green]")
+        console.print("3. Or run the local installer directly:")
+        console.print(f"   [bold green]powershell -ExecutionPolicy Bypass -File collectors/windows/Install-OutPostAgent.ps1 -BackendUrl \"{url}\"[/bold green]")
+        console.print("\n[dim]This automatically provisions Sysmon, applies SwiftOnSecurity sysmonconfig-export.xml, and starts telemetry streaming.[/dim]")
+    else:
+        console.print(f"[bold yellow]{target_plat.capitalize()} Sensor Deployment:[/bold yellow]")
+        console.print(f"1. Run 1-click installer:")
+        console.print(f"   [bold green]curl -sSL {url}/api/agents/install.sh | sudo bash[/bold green]")
+        console.print(f"2. Or run live sensor locally:")
+        console.print(f"   [bold green]python collectors/{target_plat}/collector_{target_plat}.py --backend-url \"{url}\" --mode live[/bold green]")
+

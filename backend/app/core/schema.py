@@ -13,7 +13,17 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 Platform = Literal["windows", "linux", "macos"]
-EventType = Literal["process_create", "network_connection", "file_write", "registry_write"]
+EventType = Literal[
+    "process_create",
+    "network_connection",
+    "file_write",
+    "registry_write",
+    "remote_thread",
+    "process_access",
+    "driver_load",
+    "module_load",
+    "file_delete",
+]
 SessionType = Literal["live", "analysis"]
 Severity = Literal["suspicious", "malicious"]
 Reputation = Literal["clean", "suspicious", "malicious", "unknown"]

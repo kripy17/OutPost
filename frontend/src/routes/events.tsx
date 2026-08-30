@@ -501,6 +501,7 @@ export default function EventsPage() {
   const [selected, setSelected] = useState<EventFeedEvent | null>(null);
   const [live, setLive] = useState(true);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [scopePlatform, setScopePlatform] = useState<"all" | "windows" | "linux">("all");
   // The Event Log displays all active telemetry sources by default with
   // distinct provenance badges (Live Host, Simulation, Sandbox Detonation).
   const [showSynthetic, setShowSynthetic] = useState(() => {
@@ -1358,7 +1359,7 @@ export default function EventsPage() {
                     platform={platform}
                     q={submittedQ}
                     pids={submittedPids}
-                    count={countsQuery.data ? countsQuery.data.types[c.type === "" ? "all" : c.type] : undefined}
+                    count={countsQuery.data ? (countsQuery.data.types as Record<string, number>)[c.type === "" ? "all" : c.type] : undefined}
                   />
                 </button>
               </li>
@@ -1585,17 +1586,61 @@ export default function EventsPage() {
             </div>
 
             {/* Quick query filter pills for rapid forensic scoping */}
-            <div className="flex flex-wrap items-center gap-1.5 pt-1">
-              <span className="font-mono text-[10px] uppercase tracking-wide text-text-faint">Quick Scopes:</span>
-              {[
-                { label: "user:root", q: "user:root" },
-                { label: "dev:mic", q: "dev:mic" },
-                { label: "state:deleted", q: "state:deleted" },
-                { label: "memfd", q: "memfd" },
-                { label: "cmd:curl", q: "curl" },
-                { label: "port :443", q: ":443" },
-                { label: "/etc/shadow", q: "/etc/shadow" },
-              ].map((pill) => (
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <div className="flex items-center rounded-lg border border-border-subtle bg-bg-surface p-0.5 font-mono text-[10px]">
+                <button
+                  type="button"
+                  onClick={() => setScopePlatform("all")}
+                  className={`rounded px-1.5 py-0.5 transition ${scopePlatform === "all" ? "bg-accent/20 font-bold text-accent" : "text-text-muted hover:text-text-primary"}`}
+                >
+                  All Fleet
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setScopePlatform("windows")}
+                  className={`rounded px-1.5 py-0.5 transition ${scopePlatform === "windows" ? "bg-accent/20 font-bold text-accent" : "text-text-muted hover:text-text-primary"}`}
+                >
+                  Windows
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setScopePlatform("linux")}
+                  className={`rounded px-1.5 py-0.5 transition ${scopePlatform === "linux" ? "bg-accent/20 font-bold text-accent" : "text-text-muted hover:text-text-primary"}`}
+                >
+                  Linux
+                </button>
+              </div>
+
+              {(scopePlatform === "windows"
+                ? [
+                    { label: "user:SYSTEM", q: "user:SYSTEM" },
+                    { label: "powershell", q: "powershell" },
+                    { label: "vssadmin", q: "vssadmin" },
+                    { label: "certutil", q: "certutil" },
+                    { label: "reg:Run", q: "CurrentVersion\\Run" },
+                    { label: "event:sysmon", q: "sysmon" },
+                    { label: "lsass", q: "lsass" },
+                  ]
+                : scopePlatform === "linux"
+                ? [
+                    { label: "user:root", q: "user:root" },
+                    { label: "dev:mic", q: "dev:mic" },
+                    { label: "state:deleted", q: "state:deleted" },
+                    { label: "memfd", q: "memfd" },
+                    { label: "cmd:curl", q: "curl" },
+                    { label: "port :443", q: ":443" },
+                    { label: "/etc/shadow", q: "/etc/shadow" },
+                  ]
+                : [
+                    { label: "port :443", q: ":443" },
+                    { label: "user:root", q: "user:root" },
+                    { label: "user:SYSTEM", q: "user:SYSTEM" },
+                    { label: "powershell", q: "powershell" },
+                    { label: "cmd:curl", q: "curl" },
+                    { label: "mimikatz", q: "mimikatz" },
+                    { label: "c2-beacon", q: "beacon" },
+                  ]
+              ).map((pill) => (
                 <button
                   key={pill.label}
                   type="button"
