@@ -23,6 +23,8 @@ export default function WatchlistPage() {
   const [error, setError] = useState<string | null>(null);
   const [importMsg, setImportMsg] = useState<string | null>(null);
   const [inspectIp, setInspectIp] = useState<string | null>(null);
+  const [filterType, setFilterType] = useState<"all" | "ip" | "domain" | "hash">("all");
+  const [filterSearch, setFilterSearch] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
   const add = async (e: React.FormEvent) => {
@@ -139,24 +141,72 @@ export default function WatchlistPage() {
         {importMsg && <span className="inline-flex items-center gap-1 text-xs text-risk-clean"><Icon name="check" size={11} />{importMsg}</span>}
       </div>
 
-      <div className="mt-8 space-y-2">
+      {entries.length > 0 && (
+        <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-border-subtle/50 pt-4">
+          <div className="flex items-center gap-1 font-mono text-[11px]">
+            {(
+              [
+                { id: "all", label: "All" },
+                { id: "ip", label: "IPs" },
+                { id: "domain", label: "Domains" },
+                { id: "hash", label: "Hashes" },
+              ] as const
+            ).map((chip) => (
+              <button
+                key={chip.id}
+                onClick={() => setFilterType(chip.id)}
+                className={`rounded-lg border px-2.5 py-1 transition-all ${
+                  filterType === chip.id
+                    ? "border-accent/60 bg-accent/15 font-semibold text-accent"
+                    : "border-border-subtle text-text-muted hover:border-accent/40"
+                }`}
+              >
+                {chip.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="relative w-48">
+            <Icon name="search" size={12} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-text-faint" />
+            <input
+              type="text"
+              value={filterSearch}
+              onChange={(e) => setFilterSearch(e.target.value)}
+              placeholder="Filter watchlist…"
+              className="w-full rounded-lg border border-border-subtle bg-bg-surface py-1 pl-7 pr-2 font-mono text-[11px] text-text-primary placeholder:text-text-faint focus:border-accent/60 focus:outline-none"
+            />
+          </div>
+        </div>
+      )}
+
+      <div className="mt-4 space-y-2">
         {entries.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-border-strong bg-bg-surface/40 p-12 text-center">
             <Icon name="star" size={26} className="mx-auto text-text-faint" />
             <p className="mt-3 text-sm text-text-muted">Watchlist is empty — add an IP you're tracking.</p>
           </div>
         ) : (
-          entries.map((e) => {
-            const t = typeOf(e.value);
-            return (
-              <div
-                key={e.value}
-                className="group flex flex-wrap items-center gap-3 rounded-xl border border-border-subtle bg-bg-surface px-4 py-2.5 transition-colors duration-150 hover:border-accent/30"
-              >
-                <Icon name="star" size={13} className="shrink-0 text-accent" />
-                <span className={`shrink-0 rounded border px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wide ${t.cls}`}>
-                  {t.label}
-                </span>
+          entries
+            .filter((e) => {
+              const t = typeOf(e.value);
+              if (filterType !== "all" && t.label !== filterType) return false;
+              if (filterSearch) {
+                const s = filterSearch.toLowerCase();
+                return e.value.toLowerCase().includes(s) || (e.label && e.label.toLowerCase().includes(s));
+              }
+              return true;
+            })
+            .map((e) => {
+              const t = typeOf(e.value);
+              return (
+                <div
+                  key={e.value}
+                  className="group flex flex-wrap items-center gap-3 rounded-xl border border-border-subtle bg-bg-surface px-4 py-2.5 transition-colors duration-150 hover:border-accent/30"
+                >
+                  <Icon name="star" size={13} className="shrink-0 text-accent" />
+                  <span className={`shrink-0 rounded border px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wide ${t.cls}`}>
+                    {t.label}
+                  </span>
                 <code className="min-w-0 truncate font-mono text-xs text-text-primary">{e.value}</code>
                 {e.label && <span className="truncate text-xs text-text-muted">— {e.label}</span>}
                 <div className="ml-auto flex shrink-0 items-center gap-2">
