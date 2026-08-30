@@ -285,8 +285,257 @@ def generate_detection_suite(
 
 
 # ---------------------------------------------------------------------------
-# Sigma Transpiler — converts Sigma YAML into OutPost heuristic rule definitions
+# SigmaHQ Transpiler & Community Rule Library
 # ---------------------------------------------------------------------------
+
+
+COMMUNITY_SIGMA_RULES = [
+    {
+        "id": "sigma-win-powershell-download-cradle",
+        "title": "Suspicious PowerShell Download Cradle",
+        "platform": "windows",
+        "level": "high",
+        "severity": "malicious",
+        "mitre_tactics": ["execution", "command-and-control"],
+        "mitre_techniques": ["T1059.001", "T1105"],
+        "description": "Detects suspicious PowerShell execution with web download cradles (DownloadString, WebClient, Invoke-WebRequest) designed to download and execute in-memory payloads.",
+        "sigma_yaml": """title: Suspicious PowerShell Download Cradle
+id: 3d304ab1-633a-442a-a92c-e36214ec042e
+status: stable
+description: Detects suspicious PowerShell download cradles attempting to execute remote code.
+references:
+    - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_powershell_download_cradles.yml
+author: Florian Roth, SigmaHQ
+date: 2022-03-15
+tags:
+    - attack.execution
+    - attack.t1059.001
+    - attack.command_and_control
+    - attack.t1105
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Image|endswith:
+            - '\\powershell.exe'
+            - '\\pwsh.exe'
+        CommandLine|contains:
+            - 'DownloadString'
+            - 'DownloadFile'
+            - 'Net.WebClient'
+            - 'Invoke-WebRequest'
+            - 'IEX((New-Object'
+            - 'irm '
+    condition: selection
+level: high
+""",
+    },
+    {
+        "id": "sigma-win-certutil-download",
+        "title": "Certutil Remote Artifact Download",
+        "platform": "windows",
+        "level": "high",
+        "severity": "malicious",
+        "mitre_tactics": ["defense-evasion", "command-and-control"],
+        "mitre_techniques": ["T1105", "T1140"],
+        "description": "Detects use of certutil.exe to download files or decode base64 payloads from remote URLs (LOLBAS T1105).",
+        "sigma_yaml": """title: Certutil Remote Artifact Download
+id: e011a79f-879a-4c29-ba80-77a82c4be3e6
+status: stable
+description: Detects execution of certutil with urlcache parameter to download remote files.
+author: Florian Roth, SigmaHQ
+tags:
+    - attack.defense_evasion
+    - attack.t1140
+    - attack.command_and_control
+    - attack.t1105
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Image|endswith:
+            - '\\certutil.exe'
+        CommandLine|contains:
+            - '-urlcache'
+            - '/urlcache'
+            - '-split'
+            - '/split'
+    condition: selection
+level: high
+""",
+    },
+    {
+        "id": "sigma-win-vssadmin-shadow-delete",
+        "title": "Volume Shadow Copy Deletion (Ransomware Inhibit Recovery)",
+        "platform": "windows",
+        "level": "critical",
+        "severity": "malicious",
+        "mitre_tactics": ["impact"],
+        "mitre_techniques": ["T1490"],
+        "description": "Detects deletion of volume shadow copies via vssadmin or wmic, a common precursor to ransomware encryption.",
+        "sigma_yaml": """title: Volume Shadow Copy Deletion
+id: c947e116-0914-4c4c-9548-5256e22f254b
+status: stable
+description: Detects volume shadow copies deletion to inhibit system recovery.
+author: Michael Haag, SigmaHQ
+tags:
+    - attack.impact
+    - attack.t1490
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        CommandLine|contains:
+            - 'delete shadows'
+            - 'resize shadowstorage'
+            - 'shadowcopy delete'
+    condition: selection
+level: critical
+""",
+    },
+    {
+        "id": "sigma-win-mimikatz-commands",
+        "title": "Mimikatz LSASS Credential Dump Commands",
+        "platform": "windows",
+        "level": "critical",
+        "severity": "malicious",
+        "mitre_tactics": ["credential-access"],
+        "mitre_techniques": ["T1003.001"],
+        "description": "Detects command-line arguments indicative of Mimikatz execution targeting LSASS and SAM credential extraction.",
+        "sigma_yaml": """title: Mimikatz LSASS Credential Dump Commands
+id: 0e86b052-a0f1-4347-81ef-24908a8d11c7
+status: stable
+description: Detects command-line parameters used by Mimikatz modules.
+author: Florian Roth, SigmaHQ
+tags:
+    - attack.credential_access
+    - attack.t1003.001
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        CommandLine|contains:
+            - 'sekurlsa::logonpasswords'
+            - 'sekurlsa::wdigest'
+            - 'lsadump::sam'
+            - 'lsadump::secrets'
+            - 'privilege::debug'
+            - 'crypto::certificates'
+    condition: selection
+level: critical
+""",
+    },
+    {
+        "id": "sigma-win-mshta-execution",
+        "title": "MSHTA Proxy Scriptlet Execution",
+        "platform": "windows",
+        "level": "high",
+        "severity": "malicious",
+        "mitre_tactics": ["defense-evasion"],
+        "mitre_techniques": ["T1218.005"],
+        "description": "Detects mshta.exe executing inline JavaScript/VBScript or remote HTML applications.",
+        "sigma_yaml": """title: MSHTA Proxy Scriptlet Execution
+id: 67f113ec-232d-4340-9045-d529e307c503
+status: stable
+description: Detects mshta executing inline scriptlets or remote URLs.
+author: Diego Perez, SigmaHQ
+tags:
+    - attack.defense_evasion
+    - attack.t1218.005
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Image|endswith:
+            - '\\mshta.exe'
+        CommandLine|contains:
+            - 'javascript:'
+            - 'vbscript:'
+            - 'about:'
+            - 'http://'
+            - 'https://'
+    condition: selection
+level: high
+""",
+    },
+    {
+        "id": "sigma-lnx-susp-curl-pipe-bash",
+        "title": "Suspicious Remote Script Pipe to Shell",
+        "platform": "linux",
+        "level": "high",
+        "severity": "malicious",
+        "mitre_tactics": ["execution", "command-and-control"],
+        "mitre_techniques": ["T1059.004", "T1105"],
+        "description": "Detects remote shell download pipelines such as curl/wget piped directly into bash or sh.",
+        "sigma_yaml": """title: Suspicious Remote Script Pipe to Shell
+id: 79be7526-7ee6-4e50-b08e-c9069dfd0f7a
+status: stable
+description: Detects execution of scripts directly piped from curl/wget into shell interpreters.
+author: OutPost Community, SigmaHQ
+tags:
+    - attack.execution
+    - attack.t1059.004
+    - attack.command_and_control
+    - attack.t1105
+logsource:
+    category: process_creation
+    product: linux
+detection:
+    selection:
+        CommandLine|contains:
+            - 'curl | bash'
+            - 'curl | sh'
+            - 'wget -O- | bash'
+            - 'wget -qO- | sh'
+            - 'curl -sSL | python'
+    condition: selection
+level: high
+""",
+    },
+    {
+        "id": "sigma-macos-osascript-user-prompt",
+        "title": "AppleScript / OSAScript Fake Credential Prompt",
+        "platform": "macos",
+        "level": "high",
+        "severity": "malicious",
+        "mitre_tactics": ["credential-access"],
+        "mitre_techniques": ["T1056.002"],
+        "description": "Detects osascript prompting users for administrative credentials via hidden-answer GUI dialogs.",
+        "sigma_yaml": """title: AppleScript Fake Credential Prompt
+id: 4831d1d8-3011-482a-a92c-f9e4299b8288
+status: stable
+description: Detects osascript executing password capture dialog prompts on macOS.
+author: OutPost Community, SigmaHQ
+tags:
+    - attack.credential_access
+    - attack.t1056.002
+logsource:
+    category: process_creation
+    product: macos
+detection:
+    selection:
+        Image|endswith:
+            - '/osascript'
+        CommandLine|contains:
+            - 'display dialog'
+            - 'with hidden answer'
+            - 'default answer'
+            - 'Administrator Password'
+    condition: selection
+level: high
+""",
+    },
+]
+
+
+def get_community_sigma_rules() -> list[dict[str, Any]]:
+    """Return the curated SigmaHQ community detection rules library."""
+    return list(COMMUNITY_SIGMA_RULES)
 
 
 def transpile_sigma_yaml(yaml_str: str) -> dict[str, Any]:
@@ -294,69 +543,91 @@ def transpile_sigma_yaml(yaml_str: str) -> dict[str, Any]:
     if not yaml_str or not yaml_str.strip():
         raise ValueError("Empty Sigma rule string")
 
-    title_match = re.search(r"^title:\s*(.+)$", yaml_str, re.MULTILINE)
-    desc_match = re.search(r"^description:\s*(.+)$", yaml_str, re.MULTILINE)
-    level_match = re.search(r"^level:\s*(.+)$", yaml_str, re.MULTILINE)
-    status_match = re.search(r"^status:\s*(.+)$", yaml_str, re.MULTILINE)
-    id_match = re.search(r"^id:\s*(.+)$", yaml_str, re.MULTILINE)
+    import yaml
 
-    title = title_match.group(1).strip().strip("'\"") if title_match else "Imported Sigma Rule"
-    description = desc_match.group(1).strip().strip("'\"") if desc_match else "Transpiled from Sigma specification"
-    level = level_match.group(1).strip().strip("'\"").lower() if level_match else "medium"
-    status = status_match.group(1).strip().strip("'\"") if status_match else "experimental"
-    sigma_id = id_match.group(1).strip().strip("'\"") if id_match else uuid.uuid4().hex[:8]
+    try:
+        data = yaml.safe_load(yaml_str)
+    except Exception as e:
+        raise ValueError(f"Invalid Sigma YAML: {e}")
+
+    if not isinstance(data, dict):
+        raise ValueError("Sigma document must be a YAML mapping")
+
+    title = str(data.get("title") or "Imported Sigma Rule").strip()
+    description = str(data.get("description") or "Transpiled from Sigma specification").strip()
+    level = str(data.get("level") or "medium").strip().lower()
+    status = str(data.get("status") or "experimental").strip()
+    sigma_id = str(data.get("id") or uuid.uuid4().hex[:8]).strip()
+    logsource = data.get("logsource") or {}
+    product = str(logsource.get("product") or "all").lower()
 
     # Severity mapping
     severity = "malicious" if level in ("critical", "high") else "suspicious"
 
     # Extract tags (MITRE ATT&CK)
-    tags = re.findall(r"-\s*attack\.([a-zA-Z0-9_\-\.]+)", yaml_str)
-    mitre_techniques = [t.upper() for t in tags if t.startswith("t")]
-    mitre_tactics = [t.replace("_", "-") for t in tags if not t.startswith("t")]
+    raw_tags = data.get("tags") or []
+    if isinstance(raw_tags, str):
+        raw_tags = [raw_tags]
+    mitre_techniques: list[str] = []
+    mitre_tactics: list[str] = []
+    for tag in raw_tags:
+        t_str = str(tag).strip()
+        if t_str.startswith("attack."):
+            val = t_str[7:].strip()
+            if val.lower().startswith("t"):
+                mitre_techniques.append(val.upper())
+            else:
+                mitre_tactics.append(val.replace("_", "-"))
 
-    # Parse selection fields
+    # Parse detection definitions
+    detection_def = data.get("detection") or {}
     criteria: list[dict[str, Any]] = []
-    for line in yaml_str.splitlines():
-        line = line.strip()
-        if ":" not in line or line.startswith(("#", "title", "description", "status", "level", "id", "logsource", "detection", "tags", "condition", "author", "date")):
-            continue
-        key, _, val = line.partition(":")
-        key = key.strip()
-        val = val.strip().strip("'\"")
-        if not key or not val or val.startswith(("-", "{", "[")):
-            continue
 
-        target_field = "command_line"
+    def _normalize_field(raw_k: str) -> tuple[str, str]:
+        target = "command_line"
         modifier = "contains"
-        if "|" in key:
-            raw_field, mod = key.split("|", 1)
-            raw_field = raw_field.strip()
+        if "|" in raw_k:
+            rf, mod = raw_k.split("|", 1)
+            raw_field = rf.strip()
             modifier = mod.strip().lower()
         else:
-            raw_field = key
+            raw_field = raw_k.strip()
 
-        field_lower = raw_field.lower()
-        if "image" in field_lower and "parent" not in field_lower:
-            target_field = "process_name"
-        elif "parentimage" in field_lower or "parent" in field_lower:
-            target_field = "parent_name"
-        elif "commandline" in field_lower or "cmd" in field_lower:
-            target_field = "command_line"
-        elif "targetobject" in field_lower or "registry" in field_lower:
-            target_field = "registry_key"
-        elif "targetfilename" in field_lower or "file" in field_lower:
-            target_field = "file_path"
-        elif "destinationip" in field_lower or "dest_ip" in field_lower or "dst_ip" in field_lower:
-            target_field = "dest_ip"
-        elif "destinationport" in field_lower or "dest_port" in field_lower or "dst_port" in field_lower:
-            target_field = "dest_port"
+        fl = raw_field.lower()
+        if "image" in fl and "parent" not in fl:
+            target = "process_name"
+        elif "parentimage" in fl or "parent" in fl:
+            target = "parent_name"
+        elif "commandline" in fl or "cmd" in fl:
+            target = "command_line"
+        elif "targetobject" in fl or "registry" in fl:
+            target = "registry_key"
+        elif "targetfilename" in fl or "file" in fl:
+            target = "file_path"
+        elif "destinationip" in fl or "dest_ip" in fl or "dst_ip" in fl:
+            target = "dest_ip"
+        elif "destinationport" in fl or "dest_port" in fl or "dst_port" in fl:
+            target = "dest_port"
 
-        criteria.append({
-            "original_field": raw_field,
-            "target_field": target_field,
-            "modifier": modifier,
-            "value": val,
-        })
+        return target, modifier
+
+    for sel_name, sel_content in detection_def.items():
+        if sel_name == "condition" or not isinstance(sel_content, dict):
+            continue
+        for field_key, field_val in sel_content.items():
+            target_f, mod = _normalize_field(str(field_key))
+            values = field_val if isinstance(field_val, list) else [field_val]
+            str_vals = [str(v).strip() for v in values if v is not None]
+            if not str_vals:
+                continue
+            criteria.append({
+                "section": sel_name,
+                "original_field": str(field_key),
+                "target_field": target_f,
+                "modifier": mod,
+                "values": str_vals,
+                "value": str_vals[0] if len(str_vals) == 1 else str_vals,
+            })
 
     rule_id = f"sigma-{re.sub(r'[^a-zA-Z0-9]', '-', title.lower())[:32].strip('-')}"
 
@@ -365,6 +636,7 @@ def transpile_sigma_yaml(yaml_str: str) -> dict[str, Any]:
         "sigma_id": sigma_id,
         "title": title,
         "description": description,
+        "platform": product,
         "level": level,
         "severity": severity,
         "status": status,
@@ -372,5 +644,7 @@ def transpile_sigma_yaml(yaml_str: str) -> dict[str, Any]:
         "mitre_techniques": mitre_techniques or ["T1059"],
         "criteria": criteria,
         "transpiled_filter_count": len(criteria),
+        "condition": str(detection_def.get("condition") or "selection"),
         "source": "sigma_import",
     }
+

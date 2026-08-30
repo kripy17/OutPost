@@ -7,6 +7,8 @@ set -euo pipefail
 BACKEND_URL="${1:-http://127.0.0.1:8000}"
 AGENT_TOKEN="${OUTPOST_AGENT_TOKEN:-}"
 
+AUTO_CONFIRM="${AUTO_CONFIRM:-0}"
+
 # Parse optional CLI flags
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -17,6 +19,10 @@ while [[ $# -gt 0 ]]; do
         --agent-token)
             AGENT_TOKEN="$2"
             shift 2
+            ;;
+        -y|--yes|-non-interactive|--non-interactive)
+            AUTO_CONFIRM=1
+            shift
             ;;
         *)
             shift

@@ -25,6 +25,8 @@ import {
   testYaraRule,
   transpileSigmaRule,
   backtestRule,
+  getCommunitySigmaRules,
+  importSigmaRule,
 } from "../lib/api";
 import { clearEnumDrafts, clearLogDrafts, clearYaraDraft, readEnumDrafts, readLogDrafts, readYaraDraft, writeEnumDrafts, writeLogDrafts, writeYaraDraft } from "./rulesDrafts";
 import type { CustomYaraRule, EnumPatternRow, FpDayPoint, LogPatternKind, RuleBacktestResult, RuleFpEntry, RulePack, TuningKnob, YaraTestResponse } from "../types";
@@ -890,6 +892,21 @@ function SigmaTranspilePanel() {
   const [result, setResult] = useState<any | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [imported, setImported] = useState(false);
+  const [showCatalog, setShowCatalog] = useState(false);
+
+  const { data: communityRules } = useQuery({
+    queryKey: ["sigma-community"],
+    queryFn: getCommunitySigmaRules,
+  });
+
+  const importMutation = useMutation({
+    mutationFn: (ruleYaml: string) => importSigmaRule(ruleYaml, true),
+    onSuccess: () => {
+      setImported(true);
+      setTimeout(() => setImported(false), 3000);
+    },
+  });
 
   const loadExample = () => {
     setYaml(`title: Suspicious PowerShell Download C2
@@ -923,19 +940,113 @@ detection:
     }
   };
 
+  const handleSelectCommunityRule = (r: any) => {
+    setYaml(r.sigma_yaml);
+    setShowCatalog(false);
+    setError(null);
+    setResult(null);
+  };
+
   return (
     <div className="mt-8">
+      {showCatalog && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in"
+          onClick={() => setShowCatalog(false)}
+        >
+          <div
+            className="w-full max-w-2xl max-h-[85vh] flex flex-col rounded-2xl border border-border-subtle bg-bg-surface p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-border-subtle pb-3 mb-4">
+              <div className="flex items-center gap-2">
+                <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-accent/40 bg-accent/15 text-accent font-mono text-xs font-bold">
+                  🛡️
+                </span>
+                <div>
+                  <h3 className="font-mono text-sm font-bold text-text-primary">SigmaHQ Community Rule Catalog</h3>
+                  <p className="text-xs text-text-muted">Curated high-fidelity rules covering Windows, Linux, and macOS</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowCatalog(false)}
+                className="text-text-muted hover:text-text-primary text-sm font-mono"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto space-y-3 pr-1">
+              {(communityRules ?? []).map((r) => (
+                <div
+                  key={r.id}
+                  className="rounded-xl border border-border-subtle bg-bg-base/50 p-4 transition hover:border-accent/50 hover:bg-bg-elevated/40"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-mono text-xs font-bold text-text-primary">{r.title}</span>
+                    <div className="flex items-center gap-1.5 font-mono text-[10px]">
+                      <span className="rounded border border-border-subtle bg-bg-surface px-1.5 py-0.5 text-text-muted uppercase">
+                        {r.platform}
+                      </span>
+                      <span className="rounded bg-risk-malicious/15 px-1.5 py-0.5 text-risk-malicious font-bold uppercase">
+                        {r.level}
+                      </span>
+                    </div>
+                  </div>
+                  <p className="mt-1 text-xs text-text-muted leading-relaxed">{r.description}</p>
+                  <div className="mt-3 flex items-center justify-between">
+                    <div className="flex flex-wrap gap-1 font-mono text-[10px] text-text-faint">
+                      {r.mitre_techniques.map((t) => (
+                        <span key={t} className="rounded bg-accent/10 px-1.5 py-0.5 text-accent">
+                          {t}
+                        </span>
+                      ))}
+                    </div>
+                    <button
+                      onClick={() => handleSelectCommunityRule(r)}
+                      className="press rounded-lg border border-accent/60 bg-accent/10 px-3 py-1 font-mono text-xs font-semibold text-accent hover:bg-accent/20"
+                    >
+                      Load into Editor →
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-4 pt-3 border-t border-border-subtle flex justify-end">
+              <button
+                onClick={() => setShowCatalog(false)}
+                className="press rounded-lg border border-border-subtle px-4 py-1.5 font-mono text-xs text-text-muted hover:text-text-primary"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="mb-2 flex items-center justify-between">
         <div>
-          <p className="kicker">Sigma HQ · Transpiler</p>
+          <p className="kicker">Sigma HQ · Community Engine</p>
           <h2 className="mt-1 text-base font-semibold text-text-primary">Import &amp; Transpile Sigma Rules</h2>
         </div>
-        <button
-          onClick={loadExample}
-          className="press rounded border border-border-subtle px-2.5 py-1 font-mono text-xs text-text-muted hover:text-accent"
-        >
-          Load Example
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowCatalog(true)}
+            className="press inline-flex items-center gap-1 rounded-lg border border-accent/50 bg-accent/10 px-2.5 py-1 font-mono text-xs font-semibold text-accent hover:bg-accent/20"
+          >
+            <Icon name="grid" size={12} />
+            <span>Browse SigmaHQ Catalog</span>
+          </button>
+          <button
+            onClick={loadExample}
+            className="press rounded border border-border-subtle px-2.5 py-1 font-mono text-xs text-text-muted hover:text-accent"
+          >
+            Load Example
+          </button>
+        </div>
       </div>
       <Panel title="Sigma YAML to OutPost Detection Filter">
         <textarea
@@ -946,14 +1057,26 @@ detection:
           className="w-full rounded-lg border border-border-subtle bg-bg-base p-3 font-mono text-xs text-text-primary focus:border-accent/60 focus:outline-none"
         />
         <div className="mt-3 flex items-center justify-between">
-          <button
-            onClick={handleTranspile}
-            disabled={busy || !yaml.trim()}
-            className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/10 px-4 py-2 font-mono text-xs text-accent transition-colors hover:bg-accent/20 disabled:opacity-50"
-          >
-            <Icon name="terminal" size={14} />
-            {busy ? "Transpiling…" : "Transpile Sigma Rule"}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleTranspile}
+              disabled={busy || !yaml.trim()}
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/10 px-4 py-2 font-mono text-xs text-accent transition-colors hover:bg-accent/20 disabled:opacity-50"
+            >
+              <Icon name="terminal" size={14} />
+              {busy ? "Transpiling…" : "Transpile Sigma Rule"}
+            </button>
+            {result && (
+              <button
+                onClick={() => importMutation.mutate(yaml)}
+                disabled={importMutation.isPending}
+                className="press inline-flex items-center gap-1.5 rounded-lg border border-signal/60 bg-signal/15 px-4 py-2 font-mono text-xs font-bold text-signal transition hover:bg-signal/25 disabled:opacity-50"
+              >
+                <Icon name="check" size={14} />
+                <span>{importMutation.isPending ? "Activating…" : imported ? "✓ Rule Active in Engine" : "Activate in Live Engine"}</span>
+              </button>
+            )}
+          </div>
           {result && (
             <span className="font-mono text-xs text-risk-clean">
               ✓ Successfully transpiled {result.transpiled_filter_count} criteria

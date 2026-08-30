@@ -417,3 +417,33 @@ def test_storm_cap_holds_across_ingest_batches(client):
     fired = [a for a in _alerts(client, run) if a["rule_id"] == "first-seen-process"]
     assert len(fired) == 20
     assert client.get(f"/runs/{run}").json()["suppressed_alerts"] == {"first-seen-process": 4}
+
+
+def test_sigma_community_rules_and_import(client):
+    """Test retrieving community SigmaHQ rules and importing them into live engine."""
+    # 1. Fetch community library
+    resp = client.get("/rules/sigma/community")
+    assert resp.status_code == 200
+    rules = resp.json()
+    assert len(rules) >= 6
+    assert any("powershell" in r["id"].lower() for r in rules)
+    assert any("vssadmin" in r["id"].lower() for r in rules)
+
+    # 2. Import one rule into engine
+    target_rule = next(r for r in rules if "mimikatz" in r["id"].lower())
+    imp_resp = client.post("/rules/sigma/import", json={"sigma_yaml": target_rule["sigma_yaml"]})
+    assert imp_resp.status_code == 200
+    imp_data = imp_resp.json()
+    assert imp_data["status"] == "imported"
+    rule_id = imp_data["rule"]["rule_id"]
+
+    # 3. Trigger imported rule via ingestion
+    run = make_run(client, sample_name="mimi-test.exe")
+    _ingest(client, run, [{
+        "run_id": run, "platform": "windows", "event_type": "process_create",
+        "timestamp": _ts(1), "pid": 7000, "ppid": 1,
+        "process_name": "mimikatz.exe", "command_line": "mimikatz.exe privilege::debug sekurlsa::logonpasswords exit",
+    }])
+
+    fired = _alerts(client, run)
+    assert any(a["rule_id"] == rule_id for a in fired)

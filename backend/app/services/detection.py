@@ -2520,6 +2520,105 @@ def _allowlist_blocks(allowlist: list[dict], alert: Alert, sample_sha256: str | 
     return False
 
 
+def load_custom_sigma_rules(conn: sqlite3.Connection) -> dict:
+    """Load user-imported SigmaHQ rules from database settings."""
+    row = conn.execute("SELECT value FROM settings WHERE key = 'custom_sigma_rules'").fetchone()
+    if not row:
+        return {}
+    try:
+        return json.loads(row["value"])
+    except (json.JSONDecodeError, TypeError):
+        return {}
+
+
+def check_custom_sigma_rules(custom_rules: dict, event: dict) -> list[Alert]:
+    """Evaluate imported SigmaHQ detection rules against one normalized event."""
+    alerts = []
+    if not custom_rules:
+        return alerts
+
+    plat = (event.get("platform") or "").lower()
+
+    for rule_id, rule_def in custom_rules.items():
+        if not rule_def.get("enabled", True):
+            continue
+
+        rule_plat = (rule_def.get("platform") or "all").lower()
+        if rule_plat not in ("all", "", "unknown") and plat and rule_plat != plat:
+            continue
+
+        criteria = rule_def.get("criteria", [])
+        if not criteria:
+            continue
+
+        matched_all = True
+        matched_details = []
+
+        for crit in criteria:
+            field = crit.get("target_field", "command_line")
+            mod = crit.get("modifier", "contains").lower()
+            vals = crit.get("values") or ([crit["value"]] if isinstance(crit.get("value"), str) else crit.get("value") or [])
+
+            event_val = str(event.get(field) or "").lower()
+            if not event_val:
+                matched_all = False
+                break
+
+            matched_crit = False
+            for v_raw in vals:
+                val = str(v_raw).lower()
+                if mod in ("contains", "all"):
+                    if val in event_val:
+                        matched_crit = True
+                        break
+                elif mod == "startswith":
+                    if event_val.startswith(val):
+                        matched_crit = True
+                        break
+                elif mod == "endswith":
+                    if event_val.endswith(val):
+                        matched_crit = True
+                        break
+                elif mod in ("equals", "exact"):
+                    if event_val == val:
+                        matched_crit = True
+                        break
+                elif mod in ("re", "regex"):
+                    try:
+                        if re.search(val, event_val, re.IGNORECASE):
+                            matched_crit = True
+                            break
+                    except re.error:
+                        pass
+                else:
+                    if val in event_val:
+                        matched_crit = True
+                        break
+
+            if not matched_crit:
+                matched_all = False
+                break
+            matched_details.append(f"{crit.get('original_field', field)} matched")
+
+        if matched_all:
+            alerts.append(
+                Alert(
+                    run_id=event.get("run_id") or "",
+                    rule_id=rule_def.get("rule_id", rule_id),
+                    rule_name=rule_def.get("title", rule_id),
+                    severity=rule_def.get("severity", "suspicious"),
+                    mitre_tactic=rule_def.get("mitre_tactics", ["execution"])[0] if rule_def.get("mitre_tactics") else "execution",
+                    mitre_technique=rule_def.get("mitre_techniques", ["T1059"])[0] if rule_def.get("mitre_techniques") else "T1059",
+                    details=f"SigmaHQ rule '{rule_def.get('title')}': {', '.join(matched_details[:3])}",
+                    related_pid=event.get("pid"),
+                    related_ip=event.get("dest_ip"),
+                    triggered_at=event.get("timestamp") or datetime.now(timezone.utc).isoformat(),
+                )
+            )
+
+    return alerts
+
+
 # ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
@@ -2536,6 +2635,7 @@ def evaluate_batch(conn: sqlite3.Connection, run_id: str, events: list[dict]) ->
     suppressions = load_suppressions(conn)
     allowlist = load_run_allowlist(conn, run_id)
     sample_sha256 = load_run_sample_sha256(conn, run_id)
+    custom_sigma_rules = load_custom_sigma_rules(conn)
     # The run's sample name — the value scope a queue-sweep suppression
     # matches against (suppress beaconing for "detonate-demo.sh" etc.).
     row = conn.execute(
@@ -2687,6 +2787,9 @@ def evaluate_batch(conn: sqlite3.Connection, run_id: str, events: list[dict]) ->
             check_macos_dylib_hijack(event),
             check_macos_gatekeeper_bypass(event),
         ]
+        if custom_sigma_rules:
+            candidates.extend(check_custom_sigma_rules(custom_sigma_rules, event))
+
         for alert in candidates:
             if alert is not None:
                 fire(alert, event)

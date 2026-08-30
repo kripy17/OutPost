@@ -727,6 +727,13 @@ class SigmaTranspileIn(BaseModel):
     sigma_yaml: str = Field(..., min_length=5, description="Sigma detection rule YAML content")
 
 
+@router.get("/rules/sigma/community", response_model=None)
+def get_community_sigma_rules_endpoint() -> list[dict]:
+    """List curated SigmaHQ community detection rules with full YAML definitions."""
+    from ..services.rule_generator import get_community_sigma_rules
+    return get_community_sigma_rules()
+
+
 @router.post("/rules/sigma/transpile", response_model=None)
 def post_sigma_transpile(body: SigmaTranspileIn) -> dict:
     """Transpile a Sigma YAML rule definition into an OutPost detection rule definition."""
@@ -736,6 +743,45 @@ def post_sigma_transpile(body: SigmaTranspileIn) -> dict:
         return transpile_sigma_yaml(body.sigma_yaml)
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"Failed to transpile Sigma rule: {exc}")
+
+
+class SigmaImportIn(BaseModel):
+    sigma_yaml: str = Field(..., min_length=5, description="Sigma detection rule YAML content")
+    enabled: bool = True
+
+
+@router.post("/rules/sigma/import", response_model=None)
+def post_sigma_import(body: SigmaImportIn, request: Request) -> dict:
+    """Import and activate a SigmaHQ detection rule into the OutPost detection store."""
+    from ..services.rule_generator import transpile_sigma_yaml
+
+    try:
+        rule_def = transpile_sigma_yaml(body.sigma_yaml)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"Failed to parse Sigma rule: {exc}")
+
+    rule_def["enabled"] = body.enabled
+    rule_def["imported_at"] = datetime.now(timezone.utc).isoformat()
+
+    with db_session() as conn:
+        # Save imported sigma rules into settings table under 'custom_sigma_rules'
+        row = conn.execute("SELECT value FROM settings WHERE key = 'custom_sigma_rules'").fetchone()
+        current_rules = json.loads(row["value"]) if row else {}
+        current_rules[rule_def["rule_id"]] = rule_def
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('custom_sigma_rules', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (json.dumps(current_rules),),
+        )
+
+        actor = auth.role_from_request(request)
+        audit.log(
+            conn, actor, "rules.sigma.import",
+            target_type="rules", target_id=rule_def["rule_id"],
+            detail=f"Imported SigmaHQ rule '{rule_def['title']}' (level: {rule_def['level']})",
+        )
+
+    return {"status": "imported", "rule": rule_def}
 
 
 @router.get("/coverage/navigator/download", response_model=None)

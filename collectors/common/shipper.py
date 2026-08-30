@@ -246,8 +246,13 @@ class Shipper:
 
     # -- fallback spooling ---------------------------------------------------
     def _spool(self, batch: list[dict]) -> None:
-        with open(self.spool_path, "a", encoding="utf-8") as fh:
-            fh.writelines(json.dumps(ev) + "\n" for ev in batch)
+        try:
+            if os.path.exists(self.spool_path) and os.path.getsize(self.spool_path) > 25 * 1024 * 1024:
+                log.warning("Spool file exceeds 25MB safety cap (%s)", self.spool_path)
+            with open(self.spool_path, "a", encoding="utf-8") as fh:
+                fh.writelines(json.dumps(ev) + "\n" for ev in batch)
+        except OSError as err:
+            log.warning("Failed to write to spool: %s", err)
 
     def _replay_spool(self) -> None:
         """Push any spooled events to the backend now that it's reachable."""
@@ -257,7 +262,11 @@ class Shipper:
             with open(self.spool_path, "r", encoding="utf-8") as fh:
                 events = [json.loads(line) for line in fh if line.strip()]
             if events:
-                requests.post(f"{self.backend_url}/ingest/batch", json=events, headers=_auth_headers(), timeout=5).raise_for_status()
+                chunk_size = 100
+                headers = _auth_headers()
+                for i in range(0, len(events), chunk_size):
+                    chunk = events[i : i + chunk_size]
+                    requests.post(f"{self.backend_url}/ingest/batch", json=chunk, headers=headers, timeout=5).raise_for_status()
             os.remove(self.spool_path)
         except Exception:
             log.warning("Spool replay failed — will retry on next successful flush")
