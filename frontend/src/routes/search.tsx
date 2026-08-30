@@ -22,6 +22,7 @@ import type { IocSearchResponse, Reputation, SearchGroup, SearchHit, SearchRespo
 import { platformTone, readSavedQuery, writeSavedQuery } from "./searchHelpers";
 import NetworkContextModal from "../components/NetworkContextModal";
 import ProcessContextModal from "../components/ProcessContextModal";
+import WatchlistPage from "./watchlist";
 
 type Scope = "ioc" | "global";
 
@@ -215,7 +216,10 @@ function GlobalResults({
 }
 
 export default function SearchPage() {
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
+  const [activeTab, setActiveTab] = useState<"search" | "watchlist">(() =>
+    params.get("tab") === "watchlist" ? "watchlist" : "search"
+  );
   const [scope, setScope] = useState<Scope>(() => readScope(params));
   const [value, setValue] = useState(params.get("q") ?? readSavedQuery());
   const [result, setResult] = useState<IocSearchResponse | null>(null);
@@ -230,6 +234,14 @@ export default function SearchPage() {
   // Deep-link support: ?q= (IOC scope) or ?q=+?mode=global (global scope)
   // run once on mount; a bare visit re-runs the last saved query in the
   // saved scope (same resume-mid-thought UX as before).
+  useEffect(() => {
+    if (params.get("tab") === "watchlist") {
+      setActiveTab("watchlist");
+    } else if (params.get("tab") === "search") {
+      setActiveTab("search");
+    }
+  }, [params]);
+
   useEffect(() => {
     const query = (params.get("q") ?? "").trim();
     if (query) {
@@ -292,9 +304,13 @@ export default function SearchPage() {
   return (
     <div className="mx-auto max-w-5xl px-5 py-8 lg:px-8">
       <PageHeader
-        kicker={scope === "global" ? "Intelligence · global search" : "Intelligence · search"}
+        kicker={activeTab === "watchlist" ? "Detection & Intel · Watchlist" : scope === "global" ? "Detection & Intel · Global search" : "Detection & Intel · IOC Search"}
         title={
-          scope === "global" ? (
+          activeTab === "watchlist" ? (
+            <>
+              Infrastructure Watchlist <span className="font-normal text-text-muted">— tracked adversary hosts</span>
+            </>
+          ) : scope === "global" ? (
             "Global search"
           ) : (
             <>
@@ -303,51 +319,95 @@ export default function SearchPage() {
           )
         }
         lede={
-          scope === "global"
-            ? "One query across every analyst-facing resource — findings, IOCs, artifacts, hosts, sessions, investigations, campaigns — with qualifiers (type: status: severity: disposition: host: rule: case:) and direct navigation into each result."
+          activeTab === "watchlist"
+            ? "Flag and monitor persistent adversary IP addresses, domain names, and file hashes across all telemetry."
+            : scope === "global"
+            ? "One query across every analyst-facing resource — findings, IOCs, artifacts, hosts, sessions, investigations, campaigns — with qualifiers and direct navigation into each result."
             : "Search any IP, process name, file path, or registry key across every run in your history."
         }
       />
 
-      {/* Scope toggle — IOC (legacy event-scoped) vs Global (grouped resources). */}
-      <div className="mt-2 inline-flex rounded-lg border border-border-subtle bg-bg-elevated/40 p-0.5" role="tablist" aria-label="Search scope">
+      {/* Main Workspace Tab Switcher */}
+      <div className="mb-8 flex rounded-xl border border-border-subtle bg-bg-surface p-1 font-mono text-xs shadow-sm">
         <button
-          role="tab"
-          aria-selected={scope === "ioc"}
-          onClick={() => persistScope("ioc")}
-          className={`rounded-md px-3 py-1 text-[11px] font-medium transition-colors ${scope === "ioc" ? "bg-accent/15 text-accent" : "text-text-muted hover:text-text-primary"}`}
+          onClick={() => {
+            setActiveTab("search");
+            setParams((p) => {
+              p.delete("tab");
+              return p;
+            });
+          }}
+          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-medium transition ${
+            activeTab === "search"
+              ? "bg-accent/15 font-bold text-accent shadow-sm"
+              : "text-text-muted hover:text-text-primary"
+          }`}
         >
-          IOC search
+          <Icon name="search" size={13} />
+          <span>Unified IOC &amp; Global Search</span>
         </button>
         <button
-          role="tab"
-          aria-selected={scope === "global"}
-          onClick={() => persistScope("global")}
-          className={`rounded-md px-3 py-1 text-[11px] font-medium transition-colors ${scope === "global" ? "bg-accent/15 text-accent" : "text-text-muted hover:text-text-primary"}`}
+          onClick={() => {
+            setActiveTab("watchlist");
+            setParams((p) => {
+              p.set("tab", "watchlist");
+              return p;
+            });
+          }}
+          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-medium transition ${
+            activeTab === "watchlist"
+              ? "bg-accent/15 font-bold text-accent shadow-sm"
+              : "text-text-muted hover:text-text-primary"
+          }`}
         >
-          Global search
+          <Icon name="target" size={13} />
+          <span>Infrastructure Watchlist</span>
         </button>
       </div>
 
-      <form onSubmit={onSearch} className="mt-6 flex gap-2">
-        <div className="relative w-full max-w-md">
-          <Icon name="search" size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-faint" />
-          <input
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            placeholder={scope === "global" ? "e.g. 203.0.113.88  or  type:finding status:open beaconing" : "e.g. 185.220.101.34"}
-            className="w-full rounded-lg border border-border-subtle bg-bg-surface py-2 pl-9 pr-3 font-mono text-sm text-text-primary placeholder:text-text-faint focus:border-accent/60 focus:outline-none"
-          />
-        </div>
-        <button
-          type="submit"
-          disabled={scope === "global" ? globalLoading : loading}
-          className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 px-4 py-2 font-mono text-xs text-accent transition-colors duration-150 hover:bg-accent/10 disabled:opacity-50"
-        >
-          <Icon name={(scope === "global" ? globalLoading : loading) ? "refresh" : "search"} size={12} className={(scope === "global" ? globalLoading : loading) ? "animate-spin" : ""} />
-          {(scope === "global" ? globalLoading : loading) ? "Searching…" : "Search"}
-        </button>
-      </form>
+      {activeTab === "watchlist" ? (
+        <WatchlistPage />
+      ) : (
+        <>
+          {/* Scope toggle — IOC (legacy event-scoped) vs Global (grouped resources). */}
+          <div className="mt-2 inline-flex rounded-lg border border-border-subtle bg-bg-elevated/40 p-0.5" role="tablist" aria-label="Search scope">
+            <button
+              role="tab"
+              aria-selected={scope === "ioc"}
+              onClick={() => persistScope("ioc")}
+              className={`rounded-md px-3 py-1 text-[11px] font-medium transition-colors ${scope === "ioc" ? "bg-accent/15 text-accent" : "text-text-muted hover:text-text-primary"}`}
+            >
+              IOC search
+            </button>
+            <button
+              role="tab"
+              aria-selected={scope === "global"}
+              onClick={() => persistScope("global")}
+              className={`rounded-md px-3 py-1 text-[11px] font-medium transition-colors ${scope === "global" ? "bg-accent/15 text-accent" : "text-text-muted hover:text-text-primary"}`}
+            >
+              Global search
+            </button>
+          </div>
+
+          <form onSubmit={onSearch} className="mt-6 flex gap-2">
+            <div className="relative w-full max-w-md">
+              <Icon name="search" size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-faint" />
+              <input
+                value={value}
+                onChange={(e) => setValue(e.target.value)}
+                placeholder={scope === "global" ? "e.g. 203.0.113.88  or  type:finding status:open beaconing" : "e.g. 185.220.101.34"}
+                className="w-full rounded-lg border border-border-subtle bg-bg-surface py-2 pl-9 pr-3 font-mono text-sm text-text-primary placeholder:text-text-faint focus:border-accent/60 focus:outline-none"
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={scope === "global" ? globalLoading : loading}
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 px-4 py-2 font-mono text-xs text-accent transition-colors duration-150 hover:bg-accent/10 disabled:opacity-50"
+            >
+              <Icon name={(scope === "global" ? globalLoading : loading) ? "refresh" : "search"} size={12} className={(scope === "global" ? globalLoading : loading) ? "animate-spin" : ""} />
+              {(scope === "global" ? globalLoading : loading) ? "Searching…" : "Search"}
+            </button>
+          </form>
 
       {scope === "ioc" ? (
         <>
@@ -591,6 +651,8 @@ export default function SearchPage() {
               </div>
             </div>
           )}
+        </>
+      )}
         </>
       )}
 
