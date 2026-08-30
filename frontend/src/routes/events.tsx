@@ -1583,6 +1583,36 @@ export default function EventsPage() {
                 )}
               </form>
             </div>
+
+            {/* Quick query filter pills for rapid forensic scoping */}
+            <div className="flex flex-wrap items-center gap-1.5 pt-1">
+              <span className="font-mono text-[10px] uppercase tracking-wide text-text-faint">Quick Scopes:</span>
+              {[
+                { label: "user:root", q: "user:root" },
+                { label: "dev:mic", q: "dev:mic" },
+                { label: "state:deleted", q: "state:deleted" },
+                { label: "memfd", q: "memfd" },
+                { label: "cmd:curl", q: "curl" },
+                { label: "port :443", q: ":443" },
+                { label: "/etc/shadow", q: "/etc/shadow" },
+              ].map((pill) => (
+                <button
+                  key={pill.label}
+                  type="button"
+                  onClick={() => {
+                    setQ(pill.q);
+                    setSubmittedQ(pill.q);
+                  }}
+                  className={`rounded-md border px-2 py-0.5 font-mono text-[10px] transition-colors ${
+                    submittedQ === pill.q
+                      ? "border-accent bg-accent/15 font-semibold text-accent"
+                      : "border-border-subtle bg-bg-surface text-text-muted hover:border-accent/50 hover:text-text-primary"
+                  }`}
+                >
+                  {pill.label}
+                </button>
+              ))}
+            </div>
           </div>
 
           <p className="mb-3 font-mono text-[11px] text-text-faint">
