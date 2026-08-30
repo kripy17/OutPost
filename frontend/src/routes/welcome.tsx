@@ -34,7 +34,12 @@ export default function WelcomePage() {
   });
 
   const host = plat ? (plat.os === "windows" ? "windows" : plat.os === "macos" ? "macos" : "linux") : "linux";
-  const collector = plat?.os === "windows" ? "collectors\\windows\\collector_win.py" : "collectors/linux/collector_linux.py";
+  const collector =
+    plat?.os === "windows"
+      ? "collectors\\windows\\collector_win.py"
+      : plat?.os === "macos"
+        ? "collectors/macos/collector_macos.py"
+        : "collectors/linux/collector_linux.py";
   const agentCmd = `python ${collector} --backend-url ${BASE_URL} --mode live`;
 
   return (

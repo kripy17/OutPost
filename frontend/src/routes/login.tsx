@@ -37,7 +37,9 @@ export default function LoginPage() {
           <span className="flex h-12 w-12 items-center justify-center rounded-xl border border-accent/40 bg-accent/10 text-accent">
             <Icon name="shield" size={22} />
           </span>
-          <p className="kicker mt-4">OutPost</p>
+          <p className="kicker mt-4">
+            {typeof window !== "undefined" ? localStorage.getItem("outpost-custom-title") || "OutPost" : "OutPost"}
+          </p>
           <h1 className="display mt-1">Sign in</h1>
           <p className="mt-2 text-xs leading-relaxed text-text-muted">
             This server requires authentication. Enter the admin password for full
