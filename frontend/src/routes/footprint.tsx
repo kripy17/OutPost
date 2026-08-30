@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { Chip, PageHeader, Panel } from "../components/ui";
+import NetworkContextModal from "../components/NetworkContextModal";
 import { exportFootprint, getFootprint, getFootprintTopology, getSamples, refreshEnrichmentIp, saveBlob } from "../lib/api";
 import { intelAgeLabel } from "../lib/constants";
 import type { Footprint, FootprintSeedIp } from "../types";
@@ -96,7 +97,15 @@ function FootprintMap({ footprint }: { footprint: Footprint }) {
   );
 }
 
-function SeedIpTable({ seeds, queryKey }: { seeds: FootprintSeedIp[]; queryKey: unknown[] }) {
+function SeedIpTable({
+  seeds,
+  queryKey,
+  onInspectIp,
+}: {
+  seeds: FootprintSeedIp[];
+  queryKey: unknown[];
+  onInspectIp?: (ip: string) => void;
+}) {
   const queryClient = useQueryClient();
   const [refreshing, setRefreshing] = useState<string | null>(null);
   const refresh = async (ip: string) => {
@@ -128,12 +137,26 @@ function SeedIpTable({ seeds, queryKey }: { seeds: FootprintSeedIp[]; queryKey: 
             <th className="px-3 py-2 font-normal">Hits</th>
             <th className="px-3 py-2 font-normal">Runs</th>
             <th className="px-3 py-2 font-normal">First / last seen</th>
+            <th className="px-3 py-2 font-normal text-right">Actions</th>
           </tr>
         </thead>
         <tbody>
           {seeds.map((s) => (
             <tr key={s.ip} className="border-b border-border-subtle/60 transition-colors duration-150 last:border-0 hover:bg-bg-elevated/40">
-              <td className="px-3 py-2 font-mono text-text-primary">{s.ip}</td>
+              <td className="px-3 py-2 font-mono text-text-primary">
+                <span className="flex items-center gap-1.5">
+                  {s.ip}
+                  {onInspectIp && (
+                    <button
+                      onClick={() => onInspectIp(s.ip)}
+                      className="press text-accent hover:text-accent-hover"
+                      title={`Investigate network context for ${s.ip}`}
+                    >
+                      <Icon name="activity" size={11} />
+                    </button>
+                  )}
+                </span>
+              </td>
               <td className="px-3 py-2">
                 <Chip tone={s.reputation === "malicious" ? "malicious" : s.reputation === "suspicious" ? "suspicious" : s.reputation === "clean" ? "clean" : "muted"} dot>
                   {s.reputation}
@@ -159,6 +182,17 @@ function SeedIpTable({ seeds, queryKey }: { seeds: FootprintSeedIp[]; queryKey: 
               <td className="px-3 py-2 font-mono tabular-nums text-text-muted">{s.run_count}</td>
               <td className="px-3 py-2 font-mono tabular-nums text-text-faint">
                 {s.first_seen.slice(0, 10)} → {s.last_seen.slice(0, 10)}
+              </td>
+              <td className="px-3 py-2 text-right">
+                {onInspectIp && (
+                  <button
+                    onClick={() => onInspectIp(s.ip)}
+                    className="press inline-flex items-center gap-1 rounded border border-border-subtle bg-bg-surface px-2 py-0.5 font-mono text-[10px] text-text-muted hover:border-accent/50 hover:text-accent"
+                  >
+                    <Icon name="activity" size={10} />
+                    Context
+                  </button>
+                )}
               </td>
             </tr>
           ))}
@@ -215,6 +249,7 @@ export default function FootprintPage() {
   const appliedLink = useRef(false);
   const [sampleId, setSampleId] = useState<string>("");
   const [mock, setMock] = useState(false);
+  const [inspectIp, setInspectIp] = useState<string | null>(null);
 
   const { data: vault } = useQuery({ queryKey: ["samples", "all"], queryFn: () => getSamples({ limit: 100 }) });
 
@@ -368,7 +403,11 @@ export default function FootprintPage() {
               ) : undefined
             }
           >
-            <SeedIpTable seeds={footprint.seed_ips} queryKey={["footprint", sampleId, mock]} />
+            <SeedIpTable
+              seeds={footprint.seed_ips}
+              queryKey={["footprint", sampleId, mock]}
+              onInspectIp={setInspectIp}
+            />
           </Panel>
 
           {/* Footprint map */}
@@ -498,6 +537,23 @@ export default function FootprintPage() {
                           {c.sample_count} sample{c.sample_count === 1 ? "" : "s"} ·{" "}
                           {c.checked_at ? `checked ${intelAgeLabel(c.checked_at)}` : "no reputation cache"}
                         </span>
+                        <div className="ml-auto flex items-center gap-2">
+                          <button
+                            onClick={() => setInspectIp(c.ip)}
+                            className="press inline-flex items-center gap-1 rounded border border-border-subtle bg-bg-surface px-2 py-0.5 font-mono text-[10px] text-text-muted hover:border-accent/50 hover:text-accent"
+                          >
+                            <Icon name="activity" size={10} />
+                            Context
+                          </button>
+                          <Link
+                            to={`/campaigns`}
+                            className="press inline-flex items-center gap-1 rounded border border-accent/40 bg-accent/10 px-2 py-0.5 font-mono text-[10px] font-semibold text-accent hover:bg-accent/20"
+                            title="View adversary campaigns tracking this cluster"
+                          >
+                            <Icon name="flag" size={10} />
+                            View Campaign
+                          </Link>
+                        </div>
                       </div>
                       <div className="mt-2 flex flex-wrap gap-1.5">
                         {c.members.map((m) => (
@@ -519,6 +575,10 @@ export default function FootprintPage() {
             </Panel>
           )}
         </div>
+      )}
+
+      {inspectIp && (
+        <NetworkContextModal ip={inspectIp} onClose={() => setInspectIp(null)} />
       )}
     </div>
   );
