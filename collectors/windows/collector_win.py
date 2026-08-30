@@ -21,6 +21,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
 
@@ -47,21 +48,91 @@ EVENT_TYPE_MAP = {
 def parse_sysmon_event(record) -> dict | None:
     """Convert one win32evtlog record into a unified-schema event dict."""
     try:
-        event_id = record.EventID
+        event_id = record.EventID & 0xFFFF  # Mask qualifier bits
     except AttributeError:
         return None
     if event_id not in EVENT_TYPE_MAP:
         return None
 
-    # Record.Data is a list of (name, value) tuples for EventData fields.
-    data = {}
+    data: dict[str, Any] = {}
+
+    # 1. Try StringInserts (standard for Win32 Event Log provider)
+    inserts = getattr(record, "StringInserts", None)
+    if inserts and isinstance(inserts, (list, tuple)):
+        # For Sysmon Event 1 (Process Create)
+        if event_id == 1 and len(inserts) >= 12:
+            data["UtcTime"] = inserts[1] if len(inserts) > 1 else ""
+            data["ProcessId"] = inserts[3] if len(inserts) > 3 else ""
+            data["Image"] = inserts[4] if len(inserts) > 4 else ""
+            data["CommandLine"] = inserts[10] if len(inserts) > 10 else ""
+            if len(inserts) >= 21:
+                data["ParentProcessId"] = inserts[19]
+                data["ParentImage"] = inserts[20]
+        # For Sysmon Event 3 (Network Connection)
+        elif event_id == 3 and len(inserts) >= 17:
+            data["UtcTime"] = inserts[1]
+            data["ProcessId"] = inserts[3]
+            data["Image"] = inserts[4]
+            data["Protocol"] = inserts[6]
+            data["SourceIp"] = inserts[9]
+            data["DestinationIp"] = inserts[14]
+            data["DestinationHostname"] = inserts[15]
+            data["DestinationPort"] = inserts[16]
+        # For Sysmon Event 6 (Driver Load)
+        elif event_id == 6 and len(inserts) >= 5:
+            data["UtcTime"] = inserts[1]
+            data["Image"] = inserts[3]
+            data["TargetFilename"] = inserts[3]
+        # For Sysmon Event 7 (Module Load)
+        elif event_id == 7 and len(inserts) >= 6:
+            data["UtcTime"] = inserts[1]
+            data["ProcessId"] = inserts[3]
+            data["Image"] = inserts[4]
+            data["TargetFilename"] = inserts[5]
+        # For Sysmon Event 8 (CreateRemoteThread)
+        elif event_id == 8 and len(inserts) >= 8:
+            data["UtcTime"] = inserts[1]
+            data["ProcessId"] = inserts[3]
+            data["Image"] = inserts[4]
+            data["TargetProcessId"] = inserts[6]
+            data["TargetImage"] = inserts[7]
+            data["TargetFilename"] = inserts[7]
+        # For Sysmon Event 10 (ProcessAccess)
+        elif event_id == 10 and len(inserts) >= 9:
+            data["UtcTime"] = inserts[1]
+            data["ProcessId"] = inserts[3]
+            data["Image"] = inserts[5]
+            data["TargetProcessId"] = inserts[7]
+            data["TargetImage"] = inserts[8]
+        # For Sysmon Event 11 (FileCreate / FileWrite)
+        elif event_id == 11 and len(inserts) >= 6:
+            data["UtcTime"] = inserts[1]
+            data["ProcessId"] = inserts[3]
+            data["Image"] = inserts[4]
+            data["TargetFilename"] = inserts[5]
+        # For Sysmon Event 12/13/14 (Registry Write/Delete)
+        elif event_id in (12, 13, 14) and len(inserts) >= 7:
+            data["UtcTime"] = inserts[2]
+            data["ProcessId"] = inserts[4]
+            data["Image"] = inserts[5]
+            data["TargetObject"] = inserts[6]
+        # For Sysmon Event 23 (FileDelete)
+        elif event_id == 23 and len(inserts) >= 6:
+            data["UtcTime"] = inserts[1]
+            data["ProcessId"] = inserts[3]
+            data["Image"] = inserts[4]
+            data["TargetFilename"] = inserts[5]
+
+    # 2. Record.Data fallback for structured event receivers
     try:
-        raw = record.Data
+        raw = getattr(record, "Data", None)
         if isinstance(raw, (list, tuple)):
             for i in range(0, len(raw) - 1, 2):
                 data[str(raw[i])] = str(raw[i + 1])
+        elif isinstance(raw, dict):
+            data.update(raw)
     except Exception:
-        return None
+        pass
 
     ts = datetime.datetime.fromtimestamp(record.TimeGenerated.timestamp(), datetime.timezone.utc).isoformat()
     ev = {
