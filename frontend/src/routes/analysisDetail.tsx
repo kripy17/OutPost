@@ -297,6 +297,13 @@ export default function AnalysisDetailPage() {
         lede={`${j.backend} backend · run ${j.run_id}`}
         actions={
           <>
+            <Link
+              to={`/investigations?create=1&title=${encodeURIComponent(`Analysis Job — ${j.sample_name || j.run_id}`)}&evidence_type=run&evidence_id=${encodeURIComponent(runId ?? "")}`}
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/40 bg-accent/10 px-3 py-1.5 font-mono text-[11px] font-semibold text-accent hover:bg-accent/20"
+              title="Escalate this analysis job into a formal incident dossier"
+            >
+              Escalate Case
+            </Link>
             <Chip tone={j.backend === "static" ? "accent" : "muted"}>{j.backend}</Chip>
             <Chip tone={STATUS_TONE[j.status]} dot>
               {j.status}
