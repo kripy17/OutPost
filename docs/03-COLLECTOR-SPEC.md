@@ -109,16 +109,34 @@ def parse_audit_line(line: str) -> dict | None:
 
 def main(run_id: str, backend_url: str):
     shipper = Shipper(backend_url, run_id)
-    # tail audit.log, parse_audit_line(), shipper.add()
+    # tail audit.log or attach eBPF, parse_audit_line(), shipper.add()
     ...
 ```
 
-*(Upgrade path noted in the build plan: swapping this for Falco later gives structured JSON output natively, removing most of the manual parsing — worth doing once the MVP pipeline is proven.)*
+## macOS Collector (Apple EndpointSecurity Framework)
+
+**Prerequisites:**
+- macOS 13+ (Ventura, Sonoma, Sequoia) with Full Disk Access / Root entitlement for `eslogger`.
+
+**Approach:**
+- Stream native Apple EndpointSecurity JSON lines using `eslogger exec open create rename unlink close connect`
+- Map native ESF event payloads to the unified schema:
+  - `event.exec` → `process_create` (`target.executable.path`, `signing_info`, `audit_token.pid`)
+  - `event.connect` → `network_connection` (`remote_address`, `remote_port`)
+  - `event.create` / `event.open` / `event.rename` / `event.unlink` → `file_write` / `file_read` / `file_delete`
+- Normalizes parsed records and ships via `Shipper.add()` with optional transparent Gzip/Zstandard payload compression.
+
+**File:** `collectors/macos/collector_macos.py`
+
+## High-Throughput Ingestion & Compression
+
+- Collectors support optional Gzip batch compression (`compress=True`) for high-volume endpoints shipping large bursts of kernel telemetry.
+- Backend ASGI decompression middleware (`DecompressionMiddleware`) transparently accepts `Content-Encoding: gzip, deflate, zstd` across `/ingest/batch` and `/ingest/snapshot`.
 
 ## Testing Collectors Safely
 
-Before pointing either collector at a real untrusted sample, validate against a synthetic test script that:
+Before pointing any collector at a real untrusted sample, validate against a synthetic test script that:
 - Spawns 2–3 child processes with identifiable names
 - Opens a connection to a test IP/port you control (e.g. a `netcat` listener on the same machine or network segment)
 
-If the dashboard shows the expected process tree and connection for that synthetic script, the pipeline is proven end-to-end before anything real touches it. This is also the fastest way to test **live mode** specifically — start `vantage watch`, run the synthetic script in a normal terminal, and confirm the alert/event stream picks it up in near real time.
+If the dashboard shows the expected process tree and connection for that synthetic script, the pipeline is proven end-to-end before anything real touches it. This is also the fastest way to test **live mode** specifically — start `outpost agent run`, run the synthetic script in a normal terminal, and confirm the alert/event stream picks it up in near real time.
