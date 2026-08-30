@@ -164,7 +164,15 @@ function CampaignCard({
           {campaign.runs.length} sample{campaign.runs.length === 1 ? "" : "s"}
         </span>
         <ReputationBadge campaign={campaign} />
-        <span className="ml-auto flex items-center gap-3">
+        <span className="ml-auto flex items-center gap-2.5">
+          <Link
+            to={`/investigations?create=1&tags=campaign,${campaign.key}&title=${encodeURIComponent("Adversary Campaign: " + campaign.key)}`}
+            className="press inline-flex items-center gap-1 rounded border border-risk-malicious/50 bg-risk-malicious/10 px-2 py-1 font-mono text-[11px] font-semibold text-risk-malicious transition-colors duration-150 hover:bg-risk-malicious/20"
+            title="Escalate this campaign into a formal incident case dossier"
+          >
+            <Icon name="shield" size={11} />
+            Escalate Case
+          </Link>
           {campaign.runs.length >= 2 && (
             <Link
               to={`/history?a=${campaign.runs[0].run_id}&b=${campaign.runs[1].run_id}`}
@@ -342,7 +350,24 @@ export default function CampaignsPage() {
   }, [sort]);
   const [activeTab, setActiveTab] = useState<"campaigns" | "watchlist" | "footprint">("campaigns");
   const [inspectIp, setInspectIp] = useState<string | null>(null);
+  const [searchQ, setSearchQ] = useState("");
   const sorted = useMemo(() => sortCampaigns(campaigns, sort), [campaigns, sort]);
+
+  const filteredCampaigns = useMemo(() => {
+    if (!searchQ.trim()) return sorted;
+    const q = searchQ.toLowerCase().trim();
+    return sorted.filter((c) => {
+      if (c.key.toLowerCase().includes(q)) return true;
+      if (c.runs.some((r) => r.sample_name.toLowerCase().includes(q))) return true;
+      const allIocs = [
+        ...c.iocs.ips,
+        ...c.iocs.registry_keys,
+        ...c.iocs.file_paths,
+        ...c.iocs.processes,
+      ];
+      return allIocs.some((i) => i.value.toLowerCase().includes(q));
+    });
+  }, [sorted, searchQ]);
 
   return (
     <div className="mx-auto max-w-6xl px-5 py-8 lg:px-8">
@@ -412,46 +437,69 @@ export default function CampaignsPage() {
           )}
       {isError && <p className="mt-8 text-sm text-risk-malicious">Couldn't load campaigns — is the OutPost backend running?</p>}
       {!isLoading && !isError && campaigns.length === 0 && (
-        <div className="mt-10 rounded-2xl border border-dashed border-border-strong bg-bg-surface/40 p-14 text-center">
+        <div className="mt-10 rounded-2xl border border-dashed border-border-strong bg-bg-surface/40 p-14 text-center space-y-4">
           <Icon name="flag" size={28} className="mx-auto text-text-faint" />
-          <p className="mt-3 text-sm text-text-muted">
-            No campaigns yet — two or more runs must connect to the same IP. Detonate a couple of samples and check again.
-          </p>
+          <div>
+            <h4 className="font-semibold text-text-primary text-sm">No Shared Adversary Campaigns Identified Yet</h4>
+            <p className="mt-1 text-xs text-text-muted max-w-md mx-auto">
+              Campaigns automatically cluster when multiple sample detonations connect to shared C2 infrastructure or IOCs.
+            </p>
+          </div>
+          <Link
+            to="/monitor"
+            className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/15 px-3.5 py-1.5 font-mono text-xs font-semibold text-accent hover:bg-accent/25"
+          >
+            <Icon name="play" size={12} />
+            Launch Adversary Attack Playbook
+          </Link>
         </div>
       )}
 
       {!isLoading && !isError && campaigns.length > 0 && (
-        <div className="mt-6 flex flex-wrap items-center gap-x-4 gap-y-2">
-          <span className="font-mono text-[10px] uppercase tracking-wide text-text-faint">Sort</span>
-          <div className="flex items-center overflow-hidden rounded-lg border border-border-subtle" role="group" aria-label="Sort campaigns">
-            {CAMPAIGN_SORTS.map((s) => (
-              <button
-                key={s.key}
-                onClick={() => setSort(s.key)}
-                aria-pressed={sort === s.key}
-                title={s.title}
-                className={`px-3 py-1.5 font-mono text-[11px] transition-colors duration-150 ${
-                  sort === s.key ? "bg-accent/10 font-medium text-accent" : "text-text-muted hover:bg-bg-elevated hover:text-text-primary"
-                }`}
-              >
-                {s.label}
-              </button>
-            ))}
+        <div className="mt-6 flex flex-wrap items-center justify-between gap-4">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <span className="font-mono text-[10px] uppercase tracking-wide text-text-faint">Sort</span>
+            <div className="flex items-center overflow-hidden rounded-lg border border-border-subtle" role="group" aria-label="Sort campaigns">
+              {CAMPAIGN_SORTS.map((s) => (
+                <button
+                  key={s.key}
+                  onClick={() => setSort(s.key)}
+                  aria-pressed={sort === s.key}
+                  title={s.title}
+                  className={`px-3 py-1.5 font-mono text-[11px] transition-colors duration-150 ${
+                    sort === s.key ? "bg-accent/10 font-medium text-accent" : "text-text-muted hover:bg-bg-elevated hover:text-text-primary"
+                  }`}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => setShowSynthetic((v) => !v)}
+              aria-pressed={showSynthetic}
+              title={
+                showSynthetic
+                  ? "Hide demo/synthetic campaign members again"
+                  : "Include campaigns built from seeded demo runs and webapp-synthetic detonations"
+              }
+              className={`press rounded-lg border px-3 py-1.5 font-mono text-[11px] transition-colors duration-150 ${
+                showSynthetic ? "border-accent/50 bg-accent/10 text-accent" : "border-border-subtle text-text-faint hover:text-text-primary"
+              }`}
+            >
+              {showSynthetic ? "Show synthetic · on" : "Show synthetic"}
+            </button>
           </div>
-          <button
-            onClick={() => setShowSynthetic((v) => !v)}
-            aria-pressed={showSynthetic}
-            title={
-              showSynthetic
-                ? "Hide demo/synthetic campaign members again"
-                : "Include campaigns built from seeded demo runs and webapp-synthetic detonations"
-            }
-            className={`press rounded-lg border px-3 py-1.5 font-mono text-[11px] transition-colors duration-150 ${
-              showSynthetic ? "border-accent/50 bg-accent/10 text-accent" : "border-border-subtle text-text-faint hover:text-text-primary"
-            }`}
-          >
-            {showSynthetic ? "Show synthetic · on" : "Show synthetic"}
-          </button>
+
+          <div className="relative">
+            <Icon name="search" size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-text-faint" />
+            <input
+              value={searchQ}
+              onChange={(e) => setSearchQ(e.target.value)}
+              placeholder="Search campaigns & IOCs…"
+              className="w-56 rounded-lg border border-border-subtle bg-bg-base py-1.5 pl-8 pr-3 font-mono text-xs text-text-primary placeholder:text-text-faint focus:border-accent/60 focus:outline-none"
+              aria-label="Search campaigns and IOCs"
+            />
+          </div>
         </div>
       )}
 
@@ -567,13 +615,19 @@ export default function CampaignsPage() {
         })()}
 
       <div className="mt-6 space-y-6">
-        {sorted.map((c) => (
-          <CampaignCard
-            key={c.key}
-            campaign={c}
-            onInspectIp={setInspectIp}
-          />
-        ))}
+        {filteredCampaigns.length === 0 && searchQ ? (
+          <p className="rounded-xl border border-border-subtle bg-bg-surface p-6 text-center font-mono text-xs text-text-muted">
+            No adversary campaigns or IOCs match &quot;{searchQ}&quot;.
+          </p>
+        ) : (
+          filteredCampaigns.map((c) => (
+            <CampaignCard
+              key={c.key}
+              campaign={c}
+              onInspectIp={setInspectIp}
+            />
+          ))
+        )}
       </div>
         </>
       )}
