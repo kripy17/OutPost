@@ -10,7 +10,7 @@ from urllib.parse import quote
 
 import requests
 
-BASE_URL = (os.getenv("OUTPOST_API_URL") or os.getenv("OUTPOST_BACKEND_URL") or "http://127.0.0.1:8001").rstrip("/")
+BASE_URL = (os.getenv("OUTPOST_API_URL") or os.getenv("OUTPOST_BACKEND_URL") or "http://127.0.0.1:8000").rstrip("/")
 
 
 class APIError(RuntimeError):
@@ -597,4 +597,55 @@ def get_similar_samples(sample_id: str, min_similarity: int = 20) -> dict:
 def transpile_sigma(sigma_yaml: str) -> dict:
     """Transpile a Sigma YAML detection rule into OutPost rule format."""
     return _post("/rules/sigma/transpile", {"sigma_yaml": sigma_yaml})
+
+
+def get_forensics_snapshot() -> dict:
+    """Live host system telemetry snapshot (metrics, active processes, sockets)."""
+    return _get("/system/forensics/snapshot")
+
+
+def get_forensics_process(pid: int) -> dict:
+    """Deep inspection of a process PID (lineage, sockets, files, environment)."""
+    return _get(f"/system/forensics/process/{pid}")
+
+
+def get_forensics_tree() -> list[dict]:
+    """Hierarchical process causality tree for dynamic execution analysis."""
+    return _get("/system/forensics/tree")
+
+
+def get_forensics_network() -> dict:
+    """Deep network socket & connection matrix categorized by threat domain."""
+    return _get("/system/forensics/network")
+
+
+def get_forensics_explanations() -> list[dict]:
+    """Automated behavioral heuristic explanations & findings cards."""
+    return _get("/system/forensics/explanations")
+
+
+def capture_forensics_baseline() -> dict:
+    """Capture a new host system baseline for differential execution comparison."""
+    return _post("/system/forensics/snapshot/baseline", {})
+
+
+def get_forensics_diff() -> dict:
+    """Compute differential delta (+/-) between baseline and current host state."""
+    return _get("/system/forensics/snapshot/diff")
+
+
+def control_forensics_process(pid: int, action: str = "terminate") -> dict:
+    """Execute lifecycle controls on a process (freeze, resume, terminate, kill)."""
+    return _post(f"/system/forensics/process/{pid}/action", {"action": action})
+
+
+def get_forensics_catalog() -> dict:
+    """Target catalog for rapid inspection of Apps, Processes, and Ports."""
+    return _get("/system/forensics/catalog")
+
+
+def get_forensics_dossier(pid: int) -> dict:
+    """Unified full target dossier for Deep Host Forensics."""
+    return _get(f"/system/forensics/process/{pid}/full")
+
 
