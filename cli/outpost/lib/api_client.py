@@ -263,6 +263,24 @@ def list_samples(q: str = "") -> dict:
     return _get(f"/samples{suffix}")
 
 
+def upload_sample(data: bytes, name: str = "") -> dict:
+    """Upload raw sample bytes to the vault with OS auto-detection."""
+    suffix = f"?name={quote(name)}" if name else ""
+    try:
+        resp = requests.post(
+            f"{BASE_URL}/samples{suffix}",
+            data=data,
+            headers={"Content-Type": "application/octet-stream", **_auth_headers()},
+            timeout=30,
+        )
+    except requests.RequestException as exc:
+        raise APIError(f"Backend unreachable at {BASE_URL} — is OutPost running? ({exc})") from exc
+    if not resp.ok:
+        raise APIError(f"POST /samples → {resp.status_code}: {resp.text[:200]}")
+    return resp.json()
+
+
+
 def export_stix(run_id: str) -> dict:
     """STIX 2.1 bundle of the run's indicators (roadmap 3.3)."""
     return _get(f"/runs/{run_id}/export?format=stix")
