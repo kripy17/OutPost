@@ -9,7 +9,7 @@ import { PageHeader, Panel } from "../components/ui";
 import { ageBucket, collapseFindings, intelFreshness, intelKeyHealth, openSince, overviewRunParams, sortFindingsRiskFirst } from "./overviewHelpers";
 import { copyToClipboard } from "../lib/clipboard";
 import { SEVERITY_BG } from "../lib/constants";
-import { BASE_URL, getAgents, getCampaigns, getHealth, getHostXRaySnapshot, getIntelFreshness, getIntelKeys, getMeta, getPlatform, getProcessSummary, getRecentAlerts, getRuleMeta, getRuns, getXRayTargetCatalog, listInvestigations, resetStore, runLiveSimulation } from "../lib/api";
+import { BASE_URL, bulkUpdateAlertStatus, getAgents, getCampaigns, getHealth, getHostXRaySnapshot, getIntelFreshness, getIntelKeys, getMeta, getPlatform, getProcessSummary, getRecentAlerts, getRuleMeta, getRuns, getXRayTargetCatalog, listInvestigations, resetStore, runLiveSimulation } from "../lib/api";
 import { useEventStream } from "../lib/useEventStream";
 
 // Compact relative time for the host panel's auth-context tooltips (the
@@ -42,10 +42,13 @@ function PostureHeader({
   totalAlerts: number;
 }) {
   const { data: fleet } = useQuery({ queryKey: ["agents"], queryFn: () => getAgents(), staleTime: 15_000 });
+  const { data: invData } = useQuery({ queryKey: ["investigations", "count"], queryFn: () => listInvestigations({ limit: 100 }), staleTime: 30_000 });
+  
   const onlineAgents = (fleet?.agents ?? []).filter((a) => a.online).length;
   const malicious = runs.filter((r) => r.highest_severity === "malicious").length;
   const suspicious = runs.filter((r) => r.highest_severity === "suspicious").length;
   const clean = runs.length - malicious - suspicious;
+  const openCases = (invData?.investigations ?? []).filter((i) => i.status !== "closed" && i.status !== "resolved").length;
 
   return (
     <section className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3" aria-label="Operational telemetry summary">
@@ -65,7 +68,7 @@ function PostureHeader({
         <div className="flex flex-wrap items-center gap-3 border-t border-border-subtle/60 pt-3 font-mono text-[11px] text-text-muted">
           <span>{fleet?.agents?.length ?? 1} host{fleet?.agents?.length === 1 ? "" : "s"} enrolled</span>
           <span className="text-text-faint">·</span>
-          <span className="text-risk-clean">{onlineAgents || 1} online</span>
+          <span className="text-risk-clean">{onlineAgents || (runs.length > 0 ? 1 : 0)} online</span>
         </div>
       </div>
 
@@ -100,8 +103,8 @@ function PostureHeader({
           </Link>
         </div>
         <div className="my-3 flex items-baseline gap-3">
-          <span className="font-mono text-3xl font-bold tracking-tight text-text-primary">{campaigns}</span>
-          <span className="text-xs text-text-muted">active campaigns</span>
+          <span className="font-mono text-3xl font-bold tracking-tight text-text-primary">{openCases || campaigns}</span>
+          <span className="text-xs text-text-muted">active case dossiers</span>
         </div>
         <div className="flex items-center justify-between border-t border-border-subtle/60 pt-3 font-mono text-[11px] text-text-muted">
           <span>{clean} clean baseline runs</span>
@@ -298,29 +301,48 @@ function FindingsFeed() {
                     {rule.technique} · {rule.tactic}
                   </span>
                 )}
-                <span className="ml-auto flex items-center gap-2 font-mono text-[10px] tabular-nums">
+                <div className="ml-auto flex items-center gap-2 font-mono text-[10px] tabular-nums">
                   {a.status === "open" && (
-                    <span
-                      className={`rounded-full border px-1.5 py-px ${
-                        ageBucket(a, now) === 2
-                          ? "border-risk-malicious/40 bg-risk-malicious/10 text-risk-malicious"
-                          : ageBucket(a, now) === 1
-                            ? "border-risk-suspicious/40 bg-risk-suspicious/10 text-risk-suspicious"
-                            : "border-border-subtle text-text-faint"
-                      }`}
-                      title={a.status_at ? `Open since ${a.triggered_at}` : "Open — awaiting triage"}
-                    >
-                      {openSince(a, now)}
-                    </span>
+                    <div className="flex items-center gap-1.5">
+                      {a.id != null && (
+                        <button
+                          onClick={async (e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            if (a.id != null) {
+                              await bulkUpdateAlertStatus([a.id], "acknowledged", "Acknowledged from live dashboard");
+                              void queryClient.invalidateQueries({ queryKey: ["alerts"] });
+                            }
+                          }}
+                          className="press inline-flex items-center gap-1 rounded border border-border-subtle bg-bg-surface px-1.5 py-0.5 text-[10px] text-text-muted hover:border-signal/50 hover:text-signal transition"
+                          title="Acknowledge alert from dashboard"
+                        >
+                          <Icon name="check" size={9} />
+                          <span>ack</span>
+                        </button>
+                      )}
+                      <span
+                        className={`rounded-full border px-1.5 py-px ${
+                          ageBucket(a, now) === 2
+                            ? "border-risk-malicious/40 bg-risk-malicious/10 text-risk-malicious"
+                            : ageBucket(a, now) === 1
+                              ? "border-risk-suspicious/40 bg-risk-suspicious/10 text-risk-suspicious"
+                              : "border-border-subtle text-text-faint"
+                        }`}
+                        title={a.status_at ? `Open since ${a.triggered_at}` : "Open — awaiting triage"}
+                      >
+                        {openSince(a, now)}
+                      </span>
+                    </div>
                   )}
                   {a.status !== "open" && (
-                    <span className="text-text-faint">{a.status}</span>
+                    <span className="text-text-faint uppercase font-bold text-[9px] px-1.5 py-0.5 rounded bg-bg-base border border-border-subtle">{a.status}</span>
                   )}
                   <span className="flex items-center gap-1 text-text-faint">
                     <Icon name={a.severity === "malicious" ? "alert" : "zap"} size={11} className={a.severity === "malicious" ? "text-risk-malicious" : "text-risk-suspicious"} />
                     {a.triggered_at.slice(11, 19)} UTC
                   </span>
-                </span>
+                </div>
               </div>
               <p className="truncate px-3.5 pb-3 font-mono text-[11px] text-text-muted" title={a.details}>
                 {a.details}
@@ -672,15 +694,39 @@ function HostForensicsRadarPanel() {
 }
 
 function MitreTacticalProgressionPanel() {
-  const tactics = [
-    { id: "TA0001", name: "Initial Access", color: "bg-blue-500/20 text-blue-300 border-blue-500/30", count: 2 },
-    { id: "TA0002", name: "Execution", color: "bg-amber-500/20 text-amber-300 border-amber-500/30", count: 4 },
-    { id: "TA0003", name: "Persistence", color: "bg-orange-500/20 text-orange-300 border-orange-500/30", count: 3 },
-    { id: "TA0004", name: "Priv Escalation", color: "bg-red-500/20 text-red-300 border-red-500/30", count: 1 },
-    { id: "TA0005", name: "Defense Evasion", color: "bg-rose-500/20 text-rose-300 border-rose-500/30", count: 5 },
-    { id: "TA0006", name: "Credential Access", color: "bg-purple-500/20 text-purple-300 border-purple-500/30", count: 2 },
-    { id: "TA0011", name: "Command & Control", color: "bg-indigo-500/20 text-indigo-300 border-indigo-500/30", count: 3 },
+  const { data: meta = [] } = useQuery({ queryKey: ["rules-meta"], queryFn: getRuleMeta, staleTime: Infinity });
+  const { data: alerts = [] } = useQuery({ queryKey: ["alerts", "recent"], queryFn: () => getRecentAlerts(100, "real"), staleTime: 10_000 });
+
+  const CANONICAL_TACTICS = [
+    { id: "TA0001", slug: "initial-access", name: "Initial Access", color: "bg-blue-500/15 text-blue-300 border-blue-500/30" },
+    { id: "TA0002", slug: "execution", name: "Execution", color: "bg-amber-500/15 text-amber-300 border-amber-500/30" },
+    { id: "TA0003", slug: "persistence", name: "Persistence", color: "bg-orange-500/15 text-orange-300 border-orange-500/30" },
+    { id: "TA0004", slug: "privilege-escalation", name: "Priv Escalation", color: "bg-red-500/15 text-red-300 border-red-500/30" },
+    { id: "TA0005", slug: "defense-evasion", name: "Defense Evasion", color: "bg-rose-500/15 text-rose-300 border-rose-500/30" },
+    { id: "TA0006", slug: "credential-access", name: "Credential Access", color: "bg-purple-500/15 text-purple-300 border-purple-500/30" },
+    { id: "TA0011", slug: "command-and-control", name: "Command & Control", color: "bg-indigo-500/15 text-indigo-300 border-indigo-500/30" },
   ];
+
+  const ruleMap = useMemo(() => {
+    const counts: Record<string, { rules: number; activeAlerts: number }> = {};
+    for (const t of CANONICAL_TACTICS) {
+      counts[t.slug] = { rules: 0, activeAlerts: 0 };
+    }
+    for (const r of meta) {
+      const slug = (r.tactic || "").toLowerCase().replace(/[\s_]+/g, "-");
+      if (counts[slug]) {
+        counts[slug].rules += 1;
+      }
+    }
+    const ruleTacticMap = new Map(meta.map((m) => [m.rule_id, (m.tactic || "").toLowerCase().replace(/[\s_]+/g, "-")]));
+    for (const a of alerts) {
+      const slug = ruleTacticMap.get(a.rule_id);
+      if (slug && counts[slug]) {
+        counts[slug].activeAlerts += 1;
+      }
+    }
+    return counts;
+  }, [meta, alerts]);
 
   return (
     <section className="panel mb-6 border border-border-subtle bg-bg-surface/80 backdrop-blur-md p-5 rounded-2xl" aria-label="MITRE Kill Chain Progression">
@@ -692,23 +738,38 @@ function MitreTacticalProgressionPanel() {
           </h3>
         </div>
         <Link to="/coverage" className="font-mono text-[11px] text-accent hover:underline flex items-center gap-1">
-          <span>Enterprise Heatmap</span>
+          <span>Enterprise Heatmap ({meta.length} active rules)</span>
           <Icon name="arrowRight" size={11} />
         </Link>
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
-        {tactics.map((t) => (
-          <Link
-            key={t.id}
-            to={`/coverage?tactic=${t.id}`}
-            className={`rounded-xl border p-3 text-center transition hover:brightness-125 cursor-pointer ${t.color}`}
-          >
-            <div className="font-mono text-[10px] opacity-70">{t.id}</div>
-            <div className="mt-1 font-bold text-xs truncate">{t.name}</div>
-            <div className="mt-2 font-mono text-sm font-bold">{t.count} techniques</div>
-          </Link>
-        ))}
+        {CANONICAL_TACTICS.map((t) => {
+          const stats = ruleMap[t.slug] || { rules: 0, activeAlerts: 0 };
+          const hasActive = stats.activeAlerts > 0;
+          return (
+            <Link
+              key={t.id}
+              to={`/coverage?tactic=${t.slug}`}
+              className={`rounded-xl border p-3 text-center transition hover:brightness-125 cursor-pointer ${
+                hasActive ? "ring-1 ring-risk-malicious/50 " + t.color : t.color
+              }`}
+            >
+              <div className="flex items-center justify-between font-mono text-[10px] opacity-75">
+                <span>{t.id}</span>
+                {hasActive && (
+                  <span className="flex items-center gap-1 rounded bg-risk-malicious px-1 py-px text-[9px] font-bold text-white uppercase">
+                    {stats.activeAlerts} live
+                  </span>
+                )}
+              </div>
+              <div className="mt-1 font-bold text-xs truncate text-text-primary">{t.name}</div>
+              <div className="mt-2 font-mono text-[11px] font-semibold text-text-muted">
+                {stats.rules} rule{stats.rules === 1 ? "" : "s"}
+              </div>
+            </Link>
+          );
+        })}
       </div>
     </section>
   );
@@ -770,13 +831,17 @@ function HostMonitorPanel() {
   );
 
   if (!plat) return null;
-  if (plat.os === "macos") return null;
 
   const agent = (fleet?.agents ?? []).find((a) => a.host_id === plat.hostname);
   const monitored = agent !== undefined;
-  const collector = plat.os === "windows" ? "collectors\\windows\\collector_win.py" : "collectors/linux/collector_linux.py";
+  const collector =
+    plat.os === "windows"
+      ? "collectors\\windows\\collector_win.py"
+      : plat.os === "macos"
+        ? "collectors/macos/collector_macos.py"
+        : "collectors/linux/collector_linux.py";
   const agentCmd = `python ${collector} --backend-url ${BASE_URL} --mode live`;
-  const glyph = plat.os === "windows" ? "windows" : "linux";
+  const glyph = plat.os === "windows" ? "windows" : plat.os === "macos" ? "mac" : "linux";
 
   return (
     <div
@@ -1099,6 +1164,7 @@ function WorkflowQuickstartPanel() {
 function LiveDetonationPlayground() {
   const queryClient = useQueryClient();
   const [runningId, setRunningId] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
   const [lastResult, setLastResult] = useState<{
     run_id: string;
     scenario_id: string;
@@ -1143,6 +1209,7 @@ function LiveDetonationPlayground() {
 
   const handleDetonate = async (scenarioId: string) => {
     setRunningId(scenarioId);
+    setExpanded(true);
     setError(null);
     try {
       const res = await runLiveSimulation(scenarioId);
@@ -1176,12 +1243,22 @@ function LiveDetonationPlayground() {
             </p>
           </div>
         </div>
-        <Link to="/monitor" className="press inline-flex items-center gap-1 font-mono text-xs text-accent hover:underline">
-          Advanced Simulation Lab <Icon name="external" size={10} />
-        </Link>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setExpanded(!expanded)}
+            className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/40 bg-accent/10 px-3 py-1.5 font-mono text-xs font-semibold text-accent hover:bg-accent/20 transition"
+          >
+            <span>{expanded ? "Collapse Playground ▴" : "Open Detonation Playground ▾"}</span>
+          </button>
+          <Link to="/monitor" className="press inline-flex items-center gap-1 font-mono text-xs text-accent hover:underline">
+            Advanced Simulation Lab <Icon name="external" size={10} />
+          </Link>
+        </div>
       </div>
 
-      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      {(expanded || lastResult !== null) && (
+        <>
+          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {SCENARIOS.map((s) => (
           <div
             key={s.id}
@@ -1260,6 +1337,8 @@ function LiveDetonationPlayground() {
           </div>
         </div>
       )}
+        </>
+      )}
     </div>
   );
 }
@@ -1307,22 +1386,14 @@ export default function OverviewPage() {
         }
       />
 
-      <WorkflowQuickstartPanel />
-      <LiveDetonationPlayground />
       <DemoBanner />
-      <Deferred>
-        <HostMonitorPanel />
-        {/* Intel posture: configured keys + rotation age, and cache freshness. */}
-        <IntelKeyHealth />
-        <IntelFreshness />
-      </Deferred>
 
       {!isLoading && !isError && runs.length === 0 && (
         <Panel kicker="Telemetry status" title="No telemetry received">
           <div className="py-8 text-center font-mono text-sm text-text-muted">
             <p className="font-semibold text-text-primary">0 monitored sessions active</p>
             <p className="mt-1 text-xs text-text-faint">
-              Connect a Linux or Windows agent collector, or launch the Simulation Lab to generate security events.
+              Connect a Linux, Windows, or macOS agent collector, or launch the Simulation Lab to generate security events.
             </p>
             <div className="mt-4 flex justify-center gap-3">
               <Link to="/events" className="btn btn-primary text-xs">
@@ -1339,6 +1410,13 @@ export default function OverviewPage() {
       {!isLoading && !isError && runs.length > 0 && (
         <PostureHeader runs={runs} campaigns={campaigns.length} totalAlerts={totalAlerts} />
       )}
+
+      <Deferred>
+        <HostMonitorPanel />
+        {/* Intel posture: configured keys + rotation age, and cache freshness. */}
+        <IntelKeyHealth />
+        <IntelFreshness />
+      </Deferred>
 
       {/* Host X-Ray Real-time Telemetry Radar & MITRE Kill Chain Progression */}
       <Deferred>
@@ -1359,6 +1437,9 @@ export default function OverviewPage() {
           <ActiveInvestigationsPanel />
         </Deferred>
       </div>
+
+      <LiveDetonationPlayground />
+      <WorkflowQuickstartPanel />
 
       {/* Actions + environment, one compact strip. The dashboard is exactly:
           posture, live findings (+ hunt), and this action bar. */}
