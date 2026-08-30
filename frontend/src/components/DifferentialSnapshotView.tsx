@@ -67,7 +67,7 @@ export function DifferentialSnapshotView({ onSelectProcess }: DifferentialSnapsh
           <div className="flex items-center gap-2">
             <span className="text-base font-semibold text-text-primary">Differential Host Baseline Delta</span>
             <span className="px-2 py-0.5 rounded text-xs font-medium bg-accent/15 text-accent border border-accent/30">
-              Omarchy X-Ray Delta Engine
+              Host Forensics Delta Engine
             </span>
           </div>
           <p className="text-xs text-text-muted mt-1">
@@ -88,11 +88,11 @@ export function DifferentialSnapshotView({ onSelectProcess }: DifferentialSnapsh
             {capturingBaseline ? "Capturing..." : "📸 Capture New Baseline"}
           </button>
           <button
-            onClick={fetchDiff}
+            onClick={() => void fetchDiff()}
             disabled={loading}
-            className="px-3 py-1.5 rounded text-xs font-medium bg-panel-border/60 text-text-primary border border-panel-border hover:bg-panel-border transition cursor-pointer"
+            className="px-3 py-1.5 rounded text-xs font-medium bg-bg-elevated border border-border-subtle hover:text-text-primary transition cursor-pointer disabled:opacity-50"
           >
-            {loading ? "Diffing..." : "🔄 Refresh Delta"}
+            {loading ? "Diffing..." : "🔄 Refresh"}
           </button>
         </div>
       </div>
@@ -249,7 +249,7 @@ export function DifferentialSnapshotView({ onSelectProcess }: DifferentialSnapsh
                       onClick={() => onSelectProcess(proc.pid)}
                       className="px-2.5 py-1 rounded text-xs font-medium bg-accent/15 text-accent hover:bg-accent/25 transition cursor-pointer"
                     >
-                      Inspect X-Ray
+                      Inspect Forensics
                     </button>
                   )}
                 </div>
