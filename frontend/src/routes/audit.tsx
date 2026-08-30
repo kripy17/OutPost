@@ -5,6 +5,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router-dom";
+import { Icon } from "../components/Icon";
 import { PageHeader, Panel } from "../components/ui";
 import { getAudit } from "../lib/api";
 import type { AuditEntry } from "../types";
@@ -54,6 +55,27 @@ export default function AuditPage() {
   const events = data?.events ?? [];
   const actions = auditActionKinds();
 
+  const exportAuditCsv = () => {
+    if (events.length === 0) return;
+    const headers = ["Timestamp", "Actor", "Action", "Target Type", "Target ID", "Detail"];
+    const rows = events.map((e) => [
+      `"${e.ts}"`,
+      `"${e.actor.replace(/"/g, '""')}"`,
+      `"${e.action}"`,
+      `"${e.target_type ?? ""}"`,
+      `"${e.target_id ?? ""}"`,
+      `"${(e.detail ?? "").replace(/"/g, '""')}"`,
+    ]);
+    const csvContent = [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `outpost-audit-trail-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="mx-auto max-w-[1100px] px-5 py-8 lg:px-8">
       <PageHeader
@@ -65,18 +87,29 @@ export default function AuditPage() {
         }
         lede="Every analyst action lands here with the acting identity: triage transitions, false-positive marks, logins, password rotations, allowlist and suppression edits, retention prunes, and backups. Read-only trail — nothing here is editable."
         actions={
-          <div className="flex items-center gap-0.5 overflow-hidden rounded-lg border border-border-subtle font-mono text-[10px]">
-            {actions.map((a) => (
-              <button
-                key={a || "all"}
-                onClick={() => setAction(a)}
-                className={`px-2.5 py-1.5 transition-colors ${
-                  action === a ? "bg-accent/15 font-semibold text-accent" : "text-text-faint hover:text-text-muted"
-                }`}
-              >
-                {a === "" ? "all" : a.split(".").pop()}
-              </button>
-            ))}
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={exportAuditCsv}
+              disabled={events.length === 0}
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-surface px-2.5 py-1.5 font-mono text-[11px] text-text-muted hover:border-accent/50 hover:text-accent disabled:opacity-40"
+              title="Export audit log trail to CSV"
+            >
+              <Icon name="download" size={11} />
+              Export CSV
+            </button>
+            <div className="flex items-center gap-0.5 overflow-hidden rounded-lg border border-border-subtle font-mono text-[10px]">
+              {actions.map((a) => (
+                <button
+                  key={a || "all"}
+                  onClick={() => setAction(a)}
+                  className={`px-2.5 py-1.5 transition-colors ${
+                    action === a ? "bg-accent/15 font-semibold text-accent" : "text-text-faint hover:text-text-muted"
+                  }`}
+                >
+                  {a === "" ? "all" : a.split(".").pop()}
+                </button>
+              ))}
+            </div>
           </div>
         }
       />
