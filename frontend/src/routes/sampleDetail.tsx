@@ -365,7 +365,7 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
   const [detonating, setDetonating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<SampleDetonationResult | null>(null);
-  const [simTab, setSimTab] = useState<"terminal" | "tree" | "alerts" | "delta">("terminal");
+  const [simTab, setSimTab] = useState<"terminal" | "tree" | "alerts" | "delta" | "syscalls" | "sinkhole">("terminal");
 
   const handleDetonateLive = async () => {
     setDetonating(true);
@@ -420,8 +420,8 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
               </Link>
             </div>
 
-            <div className="flex gap-2 font-mono text-xs">
-              {(["terminal", "tree", "alerts", "delta"] as const).map((t) => (
+            <div className="flex flex-wrap gap-2 font-mono text-xs">
+              {(["terminal", "tree", "alerts", "delta", "syscalls", "sinkhole"] as const).map((t) => (
                 <button
                   key={t}
                   onClick={() => setSimTab(t)}
@@ -429,7 +429,17 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
                     simTab === t ? "bg-accent/15 font-bold text-accent" : "text-text-muted hover:text-text-primary"
                   }`}
                 >
-                  {t === "terminal" ? "Terminal Log" : t === "tree" ? `Process Tree (${result.process_tree?.length ?? 0})` : t === "alerts" ? `Triggered Alerts (${result.alerts?.length ?? 0})` : "Baseline Delta"}
+                  {t === "terminal"
+                    ? "Terminal Log"
+                    : t === "tree"
+                    ? `Process Tree (${result.process_tree?.length ?? 0})`
+                    : t === "alerts"
+                    ? `Triggered Alerts (${result.alerts?.length ?? 0})`
+                    : t === "delta"
+                    ? "Baseline Delta"
+                    : t === "syscalls"
+                    ? `Syscall Trace (${result.syscalls?.length ?? 0})`
+                    : `C2 Sinkhole (${result.sinkhole_traffic?.length ?? 0})`}
                 </button>
               ))}
             </div>
@@ -480,6 +490,56 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
                     <div key={i} className="mt-1 text-[11px] text-text-muted">{s.protocol} {s.local_ip}:{s.local_port}</div>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {simTab === "syscalls" && (
+              <div className="space-y-2">
+                {(!result.syscalls || result.syscalls.length === 0) ? (
+                  <p className="text-xs text-text-muted py-3">No low-level system call traces captured in this run.</p>
+                ) : (
+                  <div className="max-h-72 overflow-y-auto rounded-xl border border-border-subtle bg-[#0a0c10] p-3 font-mono text-[11px]">
+                    <div className="grid grid-cols-12 gap-2 border-b border-border-subtle pb-1.5 font-bold text-text-faint uppercase text-[9px]">
+                      <span className="col-span-1">PID</span>
+                      <span className="col-span-2">Syscall</span>
+                      <span className="col-span-6">Arguments</span>
+                      <span className="col-span-1">Result</span>
+                      <span className="col-span-2">Category</span>
+                    </div>
+                    {result.syscalls.map((sc, i) => (
+                      <div key={i} className="grid grid-cols-12 gap-2 py-1 border-b border-border-subtle/30 text-[#c9d1d9] hover:bg-accent/5">
+                        <span className="col-span-1 text-text-faint">{sc.pid ?? "-"}</span>
+                        <span className="col-span-2 font-bold text-accent">{sc.syscall}</span>
+                        <span className="col-span-6 truncate text-text-muted" title={sc.arguments}>{sc.arguments}</span>
+                        <span className="col-span-1 text-emerald-400">{sc.result}</span>
+                        <span className="col-span-2 capitalize text-text-faint">{sc.category}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {simTab === "sinkhole" && (
+              <div className="space-y-2">
+                {(!result.sinkhole_traffic || result.sinkhole_traffic.length === 0) ? (
+                  <p className="text-xs text-text-muted py-3">Zero outbound DNS/C2 beacon requests intercepted by sandbox sinkhole.</p>
+                ) : (
+                  <div className="space-y-1.5 font-mono text-xs">
+                    {result.sinkhole_traffic.map((req, i) => (
+                      <div key={i} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5">
+                        <div className="flex items-center gap-2">
+                          <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[9px] font-bold text-amber-400 uppercase">
+                            {req.type.replace("_", " ")}
+                          </span>
+                          <span className="font-bold text-text-primary">{req.target}</span>
+                          {req.method && <span className="text-text-muted">({req.method} {req.path})</span>}
+                        </div>
+                        <span className="text-[10px] text-amber-300/80">{req.intercepted_response}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>

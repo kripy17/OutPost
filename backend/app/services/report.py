@@ -328,3 +328,94 @@ def _event_detail(ev: dict) -> str:
     if ev["event_type"] == "registry_write":
         return ev.get("registry_key") or "-"
     return "-"
+
+
+def synthesize_investigation_narrative(conn, investigation_id: str) -> dict:
+    """Synthesize an executive incident narrative, causality stages, and actionable remediation checklist."""
+    inv_row = conn.execute("SELECT * FROM investigations WHERE id = ?", (investigation_id,)).fetchone()
+    if not inv_row:
+        raise ValueError(f"Investigation {investigation_id} not found")
+
+    title = inv_row["title"]
+    status = inv_row["status"]
+
+    alert_rows = conn.execute(
+        "SELECT a.id, a.rule_id, a.rule_name, a.severity, a.details, a.triggered_at, a.run_id, r.sample_name "
+        "FROM alerts a LEFT JOIN runs r ON a.run_id = r.run_id "
+        "WHERE a.investigation_id = ? ORDER BY a.triggered_at ASC",
+        (investigation_id,),
+    ).fetchall()
+    alerts = [dict(r) for r in alert_rows]
+
+    ref_rows = conn.execute(
+        "SELECT ref_type, ref_id FROM investigation_refs WHERE investigation_id = ?",
+        (investigation_id,),
+    ).fetchall()
+    refs = [dict(r) for r in ref_rows]
+
+    runs_set = {r["ref_id"] for r in refs if r["ref_type"] == "run"}
+    for a in alerts:
+        if a.get("run_id"):
+            runs_set.add(a["run_id"])
+
+    hosts_set = {r["ref_id"] for r in refs if r["ref_type"] == "host"}
+    iocs_set = {r["ref_id"] for r in refs if r["ref_type"] == "ioc"}
+    samples_set = {r["ref_id"] for r in refs if r["ref_type"] == "artifact"}
+
+    from .risk import RULE_META
+    tactics_seen: set[str] = set()
+    for a in alerts:
+        meta = RULE_META.get(a.get("rule_id", ""), {})
+        if meta.get("tactic"):
+            tactics_seen.add(meta["tactic"])
+
+    severities = [a["severity"] for a in alerts]
+    max_severity = "critical" if "malicious" in severities and len(alerts) >= 3 else "malicious" if "malicious" in severities else "suspicious" if "suspicious" in severities else "clean"
+
+    exec_summary = (
+        f"Security incident '{title}' (ID: {investigation_id}) currently in '{status.upper()}' state with {len(alerts)} "
+        f"correlated detection alerts across {len(hosts_set) or 1} affected endpoint(s). "
+        f"The intrusion activity spans {len(tactics_seen) or 1} MITRE ATT&CK kill-chain phases with maximum severity classified as {max_severity.upper()}."
+    )
+
+    causality_stages = []
+    for idx, a in enumerate(alerts[:8], start=1):
+        causality_stages.append({
+            "step": idx,
+            "rule": a["rule_name"],
+            "severity": a["severity"],
+            "details": a["details"],
+            "timestamp": a["triggered_at"],
+            "sample": a.get("sample_name") or "system",
+        })
+
+    remediation_checklist = []
+    for h in (hosts_set or ["local"]):
+        remediation_checklist.append(f"Containment: Enforce host isolation or network boundary policy on endpoint '{h}'.")
+    for a in alerts:
+        if "process" in a["details"].lower() or a["rule_id"] in ("masquerading", "reverse-shell", "credential-dumping"):
+            remediation_checklist.append(f"Process Termination: Verify and terminate suspicious process instances matching {a['rule_name']}.")
+    for ioc in (iocs_set or []):
+        remediation_checklist.append(f"Network Ingress/Egress: Block malicious indicator '{ioc}' at border firewalls.")
+    remediation_checklist.append("Credential Invalidation: Force password reset and session revocation for all compromised user accounts.")
+    remediation_checklist.append("Host Rescan: Perform deep host memory forensics and baseline differential comparison before unisolating.")
+
+    remediation_checklist = list(dict.fromkeys(remediation_checklist))
+
+    return {
+        "investigation_id": investigation_id,
+        "title": title,
+        "status": status,
+        "max_severity": max_severity,
+        "executive_summary": exec_summary,
+        "tactics_involved": sorted(tactics_seen),
+        "causality_timeline": causality_stages,
+        "compromised_assets": {
+            "hosts": list(hosts_set) or ["local"],
+            "runs": list(runs_set),
+            "samples": list(samples_set),
+            "iocs": list(iocs_set),
+        },
+        "remediation_checklist": remediation_checklist,
+    }
+

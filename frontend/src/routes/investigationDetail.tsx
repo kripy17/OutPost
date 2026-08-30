@@ -12,10 +12,11 @@ import {
   removeInvestigationRef,
   reopenInvestigation,
   setAlertInvestigation,
+  synthesizeInvestigation,
 } from "../lib/api";
 import { useEventStream } from "../lib/useEventStream";
 import { toneFill, toneForSeverity } from "../lib/fillPatterns";
-import type { AlertStatus, InvestigationRefType, InvestigationStatus } from "../types";
+import type { AlertStatus, InvestigationNarrativeResult, InvestigationRefType, InvestigationStatus } from "../types";
 import DataProvenanceBadge from "../components/DataProvenanceBadge";
 import NetworkContextModal from "../components/NetworkContextModal";
 import ProcessContextModal from "../components/ProcessContextModal";
@@ -43,6 +44,21 @@ export default function InvestigationDetailPage() {
   const [showClose, setShowClose] = useState(false);
   const [inspectIp, setInspectIp] = useState<string | null>(null);
   const [inspectPid, setInspectPid] = useState<number | null>(null);
+  const [narrative, setNarrative] = useState<InvestigationNarrativeResult | null>(null);
+  const [synthesizing, setSynthesizing] = useState(false);
+  const [completedRemediations, setCompletedRemediations] = useState<Record<string, boolean>>({});
+
+  const handleSynthesize = async () => {
+    setSynthesizing(true);
+    try {
+      const res = await synthesizeInvestigation(investigationId);
+      setNarrative(res);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setSynthesizing(false);
+    }
+  };
 
   const { data: inv, isLoading, isError } = useQuery({
     queryKey: ["investigation", investigationId],
@@ -173,7 +189,15 @@ export default function InvestigationDetailPage() {
         }
         actions={
           <>
-            <button className="btn btn-primary" onClick={handleExportIncidentReport}>
+            <button
+              className="btn btn-primary"
+              disabled={synthesizing}
+              onClick={() => void handleSynthesize()}
+            >
+              <Icon name={synthesizing ? "refresh" : "terminal"} size={13} className={`mr-1.5 inline ${synthesizing ? "animate-spin" : ""}`} />
+              {synthesizing ? "Synthesizing…" : "Synthesize Narrative"}
+            </button>
+            <button className="btn" onClick={handleExportIncidentReport}>
               <Icon name="download" size={13} className="mr-1.5 inline" />
               Export Report
             </button>
@@ -268,6 +292,74 @@ export default function InvestigationDetailPage() {
           </div>
         )}
       </Panel>
+
+      {/* Synthesized Incident Narrative & Remediation Action Card */}
+      {narrative && (
+        <Panel kicker="AI Incident Response Copilot · Synthesis" title="Executive Incident Narrative & Containment Plan" className="mb-6">
+          <div className="space-y-4">
+            <div className="rounded-xl border border-accent/30 bg-accent/5 p-4">
+              <span className="font-mono text-[10px] uppercase font-bold text-accent">Executive Summary</span>
+              <p className="mt-1 text-xs leading-relaxed text-text-primary">{narrative.executive_summary}</p>
+              {narrative.tactics_involved.length > 0 && (
+                <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                  <span className="font-mono text-[10px] text-text-faint uppercase">Kill-Chain Phases:</span>
+                  {narrative.tactics_involved.map((tac) => (
+                    <span key={tac} className="rounded border border-accent/40 bg-accent/15 px-2 py-0.5 font-mono text-[10px] font-bold text-accent">
+                      {tac}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Attack causality sequence */}
+            {narrative.causality_timeline.length > 0 && (
+              <div className="space-y-2">
+                <span className="font-mono text-[10px] uppercase font-bold text-text-faint">Attack Causality Sequence:</span>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  {narrative.causality_timeline.map((c) => (
+                    <div key={c.step} className="rounded-lg border border-border-subtle bg-bg-surface p-2.5 font-mono text-xs">
+                      <div className="flex items-center justify-between text-text-muted">
+                        <span className="font-bold text-text-primary">#{c.step} · {c.rule}</span>
+                        <span className={`text-[9px] uppercase font-bold ${c.severity === "malicious" ? "text-rose-400" : "text-amber-400"}`}>{c.severity}</span>
+                      </div>
+                      <p className="mt-1 text-[11px] truncate text-text-muted" title={c.details}>{c.details}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Prescribed Remediation Checklist */}
+            <div className="space-y-2 border-t border-border-subtle pt-3">
+              <span className="font-mono text-[10px] uppercase font-bold text-text-faint">Incident Containment & Remediation Checklist:</span>
+              <div className="space-y-1.5">
+                {narrative.remediation_checklist.map((item, idx) => {
+                  const isChecked = !!completedRemediations[item];
+                  return (
+                    <label
+                      key={idx}
+                      className={`flex items-start gap-2.5 rounded-lg border p-2.5 font-mono text-xs cursor-pointer transition ${
+                        isChecked
+                          ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300 line-through"
+                          : "border-border-subtle bg-bg-surface text-text-primary hover:border-accent/40"
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={() => setCompletedRemediations((prev) => ({ ...prev, [item]: !prev[item] }))}
+                        className="mt-0.5 h-3.5 w-3.5 accent-[var(--accent)]"
+                      />
+                      <span className="flex-1">{item}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </Panel>
+      )}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[3fr_2fr]">
         {/* Findings */}

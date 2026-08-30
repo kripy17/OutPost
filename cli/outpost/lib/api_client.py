@@ -662,6 +662,19 @@ def get_forensics_diff() -> dict:
     return _get("/system/forensics/snapshot/diff")
 
 
+def backtest_rule(rule_id: str, max_events: int = 2000) -> dict:
+    """Evaluate detection heuristic against historical events."""
+    from urllib.parse import quote
+    return _post(f"/rules/{quote(rule_id)}/backtest?max_events={max_events}", {})
+
+
+def synthesize_investigation(investigation_id: str) -> dict:
+    """Synthesize executive incident narrative and containment checklist."""
+    from urllib.parse import quote
+    return _post(f"/investigations/{quote(investigation_id)}/synthesize", {})
+
+
+
 def control_forensics_process(pid: int, action: str = "terminate") -> dict:
     """Execute lifecycle controls on a process (freeze, resume, terminate, kill)."""
     return _post(f"/system/forensics/process/{pid}/action", {"action": action})

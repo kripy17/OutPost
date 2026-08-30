@@ -602,6 +602,72 @@ async def execute_simulation_scenario_live(scenario_id: str) -> dict[str, Any]:
     }
 
 
+def extract_syscalls_from_trace(trace_text: str) -> list[dict[str, Any]]:
+    """Parse strace / execution output into structured syscall events."""
+    syscalls: list[dict[str, Any]] = []
+    pattern = re.compile(r"(?:\[pid\s+(\d+)\]\s+)?([a-zA-Z0-9_]+)\((.*)\)\s+=\s+(-?[0-9a-fx?]+|0x[0-9a-f]+|[A-Z_]+)(?:\s+(.*))?", re.IGNORECASE)
+    for line in trace_text.splitlines():
+        line_clean = line.strip()
+        m = pattern.search(line_clean)
+        if m:
+            pid_s, sc_name, args, res, extra = m.groups()
+            if sc_name in ("openat", "open", "creat", "unlink", "unlinkat", "execve", "connect", "bind", "mmap", "mprotect", "memfd_create", "clone", "fork", "socket"):
+                syscalls.append({
+                    "pid": int(pid_s) if pid_s else None,
+                    "syscall": sc_name,
+                    "arguments": (args or "").strip()[:200],
+                    "result": (res or "").strip(),
+                    "category": (
+                        "network" if sc_name in ("connect", "bind", "socket") else
+                        "file" if sc_name in ("openat", "open", "creat", "unlink", "unlinkat") else
+                        "memory" if sc_name in ("mmap", "mprotect", "memfd_create") else
+                        "process"
+                    ),
+                })
+        if len(syscalls) >= 100:
+            break
+    return syscalls
+
+
+def extract_c2_sinkhole_events(stdout_s: str, stderr_s: str) -> list[dict[str, Any]]:
+    """Simulated C2 / FakeDNS interceptor capturing outbound requests."""
+    combined = stdout_s + "\n" + stderr_s
+    requests: list[dict[str, Any]] = []
+
+    domains = set(re.findall(r"\b(?:[a-zA-Z0-9-]{1,63}\.)+[a-zA-Z]{2,6}\b", combined))
+    for d in domains:
+        if not d.endswith((".local", ".internal", ".arpa", ".so", ".bin", ".sh", ".py", ".exe", ".dll")):
+            requests.append({
+                "type": "dns_query",
+                "target": d,
+                "record_type": "A",
+                "intercepted_response": "127.0.0.1 (SINKHOLED)",
+                "action": "sinkholed",
+            })
+
+    http_methods = re.findall(r"(GET|POST|PUT|DELETE)\s+([/\w\-._~:?#[\]@!$&'()*+,;=]+)\s+HTTP/[0-9.]+", combined)
+    for method, path in http_methods:
+        requests.append({
+            "type": "http_request",
+            "method": method,
+            "path": path,
+            "target": "simulated_c2",
+            "intercepted_response": "HTTP/1.1 200 OK (SINKHOLE_BEACON_ACK)",
+            "action": "intercepted",
+        })
+
+    urls = set(re.findall(r"https?://[^\s\"'<>]+", combined))
+    for u in urls:
+        requests.append({
+            "type": "outbound_url",
+            "target": u,
+            "intercepted_response": "Intercepted by OutPost Sandbox Sinkhole",
+            "action": "sinkholed",
+        })
+
+    return requests[:50]
+
+
 async def execute_sample_detonation(
     sample_id: str,
     raw_bytes: bytes,
@@ -645,6 +711,9 @@ async def execute_sample_detonation(
     except Exception:
         pass
 
+    syscalls = extract_syscalls_from_trace(stdout_s + "\n" + stderr_s)
+    sinkhole_traffic = extract_c2_sinkhole_events(stdout_s, stderr_s)
+
     terminal_logs: list[str] = [
         f"[OutPost Dynamic Sandbox] Detonating sample '{sample_name}' (ID: {sample_id})",
         f"[OutPost Dynamic Sandbox] Target Platform: {plat.upper()} · Timeout: {timeout_seconds}s",
@@ -658,6 +727,8 @@ async def execute_sample_detonation(
             terminal_logs.append(f"  [stderr] {line}")
     terminal_logs.append("-" * 60)
     terminal_logs.append(f"[OutPost Dynamic Sandbox] Execution completed with exit code: {exit_code}")
+    if sinkhole_traffic:
+        terminal_logs.append(f"[OutPost C2 Sinkhole] Intercepted {len(sinkhole_traffic)} simulated network beacon/DNS requests.")
 
     with db_session() as conn:
         for ev in events:
@@ -691,5 +762,8 @@ async def execute_sample_detonation(
         "risk_score": risk_score,
         "process_tree": tree,
         "detonation_delta": detonation_delta,
+        "syscalls": syscalls,
+        "sinkhole_traffic": sinkhole_traffic,
     }
+
 

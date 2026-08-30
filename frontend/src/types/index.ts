@@ -484,6 +484,24 @@ export interface SampleStatic {
   risk_factors?: string[];
 }
 
+export interface SyscallTraceItem {
+  pid?: number | null;
+  syscall: string;
+  arguments: string;
+  result: string;
+  category: "network" | "file" | "memory" | "process";
+}
+
+export interface SinkholeTrafficItem {
+  type: string;
+  target: string;
+  method?: string;
+  path?: string;
+  record_type?: string;
+  intercepted_response: string;
+  action: string;
+}
+
 export interface SampleDetonationResult {
   run_id: string;
   sample_id: string;
@@ -499,7 +517,54 @@ export interface SampleDetonationResult {
   risk_score: number;
   process_tree: any[];
   detonation_delta?: DetonationDelta | null;
+  syscalls?: SyscallTraceItem[];
+  sinkhole_traffic?: SinkholeTrafficItem[];
 }
+
+export interface RuleBacktestResult {
+  rule_id: string;
+  rule_name: string;
+  tactic: string;
+  events_scanned: number;
+  matches_count: number;
+  match_rate_pct: number;
+  affected_runs_count: number;
+  sample_matches: Array<{
+    event_id: number;
+    run_id: string;
+    event_type: string;
+    process_name: string;
+    command_line: string;
+    timestamp: string;
+    match_reason: string;
+  }>;
+  estimated_fp_risk: "low" | "medium" | "high";
+}
+
+export interface InvestigationNarrativeResult {
+  investigation_id: string;
+  title: string;
+  status: string;
+  max_severity: string;
+  executive_summary: string;
+  tactics_involved: string[];
+  causality_timeline: Array<{
+    step: number;
+    rule: string;
+    severity: string;
+    details: string;
+    timestamp: string;
+    sample: string;
+  }>;
+  compromised_assets: {
+    hosts: string[];
+    runs: string[];
+    samples: string[];
+    iocs: string[];
+  };
+  remediation_checklist: string[];
+}
+
 
 export interface CompareResponse {
   run_a: { run_id: string; sample_name: string };
