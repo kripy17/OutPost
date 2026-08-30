@@ -387,6 +387,7 @@ class SandboxDetonateIn(BaseModel):
 
     sample_id: str = Field(min_length=1, max_length=64)
     provider: str = Field(default="auto", max_length=16)
+    isolation_driver: str = Field(default="auto", max_length=32)
     platform: Platform | None = None
     note: str | None = Field(default=None, max_length=500)
 

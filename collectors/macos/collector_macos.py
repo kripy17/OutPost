@@ -98,6 +98,108 @@ def parse_bsm_line(line: str, run_id: str) -> dict | None:
             "raw_record": line,
         }
 
+def parse_eslogger_json(record: dict, run_id: str) -> dict | None:
+    """Parse a native Apple EndpointSecurity eslogger JSON event into a normalized OutPost event."""
+    if not isinstance(record, dict):
+        return None
+
+    now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    event_data = record.get("event") or {}
+    proc = record.get("process") or {}
+
+    proc_audit = proc.get("audit_token") or {}
+    parent_pid = proc_audit.get("pid") or proc.get("ppid") or 1
+    parent_path = (proc.get("executable") or {}).get("path") or ""
+
+    # 1. Exec Event
+    if "exec" in event_data:
+        exec_info = event_data["exec"]
+        target = exec_info.get("target") or {}
+        target_audit = target.get("audit_token") or {}
+        pid = target_audit.get("pid") or target.get("ppid") or 0
+        ppid = target.get("ppid") or parent_pid
+        exe_path = (target.get("executable") or {}).get("path") or ""
+        args = target.get("args") or []
+        cmdline = " ".join(str(a) for a in args) if args else exe_path
+        pname = Path(exe_path).name if exe_path else f"proc_{pid}"
+
+        signing = target.get("signing_info") or {}
+        signing_id = signing.get("signing_id") or ""
+
+        return {
+            "run_id": run_id,
+            "platform": "macos",
+            "event_type": "process_create",
+            "timestamp": now_iso,
+            "pid": pid,
+            "ppid": ppid,
+            "process_name": pname,
+            "command_line": cmdline,
+            "exe_path": exe_path,
+            "code_sign_id": signing_id,
+            "log_source": "endpoint_security",
+            "raw_record": str(record)[:1000],
+        }
+
+    # 2. Connect / Network Socket Event
+    if "connect" in event_data:
+        conn_info = event_data["connect"]
+        remote = conn_info.get("remote_address") or {}
+        dest_ip = remote.get("ip") or remote.get("address") or ""
+        dest_port = int(remote.get("port") or 0)
+        pid = proc_audit.get("pid") or 0
+
+        if not dest_ip or dest_port == 0:
+            return None
+
+        try:
+            ip_obj = ipaddress.ip_address(dest_ip)
+            if ip_obj.is_loopback or ip_obj.is_multicast or ip_obj.is_unspecified:
+                return None
+        except ValueError:
+            return None
+
+        return {
+            "run_id": run_id,
+            "platform": "macos",
+            "event_type": "network_connection",
+            "timestamp": now_iso,
+            "pid": pid,
+            "dest_ip": dest_ip,
+            "dest_port": dest_port,
+            "protocol": "tcp",
+            "log_source": "endpoint_security",
+            "raw_record": str(record)[:1000],
+        }
+
+    # 3. File Modification / Create / Rename / Unlink Event
+    for ftype in ("open", "create", "unlink", "rename", "write"):
+        if ftype in event_data:
+            finfo = event_data[ftype]
+            fpath = ""
+            if "destination" in finfo:
+                dest = finfo["destination"]
+                fpath = dest.get("existing_file", {}).get("path") or dest.get("new_path", {}).get("dir", "") + "/" + dest.get("new_path", {}).get("filename", "")
+            elif "file" in finfo:
+                fpath = finfo["file"].get("path") or ""
+            elif "source" in finfo:
+                fpath = finfo["source"].get("path") or ""
+
+            if fpath:
+                pid = proc_audit.get("pid") or 0
+                pname = Path(parent_path).name if parent_path else f"proc_{pid}"
+                return {
+                    "run_id": run_id,
+                    "platform": "macos",
+                    "event_type": "file_write" if ftype in ("create", "write", "rename") else "file_delete" if ftype == "unlink" else "file_open",
+                    "timestamp": now_iso,
+                    "pid": pid,
+                    "process_name": pname,
+                    "file_path": fpath,
+                    "log_source": "endpoint_security",
+                    "raw_record": str(record)[:1000],
+                }
+
     return None
 
 

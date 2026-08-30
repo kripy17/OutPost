@@ -438,6 +438,10 @@ _KILL_CHAIN_STAGE = {
     "shadow-copy-deletion": "Impact",
     "remote-thread-injection": "Privilege Escalation",
     "ifeo-persistence": "Persistence",
+    "macos-tcc-bypass": "Defense Evasion",
+    "macos-launchagent-persistence": "Persistence",
+    "macos-dylib-hijack": "Defense Evasion",
+    "macos-gatekeeper-bypass": "Defense Evasion",
 }
 
 
@@ -1135,6 +1139,85 @@ def check_ifeo_persistence(event: dict) -> Alert | None:
             f"Image File Execution Options debugger hook modified: {event.get('registry_key')}",
         )
     return None
+
+
+# ---------------------------------------------------------------------------
+# Rule 32 — macOS TCC Privacy Database Tampering (T1548.002)
+# ---------------------------------------------------------------------------
+def check_macos_tcc_bypass(event: dict) -> Alert | None:
+    """macOS: Detect unauthorized access or modification to TCC (Transparency, Consent, and Control) privacy database."""
+    if _platform(event) != "macos":
+        return None
+    fpath = (event.get("file_path") or "").lower()
+    cmd = (event.get("command_line") or "").lower()
+    if "tcc.db" in fpath or "tcc.db" in cmd:
+        pname = (_proc_name(event) or "").lower()
+        if pname not in ("tccd", "systempolicyctl", "mds", "mds_stores"):
+            return _make_alert(
+                event["run_id"], "macos-tcc-bypass",
+                "macOS TCC Privacy Database Tampering",
+                "malicious", event,
+                f"Non-system process '{pname}' attempted access to macOS TCC privacy database: {fpath or cmd}",
+            )
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Rule 33 — macOS LaunchAgent/LaunchDaemon Persistence (T1543.001)
+# ---------------------------------------------------------------------------
+def check_macos_launchagent_persistence(event: dict) -> Alert | None:
+    """macOS: Detect unauthorized creation or modification of LaunchAgents or LaunchDaemons plists."""
+    if _platform(event) != "macos":
+        return None
+    fpath = (event.get("file_path") or "").lower()
+    cmd = (event.get("command_line") or "").lower()
+    if any(kw in fpath for kw in ("/library/launchagents", "/library/launchdaemons")) or ("launchctl" in cmd and any(kw in cmd for kw in ("load", "bootstrap", "submit"))):
+        pname = (_proc_name(event) or "").lower()
+        if pname not in ("softwareupdated", "installd", "installer", "launchd"):
+            return _make_alert(
+                event["run_id"], "macos-launchagent-persistence",
+                "macOS LaunchAgent/LaunchDaemon Persistence",
+                "suspicious", event,
+                f"Suspicious persistence configuration in LaunchAgents/Daemons by '{pname}': {fpath or cmd}",
+            )
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Rule 34 — macOS Dynamic Linker Injection (DYLD) (T1574.002)
+# ---------------------------------------------------------------------------
+def check_macos_dylib_hijack(event: dict) -> Alert | None:
+    """macOS: Detect dynamic linker hijacking via DYLD_INSERT_LIBRARIES or suspicious dylib injection."""
+    if _platform(event) != "macos":
+        return None
+    cmd = (event.get("command_line") or "")
+    if "DYLD_INSERT_LIBRARIES" in cmd or "DYLD_FORCE_FLAT_NAMESPACE" in cmd:
+        return _make_alert(
+            event["run_id"], "macos-dylib-hijack",
+            "macOS DYLD Environment Variable Injection",
+            "malicious", event,
+            f"Process spawned with dynamic linker injection environment variable: {cmd[:100]}",
+        )
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Rule 35 — macOS Gatekeeper Quarantine Bypass (T1553.001)
+# ---------------------------------------------------------------------------
+def check_macos_gatekeeper_bypass(event: dict) -> Alert | None:
+    """macOS: Detect attempts to bypass Gatekeeper quarantine attributes or disable system policy assessments."""
+    if _platform(event) != "macos":
+        return None
+    cmd = (event.get("command_line") or "").lower()
+    if ("xattr" in cmd and any(kw in cmd for kw in ("-d com.apple.quarantine", "-c", "-cr"))) or ("spctl" in cmd and "--master-disable" in cmd):
+        return _make_alert(
+            event["run_id"], "macos-gatekeeper-bypass",
+            "macOS Gatekeeper Quarantine Bypass",
+            "malicious", event,
+            f"Gatekeeper security control evasion detected via command: {event.get('command_line')[:100]}",
+        )
+    return None
+
 
 
 
@@ -2599,6 +2682,10 @@ def evaluate_batch(conn: sqlite3.Connection, run_id: str, events: list[dict]) ->
             check_shadow_copy_deletion(event),
             check_remote_thread_injection(event),
             check_ifeo_persistence(event),
+            check_macos_tcc_bypass(event),
+            check_macos_launchagent_persistence(event),
+            check_macos_dylib_hijack(event),
+            check_macos_gatekeeper_bypass(event),
         ]
         for alert in candidates:
             if alert is not None:
@@ -2834,6 +2921,20 @@ def backtest_rule(conn: sqlite3.Connection, rule_id: str, max_events: int = 2000
                 if "image file execution options" in (ev.get("registry_key") or "").lower():
                     is_match = True
                     match_reason = f"IFEO debugger persistence key modified: {ev.get('registry_key')}"
+            elif rule_id == "macos-tcc-bypass":
+                if "tcc.db" in (fpath + " " + cmd).lower():
+                    is_match = True
+                    match_reason = f"macOS TCC database access attempt: {fpath or cmd}"
+            elif rule_id == "macos-launchagent-persistence":
+                if any(kw in fpath.lower() for kw in ("/library/launchagents", "/library/launchdaemons")) or ("launchctl" in cmd.lower() and any(kw in cmd.lower() for kw in ("load", "bootstrap"))):
+                    is_match = True
+                    match_reason = f"macOS LaunchAgent/Daemon persistence modification: {fpath or cmd}"
+            elif rule_id == "macos-dylib-hijack" and ("dyld_insert_libraries" in cmd.lower() or "dyld_force_flat_namespace" in cmd.lower()):
+                is_match = True
+                match_reason = f"macOS dynamic linker injection syntax: {cmd[:60]}"
+            elif rule_id == "macos-gatekeeper-bypass" and (("xattr" in cmd.lower() and "com.apple.quarantine" in cmd.lower()) or ("spctl" in cmd.lower() and "--master-disable" in cmd.lower())):
+                is_match = True
+                match_reason = f"macOS Gatekeeper bypass syntax: {cmd[:60]}"
             else:
                 if (rule_id.replace("-", " ") in cmd.lower()) or (rule_id.replace("-", " ") in pname.lower()):
                     is_match = True

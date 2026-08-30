@@ -363,6 +363,7 @@ function CategorizedStringsPanel({ categorized, rawStrings }: { categorized?: Sa
 function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; original_name: string; detected_platform: string } }) {
   const queryClient = useQueryClient();
   const [detonating, setDetonating] = useState(false);
+  const [isolationDriver, setIsolationDriver] = useState<string>("auto");
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<SampleDetonationResult | null>(null);
   const [simTab, setSimTab] = useState<"terminal" | "tree" | "alerts" | "delta" | "syscalls" | "sinkhole">("terminal");
@@ -371,7 +372,7 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
     setDetonating(true);
     setError(null);
     try {
-      const res = await detonateSample(sample.sample_id, 15);
+      const res = await detonateSample(sample.sample_id, 15, isolationDriver);
       setResult(res);
       void queryClient.invalidateQueries({ queryKey: ["runs"] });
       void queryClient.invalidateQueries({ queryKey: ["events"] });
@@ -390,8 +391,21 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
           <div>
             <h4 className="font-mono text-xs font-bold text-text-primary">Instant Sandbox Detonation</h4>
             <p className="mt-0.5 text-[11px] text-text-muted">
-              Executes binary in an isolated temporary workspace, tracking process creation, disk I/O, network sockets, and behavioral detection alerts.
+              Executes binary in an isolated micro-environment, tracking process creation, disk I/O, network sockets, and behavioral detection alerts.
             </p>
+            <div className="mt-3 flex items-center gap-2">
+              <label className="font-mono text-[11px] text-text-muted">Isolation Driver:</label>
+              <select
+                value={isolationDriver}
+                onChange={(e) => setIsolationDriver(e.target.value)}
+                className="rounded-lg border border-border-subtle bg-bg-surface px-2.5 py-1 font-mono text-xs text-text-primary outline-none focus:border-accent/60"
+              >
+                <option value="auto">Auto-Detect Best Driver</option>
+                <option value="bubblewrap">Bubblewrap Micro-Sandbox (bwrap)</option>
+                <option value="wine">Headless Wine Emulation</option>
+                <option value="tempdir">Standard Isolation (Tempdir)</option>
+              </select>
+            </div>
           </div>
           <button
             onClick={() => void handleDetonateLive()}

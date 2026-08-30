@@ -102,6 +102,66 @@ def _agent_allowed(method: str, path: str) -> bool:
     return False
 
 
+class DecompressionMiddleware:
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            import gzip as _gzip
+            import zlib as _zlib
+
+            headers = dict(scope.get("headers", []))
+            encoding = headers.get(b"content-encoding", b"").decode("latin1").lower().strip()
+            if encoding in ("gzip", "deflate", "zlib", "zstd"):
+                new_headers = [(k, v) for k, v in scope["headers"] if k.lower() != b"content-encoding"]
+                scope["headers"] = new_headers
+
+                body_parts = []
+                while True:
+                    message = await receive()
+                    body_parts.append(message.get("body", b""))
+                    if not message.get("more_body", False):
+                        break
+                raw_body = b"".join(body_parts)
+
+                if raw_body:
+                    try:
+                        if encoding == "gzip":
+                            decompressed = _gzip.decompress(raw_body)
+                        elif encoding in ("deflate", "zlib"):
+                            decompressed = _zlib.decompress(raw_body)
+                        elif encoding == "zstd":
+                            try:
+                                import zstandard as _zstd
+                                dctx = _zstd.ZstdDecompressor()
+                                decompressed = dctx.decompress(raw_body)
+                            except ImportError:
+                                decompressed = raw_body
+                        else:
+                            decompressed = raw_body
+                    except Exception:
+                        decompressed = raw_body
+                else:
+                    decompressed = b""
+
+                sent = False
+
+                async def custom_receive():
+                    nonlocal sent
+                    if not sent:
+                        sent = True
+                        return {"type": "http.request", "body": decompressed, "more_body": False}
+                    return {"type": "http.request", "body": b"", "more_body": False}
+
+                return await self.app(scope, custom_receive, send)
+
+        return await self.app(scope, receive, send)
+
+
+app.add_middleware(DecompressionMiddleware)
+
+
 @app.middleware("http")
 async def auth_gate(request: Request, call_next):
     """Optional auth: with no role passwords configured this passes everything

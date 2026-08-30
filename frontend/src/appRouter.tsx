@@ -11,8 +11,8 @@
 // — the route table changes rarely and a reload is the honest refresh.
 
 import { useQuery } from "@tanstack/react-query";
-import { Suspense, lazy } from "react";
-import { createBrowserRouter, Navigate, Outlet, useLocation } from "react-router-dom";
+import { Suspense, lazy, useEffect, useState } from "react";
+import { createBrowserRouter, Navigate, Outlet, useLocation, useNavigate } from "react-router-dom";
 import BrowserCheck from "./components/BrowserCheck/BrowserCheck";
 import BrowserNotifications from "./components/BrowserNotifications/BrowserNotifications";
 import Nav from "./components/Nav";
@@ -60,6 +60,72 @@ function RouteFallback() {
 
 function Layout() {
   const location = useLocation();
+  const navigate = useNavigate();
+  const [showHelp, setShowHelp] = useState(false);
+  const [gPending, setGPending] = useState(false);
+
+  useEffect(() => {
+    let gTimeout: number | undefined;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if user is currently typing in an input, textarea, or select
+      const target = e.target as HTMLElement;
+      if (
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.tagName === "SELECT" ||
+        target.isContentEditable
+      ) {
+        return;
+      }
+
+      if (e.key === "?" && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        setShowHelp((prev) => !prev);
+        return;
+      }
+
+      if (e.key === "Escape") {
+        setShowHelp(false);
+        setGPending(false);
+        return;
+      }
+
+      if (e.key === "g" && !e.ctrlKey && !e.metaKey) {
+        setGPending(true);
+        window.clearTimeout(gTimeout);
+        gTimeout = window.setTimeout(() => setGPending(false), 1000);
+        return;
+      }
+
+      if (gPending) {
+        setGPending(false);
+        window.clearTimeout(gTimeout);
+        const map: Record<string, string> = {
+          o: "/",
+          e: "/events",
+          a: "/agents",
+          s: "/samples",
+          r: "/rules",
+          f: "/findings",
+          m: "/monitor",
+          i: "/investigations",
+          c: "/campaigns",
+          h: "/history",
+        };
+        if (map[e.key.toLowerCase()]) {
+          e.preventDefault();
+          navigate(map[e.key.toLowerCase()]);
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.clearTimeout(gTimeout);
+    };
+  }, [gPending, navigate]);
 
   // Both boot probes run unconditionally (hook order must be stable): the
   // optional-auth gate and the first-run gate below only decide *which*
@@ -108,6 +174,75 @@ function Layout() {
       {/* Native browser notifications for high-severity alerts while the tab
           is unfocused (spec). Opt-in via Settings → Browser notifications. */}
       <BrowserNotifications />
+
+      {/* Keyboard Shortcuts Help Modal */}
+      {showHelp && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in"
+          onClick={() => setShowHelp(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border border-border-subtle bg-bg-surface p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-border-subtle pb-3 mb-4">
+              <div className="flex items-center gap-2">
+                <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-accent/40 bg-accent/15 text-accent font-mono text-xs font-bold">
+                  ⌨
+                </span>
+                <h3 className="font-mono text-sm font-bold text-text-primary">Global SOC Deck Shortcuts</h3>
+              </div>
+              <button
+                onClick={() => setShowHelp(false)}
+                className="text-text-muted hover:text-text-primary text-sm font-mono"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="space-y-2.5 font-mono text-xs text-text-muted">
+              <div className="flex justify-between items-center py-1 border-b border-border-subtle/50">
+                <span>Go to Overview</span>
+                <kbd className="rounded border border-border-subtle bg-bg-elevated px-2 py-0.5 text-text-primary">g o</kbd>
+              </div>
+              <div className="flex justify-between items-center py-1 border-b border-border-subtle/50">
+                <span>Go to Event Feed</span>
+                <kbd className="rounded border border-border-subtle bg-bg-elevated px-2 py-0.5 text-text-primary">g e</kbd>
+              </div>
+              <div className="flex justify-between items-center py-1 border-b border-border-subtle/50">
+                <span>Go to Fleet Agents</span>
+                <kbd className="rounded border border-border-subtle bg-bg-elevated px-2 py-0.5 text-text-primary">g a</kbd>
+              </div>
+              <div className="flex justify-between items-center py-1 border-b border-border-subtle/50">
+                <span>Go to Sample Vault</span>
+                <kbd className="rounded border border-border-subtle bg-bg-elevated px-2 py-0.5 text-text-primary">g s</kbd>
+              </div>
+              <div className="flex justify-between items-center py-1 border-b border-border-subtle/50">
+                <span>Go to Detection Rules</span>
+                <kbd className="rounded border border-border-subtle bg-bg-elevated px-2 py-0.5 text-text-primary">g r</kbd>
+              </div>
+              <div className="flex justify-between items-center py-1 border-b border-border-subtle/50">
+                <span>Go to SOC Findings</span>
+                <kbd className="rounded border border-border-subtle bg-bg-elevated px-2 py-0.5 text-text-primary">g f</kbd>
+              </div>
+              <div className="flex justify-between items-center py-1 border-b border-border-subtle/50">
+                <span>Go to Live Monitor</span>
+                <kbd className="rounded border border-border-subtle bg-bg-elevated px-2 py-0.5 text-text-primary">g m</kbd>
+              </div>
+              <div className="flex justify-between items-center py-1 border-b border-border-subtle/50">
+                <span>Go to Campaigns</span>
+                <kbd className="rounded border border-border-subtle bg-bg-elevated px-2 py-0.5 text-text-primary">g c</kbd>
+              </div>
+              <div className="flex justify-between items-center py-1">
+                <span>Toggle Shortcuts Help</span>
+                <kbd className="rounded border border-border-subtle bg-bg-elevated px-2 py-0.5 text-text-primary">?</kbd>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* The left rail is fixed; the content column offsets for it (lg+).
           Both widths come from var(--rail-w), so the collapsed icon-only rail
           and the content offset always match. */}

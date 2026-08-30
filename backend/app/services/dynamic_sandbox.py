@@ -77,6 +77,49 @@ def detect_runner(data: bytes, filename: str) -> list[str] | None:
     return []
 
 
+def get_available_isolation_drivers() -> list[dict[str, Any]]:
+    """Inspect host system and return supported sandbox isolation drivers and capabilities."""
+    drivers = [
+        {
+            "id": "tempdir",
+            "name": "Standard Isolation (TempDir)",
+            "available": True,
+            "description": "Unprivileged ephemeral directory execution with process timeout monitoring",
+            "type": "native",
+        }
+    ]
+
+    has_bwrap = bool(shutil.which("bwrap"))
+    drivers.append({
+        "id": "bubblewrap",
+        "name": "Bubblewrap Micro-Sandbox (bwrap)",
+        "available": has_bwrap,
+        "description": "Kernel unshared namespaces (PID, IPC, UTS, read-only system rootfs, isolated /tmp)",
+        "type": "micro_sandbox",
+    })
+
+    has_wine = bool(shutil.which("wine64") or shutil.which("wine"))
+    drivers.append({
+        "id": "wine",
+        "name": "Headless Wine Emulation",
+        "available": has_wine,
+        "description": "Emulated Windows subsystem environment for PE executables and DLLs",
+        "type": "emulation",
+    })
+
+    has_podman = bool(shutil.which("podman"))
+    has_docker = bool(shutil.which("docker"))
+    drivers.append({
+        "id": "container",
+        "name": "Container Isolation (Podman / Docker)",
+        "available": has_podman or has_docker,
+        "description": "Isolated container runtime sandbox execution",
+        "type": "container",
+    })
+
+    return drivers
+
+
 async def execute_bytes_sandbox(
     run_id: str,
     sample_name: str,
@@ -84,8 +127,9 @@ async def execute_bytes_sandbox(
     raw_bytes: bytes,
     timeout_seconds: int = 10,
     custom_args: list[str] | None = None,
-) -> tuple[list[dict[str, Any]], str, str, int]:
-    """Execute raw sample bytes in an isolated temporary workspace and collect genuine execution events."""
+    isolation_driver: str = "auto",
+) -> tuple[list[dict[str, Any]], str, str, int, str]:
+    """Execute raw sample bytes in an isolated sandbox workspace and collect genuine execution events."""
     sample_plat = platform_hint or platform.system().lower()
     runner = detect_runner(raw_bytes, sample_name)
     if runner is None:
@@ -102,6 +146,7 @@ async def execute_bytes_sandbox(
     stdout_data = ""
     stderr_data = ""
     exit_code = 0
+    active_driver = "tempdir"
 
     try:
         target_file.write_bytes(raw_bytes)
@@ -119,6 +164,52 @@ async def execute_bytes_sandbox(
 
         if custom_args:
             cmd.extend(custom_args)
+
+        # Determine active isolation driver
+        has_bwrap = bool(shutil.which("bwrap"))
+        has_wine = bool(shutil.which("wine64") or shutil.which("wine"))
+
+        if isolation_driver == "auto":
+            if any("wine" in str(c) for c in cmd):
+                active_driver = "wine" if has_wine else "tempdir"
+            elif has_bwrap and platform.system().lower() == "linux":
+                active_driver = "bubblewrap"
+            else:
+                active_driver = "tempdir"
+        elif isolation_driver == "bubblewrap" and has_bwrap:
+            active_driver = "bubblewrap"
+        elif isolation_driver == "wine" and has_wine:
+            active_driver = "wine"
+        else:
+            active_driver = "tempdir"
+
+        # Apply bubblewrap wrapping if active
+        exec_cmd = list(cmd)
+        if active_driver == "bubblewrap" and has_bwrap:
+            bwrap_prefix = [
+                "bwrap",
+                "--ro-bind", "/usr", "/usr",
+                "--ro-bind", "/lib", "/lib",
+                "--ro-bind", "/lib64", "/lib64",
+                "--ro-bind", "/bin", "/bin",
+                "--ro-bind", "/sbin", "/sbin",
+                "--dir", "/tmp",
+                "--bind", str(sandbox_dir), str(sandbox_dir),
+                "--proc", "/proc",
+                "--dev", "/dev",
+                "--chdir", str(sandbox_dir),
+                "--unshare-pid",
+                "--unshare-ipc",
+                "--unshare-uts",
+                "--die-with-parent",
+            ]
+            if Path("/etc/resolv.conf").exists():
+                bwrap_prefix.extend(["--ro-bind", "/etc/resolv.conf", "/etc/resolv.conf"])
+            if Path("/etc/ssl").exists():
+                bwrap_prefix.extend(["--ro-bind", "/etc/ssl", "/etc/ssl"])
+            if Path("/etc/ca-certificates").exists():
+                bwrap_prefix.extend(["--ro-bind", "/etc/ca-certificates", "/etc/ca-certificates"])
+            exec_cmd = bwrap_prefix + exec_cmd
 
         start_dt = datetime.datetime.now(datetime.timezone.utc).isoformat()
         main_pid = os.getpid() + 1000 + (hash(run_id) % 5000)
@@ -148,14 +239,14 @@ async def execute_bytes_sandbox(
         }
         child_env["OUTPOST_SANDBOX"] = "1"
         child_env["OUTPOST_RUN_ID"] = run_id
-        if any("wine" in str(c) for c in cmd):
+        if "wine" in active_driver or any("wine" in str(c) for c in cmd):
             child_env["WINEDEBUG"] = "-all"
             child_env["DISPLAY"] = ""
             child_env["WINEPREFIX"] = str(sandbox_dir / ".wine")
 
         try:
             proc = await asyncio.create_subprocess_exec(
-                *cmd,
+                *exec_cmd,
                 cwd=str(sandbox_dir),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -176,7 +267,7 @@ async def execute_bytes_sandbox(
                 stderr_data += "\n[OutPost Sandbox] Execution timed out after limit."
                 exit_code = -1
         except Exception as exc:
-            stderr_data += f"\n[OutPost Sandbox] Execution error: {exc}"
+            stderr_data += f"\n[OutPost Sandbox] Execution error ({active_driver}): {exc}"
             exit_code = 127
 
         for p in sandbox_dir.iterdir():
@@ -214,13 +305,14 @@ async def execute_bytes_sandbox(
         except Exception:
             pass
 
-    return events_batch, stdout_data, stderr_data, exit_code
+    return events_batch, stdout_data, stderr_data, exit_code, active_driver
 
 
 async def execute_and_trace(
     sample_id: str,
     timeout_seconds: int = 10,
     custom_args: list[str] | None = None,
+    isolation_driver: str = "auto",
 ) -> dict[str, Any]:
     """Execute sample in an isolated sandbox workspace and collect real execution telemetry."""
     with db_session() as conn:
@@ -255,13 +347,14 @@ async def execute_and_trace(
             source="sandbox_dynamic",
         )
 
-    events_batch, stdout_data, stderr_data, exit_code = await execute_bytes_sandbox(
+    events_batch, stdout_data, stderr_data, exit_code, active_driver = await execute_bytes_sandbox(
         run_id=run_id,
         sample_name=sample_name,
         platform_hint=sample_plat,
         raw_bytes=raw_bytes,
         timeout_seconds=timeout_seconds,
         custom_args=custom_args,
+        isolation_driver=isolation_driver,
     )
 
     with db_session() as conn:
@@ -290,6 +383,7 @@ async def execute_and_trace(
         "sample_id": sample_id,
         "sample_name": sample_name,
         "platform": sample_plat,
+        "isolation_driver": active_driver,
         "verdict": verdict,
         "exit_code": exit_code,
         "stdout": stdout_data,
@@ -299,7 +393,6 @@ async def execute_and_trace(
         "alerts": alerts,
         "process_tree": tree,
         "kill_chain": chain,
-        "events_count": len(events_batch),
     }
 
 
@@ -730,6 +823,7 @@ async def execute_sample_detonation(
     sample_name: str,
     platform_hint: str = "linux",
     timeout_seconds: int = 15,
+    isolation_driver: str = "auto",
 ) -> dict[str, Any]:
     """Execute uploaded malware sample bytes in an isolated dynamic sandbox, collect telemetry, and evaluate alerts."""
     run_id = f"dyn_{uuid.uuid4().hex[:12]}"
@@ -752,12 +846,13 @@ async def execute_sample_detonation(
     except Exception:
         pass
 
-    events, stdout_s, stderr_s, exit_code = await execute_bytes_sandbox(
+    events, stdout_s, stderr_s, exit_code, active_driver = await execute_bytes_sandbox(
         run_id=run_id,
         sample_name=sample_name,
         platform_hint=plat,
         raw_bytes=raw_bytes,
         timeout_seconds=timeout_seconds,
+        isolation_driver=isolation_driver,
     )
 
     # Compute post-detonation differential delta
@@ -772,7 +867,7 @@ async def execute_sample_detonation(
 
     terminal_logs: list[str] = [
         f"[OutPost Dynamic Sandbox] Detonating sample '{sample_name}' (ID: {sample_id})",
-        f"[OutPost Dynamic Sandbox] Target Platform: {plat.upper()} · Timeout: {timeout_seconds}s",
+        f"[OutPost Dynamic Sandbox] Isolation Driver: {active_driver.upper()} · Platform: {plat.upper()} · Timeout: {timeout_seconds}s",
         "-" * 60,
     ]
     if stdout_s:
@@ -808,6 +903,7 @@ async def execute_sample_detonation(
         "sample_id": sample_id,
         "sample_name": sample_name,
         "platform": plat,
+        "isolation_driver": active_driver,
         "exit_code": exit_code,
         "terminal_output": "\n".join(terminal_logs),
         "terminal_lines": terminal_logs,

@@ -242,7 +242,7 @@ function BootstrapModal({ onClose }: { onClose: () => void }) {
               <div className="flex items-center justify-between mb-1.5">
                 <span className="font-mono text-xs font-semibold text-text-primary flex items-center gap-1.5">
                   <Icon name="terminal" size={13} className="text-accent" />
-                  Linux &amp; macOS (Universal Bash)
+                  Linux (Kernel Auditd / eBPF)
                 </span>
                 <button
                   onClick={() => copyToClipboard(data?.linux_command || "", "linux")}
@@ -254,6 +254,25 @@ function BootstrapModal({ onClose }: { onClose: () => void }) {
               </div>
               <pre className="rounded-lg border border-border-subtle bg-bg-base p-3 font-mono text-xs text-accent overflow-x-auto select-all">
                 {data?.linux_command}
+              </pre>
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="font-mono text-xs font-semibold text-text-primary flex items-center gap-1.5">
+                  <Icon name="terminal" size={13} className="text-accent" />
+                  macOS (Apple EndpointSecurity Framework)
+                </span>
+                <button
+                  onClick={() => copyToClipboard(data?.macos_command || data?.linux_command || "", "macos")}
+                  className="press inline-flex items-center gap-1 rounded border border-border-subtle px-2 py-0.5 font-mono text-[10px] text-text-muted hover:text-accent"
+                >
+                  <Icon name="copy" size={10} />
+                  {copied === "macos" ? "Copied!" : "Copy"}
+                </button>
+              </div>
+              <pre className="rounded-lg border border-border-subtle bg-bg-base p-3 font-mono text-xs text-accent overflow-x-auto select-all">
+                {data?.macos_command || data?.linux_command}
               </pre>
             </div>
 
@@ -280,7 +299,8 @@ function BootstrapModal({ onClose }: { onClose: () => void }) {
               <p className="font-medium text-text-primary mb-1">Automated Setup Capabilities:</p>
               <ul className="list-disc list-inside space-y-0.5 text-text-faint">
                 <li><strong className="text-text-primary">Windows:</strong> Automatically provisions Microsoft Sysmon and applies the industry-standard <strong>SwiftOnSecurity</strong> configuration profile.</li>
-                <li><strong className="text-text-primary">Linux/macOS:</strong> Hooks native <code className="text-text-primary">auditd</code> / <code className="text-text-primary">ebpf</code> kernel telemetry channels.</li>
+                <li><strong className="text-text-primary">Linux:</strong> Hooks native kernel <code className="text-text-primary">auditd</code> / <code className="text-text-primary">auditctl</code> rules and <code className="text-text-primary">eBPF</code> tracepoints.</li>
+                <li><strong className="text-text-primary">macOS:</strong> Streams live JSON telemetry from Apple's native <code className="text-text-primary">EndpointSecurity</code> framework.</li>
                 <li>Pings collector liveness heartbeats every 60s and streams real-time process, network, and registry events to <code className="text-text-primary">{data?.server}</code>.</li>
                 <li>Enables active network isolation &amp; process kill containment directly from the SOC console.</li>
               </ul>
