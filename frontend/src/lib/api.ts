@@ -1186,6 +1186,53 @@ export async function getProcessXRay(pid: number): Promise<{
     status: string;
   }>;
   open_files: Array<{ path: string; fd: number }>;
+  detailed_fds?: Array<{
+    fd: number;
+    path: string;
+    kind: "file" | "socket" | "pipe" | "anon_inode" | "device" | "memfd" | "shm";
+    access: string;
+    is_deleted: boolean;
+    is_memfd: boolean;
+    is_shm: boolean;
+  }>;
+  device_access?: {
+    microphone: boolean;
+    camera: boolean;
+    screen_capture: boolean;
+    audio_playback: boolean;
+    audio_capture: boolean;
+    video_capture: boolean;
+    gpu: boolean;
+    gpu_clients_count: number;
+    gpu_nodes: string[];
+    sleep_inhibition: boolean;
+  };
+  disk_io?: {
+    read_bytes: number;
+    write_bytes: number;
+    read_mb: number;
+    write_mb: number;
+    syscr: number;
+    syscw: number;
+    read_bytes_sec: number;
+    write_bytes_sec: number;
+    io_rate_label: string;
+  };
+  launch_chain?: {
+    supervisor: string;
+    service: string;
+    container: string;
+    cgroup_slice: string;
+    cgroup_scope: string;
+    chain: Array<{ role: string; name: string; type: string }>;
+  };
+  sparkline?: {
+    points: Array<{ timestamp: string; seconds_ago: number; cpu_percent: number; memory_mb: number }>;
+    sample_interval_sec: number;
+    window_seconds: number;
+    latest_cpu: number;
+    latest_mem_mb: number;
+  };
   security?: {
     seccomp?: string;
     no_new_privs?: boolean;
@@ -1211,8 +1258,11 @@ export async function getProcessXRay(pid: number): Promise<{
   correlated_events: any[];
   correlated_alerts: any[];
 }> {
-  return get<any>(`/system/xray/process/${pid}`);
+  return get<any>(`/system/forensics/process/${pid}`);
 }
+
+export const getProcessForensics = getProcessXRay;
+export const getHostForensicsSnapshot = getHostXRaySnapshot;
 
 /** Terminate a process via Host X-Ray (POST /system/xray/process/{pid}/kill). */
 export async function killProcessXRay(pid: number, signal: "SIGTERM" | "SIGKILL" = "SIGTERM"): Promise<{

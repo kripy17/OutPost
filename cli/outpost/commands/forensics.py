@@ -310,3 +310,152 @@ def terminate(pid: int = typer.Argument(..., help="PID to terminate via SIGTERM"
     except api_client.APIError as exc:
         console.print(f"[bold #C4453B]Terminate failed: {exc}[/bold #C4453B]")
         raise typer.Exit(1)
+
+
+@app.command("fds")
+def fds(pid: int = typer.Argument(..., help="PID to inspect open file descriptors")) -> None:
+    """Inspect open file descriptors, deleted inodes, and anonymous memfd handles for a PID."""
+    show_banner(primary=False)
+    try:
+        p = api_client.get_forensics_process(pid)
+    except api_client.APIError as exc:
+        console.print(f"[bold #C4453B]Failed to inspect file descriptors: {exc}[/bold #C4453B]")
+        raise typer.Exit(1)
+
+    detailed_fds = p.get("detailed_fds") or []
+    console.print(
+        f"[bold #3B82F6]Open File Descriptors & Memory Inodes[/bold #3B82F6] — "
+        f"[bold]{p.get('name')}[/bold] (PID {pid}) · {len(detailed_fds)} total FDs"
+    )
+
+    if not detailed_fds:
+        console.print("[dim]No open file descriptors captured or access denied.[/dim]")
+        return
+
+    table = Table(border_style="dim", title=f"File Descriptors (PID {pid})")
+    table.add_column("FD", style="bold")
+    table.add_column("Path / Target", style="cyan")
+    table.add_column("Kind", style="magenta")
+    table.add_column("Access / Status", style="bold")
+
+    for f in detailed_fds[:50]:
+        is_del = f.get("is_deleted")
+        is_mem = f.get("is_memfd")
+        status = "[bold red]DELETED[/bold red]" if is_del else ("[bold purple]MEMFD[/bold purple]" if is_mem else f.get("access", "READ"))
+        table.add_row(
+            str(f.get("fd")),
+            f.get("path", "-")[:70],
+            f.get("kind", "file").upper(),
+            status,
+        )
+    console.print(table)
+
+
+@app.command("devices")
+def devices() -> None:
+    """List active processes holding sensitive hardware devices (Camera, Microphone, GPU)."""
+    show_banner(primary=False)
+    try:
+        data = api_client.get_forensics_snapshot()
+    except api_client.APIError as exc:
+        console.print(f"[bold #C4453B]Device scan failed: {exc}[/bold #C4453B]")
+        raise typer.Exit(1)
+
+    procs = data.get("processes", [])
+    active_dev_procs = []
+    for p in procs[:40]:
+        try:
+            det = api_client.get_forensics_process(p["pid"])
+            dev = det.get("device_access") or {}
+            if dev.get("microphone") or dev.get("camera") or dev.get("screen_capture") or dev.get("gpu"):
+                active_dev_procs.append((det, dev))
+        except Exception:
+            pass
+
+    console.print(f"[bold #3B82F6]Active Hardware Device & Sensor Handles[/bold #3B82F6] — {len(active_dev_procs)} processes")
+    if not active_dev_procs:
+        console.print("[dim]No processes currently holding active microphone, camera, or GPU nodes.[/dim]")
+        return
+
+    table = Table(border_style="dim", title="Hardware Device Access Matrix")
+    table.add_column("PID", style="bold")
+    table.add_column("Process Name", style="bold cyan")
+    table.add_column("User")
+    table.add_column("Microphone", style="yellow")
+    table.add_column("Camera", style="magenta")
+    table.add_column("GPU", style="green")
+
+    for proc, dev in active_dev_procs:
+        table.add_row(
+            str(proc.get("pid")),
+            proc.get("name", "-"),
+            str(proc.get("user", "-")),
+            "[bold yellow]ACTIVE[/bold yellow]" if dev.get("microphone") else "[dim]No[/dim]",
+            "[bold magenta]ACTIVE[/bold magenta]" if dev.get("camera") else "[dim]No[/dim]",
+            f"[bold green]{dev.get('gpu_clients_count', 1)} LIVE[/bold green]" if dev.get("gpu") else "[dim]No[/dim]",
+        )
+    console.print(table)
+
+
+@app.command("caps")
+def caps(pid: int = typer.Argument(..., help="PID to inspect Linux capabilities")) -> None:
+    """Decode Linux capability bits (CapEff) and privilege levels for a PID."""
+    show_banner(primary=False)
+    try:
+        p = api_client.get_forensics_process(pid)
+    except api_client.APIError as exc:
+        console.print(f"[bold #C4453B]Capability inspection failed: {exc}[/bold #C4453B]")
+        raise typer.Exit(1)
+
+    sec = p.get("security") or {}
+    caps_eff = sec.get("capabilities_effective") or []
+
+    console.print(
+        f"[bold #3B82F6]Linux Security Capabilities[/bold #3B82F6] — "
+        f"[bold]{p.get('name')}[/bold] (PID {pid}) · Seccomp: [bold]{sec.get('seccomp', 'Unknown')}[/bold]"
+    )
+
+    if not caps_eff:
+        console.print("[dim]Unprivileged process (zero elevated Linux capabilities granted).[/dim]")
+        return
+
+    table = Table(border_style="dim", title=f"Decoded Effective Capabilities (PID {pid})")
+    table.add_column("Capability Name", style="bold cyan")
+    table.add_column("Risk / Danger", style="bold")
+
+    for c in caps_eff:
+        danger_label = "[bold red]⚠️ ELEVATED/DANGEROUS[/bold red]" if c.get("is_dangerous") else "[green]Standard[/green]"
+        table.add_row(c.get("name", ""), danger_label)
+    console.print(table)
+
+
+@app.command("io")
+def io(pid: int = typer.Argument(..., help="PID to inspect disk I/O throughput")) -> None:
+    """Inspect quantitative disk I/O throughput (read/write rates) for a PID."""
+    show_banner(primary=False)
+    try:
+        p = api_client.get_forensics_process(pid)
+    except api_client.APIError as exc:
+        console.print(f"[bold #C4453B]I/O inspection failed: {exc}[/bold #C4453B]")
+        raise typer.Exit(1)
+
+    disk = p.get("disk_io") or {}
+    console.print(
+        f"[bold #3B82F6]Disk I/O Velocity & Throughput[/bold #3B82F6] — "
+        f"[bold]{p.get('name')}[/bold] (PID {pid})"
+    )
+
+    table = Table(border_style="dim", title=f"Disk I/O Metrics (PID {pid})")
+    table.add_column("Read Volume", style="bold cyan")
+    table.add_column("Write Volume", style="bold magenta")
+    table.add_column("Syscall Read Count (syscr)", style="bold")
+    table.add_column("Syscall Write Count (syscw)", style="bold")
+
+    table.add_row(
+        f"{disk.get('read_mb', 0):.2f} MB ({disk.get('read_bytes', 0):,} B)",
+        f"{disk.get('write_mb', 0):.2f} MB ({disk.get('write_bytes', 0):,} B)",
+        str(disk.get("syscr", 0)),
+        str(disk.get("syscw", 0)),
+    )
+    console.print(table)
+

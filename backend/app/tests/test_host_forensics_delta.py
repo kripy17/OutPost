@@ -2,31 +2,31 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.services import host_xray
+from app.services import host_forensics
 
 client = TestClient(app)
 
 
 def test_redact_sensitive_content():
     sample_text = "curl -u user:SuperSecretPassword123 https://api.com --token my_secret_token_abc"
-    redacted = host_xray.redact_sensitive_content(sample_text)
+    redacted = host_forensics.redact_sensitive_content(sample_text)
     assert "SuperSecretPassword123" not in redacted
     assert "my_secret_token_abc" not in redacted
     assert "******" in redacted
 
     bearer_text = "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e30.t-IDNJS3eedStdBux"
-    redacted_bearer = host_xray.redact_sensitive_content(bearer_text)
+    redacted_bearer = host_forensics.redact_sensitive_content(bearer_text)
     assert "eyJ" not in redacted_bearer
     assert "******" in redacted_bearer
 
     privkey = "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA...\n-----END RSA PRIVATE KEY-----"
-    redacted_key = host_xray.redact_sensitive_content(privkey)
+    redacted_key = host_forensics.redact_sensitive_content(privkey)
     assert "[REDACTED_PRIVATE_KEY]" in redacted_key
     assert "MIIEow" not in redacted_key
 
 
 def test_extract_cgroup_and_container_info():
-    info = host_xray.extract_cgroup_and_container_info(1)
+    info = host_forensics.extract_cgroup_and_container_info(1)
     assert "container_runtime" in info
     assert "systemd_service" in info
     assert "cgroup_slice" in info

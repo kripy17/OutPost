@@ -419,6 +419,13 @@ async def execute_simulation_scenario_live(scenario_id: str) -> dict[str, Any]:
             source="simulation",
         )
 
+    # Capture pre-detonation baseline snapshot
+    from .host_forensics import capture_baseline_snapshot, compute_snapshot_diff
+    try:
+        capture_baseline_snapshot()
+    except Exception:
+        pass
+
     try:
         for idx, stage in enumerate(scenario["stages"], start=1):
             stage_name = stage["name"]
@@ -518,15 +525,26 @@ async def execute_simulation_scenario_live(scenario_id: str) -> dict[str, Any]:
         except Exception:
             pass
 
+    # Compute post-detonation differential delta
+    detonation_delta = None
+    try:
+        detonation_delta = compute_snapshot_diff()
+    except Exception:
+        pass
+
     terminal_logs.append("\n" + "=" * 60)
     terminal_logs.append("[OutPost Simulation Lab] Execution completed. Ingesting telemetry into detection engine...")
 
     with db_session() as conn:
         for ev in events:
-            event_store.insert_event(conn, ev)
+            ev["id"] = event_store.insert_event(conn, ev)
+
+        # Evaluate rules and trigger alerts
         new_alerts = detection.evaluate_batch(conn, run_id, events)
         alert_rows = conn.execute("SELECT * FROM alerts WHERE run_id = ?", (run_id,)).fetchall()
         alerts = [dict(r) for r in alert_rows]
+
+        # Synthetic fallback alert if detection engine didn't match rules
         if not alerts:
             rule_map = {
                 "ransomware-stager": "masquerading",
@@ -580,4 +598,5 @@ async def execute_simulation_scenario_live(scenario_id: str) -> dict[str, Any]:
         "alert_count": len(alerts),
         "risk_score": risk_score,
         "process_tree": tree,
+        "detonation_delta": detonation_delta,
     }

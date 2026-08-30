@@ -1349,15 +1349,101 @@ export interface AttackPlaybook {
   techniques: string[];
 }
 
-export interface PlaybookDetonateResult {
-  run_id: string;
-  playbook_id: string;
-  name: string;
-  platform: Platform;
-  event_count: number;
-  alert_count: number;
-  risk_score: number;
-  highest_severity: Severity | null;
+export interface DeviceAccessInfo {
+  microphone: boolean;
+  camera: boolean;
+  screen_capture: boolean;
+  audio_playback: boolean;
+  audio_capture: boolean;
+  video_capture: boolean;
+  gpu: boolean;
+  gpu_clients_count: number;
+  gpu_nodes: string[];
+  sleep_inhibition: boolean;
 }
+
+export interface DetailedFileDescriptor {
+  fd: number;
+  path: string;
+  kind: "file" | "socket" | "pipe" | "anon_inode" | "device" | "memfd" | "shm";
+  access: string;
+  is_deleted: boolean;
+  is_memfd: boolean;
+  is_shm: boolean;
+}
+
+export interface DiskIOStats {
+  read_bytes: number;
+  write_bytes: number;
+  read_mb: number;
+  write_mb: number;
+  syscr: number;
+  syscw: number;
+  read_bytes_sec: number;
+  write_bytes_sec: number;
+  io_rate_label: string;
+}
+
+export interface SupervisorLaunchChain {
+  supervisor: string;
+  service: string;
+  container: string;
+  cgroup_slice: string;
+  cgroup_scope: string;
+  chain: Array<{ role: string; name: string; type: string }>;
+}
+
+export interface SparklinePoint {
+  timestamp: string;
+  seconds_ago: number;
+  cpu_percent: number;
+  memory_mb: number;
+}
+
+export interface SparklineTrace {
+  points: SparklinePoint[];
+  sample_interval_sec: number;
+  window_seconds: number;
+  latest_cpu: number;
+  latest_mem_mb: number;
+}
+
+export interface DetonationDelta {
+  summary: {
+    new_processes_count: number;
+    removed_processes_count: number;
+    new_sockets_count: number;
+    closed_sockets_count: number;
+    baseline_timestamp: string;
+    current_timestamp: string;
+  };
+  new_processes: Array<{
+    pid: number;
+    ppid: number;
+    name: string;
+    cmdline: string;
+    user: string;
+    cpu_percent: number;
+    memory_mb: number;
+  }>;
+  removed_processes: Array<{
+    pid: number;
+    ppid: number;
+    name: string;
+    cmdline: string;
+    user: string;
+  }>;
+  new_sockets: Array<{
+    protocol: string;
+    local_ip: string;
+    local_port: number;
+    remote_ip: string | null;
+    remote_port: number | null;
+    status: string;
+    process_name?: string;
+    service_hint?: string;
+  }>;
+}
+
 
 

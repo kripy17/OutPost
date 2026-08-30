@@ -6,6 +6,100 @@ import { Icon } from "./Icon";
 
 type TabKey = "overview" | "lineage" | "security" | "sockets" | "files" | "libraries" | "env" | "detections";
 
+function SparklineChart({ points }: { points?: Array<{ cpu_percent: number; memory_mb: number; seconds_ago: number }> }) {
+  if (!points || points.length < 2) return null;
+  const maxCpu = Math.max(10, ...points.map((p) => p.cpu_percent));
+  const width = 120;
+  const height = 28;
+  const step = width / (points.length - 1);
+
+  const cpuPath = points
+    .map((p, i) => `${i * step},${height - (p.cpu_percent / maxCpu) * (height - 4)}`)
+    .join(" ");
+
+  return (
+    <div className="flex items-center gap-2 rounded-lg border border-border-subtle bg-bg-surface px-2.5 py-1">
+      <div className="flex flex-col">
+        <span className="text-[9px] uppercase font-bold text-accent">60s Trace</span>
+        <span className="text-[10px] font-mono text-text-primary">{points[points.length - 1]?.cpu_percent.toFixed(1)}% CPU</span>
+      </div>
+      <svg width={width} height={height} className="overflow-visible">
+        <polyline
+          fill="none"
+          stroke="var(--color-accent, #3b82f6)"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          points={cpuPath}
+        />
+      </svg>
+    </div>
+  );
+}
+
+function DeviceAccessPanel({ access }: { access?: any }) {
+  if (!access) return null;
+  const items = [
+    { label: "Microphone", inUse: access.microphone, icon: "mic" },
+    { label: "Camera", inUse: access.camera, icon: "video" },
+    { label: "Screen Capture", inUse: access.screen_capture, icon: "monitor" },
+    { label: "Audio Playback", inUse: access.audio_playback, icon: "volume" },
+    { label: "GPU Clients", inUse: access.gpu, count: access.gpu_clients_count, icon: "cpu" },
+    { label: "Sleep Inhibition", inUse: access.sleep_inhibition, icon: "shield" },
+  ];
+
+  return (
+    <div className="rounded-xl border border-border-subtle bg-bg-base/40 p-4 space-y-2.5">
+      <div className="flex items-center justify-between">
+        <span className="text-[10px] font-bold uppercase tracking-wider text-text-faint">App Device & Sensor Access</span>
+        <span className="text-[10px] font-mono text-accent">
+          {items.filter((i) => i.inUse).length} Live Access Handles
+        </span>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+        {items.map((item) => (
+          <div
+            key={item.label}
+            className={`flex items-center justify-between rounded-lg border px-2.5 py-2 font-mono text-[11px] ${
+              item.inUse
+                ? "border-accent/40 bg-accent/10 text-accent font-semibold"
+                : "border-border-subtle bg-bg-surface text-text-muted opacity-60"
+            }`}
+          >
+            <span>{item.label}</span>
+            <span className={`text-[10px] rounded px-1.5 py-0.5 ${item.inUse ? "bg-accent/20 text-accent font-bold" : "text-text-faint"}`}>
+              {item.inUse ? (item.count ? `${item.count} LIVE` : "ACTIVE") : "Not in use"}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function LaunchChainBreadcrumb({ chainInfo }: { chainInfo?: any }) {
+  if (!chainInfo?.chain) return null;
+  return (
+    <div className="rounded-xl border border-border-subtle bg-bg-base/40 p-3.5 space-y-2">
+      <div className="flex items-center justify-between">
+        <span className="text-[10px] font-bold uppercase tracking-wider text-text-faint">Launch & Supervisor Chain</span>
+        <span className="text-[10px] font-mono text-text-faint">systemd scope / cgroup</span>
+      </div>
+      <div className="flex flex-wrap items-center gap-2 font-mono text-xs">
+        {chainInfo.chain.map((c: any, idx: number) => (
+          <div key={idx} className="flex items-center gap-2">
+            {idx > 0 && <span className="text-text-faint">→</span>}
+            <div className="flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-surface px-2 py-1">
+              <span className="rounded bg-bg-elevated px-1 text-[9px] font-bold text-accent uppercase">{c.role}</span>
+              <span className="text-text-primary text-[11px] font-medium truncate max-w-[180px]">{c.name}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function ProcessContextModal({
   pid,
   onClose,
@@ -20,7 +114,7 @@ export function ProcessContextModal({
   const queryClient = useQueryClient();
 
   const { data: xrayData, isLoading: isXrayLoading } = useQuery({
-    queryKey: ["xray", "process", pid],
+    queryKey: ["forensics", "process", pid],
     queryFn: () => getProcessXRay(pid),
     retry: false,
     staleTime: 10_000,
@@ -37,7 +131,7 @@ export function ProcessContextModal({
       controlProcessXRay(pid, action, xrayData?.create_time),
     onSuccess: (res) => {
       setActionStatus(res.message);
-      void queryClient.invalidateQueries({ queryKey: ["xray"] });
+      void queryClient.invalidateQueries({ queryKey: ["forensics"] });
       void queryClient.invalidateQueries({ queryKey: ["agents"] });
     },
     onError: (err: any) => {
@@ -53,12 +147,12 @@ export function ProcessContextModal({
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `outpost-xray-capsule-pid-${pid}.json`;
+      a.download = `outpost-forensic-capsule-pid-${pid}.json`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      setActionStatus(`Exported forensic capsule: outpost-xray-capsule-pid-${pid}.json`);
+      setActionStatus(`Exported forensic capsule: outpost-forensic-capsule-pid-${pid}.json`);
     } catch (err: any) {
       setActionStatus(`Capsule export failed: ${err?.message || "Could not retrieve dossier"}`);
     }
@@ -72,9 +166,11 @@ export function ProcessContextModal({
   const status = xrayData?.status || "active";
   const cpu = xrayData?.cpu_percent ?? 0;
   const memMb = xrayData?.memory_mb ?? 0;
+  const threads = xrayData?.threads ?? 1;
+  const diskIo = xrayData?.disk_io;
 
   const sockets = xrayData?.sockets || [];
-  const openFiles = xrayData?.open_files || [];
+  const openFiles = xrayData?.detailed_fds || xrayData?.open_files || [];
   const lineage = xrayData?.lineage || [];
   const findings = summaryData?.findings || xrayData?.correlated_alerts || [];
   const envKeys = Object.keys(xrayData?.environment || {});
@@ -88,7 +184,7 @@ export function ProcessContextModal({
         className="flex max-h-[94vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-border-subtle bg-bg-surface shadow-[var(--shadow-raised)]"
         role="dialog"
         aria-modal="true"
-        aria-labelledby="xray-process-title"
+        aria-labelledby="process-forensics-title"
       >
         {/* Header Bar */}
         <div className="flex flex-wrap items-center justify-between border-b border-border-subtle bg-bg-elevated/50 px-6 py-4">
@@ -124,6 +220,10 @@ export function ProcessContextModal({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            {xrayData?.sparkline && (
+              <SparklineChart points={xrayData.sparkline.points} />
+            )}
+
             <button
               onClick={() => {
                 onClose();
@@ -139,7 +239,7 @@ export function ProcessContextModal({
             <button
               onClick={handleExportCapsule}
               className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/40 bg-accent/10 px-3 py-1.5 font-mono text-xs font-semibold text-accent hover:bg-accent/20"
-              title="Download full forensic .xray.json dossier"
+              title="Download full forensic dossier"
             >
               <Icon name="download" size={12} />
               Export Capsule
@@ -187,19 +287,19 @@ export function ProcessContextModal({
         <div className="grid grid-cols-2 gap-4 border-b border-border-subtle bg-bg-base/40 px-6 py-2.5 font-mono text-xs sm:grid-cols-4">
           <div>
             <span className="text-[10px] uppercase tracking-wider text-text-faint">User Context</span>
-            <p className="font-semibold text-text-primary">{user}</p>
+            <p className="font-semibold text-text-primary">{user} · PPID {ppid}</p>
           </div>
           <div>
-            <span className="text-[10px] uppercase tracking-wider text-text-faint">Parent PPID</span>
-            <p className="font-semibold text-text-primary">{ppid}</p>
+            <span className="text-[10px] uppercase tracking-wider text-text-faint">Threads & State</span>
+            <p className="font-semibold text-text-primary">{threads} threads · {status}</p>
           </div>
           <div>
             <span className="text-[10px] uppercase tracking-wider text-text-faint">CPU / Memory</span>
             <p className="font-semibold text-text-primary">{cpu}% · {memMb} MB</p>
           </div>
           <div>
-            <span className="text-[10px] uppercase tracking-wider text-text-faint">Sockets / Files</span>
-            <p className="font-semibold text-text-primary">{sockets.length} sockets · {openFiles.length} files</p>
+            <span className="text-[10px] uppercase tracking-wider text-text-faint">Disk I/O Throughput</span>
+            <p className="font-semibold text-text-primary">{diskIo?.read_mb ?? 0} MB R / {diskIo?.write_mb ?? 0} MB W</p>
           </div>
         </div>
 
@@ -207,11 +307,11 @@ export function ProcessContextModal({
         <div className="flex flex-wrap border-b border-border-subtle bg-bg-surface px-6">
           {(
             [
-              { k: "overview", label: "Overview & Cmd" },
+              { k: "overview", label: "Overview & Context" },
               { k: "lineage", label: `Lineage Tree (${lineage.length})` },
               { k: "security", label: `Security Posture (${capsEff.length} caps)` },
               { k: "sockets", label: `Sockets (${sockets.length})` },
-              { k: "files", label: `Open Files (${openFiles.length})` },
+              { k: "files", label: `Files & IPC (${openFiles.length})` },
               { k: "libraries", label: `Libraries (${mappedLibs.length})` },
               { k: "env", label: `Environment (${envKeys.length})` },
               { k: "detections", label: `Findings (${findings.length})` },
@@ -253,6 +353,12 @@ export function ProcessContextModal({
               {/* Tab: Overview */}
               {tab === "overview" && (
                 <div className="space-y-5 font-mono text-xs">
+                  {/* Supervisor & Launch Chain */}
+                  <LaunchChainBreadcrumb chainInfo={xrayData?.launch_chain} />
+
+                  {/* Device & Hardware Sensor Access */}
+                  <DeviceAccessPanel access={xrayData?.device_access} />
+
                   <div className="rounded-xl border border-border-subtle bg-bg-base/60 p-4 space-y-3">
                     <span className="text-[10px] font-bold uppercase tracking-wider text-text-faint">Full Command Line</span>
                     <pre className="overflow-x-auto rounded-lg border border-border-subtle bg-bg-inset p-3 text-[11px] leading-relaxed text-text-primary break-all">
@@ -468,20 +574,71 @@ export function ProcessContextModal({
                 </div>
               )}
 
-              {/* Tab: Files */}
+              {/* Tab: Files & IPC */}
               {tab === "files" && (
                 <div className="space-y-3 font-mono text-xs">
-                  <h3 className="text-xs font-semibold text-text-primary">Open File Descriptors</h3>
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xs font-semibold text-text-primary">Open File Descriptors & Memory Handles</h3>
+                    <span className="text-[10px] text-text-faint">{openFiles.length} file descriptors open</span>
+                  </div>
+
                   {openFiles.length > 0 ? (
-                    <ul className="space-y-1.5">
-                      {openFiles.map((f, i) => (
-                        <li key={i} className="flex items-center gap-3 rounded-lg border border-border-subtle bg-bg-surface p-2.5 text-[11px]">
-                          <Icon name="file" size={13} className="text-text-faint" />
-                          <span className="rounded bg-bg-elevated px-1.5 py-0.5 text-[9px] text-text-faint">fd {f.fd}</span>
-                          <span className="text-text-primary truncate">{f.path}</span>
-                        </li>
-                      ))}
-                    </ul>
+                    <div className="overflow-x-auto rounded-xl border border-border-subtle bg-bg-base/40">
+                      <table className="w-full text-left text-[11px]">
+                        <thead className="border-b border-border-subtle bg-bg-elevated/40 text-text-faint">
+                          <tr>
+                            <th className="p-3 w-16">FD</th>
+                            <th className="p-3">Path / Endpoint</th>
+                            <th className="p-3 w-24">Kind</th>
+                            <th className="p-3 w-28">Access</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-border-subtle">
+                          {openFiles.map((f: any, i: number) => {
+                            const isDeleted = f.is_deleted || f.path?.includes("(deleted)");
+                            const isMemfd = f.is_memfd || f.path?.startsWith("/memfd:") || f.path?.startsWith("anon_inode:");
+                            return (
+                              <tr key={i} className={`hover:bg-bg-elevated/30 ${isDeleted ? "bg-risk-suspicious/5" : ""}`}>
+                                <td className="p-3 font-bold text-text-faint font-mono">{f.fd}</td>
+                                <td className="p-3 font-mono text-text-primary">
+                                  <div className="flex items-center gap-2">
+                                    <span className="truncate max-w-md">{f.path}</span>
+                                    {isDeleted && (
+                                      <span className="rounded bg-risk-suspicious/20 border border-risk-suspicious/40 px-1.5 py-0.2 text-[9px] font-bold uppercase text-risk-suspicious">
+                                        DELETED
+                                      </span>
+                                    )}
+                                    {isMemfd && (
+                                      <span className="rounded bg-purple-500/20 border border-purple-500/40 px-1.5 py-0.2 text-[9px] font-bold uppercase text-purple-300">
+                                        MEMFD / RAM
+                                      </span>
+                                    )}
+                                  </div>
+                                </td>
+                                <td className="p-3">
+                                  <span className={`rounded px-1.5 py-0.5 text-[9px] uppercase font-bold ${
+                                    isMemfd ? "bg-purple-500/20 text-purple-300" :
+                                    f.kind === "socket" ? "bg-accent/15 text-accent" :
+                                    f.kind === "pipe" ? "bg-yellow-500/15 text-yellow-400" :
+                                    f.kind === "device" ? "bg-cyan-500/15 text-cyan-300" :
+                                    "bg-bg-elevated text-text-muted"
+                                  }`}>
+                                    {f.kind || "file"}
+                                  </span>
+                                </td>
+                                <td className="p-3">
+                                  <span className={`rounded px-1.5 py-0.5 text-[9px] uppercase font-semibold ${
+                                    isDeleted ? "text-risk-suspicious font-bold" : "text-text-faint"
+                                  }`}>
+                                    {f.access || (isDeleted ? "DELETED" : "READ")}
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
                   ) : (
                     <p className="rounded-xl border border-border-subtle bg-bg-elevated/20 p-6 text-center text-text-faint">
                       No open file descriptors captured.

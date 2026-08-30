@@ -2,14 +2,14 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.services import host_xray
+from app.services import host_forensics
 
 client = TestClient(app)
 
 
 def test_device_access_inspection():
     # Inspect current process (PID 1 or self)
-    res = host_xray.get_process_device_access(1)
+    res = host_forensics.get_process_device_access(1)
     assert "microphone" in res
     assert "camera" in res
     assert "screen_capture" in res
@@ -20,7 +20,7 @@ def test_device_access_inspection():
 
 
 def test_open_inodes_inspection():
-    inodes = host_xray.get_process_open_inodes(1)
+    inodes = host_forensics.get_process_open_inodes(1)
     assert isinstance(inodes, list)
     if inodes:
         i = inodes[0]
@@ -33,7 +33,7 @@ def test_open_inodes_inspection():
 
 
 def test_launch_chain_inspection():
-    chain = host_xray.get_process_launch_chain(1)
+    chain = host_forensics.get_process_launch_chain(1)
     assert "supervisor" in chain
     assert "service_scope" in chain
     assert "chain" in chain
