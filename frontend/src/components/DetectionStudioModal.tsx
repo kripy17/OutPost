@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { getRunDetectionSuite } from "../lib/api";
 import { Icon } from "./Icon";
@@ -149,6 +150,15 @@ export function DetectionStudioModal({ runId, isOpen, onClose }: DetectionStudio
           </div>
 
           <div className="flex items-center gap-2">
+            <Link
+              to="/rules?create=1"
+              onClick={onClose}
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/50 bg-accent/15 px-3 py-1.5 font-mono text-xs font-semibold text-accent transition-all hover:bg-accent/25"
+              title="Open detection rule workbench to author and test rules"
+            >
+              <Icon name="shield" size={13} />
+              Rule Workbench
+            </Link>
             <button
               onClick={handleCopy}
               className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-surface px-3 py-1.5 font-mono text-xs text-text-muted transition-colors hover:border-accent/60 hover:text-accent"
