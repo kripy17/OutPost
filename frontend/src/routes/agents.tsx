@@ -726,10 +726,36 @@ export default function AgentsPage() {
 
   const [showBootstrap, setShowBootstrap] = useState(false);
   const [containmentHost, setContainmentHost] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [platformFilter, setPlatformFilter] = useState<string>("all");
 
   const agents = data?.agents ?? [];
   const totalEvents = agents.reduce((n, a) => n + a.event_count, 0);
   const totalAlerts = agents.reduce((n, a) => n + a.alert_count, 0);
+
+  const filteredAgents = agents.filter((a) => {
+    const st = a.silent ? "silent" : a.online ? "online" : "offline";
+    if (statusFilter !== "all" && st !== statusFilter) return false;
+    if (platformFilter !== "all" && !a.platforms.includes(platformFilter as any)) return false;
+    return true;
+  });
+
+  const handleExportInventory = () => {
+    const header = "Host ID,Status,Identity,Platforms,Event Count,Run Count,Alert Count,Last Seen,Last Heartbeat\n";
+    const rows = (agents || []).map((a) => {
+      const st = a.silent ? "silent" : a.online ? "online" : "offline";
+      return `"${a.host_id}","${st}","${a.identity}","${a.platforms.join(";")}",${a.event_count},${a.run_count},${a.alert_count},"${a.last_seen || ""}","${a.last_heartbeat || ""}"`;
+    });
+    const blob = new Blob([header + rows.join("\n")], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `fleet-inventory-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
 
   return (
     <div className="mx-auto max-w-[1200px] px-5 py-8 lg:px-8">
@@ -749,6 +775,14 @@ export default function AgentsPage() {
         actions={
           <div className="flex items-center gap-2">
             <button
+              onClick={handleExportInventory}
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-2 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
+              title="Download fleet host inventory as CSV"
+            >
+              <Icon name="download" size={12} />
+              Export Fleet CSV
+            </button>
+            <button
               onClick={() => setShowBootstrap(true)}
               className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/10 px-3 py-2 font-mono text-xs font-semibold text-accent transition-colors duration-150 hover:bg-accent/20"
             >
@@ -766,33 +800,71 @@ export default function AgentsPage() {
         }
       />
 
-      {/* Identity filter — ?identity= in the URL (Event Log parity). */}
-      <div className="mb-5 flex flex-wrap items-center gap-2" role="group" aria-label="Filter fleet by identity">
-        {IDENTITY_FILTERS.map((f) => {
-          const active = (identity || "") === f.value;
-          return (
-            <button
-              key={f.value || "all"}
-              onClick={() => {
-                const next = new URLSearchParams(searchParams);
-                if (f.value) {
-                  next.set("identity", f.value);
-                } else {
-                  next.delete("identity");
-                }
-                setSearchParams(next, { replace: true });
-              }}
-              aria-pressed={active}
-              className={`press inline-flex items-center gap-1.5 rounded-full border px-3 py-1 font-mono text-[11px] transition-colors duration-150 ${
-                active
-                  ? "border-accent/60 bg-accent/10 text-accent"
-                  : "border-border-subtle bg-bg-surface text-text-muted hover:border-accent/40 hover:text-accent"
-              }`}
-            >
-              {f.label}
-            </button>
-          );
-        })}
+      {/* Identity, Status & Platform filters */}
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Filter fleet by identity">
+          {IDENTITY_FILTERS.map((f) => {
+            const active = (identity || "") === f.value;
+            return (
+              <button
+                key={f.value || "all"}
+                onClick={() => {
+                  const next = new URLSearchParams(searchParams);
+                  if (f.value) {
+                    next.set("identity", f.value);
+                  } else {
+                    next.delete("identity");
+                  }
+                  setSearchParams(next, { replace: true });
+                }}
+                aria-pressed={active}
+                className={`press inline-flex items-center gap-1.5 rounded-full border px-3 py-1 font-mono text-[11px] transition-colors duration-150 ${
+                  active
+                    ? "border-accent/60 bg-accent/10 text-accent"
+                    : "border-border-subtle bg-bg-surface text-text-muted hover:border-accent/40 hover:text-accent"
+                }`}
+              >
+                {f.label}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Status filter */}
+          <div className="flex items-center rounded-lg border border-border-subtle bg-bg-surface p-0.5 font-mono text-[11px]">
+            {(["all", "online", "silent", "offline"] as const).map((st) => (
+              <button
+                key={st}
+                onClick={() => setStatusFilter(st)}
+                className={`rounded-md px-2 py-0.5 capitalize transition ${
+                  statusFilter === st
+                    ? "bg-accent/20 font-bold text-accent shadow-sm"
+                    : "text-text-muted hover:text-text-primary"
+                }`}
+              >
+                {st}
+              </button>
+            ))}
+          </div>
+
+          {/* Platform filter */}
+          <div className="flex items-center rounded-lg border border-border-subtle bg-bg-surface p-0.5 font-mono text-[11px]">
+            {(["all", "linux", "windows", "macos"] as const).map((p) => (
+              <button
+                key={p}
+                onClick={() => setPlatformFilter(p)}
+                className={`rounded-md px-2 py-0.5 capitalize transition ${
+                  platformFilter === p
+                    ? "bg-accent/20 font-bold text-accent shadow-sm"
+                    : "text-text-muted hover:text-text-primary"
+                }`}
+              >
+                {p}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
       {/* Fleet summary strip */}
@@ -872,22 +944,28 @@ export default function AgentsPage() {
         <>
           <Panel
             kicker="Fleet"
-            title="Hosts"
+            title={`Hosts (${filteredAgents.length} of ${agents.length})`}
             right={
               <span className="font-mono text-[10px] text-text-faint">
                 online &lt; {data?.online_window_seconds}s · silent &gt; {data?.silent_window_seconds}s
               </span>
             }
           >
-            <ul className="space-y-2.5">
-              {agents.map((a) => (
-                <AgentRow
-                  key={a.host_id}
-                  agent={a}
-                  onOpenContainment={(hid) => setContainmentHost(hid)}
-                />
-              ))}
-            </ul>
+            {filteredAgents.length === 0 ? (
+              <p className="py-6 text-center text-xs font-mono text-text-muted">
+                No hosts match active status/platform filters.
+              </p>
+            ) : (
+              <ul className="space-y-2.5">
+                {filteredAgents.map((a) => (
+                  <AgentRow
+                    key={a.host_id}
+                    agent={a}
+                    onOpenContainment={(hid) => setContainmentHost(hid)}
+                  />
+                ))}
+              </ul>
+            )}
           </Panel>
           <div className="mt-5">
             <SnapshotPanel agents={agents} />
