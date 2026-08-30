@@ -253,6 +253,24 @@ RULE_META: dict[str, RuleMeta] = {
         "weight": 18,
         "severity": "suspicious",
     },
+    "shadow-copy-deletion": {
+        "technique": "T1490",
+        "tactic": "Impact",
+        "weight": 22,
+        "severity": "malicious",
+    },
+    "remote-thread-injection": {
+        "technique": "T1055.002",
+        "tactic": "Privilege Escalation",
+        "weight": 20,
+        "severity": "malicious",
+    },
+    "ifeo-persistence": {
+        "technique": "T1546.012",
+        "tactic": "Persistence",
+        "weight": 18,
+        "severity": "malicious",
+    },
 }
 
 
@@ -307,6 +325,9 @@ RULE_NAMES: dict[str, str] = {
     "doh-resolver-use": "DNS-over-HTTPS from a script host",
     "fanout-contact": "Coordinated contact with one destination",
     "fanout-recurring": "Recurring coordinated fan-out",
+    "shadow-copy-deletion": "Volume Shadow Copy & backup deletion (ransomware inhibitor)",
+    "remote-thread-injection": "Remote thread injection into system process",
+    "ifeo-persistence": "IFEO debugger registry persistence",
 }
 
 
@@ -361,5 +382,20 @@ RULE_REMEDIATION: dict[str, list[str]] = {
         "Block the shared destination IP at the firewall/EDR",
         "Treat every contacting process as potentially compromised",
         "Hunt the run's timeline for what changed between each fan-out window — the plant keeps spawning new processes",
+    ],
+    "shadow-copy-deletion": [
+        "Isolate the host immediately from the network to stop ransomware encryption",
+        "Verify shadow storage and preserve uncorrupted volume backups",
+        "Terminate the ransomware parent process tree",
+    ],
+    "remote-thread-injection": [
+        "Terminate the target process or freeze its execution",
+        "Extract process memory dump for injected shellcode or DLL payloads",
+        "Inspect the source process lineage and persistent triggers",
+    ],
+    "ifeo-persistence": [
+        "Remove the malicious Debugger / SilentProcessExit key under Image File Execution Options",
+        "Kill any resident processes launched by the hook",
+        "Audit registry permissions on HKLM\\Software\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options",
     ],
 }

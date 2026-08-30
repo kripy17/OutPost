@@ -68,6 +68,8 @@ def detect_runner(data: bytes, filename: str) -> list[str] | None:
     elif data.startswith(b"MZ"):
         if current_os == "windows":
             return []  # Execute directly
+        elif shutil.which("wine64"):
+            return ["wine64"]
         elif shutil.which("wine"):
             return ["wine"]
 
@@ -146,6 +148,10 @@ async def execute_bytes_sandbox(
         }
         child_env["OUTPOST_SANDBOX"] = "1"
         child_env["OUTPOST_RUN_ID"] = run_id
+        if any("wine" in str(c) for c in cmd):
+            child_env["WINEDEBUG"] = "-all"
+            child_env["DISPLAY"] = ""
+            child_env["WINEPREFIX"] = str(sandbox_dir / ".wine")
 
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -380,6 +386,56 @@ SIMULATION_SCENARIOS = {
             {"name": "Temporary Dropper Write", "cmd": "echo '#!/bin/sh\necho stage_active' > /tmp/payload_drop.sh && chmod +x /tmp/payload_drop.sh"},
             {"name": "Execute & Immediate Self-Delete", "cmd": "/tmp/payload_drop.sh && rm -f /tmp/payload_drop.sh"},
             {"name": "Stealth Verification", "cmd": "ls /tmp/payload_drop.sh 2>&1 || echo 'Payload file successfully unlinked from filesystem (In-Memory Inode Held)'"},
+        ],
+    },
+    "win-ransomware-shadow-wipe": {
+        "id": "win-ransomware-shadow-wipe",
+        "name": "Windows Ransomware & Shadow Copy Inhibition",
+        "severity": "critical",
+        "platform": "windows",
+        "description": "Simulates Windows ransomware execution inhibiting disaster recovery via volume shadow copy wiping syntax.",
+        "techniques": ["T1490", "T1486"],
+        "stages": [
+            {"name": "Check VSS Shadow Storage", "cmd": "vssadmin list shadows 2>nul || echo 'VSS storage checked'"},
+            {"name": "Simulated Recovery Inhibition", "cmd": "echo 'vssadmin delete shadows /all /quiet simulated'"},
+            {"name": "Canary Encryption Staging", "cmd": "echo 'CONFIDENTIAL DATA' > canary_financial.docx"},
+        ],
+    },
+    "win-lolbin-certutil-download": {
+        "id": "win-lolbin-certutil-download",
+        "name": "Windows LOLBin Ingress & Certutil Decode",
+        "severity": "high",
+        "platform": "windows",
+        "description": "Simulates Living-off-the-Land binary abuse via certutil URL cache downloading and payload decoding.",
+        "techniques": ["T1105", "T1140"],
+        "stages": [
+            {"name": "Base64 Stager Creation", "cmd": "echo TVqQAAMAAAAEAAAA//8AALgAAAAAAAAAQAA > payload.b64"},
+            {"name": "Certutil Decode Emulation", "cmd": "certutil -decode payload.b64 payload.bin 2>nul || echo 'Payload decoded'"},
+            {"name": "Execution Check", "cmd": "echo 'LOLBin execution completed'"},
+        ],
+    },
+    "win-registry-run-persistence": {
+        "id": "win-registry-run-persistence",
+        "name": "Windows Registry Run Key Persistence",
+        "severity": "high",
+        "platform": "windows",
+        "description": "Simulates adversary persistence mechanisms adding auto-run entries to HKCU/HKLM CurrentVersion\\Run.",
+        "techniques": ["T1547.001"],
+        "stages": [
+            {"name": "Target Run Key Query", "cmd": "reg query HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run 2>nul || echo 'Run key queried'"},
+            {"name": "Persistent Stager Write", "cmd": "echo '@echo off & echo persistent' > updater.cmd"},
+        ],
+    },
+    "win-lsass-credential-access": {
+        "id": "win-lsass-credential-access",
+        "name": "Windows LSASS Credential & Token Enumeration",
+        "severity": "critical",
+        "platform": "windows",
+        "description": "Simulates credential theft discovery inspecting security privileges (SeDebugPrivilege) and mapping LSASS handles.",
+        "techniques": ["T1003.001", "T1134"],
+        "stages": [
+            {"name": "Privilege Discovery", "cmd": "whoami /priv 2>nul || echo 'Privileges enumerated'"},
+            {"name": "Security Process Mapping", "cmd": "tasklist 2>nul || echo 'Process table enumerated'"},
         ],
     },
 }

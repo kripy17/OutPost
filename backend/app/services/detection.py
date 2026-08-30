@@ -435,6 +435,9 @@ _KILL_CHAIN_STAGE = {
     "doh-resolver-use": "Command and Control",
     "fanout-contact": "Command and Control",
     "fanout-recurring": "Command and Control",
+    "shadow-copy-deletion": "Impact",
+    "remote-thread-injection": "Privilege Escalation",
+    "ifeo-persistence": "Persistence",
 }
 
 
@@ -1059,6 +1062,80 @@ def check_shell_history_wipe(event: dict) -> Alert | None:
                 description,
             )
     return None
+
+
+# ---------------------------------------------------------------------------
+# Rule 29 — Volume Shadow Copy Deletion (Windows Ransomware Defense, T1490)
+# ---------------------------------------------------------------------------
+_SHADOW_DELETE_PATTERNS = [
+    (r"vssadmin(\.exe)?\s+delete\s+shadows", "vssadmin deleting shadow copies (ransomware recovery inhibit)"),
+    (r"wmic(\.exe)?\s+shadowcopy\s+delete", "WMIC deleting shadow copies (ransomware recovery inhibit)"),
+    (r"wbadmin(\.exe)?\s+delete\s+(catalog|systemstatebackup)", "wbadmin deleting backup catalogs (ransomware recovery inhibit)"),
+    (r"bcdedit(\.exe)?\s+/set[^\n]*(recoveryenabled\s+no|bootstatuspolicy\s+ignoreallfailures)", "bcdedit disabling Windows startup recovery (ransomware recovery inhibit)"),
+]
+
+
+def check_shadow_copy_deletion(event: dict) -> Alert | None:
+    """Windows: Ransomware inhibiting system recovery by deleting volume shadow copies or disabling startup repair."""
+    if _platform(event) != "windows":
+        return None
+    if event.get("event_type") != "process_create":
+        return None
+    cmdline = event.get("command_line") or ""
+    for pattern, description in _SHADOW_DELETE_PATTERNS:
+        if re.search(pattern, cmdline, re.IGNORECASE):
+            return _make_alert(
+                event["run_id"], "shadow-copy-deletion",
+                "Volume Shadow Copy & Backup Deletion",
+                "malicious", event,
+                description,
+            )
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Rule 30 — Remote Thread Injection (Windows Process Injection, T1055.002)
+# ---------------------------------------------------------------------------
+_CRITICAL_INJECTION_TARGETS = {"explorer.exe", "svchost.exe", "spoolsv.exe", "lsass.exe", "winlogon.exe", "services.exe"}
+
+
+def check_remote_thread_injection(event: dict) -> Alert | None:
+    """Windows: Sysmon Event ID 8 / CreateRemoteThread into critical system processes."""
+    if _platform(event) != "windows":
+        return None
+    if event.get("event_type") != "remote_thread":
+        return None
+    target = (event.get("file_path") or event.get("process_name") or "").lower()
+    target_base = os.path.basename(target.replace("\\", "/"))
+    if target_base in _CRITICAL_INJECTION_TARGETS:
+        return _make_alert(
+            event["run_id"], "remote-thread-injection",
+            "Remote Thread Injection",
+            "malicious", event,
+            f"Remote thread injected into critical system process '{target_base}'",
+        )
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Rule 31 — IFEO & Debugger Registry Persistence (Windows T1546.012)
+# ---------------------------------------------------------------------------
+def check_ifeo_persistence(event: dict) -> Alert | None:
+    """Windows: Image File Execution Options (IFEO) Debugger persistence or silent process exit hooks."""
+    if _platform(event) != "windows":
+        return None
+    if event.get("event_type") != "registry_write":
+        return None
+    reg = (event.get("registry_key") or "").lower()
+    if "image file execution options" in reg and ("debugger" in reg or "silentprocessexit" in reg):
+        return _make_alert(
+            event["run_id"], "ifeo-persistence",
+            "IFEO Debugger Registry Persistence",
+            "malicious", event,
+            f"Image File Execution Options debugger hook modified: {event.get('registry_key')}",
+        )
+    return None
+
 
 
 # ---------------------------------------------------------------------------
@@ -2519,6 +2596,9 @@ def evaluate_batch(conn: sqlite3.Connection, run_id: str, events: list[dict]) ->
             check_tls_sni_suspicious(event),
             check_doh_resolver_use(event),
             check_screen_capture(event),
+            check_shadow_copy_deletion(event),
+            check_remote_thread_injection(event),
+            check_ifeo_persistence(event),
         ]
         for alert in candidates:
             if alert is not None:
@@ -2743,10 +2823,17 @@ def backtest_rule(conn: sqlite3.Connection, rule_id: str, max_events: int = 2000
                 if any(kw in pname.lower() for kw in ("certutil", "bitsadmin", "mshta", "curl", "wget")) and any(kw in cmd.lower() for kw in ("http", "-decode", "download")):
                     is_match = True
                     match_reason = f"LOLBin download syntax detected: {cmd[:60]}"
-            elif rule_id == "uncommon-port" and etype == "network_connection":
-                if dport and dport not in (80, 443, 53, 22, 123, 8080, 8443) and not (dip.startswith(("127.", "10.", "192.168."))):
+            elif rule_id == "shadow-copy-deletion" and etype == "process_create":
+                if any(kw in cmd.lower() for kw in ("vssadmin", "shadowcopy", "delete catalog", "recoveryenabled no")):
                     is_match = True
-                    match_reason = f"Public outbound traffic to unusual port {dport}"
+                    match_reason = f"Ransomware recovery inhibition detected: {cmd[:60]}"
+            elif rule_id == "remote-thread-injection" and etype == "remote_thread":
+                is_match = True
+                match_reason = f"Remote thread injection detected targeting {pname or fpath}"
+            elif rule_id == "ifeo-persistence" and etype == "registry_write":
+                if "image file execution options" in (ev.get("registry_key") or "").lower():
+                    is_match = True
+                    match_reason = f"IFEO debugger persistence key modified: {ev.get('registry_key')}"
             else:
                 if (rule_id.replace("-", " ") in cmd.lower()) or (rule_id.replace("-", " ") in pname.lower()):
                     is_match = True

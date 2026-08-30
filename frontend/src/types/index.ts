@@ -18,7 +18,16 @@ export interface PlatformInfo {
 export type Reputation = "clean" | "suspicious" | "malicious" | "unknown";
 export type SessionType = "live" | "analysis";
 export type Severity = "suspicious" | "malicious";
-export type EventType = "process_create" | "network_connection" | "file_write" | "registry_write";
+export type EventType =
+  | "process_create"
+  | "network_connection"
+  | "file_write"
+  | "registry_write"
+  | "remote_thread"
+  | "process_access"
+  | "driver_load"
+  | "module_load"
+  | "file_delete";
 
 export interface RunSummary {
   run_id: string;
@@ -436,6 +445,18 @@ export interface PeMetadata {
   sections: PeSection[];
   imports: string[];
   imphash?: string | null;
+  mitigations?: string[];
+  authenticode?: {
+    signed: boolean;
+    cert_size: number;
+    cert_offset?: number;
+  };
+  rich_header?: {
+    present: boolean;
+    hash: string;
+    xor_key: string;
+    records_count: number;
+  } | null;
 }
 
 export interface ElfSection {
