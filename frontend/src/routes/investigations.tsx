@@ -1,9 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { Chip, PageHeader, Panel } from "../components/ui";
-import { createInvestigation, listInvestigations } from "../lib/api";
+import { addInvestigationRef, createInvestigation, listInvestigations } from "../lib/api";
 import { useEventStream } from "../lib/useEventStream";
 import { toneFill, toneForSeverity } from "../lib/fillPatterns";
 import type { InvestigationStatus } from "../types";
@@ -63,12 +63,14 @@ function InvestigationRow({ inv }: { inv: { id: string; title: string; status: I
 
 export default function InvestigationsPage() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [status, setStatus] = useState<InvestigationStatus | "">("");
   const [q, setQ] = useState("");
   const [debouncedQ, setDebouncedQ] = useState("");
-  const [creating, setCreating] = useState(false);
-  const [title, setTitle] = useState("");
-  const [tags, setTags] = useState("");
+  const [creating, setCreating] = useState(() => searchParams.get("create") === "1");
+  const [title, setTitle] = useState(() => searchParams.get("title") || "");
+  const [tags, setTags] = useState(() => searchParams.get("tags") || "");
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ["investigations", status, debouncedQ],
@@ -98,11 +100,28 @@ export default function InvestigationsPage() {
           .map((t) => t.trim())
           .filter(Boolean),
       }),
-    onSuccess: () => {
+    onSuccess: async (inv) => {
       setCreating(false);
       setTitle("");
       setTags("");
+      const runId = searchParams.get("run_id");
+      if (runId) {
+        try {
+          await addInvestigationRef(inv.id, { ref_type: "run", ref_id: runId });
+        } catch {
+          // ignore
+        }
+      }
+      const hostId = searchParams.get("host_id");
+      if (hostId) {
+        try {
+          await addInvestigationRef(inv.id, { ref_type: "host", ref_id: hostId });
+        } catch {
+          // ignore
+        }
+      }
       void queryClient.invalidateQueries({ queryKey: ["investigations"] });
+      navigate(`/investigations/${inv.id}`);
     },
   });
 
