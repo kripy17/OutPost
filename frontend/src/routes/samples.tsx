@@ -28,7 +28,9 @@ function SampleTile({ s, onDelete }: { s: SampleRow; onDelete: (id: string, name
               ? "border-accent/30 bg-accent/10 text-accent"
               : s.detected_platform === "linux"
                 ? "border-risk-clean/30 bg-risk-clean/10 text-risk-clean"
-                : "border-border-subtle bg-bg-elevated/60 text-text-muted"
+                : s.detected_platform === "macos"
+                  ? "border-purple-500/40 bg-purple-500/10 text-purple-400"
+                  : "border-border-subtle bg-bg-elevated/60 text-text-muted"
           }`}
         >
           <Icon name={platformIconName(s.detected_platform)} size={20} />
@@ -124,6 +126,8 @@ export default function SamplesPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<"samples" | "analysis">("samples");
+  const [platformFilter, setPlatformFilter] = useState<string>("all");
+  const [threatFilter, setThreatFilter] = useState<string>("all");
   const [q, setQ] = useState("");
   const [debounced, setDebounced] = useState("");
   const [dragOver, setDragOver] = useState(false);
@@ -206,6 +210,13 @@ export default function SamplesPage() {
   const withYara = samples.filter((s) => s.yara_rules.length > 0).length;
   const flagged = samples.filter((s) => (s.vt_detections ?? 0) > 0).length;
   const byPlatform = (p: SampleRow["detected_platform"]) => samples.filter((s) => s.detected_platform === p).length;
+
+  const filteredSamples = samples.filter((s) => {
+    if (platformFilter !== "all" && s.detected_platform !== platformFilter) return false;
+    if (threatFilter === "flagged" && (s.vt_detections ?? 0) <= 0) return false;
+    if (threatFilter === "clean" && (s.vt_detections ?? 0) > 0) return false;
+    return true;
+  });
 
   return (
     <div className="mx-auto max-w-[1400px] px-5 py-8 lg:px-8">
@@ -357,9 +368,49 @@ export default function SamplesPage() {
       <Panel
         title="Library"
         right={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Platform filter */}
+            <div className="flex items-center rounded-lg border border-border-subtle bg-bg-surface p-0.5 font-mono text-[11px]">
+              {(["all", "windows", "linux", "macos"] as const).map((p) => (
+                <button
+                  key={p}
+                  onClick={() => setPlatformFilter(p)}
+                  className={`rounded-md px-2 py-0.5 capitalize transition ${
+                    platformFilter === p
+                      ? "bg-accent/20 font-bold text-accent shadow-sm"
+                      : "text-text-muted hover:text-text-primary"
+                  }`}
+                >
+                  {p}
+                </button>
+              ))}
+            </div>
+
+            {/* Threat filter */}
+            <div className="flex items-center rounded-lg border border-border-subtle bg-bg-surface p-0.5 font-mono text-[11px]">
+              {(
+                [
+                  { id: "all", label: "All Threat" },
+                  { id: "flagged", label: "VT Flagged" },
+                  { id: "clean", label: "Clean / Untested" },
+                ] as const
+              ).map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => setThreatFilter(t.id)}
+                  className={`rounded-md px-2 py-0.5 transition ${
+                    threatFilter === t.id
+                      ? "bg-accent/20 font-bold text-accent shadow-sm"
+                      : "text-text-muted hover:text-text-primary"
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+
             <span className="font-mono text-[10px] text-text-faint">
-              {debounced ? `${samples.length} of ${data?.total ?? 0}` : data?.total ?? 0} shown
+              {filteredSamples.length} of {data?.total ?? 0} shown
             </span>
             <div className="relative">
               <Icon name="search" size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-text-faint" />
@@ -367,7 +418,7 @@ export default function SamplesPage() {
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
                 placeholder="filter by name / hash / family…"
-                className="w-56 rounded-lg border border-border-subtle bg-bg-base py-1.5 pl-8 pr-3 font-mono text-xs text-text-primary placeholder:text-text-faint focus:border-accent/60 focus:outline-none"
+                className="w-48 rounded-lg border border-border-subtle bg-bg-base py-1 pl-8 pr-3 font-mono text-xs text-text-primary placeholder:text-text-faint focus:border-accent/60 focus:outline-none"
                 aria-label="Filter samples"
               />
             </div>
@@ -382,14 +433,16 @@ export default function SamplesPage() {
           </div>
         )}
         {isError && <p className="p-6 text-sm text-risk-malicious">Couldn't load samples — is the backend running?</p>}
-        {!isLoading && !isError && samples.length === 0 && (
+        {!isLoading && !isError && filteredSamples.length === 0 && (
           <p className="p-6 text-sm text-text-muted">
-            {debounced ? "No samples match that filter." : "No samples in vault yet. Drag & drop or upload an executable binary above to begin static analysis or dynamic execution tracing."}
+            {debounced || platformFilter !== "all" || threatFilter !== "all"
+              ? "No samples match active filters."
+              : "No samples in vault yet. Drag & drop or upload an executable binary above to begin static analysis or dynamic execution tracing."}
           </p>
         )}
-        {!isLoading && !isError && samples.length > 0 && (
+        {!isLoading && !isError && filteredSamples.length > 0 && (
           <ul className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 xl:grid-cols-3">
-            {samples.map((s) => (
+            {filteredSamples.map((s) => (
               <SampleTile key={s.sample_id} s={s} onDelete={handleDeleteSample} />
             ))}
           </ul>
