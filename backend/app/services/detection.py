@@ -2671,3 +2671,112 @@ def evaluate_batch(conn: sqlite3.Connection, run_id: str, events: list[dict]) ->
     baseline_svc.learn(conn, events)
 
     return new_alerts
+
+
+def backtest_rule(conn: sqlite3.Connection, rule_id: str, max_events: int = 2000) -> dict[str, Any]:
+    """Evaluate a detection rule against historical stored events to calculate hit counts and estimated false-positive rates."""
+    from .risk import RULE_META
+
+    rule_info = RULE_META.get(rule_id, {})
+    rule_name = rule_info.get("name", rule_id)
+    tactic = rule_info.get("tactic", "Unknown")
+
+    event_rows = conn.execute(
+        "SELECT id, run_id, platform, event_type, timestamp, pid, ppid, process_name, "
+        "command_line, exe_path, dest_ip, dest_port, protocol, file_path, registry_key, host_id "
+        "FROM events ORDER BY id DESC LIMIT ?",
+        (max_events,),
+    ).fetchall()
+    events = [dict(r) for r in event_rows]
+
+    if not events:
+        return {
+            "rule_id": rule_id,
+            "rule_name": rule_name,
+            "tactic": tactic,
+            "events_scanned": 0,
+            "matches_count": 0,
+            "match_rate_pct": 0.0,
+            "affected_runs_count": 0,
+            "sample_matches": [],
+            "estimated_fp_risk": "low",
+        }
+
+    # Group events by run_id for batch rule evaluation
+    runs_map: dict[str, list[dict]] = {}
+    for ev in events:
+        rid = ev.get("run_id") or "unattributed"
+        runs_map.setdefault(rid, []).append(ev)
+
+    matching_events: list[dict[str, Any]] = []
+    affected_runs: set[str] = set()
+
+    for rid, run_evs in runs_map.items():
+        for ev in run_evs:
+            etype = ev.get("event_type")
+            cmd = ev.get("command_line") or ""
+            pname = ev.get("process_name") or ""
+            fpath = ev.get("file_path") or ""
+            dip = ev.get("dest_ip") or ""
+            dport = ev.get("dest_port")
+
+            is_match = False
+            match_reason = ""
+
+            if rule_id == "reverse-shell" and etype == "network_connection":
+                if dport in (4444, 1337, 8888, 9001):
+                    is_match = True
+                    match_reason = f"Outbound connection to suspicious port {dport}"
+            elif rule_id == "masquerading" and etype == "process_create":
+                if ("svchost" in pname and "system32" not in (ev.get("exe_path") or "").lower()) or "/tmp/" in (ev.get("exe_path") or ""):
+                    is_match = True
+                    match_reason = f"Process {pname} executed from suspicious directory"
+            elif rule_id == "autostart-persistence" and etype == "file_write":
+                if any(kw in fpath.lower() for kw in ("/etc/cron", "runonce", "startup", "systemd")):
+                    is_match = True
+                    match_reason = f"Persistence path write to {fpath}"
+            elif rule_id == "credential-dumping" and etype == "process_create":
+                if any(kw in cmd.lower() for kw in ("mimikatz", "sekurlsa", "lsass", "procdump")):
+                    is_match = True
+                    match_reason = f"Credential dumping pattern in command line: {cmd[:60]}"
+            elif rule_id == "lolbin-abuse" and etype == "process_create":
+                if any(kw in pname.lower() for kw in ("certutil", "bitsadmin", "mshta", "curl", "wget")) and any(kw in cmd.lower() for kw in ("http", "-decode", "download")):
+                    is_match = True
+                    match_reason = f"LOLBin download syntax detected: {cmd[:60]}"
+            elif rule_id == "uncommon-port" and etype == "network_connection":
+                if dport and dport not in (80, 443, 53, 22, 123, 8080, 8443) and not (dip.startswith(("127.", "10.", "192.168."))):
+                    is_match = True
+                    match_reason = f"Public outbound traffic to unusual port {dport}"
+            else:
+                if (rule_id.replace("-", " ") in cmd.lower()) or (rule_id.replace("-", " ") in pname.lower()):
+                    is_match = True
+                    match_reason = f"Direct signature match for {rule_id}"
+
+            if is_match:
+                matching_events.append({
+                    "event_id": ev.get("id"),
+                    "run_id": rid,
+                    "event_type": etype,
+                    "process_name": pname,
+                    "command_line": cmd[:120],
+                    "timestamp": ev.get("timestamp"),
+                    "match_reason": match_reason,
+                })
+                affected_runs.add(rid)
+
+    match_count = len(matching_events)
+    match_rate = round((match_count / len(events)) * 100, 2)
+    fp_risk = "high" if match_rate > 5.0 else "medium" if match_rate > 1.0 else "low"
+
+    return {
+        "rule_id": rule_id,
+        "rule_name": rule_name,
+        "tactic": tactic,
+        "events_scanned": len(events),
+        "matches_count": match_count,
+        "match_rate_pct": match_rate,
+        "affected_runs_count": len(affected_runs),
+        "sample_matches": matching_events[:20],
+        "estimated_fp_risk": fp_risk,
+    }
+

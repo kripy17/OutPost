@@ -24,9 +24,10 @@ import {
   setTuning,
   testYaraRule,
   transpileSigmaRule,
+  backtestRule,
 } from "../lib/api";
 import { clearEnumDrafts, clearLogDrafts, clearYaraDraft, readEnumDrafts, readLogDrafts, readYaraDraft, writeEnumDrafts, writeLogDrafts, writeYaraDraft } from "./rulesDrafts";
-import type { CustomYaraRule, EnumPatternRow, FpDayPoint, LogPatternKind, RuleFpEntry, RulePack, TuningKnob, YaraTestResponse } from "../types";
+import type { CustomYaraRule, EnumPatternRow, FpDayPoint, LogPatternKind, RuleBacktestResult, RuleFpEntry, RulePack, TuningKnob, YaraTestResponse } from "../types";
 
 const PLATFORM_LABELS: Record<string, string> = {
   windows: "Windows",
@@ -1004,6 +1005,126 @@ detection:
 }
 
 
+function RuleBacktestModal({
+  ruleId,
+  ruleName,
+  onClose,
+}: {
+  ruleId: string;
+  ruleName: string;
+  onClose: () => void;
+}) {
+  const [maxEvents, setMaxEvents] = useState(2000);
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState<RuleBacktestResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const runBacktest = async () => {
+    setRunning(true);
+    setError(null);
+    try {
+      const res = await backtestRule(ruleId, maxEvents);
+      setResult(res);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Backtest evaluation failed");
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  useEffect(() => {
+    void runBacktest();
+  }, [ruleId]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-2xl rounded-2xl border border-border-subtle bg-bg-surface p-6 shadow-2xl space-y-4 max-h-[85vh] overflow-y-auto">
+        <div className="flex items-center justify-between border-b border-border-subtle pb-3">
+          <div>
+            <span className="font-mono text-[10px] uppercase tracking-wide text-text-faint">Detection Validation</span>
+            <h3 className="font-mono text-sm font-bold text-text-primary">
+              Historical Rule Backtest — <span className="text-accent">{ruleName}</span>
+            </h3>
+          </div>
+          <button onClick={onClose} className="rounded-lg p-1 text-text-muted hover:bg-bg-base hover:text-text-primary">
+            <Icon name="x" size={16} />
+          </button>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 font-mono text-xs">
+          <div className="flex items-center gap-2">
+            <span className="text-text-faint">Scanned Window:</span>
+            <select
+              value={maxEvents}
+              onChange={(e) => setMaxEvents(Number(e.target.value))}
+              disabled={running}
+              className="rounded border border-border-subtle bg-bg-base px-2 py-1 text-text-primary outline-none focus:border-accent"
+            >
+              <option value={500}>Last 500 Events</option>
+              <option value={1000}>Last 1,000 Events</option>
+              <option value={2000}>Last 2,000 Events</option>
+              <option value={5000}>Last 5,000 Events</option>
+            </select>
+          </div>
+          <button
+            onClick={() => void runBacktest()}
+            disabled={running}
+            className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/15 px-3 py-1.5 font-bold text-accent hover:bg-accent/25 disabled:opacity-50"
+          >
+            <Icon name={running ? "refresh" : "play"} size={12} className={running ? "animate-spin" : ""} />
+            {running ? "Scanning History…" : "Re-run Backtest"}
+          </button>
+        </div>
+
+        {error && <p className="font-mono text-xs text-risk-malicious">{error}</p>}
+
+        {result && (
+          <div className="space-y-3 font-mono">
+            <div className="grid grid-cols-3 gap-3">
+              <div className="rounded-xl border border-border-subtle bg-bg-base/60 p-3">
+                <span className="text-[10px] text-text-faint uppercase">Events Evaluated</span>
+                <p className="text-base font-bold text-text-primary mt-1">{result.events_scanned}</p>
+              </div>
+              <div className="rounded-xl border border-border-subtle bg-bg-base/60 p-3">
+                <span className="text-[10px] text-text-faint uppercase">Rule Trigger Hits</span>
+                <p className="text-base font-bold text-accent mt-1">{result.matches_count} ({result.match_rate_pct}%)</p>
+              </div>
+              <div className="rounded-xl border border-border-subtle bg-bg-base/60 p-3">
+                <span className="text-[10px] text-text-faint uppercase">Est. False Positive Risk</span>
+                <p className={`text-base font-bold mt-1 uppercase ${result.estimated_fp_risk === "low" ? "text-emerald-400" : result.estimated_fp_risk === "medium" ? "text-amber-400" : "text-rose-500"}`}>
+                  {result.estimated_fp_risk}
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <span className="text-[10px] uppercase font-bold text-text-faint">Matched Historical Events ({result.sample_matches.length}):</span>
+              {result.sample_matches.length === 0 ? (
+                <p className="text-xs text-text-muted py-2">Zero matching events triggered across the historical sample.</p>
+              ) : (
+                <div className="max-h-60 overflow-y-auto space-y-1.5">
+                  {result.sample_matches.map((m) => (
+                    <div key={m.event_id} className="rounded-lg border border-border-subtle bg-bg-base/80 p-2.5 text-[11px]">
+                      <div className="flex items-center justify-between text-text-muted">
+                        <span className="font-bold text-accent">{m.process_name || m.event_type}</span>
+                        <span className="text-[9px] text-text-faint">{m.timestamp?.slice(0, 19).replace("T", " ")}</span>
+                      </div>
+                      <p className="mt-1 truncate text-text-primary" title={m.command_line || m.match_reason}>
+                        {m.match_reason}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
 export default function RulesPage() {
   const queryClient = useQueryClient();
   const { data, isLoading, isError } = useQuery({ queryKey: ["tuning"], queryFn: getTuning });
@@ -1011,6 +1132,7 @@ export default function RulesPage() {
   const [activeTab, setActiveTab] = useState<"rules" | "coverage">("rules");
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [fpDraft, setFpDraft] = useState<string>("");
+  const [backtestingRule, setBacktestingRule] = useState<{ id: string; name: string } | null>(null);
 
   useEffect(() => {
     if (fp) setFpDraft((d) => (d === "" ? String(fp.threshold) : d));
@@ -1216,6 +1338,13 @@ export default function RulesPage() {
                   >
                     Apply
                   </button>
+                  <button
+                    onClick={() => setBacktestingRule({ id: knob.rule_id, name: knob.param })}
+                    className="press rounded border border-border-subtle px-3 py-1.5 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
+                    title="Evaluate detection heuristic against historical events"
+                  >
+                    Backtest
+                  </button>
                   {knob.tuned && (
                     <button
                       onClick={() => reset.mutate(knob.param)}
@@ -1245,6 +1374,15 @@ export default function RulesPage() {
       )}
         </>
       )}
+
+      {backtestingRule && (
+        <RuleBacktestModal
+          ruleId={backtestingRule.id}
+          ruleName={backtestingRule.name}
+          onClose={() => setBacktestingRule(null)}
+        />
+      )}
     </div>
   );
 }
+

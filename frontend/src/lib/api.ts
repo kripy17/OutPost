@@ -45,6 +45,8 @@ import type {
   SamplesResponse,
   SampleStatic,
   SampleDetonationResult,
+  RuleBacktestResult,
+  InvestigationNarrativeResult,
   SandboxDetonateIn,
   SandboxProvidersResponse,
   SandboxTask,
@@ -1576,6 +1578,11 @@ export async function getXRayFullTargetDossier(pid: number): Promise<{
 }> {
   return get<any>(`/system/xray/process/${pid}/full`);
 }
+export async function backtestRule(ruleId: string, maxEvents = 2000): Promise<RuleBacktestResult> {
+  return post<RuleBacktestResult>(`/rules/${encodeURIComponent(ruleId)}/backtest?max_events=${maxEvents}`, {});
+}
 
-
+export async function synthesizeInvestigation(investigationId: string): Promise<InvestigationNarrativeResult> {
+  return post<InvestigationNarrativeResult>(`/investigations/${encodeURIComponent(investigationId)}/synthesize`, {});
+}
 

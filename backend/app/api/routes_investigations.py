@@ -260,3 +260,14 @@ def reopen_investigation(investigation_id: str, request: Request) -> Investigati
 
         events_stream.publish_run_update("", 0, investigation_id=investigation_id)
     return InvestigationDTO(**row)
+
+
+@router.post("/investigations/{investigation_id}/synthesize", response_model=None)
+def synthesize_case_narrative(investigation_id: str) -> dict:
+    """Synthesize an executive incident narrative, kill-chain timeline, and remediation checklist from linked evidence."""
+    from ..services.report import synthesize_investigation_narrative
+
+    with db_session() as conn:
+        _require_investigation(conn, investigation_id)
+        return synthesize_investigation_narrative(conn, investigation_id)
+

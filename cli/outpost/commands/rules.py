@@ -260,3 +260,47 @@ def sigma(
             c.get("original_field", "-"),
         )
     console.print(table)
+
+
+@app.command("backtest")
+def backtest(
+    rule_id: str = typer.Argument(..., help="Detection rule ID to backtest"),
+    max_events: int = typer.Option(2000, "--events", "-n", help="Number of historical events to evaluate"),
+) -> None:
+    """Evaluate a detection rule against historical stored events to calculate match rate and false-positive risk."""
+    show_banner(primary=False)
+    if isinstance(max_events, typer.models.OptionInfo):
+        max_events = 2000
+    try:
+        data = api_client.backtest_rule(rule_id, max_events=max_events)
+    except api_client.APIError as exc:
+        console.print(f"[bold #C4453B]Backtest failed: {exc}[/bold #C4453B]")
+        raise typer.Exit(1)
+
+    rule_name = data.get("rule_name") or rule_id
+    console.print(f"[bold #3B82F6]Historical Rule Backtest[/bold #3B82F6] — [dim]{rule_name} ({rule_id})[/dim]\n")
+    console.print(f"  [bold]Scanned Window:[/bold] {data.get('events_scanned', 0)} historical events")
+    console.print(f"  [bold]Trigger Hits:[/bold]   {data.get('matches_count', 0)} ({data.get('match_rate_pct', 0.0)}% hit rate)")
+    console.print(f"  [bold]Affected Runs:[/bold]  {data.get('affected_runs_count', 0)}")
+    fp = data.get("estimated_fp_risk", "low").upper()
+    color = "green" if fp == "LOW" else "yellow" if fp == "MEDIUM" else "red"
+    console.print(f"  [bold]Est. FP Risk:[/bold]   [bold {color}]{fp}[/bold {color}]\n")
+
+    matches = data.get("sample_matches", [])
+    if matches:
+        t = Table(title="Sample Trigger Matches (first 10)", border_style="dim")
+        t.add_column("Event ID", style="dim")
+        t.add_column("Timestamp")
+        t.add_column("Process / Event", style="bold cyan")
+        t.add_column("Match Reason", style="bold yellow")
+        for m in matches[:10]:
+            t.add_row(
+                str(m.get("event_id", "-")),
+                (m.get("timestamp") or "")[:19].replace("T", " "),
+                m.get("process_name") or m.get("event_type") or "-",
+                m.get("match_reason") or "-",
+            )
+        console.print(t)
+    else:
+        console.print("[dim]Zero matching events triggered across the historical sample.[/dim]")
+

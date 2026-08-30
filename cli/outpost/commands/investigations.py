@@ -308,3 +308,52 @@ def investigations_reopen(
         console.print(f"[bold #C4453B]Reopen failed: {exc}[/bold #C4453B]")
         raise typer.Exit(1)
     console.print(f"[#3FA796]Reopened {inv['id']} — status {inv.get('status', '-').upper()}[/#3FA796]")
+
+
+@app.command("synthesize")
+def investigations_synthesize(
+    investigation_id: str = typer.Argument(..., help="investigation id to synthesize"),
+) -> None:
+    """Synthesize an executive incident narrative, causality stages, and actionable remediation checklist."""
+    show_banner(primary=False)
+    try:
+        data = api_client.synthesize_investigation(investigation_id)
+    except api_client.APIError as exc:
+        console.print(f"[bold #C4453B]Synthesis failed: {exc}[/bold #C4453B]")
+        raise typer.Exit(1)
+
+    title = data.get("title") or investigation_id
+    status = data.get("status", "active").upper()
+    sev = data.get("max_severity", "unknown").upper()
+    console.print(f"[bold #3B82F6]Executive Incident Narrative[/bold #3B82F6] — [dim]{title} ({investigation_id})[/dim]")
+    console.print(f"  [bold]Status:[/bold] {status} · [bold]Max Severity:[/bold] [bold red]{sev}[/bold red]\n")
+
+    console.print("[bold white]Executive Summary:[/bold white]")
+    console.print(f"  {data.get('executive_summary')}\n")
+
+    tactics = data.get("tactics_involved", [])
+    if tactics:
+        console.print(f"  [bold]ATT&CK Phases:[/bold] {', '.join(tactics)}\n")
+
+    timeline = data.get("causality_timeline", [])
+    if timeline:
+        t = Table(title="Attack Causality Sequence", border_style="dim")
+        t.add_column("Step", style="dim")
+        t.add_column("Rule / Heuristic", style="bold cyan")
+        t.add_column("Severity")
+        t.add_column("Details", style="dim")
+        for c in timeline:
+            t.add_row(
+                f"#{c.get('step')}",
+                c.get("rule", "-"),
+                c.get("severity", "-"),
+                (c.get("details") or "-")[:70],
+            )
+        console.print(t)
+
+    checklist = data.get("remediation_checklist", [])
+    if checklist:
+        console.print("\n[bold green]Prescribed Remediation Checklist:[/bold green]")
+        for item in checklist:
+            console.print(f"  [ ] {item}")
+

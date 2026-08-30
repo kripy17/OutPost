@@ -14,7 +14,7 @@ Tuning takes effect on the *next* ingested batch — no backend restart needed.
 import json
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from ..core import auth
@@ -752,3 +752,13 @@ def download_navigator_layer():
         media_type="application/json",
         headers={"Content-Disposition": 'attachment; filename="outpost-attack-navigator.json"'},
     )
+
+
+@router.post("/rules/{rule_id}/backtest", response_model=None)
+def post_rule_backtest(rule_id: str, max_events: int = Query(2000, ge=10, le=10000)) -> dict:
+    """Evaluate a detection rule against historical stored events to calculate match rate and false positive risk."""
+    from ..services.detection import backtest_rule
+
+    with db_session() as conn:
+        return backtest_rule(conn, rule_id=rule_id, max_events=max_events)
+
