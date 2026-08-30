@@ -26,6 +26,7 @@ def _register_commands() -> None:
     from .commands.coverage import coverage
     from .commands.export import export
     from .commands.footprint import app as footprint_app
+    from .commands.forensics import app as forensics_app
     from .commands.hosts import app as hosts_app
     from .commands.intel import app as intel_app
     from .commands.investigations import app as investigations_app
@@ -59,6 +60,7 @@ def _register_commands() -> None:
     app.add_typer(playbooks_app, name="playbook")
     app.command("samples")(samples)
     app.command("refresh")(refresh)
+    app.add_typer(forensics_app, name="forensics")
     app.add_typer(watchlist_app, name="watchlist")
     app.add_typer(allowlist_app, name="allowlist")
     app.add_typer(intel_app, name="intel")
