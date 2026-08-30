@@ -501,6 +501,12 @@ fi
 # Setup Python packages
 $PY -m pip install --quiet requests psutil 2>/dev/null || true
 
+# Load kernel audit rules for execve and connect monitoring if auditctl is available
+if command -v auditctl >/dev/null 2>&1; then
+    sudo auditctl -a always,exit -F arch=b64 -S execve,execveat -k vantage_exec 2>/dev/null || true
+    sudo auditctl -a always,exit -F arch=b64 -S connect -k vantage_net 2>/dev/null || true
+fi
+
 TMP_DIR="$(mktemp -d /tmp/outpost-agent-XXXXXX)"
 cd "$TMP_DIR"
 

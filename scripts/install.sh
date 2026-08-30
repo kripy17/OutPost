@@ -140,6 +140,18 @@ else
     MISSING_PKGS+=("curl")
 fi
 
+# Check Linux Auditd (Optional / Recommended for Host Telemetry)
+HAS_AUDITD="no"
+AUDITD_STATUS="Not installed"
+if command -v auditd >/dev/null 2>&1 || command -v auditctl >/dev/null 2>&1; then
+    HAS_AUDITD="yes"
+    if systemctl is-active --quiet auditd 2>/dev/null || pgrep -x auditd >/dev/null 2>&1; then
+        AUDITD_STATUS="Active & Running"
+    else
+        AUDITD_STATUS="Installed (Inactive)"
+    fi
+fi
+
 # -----------------------------------------------------------------------------
 # 2. Render Diagnostic Matrix
 # -----------------------------------------------------------------------------
@@ -186,6 +198,12 @@ if [ "$HAS_CURL" = "yes" ]; then
     printf '  %-24s %s%-16s%s %s\n' "curl" "$C_GREEN" "[✔ INSTALLED]" "$C_RESET" "$CURL_VER"
 else
     printf '  %-24s %s%-16s%s %s\n' "curl" "$C_RED" "[✖ MISSING]" "$C_RESET" "Required for threat intel feeds & updates"
+fi
+
+if [ "$HAS_AUDITD" = "yes" ]; then
+    printf '  %-24s %s%-16s%s %s\n' "Linux Auditd (auditd)" "$C_GREEN" "[✔ INSTALLED]" "$C_RESET" "$AUDITD_STATUS"
+else
+    printf '  %-24s %s%-16s%s %s\n' "Linux Auditd (auditd)" "$C_CYAN" "[○ OPTIONAL]" "$C_RESET" "Recommended for kernel syscall telemetry"
 fi
 
 printf '%s========================================================================%s\n' "$C_CYAN" "$C_RESET"
@@ -325,7 +343,35 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-# 9. Installation Summary & Next Steps
+# 9. Optional Linux Auditd Rules Setup
+# -----------------------------------------------------------------------------
+INSTALL_AUDIT_RULES="${INSTALL_AUDIT_RULES:-0}"
+if [ "$HAS_AUDITD" = "yes" ] && [ -f collectors/linux/audit.rules ]; then
+    DO_AUDIT_RULES="no"
+    if [ "$INSTALL_AUDIT_RULES" = "1" ]; then
+        DO_AUDIT_RULES="yes"
+    elif [ "$NON_INTERACTIVE" != "1" ] && [ -t 0 ]; then
+        printf '%s==>%s Would you like OutPost to load Linux audit rules (execve, connect, file watches)? [Y/n]: ' "$C_BOLD" "$C_RESET"
+        read -r choice
+        case "$choice" in
+            [nN][oO]|[nN]) DO_AUDIT_RULES="no" ;;
+            *) DO_AUDIT_RULES="yes" ;;
+        esac
+    fi
+
+    if [ "$DO_AUDIT_RULES" = "yes" ]; then
+        say "Applying OutPost audit rules into Linux kernel..."
+        if [ "$(id -u)" -ne 0 ]; then
+            sudo auditctl -R collectors/linux/audit.rules 2>/dev/null || warn "Could not load auditctl rules directly."
+        else
+            auditctl -R collectors/linux/audit.rules 2>/dev/null || warn "Could not load auditctl rules directly."
+        fi
+        say "✔ OutPost Linux audit rules active."
+    fi
+fi
+
+# -----------------------------------------------------------------------------
+# 10. Installation Summary & Next Steps
 # -----------------------------------------------------------------------------
 echo
 printf '%s========================================================================%s\n' "$C_GREEN" "$C_RESET"

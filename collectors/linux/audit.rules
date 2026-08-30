@@ -1,2 +1,14 @@
--a always,exit -F arch=b64 -S execve -k vantage_exec
+## OutPost Linux Kernel Audit Rules
+## Monitor process execution (execve and execveat)
+-a always,exit -F arch=b64 -S execve,execveat -k vantage_exec
+-a always,exit -F arch=b32 -S execve,execveat -k vantage_exec
+
+## Monitor outbound network sockets (connect)
 -a always,exit -F arch=b64 -S connect -k vantage_net
+-a always,exit -F arch=b32 -S connect -k vantage_net
+
+## Monitor critical identity & privilege escalation file modifications
+-w /etc/passwd -p wa -k vantage_auth
+-w /etc/shadow -p wa -k vantage_auth
+-w /etc/sudoers -p wa -k vantage_auth
+-w /etc/sudoers.d/ -p wa -k vantage_auth
