@@ -69,6 +69,9 @@ class EventIn(BaseModel):
     # TLS Server Name Indication from the handshake (Sysmon Event ID 3
     # DestinationHostname). Feeds the TLS-SNI / DNS-over-HTTPS rules.
     tls_sni: str | None = None
+    # TLS client hello JA3 fingerprint hash (e.g. Cobalt Strike, Metasploit).
+    ja3: str | None = None
+    tls_ja3: str | None = None
     # The raw source record as shipped by a collector (the exact auditd
     # line / Sysmon event) — the Event Viewer's "raw record" pane pivots a
     # normalized row back to its source. NULL for webapp/sandbox/seed events.
@@ -130,6 +133,7 @@ class Alert(BaseModel):
     disposition: Disposition | None = None
     seen_at: datetime | None = None
     investigation_id: str | None = None
+    intel: list[dict] = []
 
 
 class AlertStatusIn(BaseModel):
@@ -245,6 +249,7 @@ class AnalysisJobCreateIn(BaseModel):
     platform: Platform | None = None
     timeout_seconds: int | None = Field(default=None, ge=1, le=86400)
     label: str | None = Field(default=None, max_length=256)
+    provider: str | None = Field(default=None, max_length=64)
 
 
 class AllowlistIn(BaseModel):

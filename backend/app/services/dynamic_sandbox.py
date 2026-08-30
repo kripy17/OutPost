@@ -89,8 +89,12 @@ async def execute_bytes_sandbox(
     if runner is None:
         runner = []
 
+    if ".." in sample_name or "/" in sample_name or "\\" in sample_name or not sample_name:
+        safe_name = "sample.bin"
+    else:
+        safe_name = sample_name
     sandbox_dir = Path(tempfile.mkdtemp(prefix=f"outpost_sandbox_{run_id}_"))
-    target_file = sandbox_dir / sample_name
+    target_file = sandbox_dir / safe_name
 
     events_batch: list[dict[str, Any]] = []
     stdout_data = ""
@@ -123,11 +127,25 @@ async def execute_bytes_sandbox(
             "timestamp": start_dt,
             "pid": main_pid,
             "ppid": os.getpid(),
-            "process_name": sample_name,
+            "process_name": safe_name,
             "command_line": " ".join(cmd),
             "exe_path": str(target_file),
             "host_id": "local",
         })
+
+        child_env = {
+            k: v
+            for k, v in os.environ.items()
+            if not (
+                k.endswith("_KEY")
+                or k.endswith("_SECRET")
+                or k.endswith("_TOKEN")
+                or k.endswith("_PASSWORD")
+                or k in ("VT_API_KEY", "ABUSEIPDB_API_KEY", "SHODAN_API_KEY", "GREYNOISE_API_KEY")
+            )
+        }
+        child_env["OUTPOST_SANDBOX"] = "1"
+        child_env["OUTPOST_RUN_ID"] = run_id
 
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -135,11 +153,7 @@ async def execute_bytes_sandbox(
                 cwd=str(sandbox_dir),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                env={
-                    **os.environ,
-                    "OUTPOST_SANDBOX": "1",
-                    "OUTPOST_RUN_ID": run_id,
-                },
+                env=child_env,
             )
             main_pid = proc.pid
 
@@ -262,7 +276,7 @@ async def execute_and_trace(
     verdict = "clean"
     if any(a.get("severity") == "malicious" for a in alerts):
         verdict = "malicious"
-    elif alerts or exit_code != 0:
+    elif alerts:
         verdict = "suspicious"
 
     return {

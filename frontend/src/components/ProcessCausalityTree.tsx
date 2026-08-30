@@ -16,18 +16,28 @@ export interface ProcessNode {
 }
 
 export function ProcessCausalityTree({
+  nodes,
   onSelectPid,
   selectedPid,
 }: {
+  nodes?: ProcessNode[];
   onSelectPid?: (pid: number) => void;
   selectedPid?: number;
 }) {
-  const [tree, setTree] = useState<ProcessNode[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [tree, setTree] = useState<ProcessNode[]>(nodes || []);
+  const [loading, setLoading] = useState(!nodes);
   const [search, setSearch] = useState("");
   const [actionMsg, setActionMsg] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (nodes) {
+      setTree(nodes);
+      setLoading(false);
+    }
+  }, [nodes]);
+
   const fetchTree = async () => {
+    if (nodes) return;
     try {
       setLoading(true);
       const data = await getProcessTree();
@@ -40,8 +50,10 @@ export function ProcessCausalityTree({
   };
 
   useEffect(() => {
-    fetchTree();
-  }, []);
+    if (!nodes) {
+      fetchTree();
+    }
+  }, [nodes]);
 
   const handleAction = async (e: React.MouseEvent, pid: number, action: "terminate" | "kill") => {
     e.stopPropagation();

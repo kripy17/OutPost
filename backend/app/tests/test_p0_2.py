@@ -407,7 +407,6 @@ def test_unexecuted_backends_return_501(client):
     before = client.get("/analysis").json()["total"]
     for backend, fragment in (
         ("watched-host", "no executor"),
-        ("external-provider", "no provider wiring"),
         ("isolated-outpost", "no isolated execution"),
     ):
         resp = client.post("/analysis", json={"backend": backend, "sample_name": "x.bin"})

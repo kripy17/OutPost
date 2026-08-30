@@ -11,6 +11,7 @@ import { toneFill, toneForSeverity } from "../lib/fillPatterns";
 import type { AlertStatus, QueueAlert, Severity } from "../types";
 import ProcessContextModal from "../components/ProcessContextModal";
 import NetworkContextModal from "../components/NetworkContextModal";
+import InvestigationsPage from "./investigations";
 import {
   ageLabel,
   PAGE,
@@ -175,6 +176,7 @@ export default function FindingsPage() {
   const provenance: "" | "real" | "synthetic" =
     provParam === "real" || provParam === "synthetic" ? provParam : readSavedProvenance(status);
   const q = searchParams.get("q") ?? "";
+  const [activeTab, setActiveTab] = useState<"findings" | "investigations">(() => (searchParams.get("tab") as any) || "findings");
   const [submittedQ, setSubmittedQ] = useState(q);
   const [offset, setOffset] = useState(0);
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -389,15 +391,45 @@ export default function FindingsPage() {
   return (
     <div className="mx-auto max-w-[1200px] px-5 py-8 lg:px-8">
       <PageHeader
-        kicker="Operations · findings"
+        kicker="Operations · findings & investigations"
         title={
           <>
-            Open findings <span className="font-normal text-text-muted">— triage queue across every run</span>
+            Incident Findings &amp; Cases <span className="font-normal text-text-muted">— alert triage &amp; incident management</span>
           </>
         }
-        lede="Every alert still needing attention, oldest first (SLA pressure). Acknowledge while you investigate, resolve when you're done — bulk-select to clear a page in one pass."
+        lede="Actionable detection alerts and case investigations across runs and hosts. Acknowledge and isolate threats during triage, or escalate to an incident case dossier."
       />
 
+      {/* Main Tab Switcher */}
+      <div className="mb-6 flex rounded-xl border border-border-subtle bg-bg-surface p-1 font-mono text-xs shadow-sm">
+        <button
+          onClick={() => setActiveTab("findings")}
+          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2.5 font-medium transition ${
+            activeTab === "findings"
+              ? "bg-accent/15 font-bold text-accent shadow-sm"
+              : "text-text-muted hover:text-text-primary"
+          }`}
+        >
+          <Icon name="alert" size={13} />
+          <span>Findings &amp; Alert Queue</span>
+        </button>
+        <button
+          onClick={() => setActiveTab("investigations")}
+          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2.5 font-medium transition ${
+            activeTab === "investigations"
+              ? "bg-accent/15 font-bold text-accent shadow-sm"
+              : "text-text-muted hover:text-text-primary"
+          }`}
+        >
+          <Icon name="notes" size={13} />
+          <span>Case Files &amp; Investigations</span>
+        </button>
+      </div>
+
+      {activeTab === "investigations" ? (
+        <InvestigationsPage />
+      ) : (
+        <>
       {/* Status tabs with live counts */}
       <div className="mb-4 flex flex-wrap items-center gap-2">
         {STATUS_TABS.map((t) => {
@@ -652,6 +684,8 @@ export default function FindingsPage() {
           </div>
         )}
       </Panel>
+        </>
+      )}
 
       {inspectIp !== null && (
         <NetworkContextModal ip={inspectIp} onClose={() => setInspectIp(null)} />
