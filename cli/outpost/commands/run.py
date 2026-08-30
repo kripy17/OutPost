@@ -17,9 +17,46 @@ from ..rendering.terminal_views import console, render_report
 
 def run(
     sample_path: str,
-    timeout: int = typer.Option(240, "--timeout", "-t", min=5, help="Observation window in seconds"),
+    timeout: int = typer.Option(240, "--timeout", "-t", min=2, help="Observation window in seconds"),
+    isolated: bool = typer.Option(False, "--isolated", "-i", help="Execute inside an isolated temporary dynamic sandbox with process tracking"),
 ) -> None:
     show_banner(primary=True)
+
+    if isolated:
+        from pathlib import Path
+        path_obj = Path(sample_path)
+        if not path_obj.exists():
+            console.print(f"[bold #C4453B]File not found: {sample_path}[/bold #C4453B]")
+            raise typer.Exit(1)
+        console.print(f"[bold #3B82F6]Uploading '{path_obj.name}' to sandbox vault...[/bold #3B82F6]")
+        try:
+            sample_meta = api_client.upload_sample(path_obj.read_bytes(), path_obj.name)
+            sample_id = sample_meta.get("sample_id")
+            if not sample_id:
+                raise ValueError("Upload failed — missing sample_id")
+
+            console.print(f"[bold #3FA796]Detonating sample in isolated dynamic sandbox (timeout: {timeout}s)...[/bold #3FA796]")
+            data = api_client.detonate_sample(sample_id, timeout=timeout)
+            console.print(f"[bold #3FA796]✔ Dynamic Detonation Completed (Run ID: {data.get('run_id')})[/bold #3FA796]")
+            console.print(f"  [dim]Exit Code:[/dim] {data.get('exit_code')}")
+            console.print(f"  [dim]Events Captured:[/dim] {data.get('events_count', 0)}")
+            console.print(f"  [dim]Alerts Triggered:[/dim] {data.get('alerts_count', 0)}")
+            console.print(f"  [dim]Risk Score:[/dim] {data.get('risk_score', 0)}")
+
+            terminal = data.get("terminal_output")
+            if terminal:
+                console.print("\n[bold white]Sandbox Execution Console:[/bold white]")
+                console.print(terminal)
+
+            run_id = data.get("run_id")
+            if run_id:
+                report = api_client.get_run(run_id)
+                render_report(report, run_id=run_id)
+            return
+        except Exception as exc:
+            console.print(f"[bold #C4453B]Isolated dynamic execution failed: {exc}[/bold #C4453B]")
+            raise typer.Exit(1)
+
     platform = monitor.detect_platform()
     run_id = api_client.create_run(sample_name=sample_path, platform=platform, session_type="analysis")
 
@@ -42,3 +79,4 @@ def run(
 
     report = api_client.get_run(run_id)
     render_report(report, run_id=run_id)
+

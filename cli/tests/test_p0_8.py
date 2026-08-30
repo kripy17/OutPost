@@ -150,3 +150,48 @@ def test_analysis_job_functions_hit_endpoints(monkeypatch):
     assert captured["body"] == {"backend": "watched-host", "sample_name": "x.bin", "platform": "linux"}
     api_client.cancel_analysis_job("run1")
     assert captured["path"] == "/analysis/run1/cancel"
+
+
+def test_upload_sample_and_run_isolated(monkeypatch, tmp_path):
+    test_file = tmp_path / "implant.sh"
+    test_file.write_bytes(b"#!/bin/bash\necho 'payload'\n")
+
+    monkeypatch.setattr(
+        api_client,
+        "upload_sample",
+        lambda data, name: {"sample_id": "spl_123", "original_name": name, "size": len(data)},
+    )
+    monkeypatch.setattr(
+        api_client,
+        "detonate_sample",
+        lambda sid, timeout: {
+            "run_id": "dyn_run_999",
+            "sample_id": sid,
+            "exit_code": 0,
+            "events_count": 8,
+            "alerts_count": 1,
+            "risk_score": 75,
+            "terminal_output": "[OutPost Dynamic Sandbox] Detonation complete.",
+        },
+    )
+    monkeypatch.setattr(
+        api_client,
+        "get_run",
+        lambda rid: {
+            "run_id": rid,
+            "sample_name": "implant.sh",
+            "started_at": "2026-08-30T10:00:00Z",
+            "completed_at": "2026-08-30T10:00:10Z",
+            "events": [],
+            "alerts": [],
+            "tree": [],
+            "risk_score": 75,
+        },
+    )
+
+    result = runner.invoke(app, ["run", str(test_file), "--isolated", "--timeout", "10"])
+    assert result.exit_code == 0
+    assert "Uploading 'implant.sh' to sandbox vault" in result.output
+    assert "Dynamic Detonation Completed (Run ID: dyn_run_999)" in result.output
+    assert "Risk Score: 75" in result.output
+
