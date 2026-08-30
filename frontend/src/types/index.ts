@@ -462,14 +462,43 @@ export interface SampleStatic {
   available: boolean;
   size: number;
   strings: string[];
+  categorized_strings?: {
+    network: string[];
+    file_paths: string[];
+    commands: string[];
+    registry: string[];
+    security_apis: string[];
+  };
   iocs: StaticIocs;
   pe: PeMetadata | null;
   elf: ElfMetadata | null;
   entropy?: number;
+  entropy_histogram?: number[];
   is_packed?: boolean;
-  capabilities?: Array<{ category: string; matched: string[]; confidence: string }>;
+  capabilities?: Array<{ category: string; matched: string[]; confidence: string; source?: string }>;
+  capa?: { available: boolean; error?: string; capabilities: any[] };
   imphash?: string | null;
   fuzzy_hash?: string | null;
+  static_risk_score?: number;
+  static_severity?: "clean" | "suspicious" | "malicious";
+  risk_factors?: string[];
+}
+
+export interface SampleDetonationResult {
+  run_id: string;
+  sample_id: string;
+  sample_name: string;
+  platform: string;
+  exit_code: number;
+  terminal_output: string;
+  terminal_lines: string[];
+  events: any[];
+  events_count: number;
+  alerts: any[];
+  alerts_count: number;
+  risk_score: number;
+  process_tree: any[];
+  detonation_delta?: DetonationDelta | null;
 }
 
 export interface CompareResponse {

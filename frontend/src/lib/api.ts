@@ -44,6 +44,7 @@ import type {
   SampleRow,
   SamplesResponse,
   SampleStatic,
+  SampleDetonationResult,
   SandboxDetonateIn,
   SandboxProvidersResponse,
   SandboxTask,
@@ -665,6 +666,10 @@ export async function getSample(sampleId: string): Promise<SampleRow> {
 
 export async function getSampleStatic(sampleId: string): Promise<SampleStatic> {
   return get<SampleStatic>(`/samples/${sampleId}/static`);
+}
+
+export async function detonateSample(sampleId: string, timeout = 15): Promise<SampleDetonationResult> {
+  return post<SampleDetonationResult>(`/samples/${encodeURIComponent(sampleId)}/detonate?timeout=${timeout}`, {});
 }
 
 export async function downloadSample(sampleId: string, name: string): Promise<void> {

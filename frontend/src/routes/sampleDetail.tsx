@@ -4,8 +4,9 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { platformIconName } from "../components/iconMeta";
 import { Chip, PageHeader, Panel } from "../components/ui";
-import { deleteSample, detonateDynamic, downloadSample, getRuns, getSample, getSampleStatic, getSandboxProviders, getSandboxTask, getSimilarSamples, sandboxDetonate, watchlistAdd } from "../lib/api";
-import type { Platform, RunSummary, SampleStatic, SandboxTask } from "../types";
+import { deleteSample, detonateDynamic, detonateSample, downloadSample, getRuns, getSample, getSampleStatic, getSandboxProviders, getSandboxTask, getSimilarSamples, sandboxDetonate, watchlistAdd } from "../lib/api";
+import { ProcessCausalityTree } from "../components/ProcessCausalityTree";
+import type { Platform, RunSummary, SampleDetonationResult, SampleStatic, SandboxTask } from "../types";
 import { filterStrings, formatBytes, iocTotal } from "./samplesHelpers";
 
 /* ── Static analysis (strings / IOCs / PE / ELF) ─────────────────────────── */
@@ -120,45 +121,50 @@ function StaticAnalysis({ sample }: { sample: { sample_id: string; sha256: strin
               <p className="mb-4 text-sm text-text-muted">No URLs, IPs, domains, hashes, or emails embedded in the bytes.</p>
             )}
 
-            {/* Strings — filterable, collapsible, mono. */}
-            <div className="border-t border-border-subtle pt-4">
-              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                <span className="font-mono text-[10px] uppercase tracking-wide text-text-faint">
-                  Strings ({st.strings.length})
-                </span>
-                <div className="flex items-center gap-2">
-                  <div className="relative">
-                    <Icon name="search" size={11} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-text-faint" />
-                    <input
-                      value={stringsFilter}
-                      onChange={(e) => setStringsFilter(e.target.value)}
-                      placeholder="filter…"
-                      className="w-40 rounded border border-border-subtle bg-bg-base py-1 pl-6 pr-2 font-mono text-[11px] text-text-primary placeholder:text-text-faint focus:border-accent/60 focus:outline-none"
-                      aria-label="Filter strings"
-                    />
+            {/* Categorized Strings Explorer */}
+            {st.categorized_strings ? (
+              <CategorizedStringsPanel categorized={st.categorized_strings} rawStrings={st.strings} />
+            ) : (
+              /* Strings — filterable, collapsible, mono. */
+              <div className="border-t border-border-subtle pt-4">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-mono text-[10px] uppercase tracking-wide text-text-faint">
+                    Strings ({st.strings.length})
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <div className="relative">
+                      <Icon name="search" size={11} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-text-faint" />
+                      <input
+                        value={stringsFilter}
+                        onChange={(e) => setStringsFilter(e.target.value)}
+                        placeholder="filter…"
+                        className="w-40 rounded border border-border-subtle bg-bg-base py-1 pl-6 pr-2 font-mono text-[11px] text-text-primary placeholder:text-text-faint focus:border-accent/60 focus:outline-none"
+                        aria-label="Filter strings"
+                      />
+                    </div>
+                    {filteredStrings.length > 80 && (
+                      <button
+                        onClick={() => setShowAll((v) => !v)}
+                        className="press font-mono text-[10px] text-text-muted transition-colors hover:text-accent"
+                      >
+                        {showAll ? "collapse" : `show all ${filteredStrings.length}`}
+                      </button>
+                    )}
                   </div>
-                  {filteredStrings.length > 80 && (
-                    <button
-                      onClick={() => setShowAll((v) => !v)}
-                      className="press font-mono text-[10px] text-text-muted transition-colors hover:text-accent"
-                    >
-                      {showAll ? "collapse" : `show all ${filteredStrings.length}`}
-                    </button>
+                </div>
+                <div className="max-h-64 overflow-y-auto rounded-lg border border-border-subtle bg-bg-elevated/30 p-3">
+                  {visibleStrings.length === 0 ? (
+                    <p className="text-[11px] text-text-faint">No strings match the filter.</p>
+                  ) : (
+                    <pre className="font-mono text-[10px] leading-relaxed text-text-muted">
+                      {visibleStrings.map((s) => (
+                        <div key={s}>{s}</div>
+                      ))}
+                    </pre>
                   )}
                 </div>
               </div>
-              <div className="max-h-64 overflow-y-auto rounded-lg border border-border-subtle bg-bg-elevated/30 p-3">
-                {visibleStrings.length === 0 ? (
-                  <p className="text-[11px] text-text-faint">No strings match the filter.</p>
-                ) : (
-                  <pre className="font-mono text-[10px] leading-relaxed text-text-muted">
-                    {visibleStrings.map((s) => (
-                      <div key={s}>{s}</div>
-                    ))}
-                  </pre>
-                )}
-              </div>
-            </div>
+            )}
           </>
         )}
       </Panel>
@@ -189,6 +195,29 @@ function StaticAnalysis({ sample }: { sample: { sample_id: string; sha256: strin
                     style={{ width: `${Math.min(100, (st.entropy / 8.0) * 100)}%` }}
                   />
                 </div>
+              </div>
+            )}
+
+            {/* Sliding Window Section Entropy Histogram */}
+            <EntropyHistogramChart histogram={st.entropy_histogram} />
+
+            {/* Static Risk Factors & Capabilities */}
+            {st.risk_factors && st.risk_factors.length > 0 && (
+              <div className="rounded-xl border border-risk-malicious/30 bg-risk-malicious/5 p-3 space-y-1.5 font-mono text-xs">
+                <div className="flex items-center justify-between font-bold">
+                  <span className="text-risk-malicious flex items-center gap-1.5">
+                    <Icon name="alert" size={13} />
+                    Static Threat Assessment Factors
+                  </span>
+                  <span className="text-[10px] rounded bg-risk-malicious/20 px-2 py-0.5 text-risk-malicious uppercase">
+                    Risk Score: {st.static_risk_score ?? 0}/100 ({st.static_severity})
+                  </span>
+                </div>
+                <ul className="list-disc list-inside space-y-1 text-[11px] text-text-muted">
+                  {st.risk_factors.map((rf, idx) => (
+                    <li key={idx}>{rf}</li>
+                  ))}
+                </ul>
               </div>
             )}
 
@@ -237,6 +266,226 @@ function StaticAnalysis({ sample }: { sample: { sample_id: string; sha256: strin
         </Panel>
       )}
     </div>
+  );
+}
+
+function EntropyHistogramChart({ histogram }: { histogram?: number[] }) {
+  if (!histogram || histogram.length === 0) return null;
+  return (
+    <div className="space-y-1.5 border-t border-border-subtle pt-3">
+      <div className="flex items-center justify-between font-mono text-[10px] text-text-faint">
+        <span>Section Entropy Sliding Histogram (32 Sequential Byte Chunks)</span>
+        <span className="flex items-center gap-2">
+          <span className="inline-flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> &lt;5.5 Code</span>
+          <span className="inline-flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-amber-400" /> 5.5-7.0 Data</span>
+          <span className="inline-flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-rose-500" /> &gt;7.0 Packed</span>
+        </span>
+      </div>
+      <div className="flex h-12 items-end gap-1 rounded-lg border border-border-subtle bg-[#0a0c10] p-1.5">
+        {histogram.map((val, idx) => {
+          const pct = Math.min(100, (val / 8.0) * 100);
+          const color = val > 7.0 ? "bg-rose-500 shadow-[var(--glow-malicious)]" : val > 5.5 ? "bg-amber-400" : "bg-emerald-400";
+          return (
+            <div
+              key={idx}
+              className={`flex-1 rounded-t transition-all hover:opacity-80 ${color}`}
+              style={{ height: `${Math.max(8, pct)}%` }}
+              title={`Chunk #${idx + 1}: ${val} / 8.0`}
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function CategorizedStringsPanel({ categorized, rawStrings }: { categorized?: SampleStatic["categorized_strings"]; rawStrings: string[] }) {
+  const [activeTab, setActiveTab] = useState<"all" | "network" | "file_paths" | "commands" | "registry" | "security_apis">("all");
+  const [search, setSearch] = useState("");
+
+  const currentList = useMemo(() => {
+    let list: string[] = [];
+    if (activeTab === "all") list = rawStrings;
+    else if (categorized && categorized[activeTab]) list = categorized[activeTab];
+    if (!search) return list;
+    const q = search.toLowerCase();
+    return list.filter((s) => s.toLowerCase().includes(q));
+  }, [activeTab, categorized, rawStrings, search]);
+
+  return (
+    <div className="space-y-3 border-t border-border-subtle pt-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap gap-1 font-mono text-[10px]">
+          {[
+            { id: "all", label: `All (${rawStrings.length})` },
+            { id: "network", label: `Network (${categorized?.network?.length ?? 0})` },
+            { id: "file_paths", label: `File Paths (${categorized?.file_paths?.length ?? 0})` },
+            { id: "commands", label: `Commands (${categorized?.commands?.length ?? 0})` },
+            { id: "registry", label: `Registry (${categorized?.registry?.length ?? 0})` },
+            { id: "security_apis", label: `Security APIs (${categorized?.security_apis?.length ?? 0})` },
+          ].map((t) => (
+            <button
+              key={t.id}
+              onClick={() => setActiveTab(t.id as any)}
+              className={`rounded-lg px-2.5 py-1 transition ${
+                activeTab === t.id
+                  ? "bg-accent/15 font-bold text-accent shadow-sm"
+                  : "text-text-muted hover:text-text-primary"
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Filter string list..."
+          className="rounded-lg border border-border-subtle bg-bg-base px-2 py-1 font-mono text-xs text-text-primary focus:border-accent/60 outline-none"
+        />
+      </div>
+
+      <div className="max-h-64 overflow-y-auto rounded-xl border border-border-subtle bg-bg-elevated/20 p-3 font-mono text-[11px] leading-relaxed text-[#c9d1d9]">
+        {currentList.length === 0 ? (
+          <p className="text-text-faint text-center py-4">No strings found in this category.</p>
+        ) : (
+          currentList.slice(0, 150).map((s, idx) => (
+            <div key={idx} className="hover:bg-accent/10 rounded px-1.5 py-0.5 truncate">
+              {s}
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; original_name: string; detected_platform: string } }) {
+  const queryClient = useQueryClient();
+  const [detonating, setDetonating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<SampleDetonationResult | null>(null);
+  const [simTab, setSimTab] = useState<"terminal" | "tree" | "alerts" | "delta">("terminal");
+
+  const handleDetonateLive = async () => {
+    setDetonating(true);
+    setError(null);
+    try {
+      const res = await detonateSample(sample.sample_id, 15);
+      setResult(res);
+      void queryClient.invalidateQueries({ queryKey: ["runs"] });
+      void queryClient.invalidateQueries({ queryKey: ["events"] });
+      void queryClient.invalidateQueries({ queryKey: ["alerts"] });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Detonation failed");
+    } finally {
+      setDetonating(false);
+    }
+  };
+
+  return (
+    <Panel kicker="Dynamic Execution · Sandbox" title="Live Isolated Execution & Dynamic Trace">
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border-subtle bg-bg-base/60 p-4">
+          <div>
+            <h4 className="font-mono text-xs font-bold text-text-primary">Instant Sandbox Detonation</h4>
+            <p className="mt-0.5 text-[11px] text-text-muted">
+              Executes binary in an isolated temporary workspace, tracking process creation, disk I/O, network sockets, and behavioral detection alerts.
+            </p>
+          </div>
+          <button
+            onClick={() => void handleDetonateLive()}
+            disabled={detonating}
+            className="press inline-flex items-center gap-1.5 rounded-xl border border-accent/60 bg-accent/15 px-4 py-2 font-mono text-xs font-bold text-accent transition hover:bg-accent/25 hover:shadow-[var(--glow-accent)] disabled:opacity-50"
+          >
+            <Icon name={detonating ? "refresh" : "play"} size={13} className={detonating ? "animate-spin" : ""} />
+            <span>{detonating ? "Executing in Sandbox..." : "Detonate Live Now"}</span>
+          </button>
+        </div>
+
+        {error && <p className="font-mono text-xs text-risk-malicious">{error}</p>}
+
+        {result && (
+          <div className="space-y-4 rounded-xl border border-border-subtle bg-bg-surface p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle pb-3">
+              <div className="flex items-center gap-2 font-mono text-xs">
+                <span className="h-2 w-2 rounded-full bg-signal animate-pulse" />
+                <span className="font-bold text-text-primary">Execution Result (Exit Code {result.exit_code})</span>
+                <span className="rounded bg-accent/20 px-2 py-0.5 text-[10px] font-bold text-accent">
+                  Risk: {result.risk_score}/100
+                </span>
+              </div>
+              <Link to={`/runs/${result.run_id}`} className="font-mono text-xs text-accent hover:underline">
+                Open Full Run Dossier →
+              </Link>
+            </div>
+
+            <div className="flex gap-2 font-mono text-xs">
+              {(["terminal", "tree", "alerts", "delta"] as const).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setSimTab(t)}
+                  className={`rounded-lg px-3 py-1.5 transition ${
+                    simTab === t ? "bg-accent/15 font-bold text-accent" : "text-text-muted hover:text-text-primary"
+                  }`}
+                >
+                  {t === "terminal" ? "Terminal Log" : t === "tree" ? `Process Tree (${result.process_tree?.length ?? 0})` : t === "alerts" ? `Triggered Alerts (${result.alerts?.length ?? 0})` : "Baseline Delta"}
+                </button>
+              ))}
+            </div>
+
+            {simTab === "terminal" && (
+              <pre className="max-h-72 overflow-y-auto rounded-xl border border-border-subtle bg-[#0a0c10] p-4 font-mono text-xs text-[#c9d1d9]">
+                {result.terminal_output}
+              </pre>
+            )}
+
+            {simTab === "tree" && (
+              <div className="rounded-xl border border-border-subtle bg-bg-base/80 p-4">
+                <ProcessCausalityTree nodes={result.process_tree || []} />
+              </div>
+            )}
+
+            {simTab === "alerts" && (
+              <div className="space-y-2">
+                {(result.alerts || []).length === 0 ? (
+                  <p className="text-xs text-text-muted">Zero heuristics triggered for this execution.</p>
+                ) : (
+                  (result.alerts || []).map((al: any, idx: number) => (
+                    <div key={idx} className="flex items-center justify-between rounded-lg border border-risk-malicious/30 bg-risk-malicious/10 p-3 text-xs">
+                      <div>
+                        <span className="font-bold text-text-primary">{al.rule_name}</span>
+                        <p className="text-[11px] text-text-muted">{al.details}</p>
+                      </div>
+                      <span className="rounded bg-risk-malicious/20 px-2 py-0.5 text-[9px] uppercase font-bold text-risk-malicious">
+                        {al.severity}
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+
+            {simTab === "delta" && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs font-mono">
+                <div className="rounded-lg border border-border-subtle bg-bg-base/50 p-3">
+                  <span className="font-bold text-signal">+ Spawned Processes ({result.detonation_delta?.new_processes?.length ?? 0})</span>
+                  {(result.detonation_delta?.new_processes || []).map((p: any, i: number) => (
+                    <div key={i} className="mt-1 text-[11px] text-text-muted">PID {p.pid}: {p.name}</div>
+                  ))}
+                </div>
+                <div className="rounded-lg border border-border-subtle bg-bg-base/50 p-3">
+                  <span className="font-bold text-accent">+ Opened Sockets ({result.detonation_delta?.new_sockets?.length ?? 0})</span>
+                  {(result.detonation_delta?.new_sockets || []).map((s: any, i: number) => (
+                    <div key={i} className="mt-1 text-[11px] text-text-muted">{s.protocol} {s.local_ip}:{s.local_port}</div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </Panel>
   );
 }
 
@@ -692,6 +941,8 @@ export default function SampleDetailPage() {
     );
   }
 
+  const [dossierTab, setDossierTab] = useState<"static" | "dynamic" | "history" | "similarity">("static");
+
   const platName = sample.detected_platform === "windows" ? "Windows" : sample.detected_platform === "linux" ? "Linux" : sample.detected_platform === "macos" ? "macOS" : "unknown";
   const platIcon = sample.detected_platform === "macos" || sample.detected_platform === "windows" || sample.detected_platform === "linux" ? platformIconName(sample.detected_platform) : "terminal";
 
@@ -830,61 +1081,98 @@ export default function SampleDetailPage() {
         </Panel>
       </div>
 
-      <StaticAnalysis sample={sample} />
+      {/* Analysis Workspace Mode Switcher */}
+      <div className="mt-8 flex flex-wrap items-center gap-2 border-b border-border-subtle pb-3 font-mono text-xs">
+        {[
+          { id: "static", label: "Static Analysis & Dossier", icon: "box" },
+          { id: "dynamic", label: "Live Dynamic Sandbox", icon: "play" },
+          { id: "history", label: `Detonation Runs (${runs.length})`, icon: "timeline" },
+          { id: "similarity", label: "Binary Similarity (CTPH)", icon: "copy" },
+        ].map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setDossierTab(tab.id as any)}
+            className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 font-medium transition-all ${
+              dossierTab === tab.id
+                ? "bg-accent/15 font-bold text-accent shadow-[var(--glow-accent)]"
+                : "text-text-muted hover:bg-bg-elevated hover:text-text-primary"
+            }`}
+          >
+            <Icon name={tab.icon as any} size={13} />
+            {tab.label}
+          </button>
+        ))}
+      </div>
 
-      <SandboxDetonation sample={sample} />
+      {dossierTab === "static" && <StaticAnalysis sample={sample} />}
 
-      <Panel kicker="Detonations" title={`Runs of ${sample.original_name}`} className="mt-6" pad={false}>
-        {runs.length === 0 ? (
-          <p className="p-6 text-sm text-text-muted">This sample hasn't been detonated yet — head to Monitor to run it.</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left">
-              <thead className="border-b border-border-subtle">
-                <tr className="text-xs font-semibold text-text-muted">
-                  <th className="px-4 py-2.5">Run</th>
-                  <th className="px-4 py-2.5">Started</th>
-                  <th className="px-4 py-2.5">Alerts</th>
-                  <th className="px-4 py-2.5">Severity</th>
-                  <th className="px-4 py-2.5 text-right">Risk</th>
-                </tr>
-              </thead>
-              <tbody>
-                {runs.map((r: RunSummary) => (
-                  <tr key={r.run_id} className="border-b border-border-subtle/50 transition-colors hover:bg-bg-elevated/30">
-                    <td className="px-4 py-2.5">
-                      <Link
-                        to={`/runs/${r.run_id}`}
-                        className="press font-mono text-xs text-accent transition-colors hover:underline"
-                      >
-                        {r.run_id.slice(0, 12)}
-                      </Link>
-                    </td>
-                    <td className="px-4 py-2.5 font-mono text-[11px] text-text-muted">
-                      {r.started_at.slice(0, 19).replace("T", " ")}
-                    </td>
-                    <td className="px-4 py-2.5 font-mono text-[11px] text-text-muted">{r.alert_count}</td>
-                    <td className="px-4 py-2.5">
-                      <span
-                        className={`font-mono text-[10px] ${
-                          r.highest_severity === "malicious"
-                            ? "text-risk-malicious"
-                            : r.highest_severity === "suspicious"
-                              ? "text-risk-suspicious"
-                              : "text-risk-clean"
-                        }`}
-                      >
-                        ● {r.highest_severity ?? "clean"}
-                      </span>
-                    </td>
-                    <td className="px-4 py-2.5 text-right font-mono text-[11px] text-text-primary">{r.risk_score}</td>
+      {dossierTab === "dynamic" && (
+        <div className="mt-6 space-y-6">
+          <LiveDynamicSandboxCockpit sample={sample} />
+          <SandboxDetonation sample={sample} />
+        </div>
+      )}
+
+      {dossierTab === "similarity" && (
+        <div className="mt-6">
+          <SimilarSamplesPanel sampleId={sample.sample_id} />
+        </div>
+      )}
+
+      {dossierTab === "history" && (
+        <Panel kicker="Detonations" title={`Runs of ${sample.original_name}`} className="mt-6" pad={false}>
+          {runs.length === 0 ? (
+            <p className="p-6 text-sm text-text-muted">This sample hasn't been detonated yet — click "Detonate in sandbox" to analyze live.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead className="border-b border-border-subtle">
+                  <tr className="text-xs font-semibold text-text-muted">
+                    <th className="px-4 py-2.5">Run</th>
+                    <th className="px-4 py-2.5">Started</th>
+                    <th className="px-4 py-2.5">Alerts</th>
+                    <th className="px-4 py-2.5">Severity</th>
+                    <th className="px-4 py-2.5 text-right">Risk</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Panel>
+                </thead>
+                <tbody>
+                  {runs.map((r: RunSummary) => (
+                    <tr key={r.run_id} className="border-b border-border-subtle/50 transition-colors hover:bg-bg-elevated/30">
+                      <td className="px-4 py-2.5">
+                        <Link
+                          to={`/runs/${r.run_id}`}
+                          className="press font-mono text-xs text-accent transition-colors hover:underline"
+                        >
+                          {r.run_id.slice(0, 12)}
+                        </Link>
+                      </td>
+                      <td className="px-4 py-2.5 font-mono text-[11px] text-text-muted">
+                        {r.started_at.slice(0, 19).replace("T", " ")}
+                      </td>
+                      <td className="px-4 py-2.5 font-mono text-[11px] text-text-muted">{r.alert_count}</td>
+                      <td className="px-4 py-2.5">
+                        <span
+                          className={`font-mono text-[10px] ${
+                            r.highest_severity === "malicious"
+                              ? "text-risk-malicious"
+                              : r.highest_severity === "suspicious"
+                                ? "text-risk-suspicious"
+                                : "text-risk-clean"
+                          }`}
+                        >
+                          ● {r.highest_severity ?? "clean"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2.5 text-right font-mono text-[11px] text-text-primary">{r.risk_score}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Panel>
+      )}
     </div>
   );
 }
+

@@ -522,3 +522,27 @@ def delete_all_samples_endpoint() -> dict:
                 pass
     return {"status": "ok", "deleted": count}
 
+
+@router.post("/samples/{sample_id}/detonate", response_model=None)
+async def detonate_sample_endpoint(sample_id: str, timeout: int = Query(15, ge=2, le=60)):
+    """Dynamically execute and detonate an uploaded malware sample in an isolated sandbox."""
+    with db_session() as conn:
+        row = samples_store.get_sample(conn, sample_id)
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Unknown sample_id: {sample_id}")
+
+    body = _load_bytes(sample_id)
+    if body is None:
+        raise HTTPException(status_code=400, detail="Sample binary payload is not stored or unavailable for detonation.")
+
+    from ..services import dynamic_sandbox
+    result = await dynamic_sandbox.execute_sample_detonation(
+        sample_id=sample_id,
+        raw_bytes=body,
+        sample_name=row["original_name"],
+        platform_hint=row.get("detected_platform") or "linux",
+        timeout_seconds=timeout,
+    )
+    return result
+
+

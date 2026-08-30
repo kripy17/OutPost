@@ -388,13 +388,30 @@ def calculate_entropy(data: bytes) -> float:
     return round(entropy, 3)
 
 
+def calculate_entropy_histogram(data: bytes, bins: int = 32) -> list[float]:
+    """Calculate sliding-window entropy across sequential chunks for visualization."""
+    if not data:
+        return [0.0] * bins
+    total_len = len(data)
+    chunk_size = max(1, total_len // bins)
+    hist: list[float] = []
+    for i in range(bins):
+        start = i * chunk_size
+        end = min(total_len, (i + 1) * chunk_size) if i < bins - 1 else total_len
+        chunk = data[start:end]
+        hist.append(calculate_entropy(chunk))
+    return hist
+
+
 _SUSPICIOUS_CAPABILITY_PATTERNS = [
-    ("Process Injection", ["VirtualAllocEx", "WriteProcessMemory", "CreateRemoteThread", "QueueUserAPC", "NtMapViewOfSection", "ptrace", "process_vm_writev"]),
-    ("Defense Evasion", ["IsDebuggerPresent", "CheckRemoteDebuggerPresent", "NtQueryInformationProcess", "mprotect", "madvise", "UnhookWindowsHookEx"]),
-    ("Persistence", ["RegSetValueEx", "RegCreateKeyEx", "SetWindowsHookEx", "SchTasks", "LaunchAgent"]),
-    ("Reconnaissance", ["GetComputerName", "GetUserName", "NetUserEnum", "gethostbyname", "EnumProcesses", "GetAdaptersInfo"]),
-    ("Network / C2", ["InternetOpen", "URLDownloadToFile", "socket", "connect", "WSAStartup", "curl_easy_init", "HttpSendRequest"]),
-    ("Cryptographic Operations", ["CryptEncrypt", "CryptGenKey", "BCryptEncrypt", "AES_encrypt", "EVP_EncryptInit"]),
+    ("Process Injection", ["VirtualAllocEx", "WriteProcessMemory", "CreateRemoteThread", "QueueUserAPC", "NtMapViewOfSection", "ptrace", "process_vm_writev", "dlopen", "dlsym"]),
+    ("Fileless / In-Memory Execution", ["memfd_create", "/dev/shm", "execveat", "VirtualProtect", "mmap", "mprotect", "ReflectiveLoader", "shellcode"]),
+    ("Defense Evasion & Anti-Debug", ["IsDebuggerPresent", "CheckRemoteDebuggerPresent", "NtQueryInformationProcess", "ptrace(PTRACE_TRACEME)", "UnhookWindowsHookEx", "GetTickCount", "rdtsc"]),
+    ("Persistence & Autostart", ["RegSetValueEx", "RegCreateKeyEx", "SetWindowsHookEx", "SchTasks", "LaunchAgent", "/etc/cron", "systemd", ".bashrc", "RunOnce"]),
+    ("Credential Access", ["lsass", "mimikatz", "SAM", "SECURITY", "CryptUnprotectData", "shadow", "/etc/passwd", "MiniDumpWriteDump", "OpenProcessToken"]),
+    ("Reconnaissance & Enumeration", ["GetComputerName", "GetUserName", "NetUserEnum", "gethostbyname", "EnumProcesses", "GetAdaptersInfo", "whoami", "ipconfig", "ifconfig"]),
+    ("Network Communications & C2", ["InternetOpen", "URLDownloadToFile", "socket", "connect", "WSAStartup", "curl_easy_init", "HttpSendRequest", "beacon", "reverse_tcp", "185.220."]),
+    ("Cryptographic & Ransomware", ["CryptEncrypt", "CryptGenKey", "BCryptEncrypt", "AES_encrypt", "EVP_EncryptInit", "ransom", ".locked", "decrypt_instructions", "wallet"]),
 ]
 
 
@@ -413,6 +430,32 @@ def detect_capabilities(data: bytes, extracted_strings: list[str]) -> list[dict[
                 "source": "heuristic",
             })
     return found
+
+
+def categorize_strings(extracted_strings: list[str]) -> dict[str, list[str]]:
+    """Categorize printable strings into analyst-friendly intelligence buckets."""
+    buckets: dict[str, list[str]] = {
+        "network": [],
+        "file_paths": [],
+        "commands": [],
+        "registry": [],
+        "security_apis": [],
+    }
+
+    for s in extracted_strings:
+        lower = s.lower()
+        if re.search(r"https?://|\b(?:\d{1,3}\.){3}\d{1,3}\b|\.com\b|\.net\b|\.org\b|\.ru\b|\.xyz\b", lower):
+            buckets["network"].append(s)
+        elif re.search(r"^/etc/|^/tmp/|^/var/|^/usr/|C:\\|%[A-Z_]+%|\.(?:exe|dll|sh|py|bat|ps1)\b", s):
+            buckets["file_paths"].append(s)
+        elif any(kw in lower for kw in ["powershell", "cmd.exe", "whoami", "curl", "wget", "chmod", "iptables", "netstat", "bash -c"]):
+            buckets["commands"].append(s)
+        elif any(kw in s for kw in ["HKLM\\", "HKCU\\", "Software\\Microsoft\\Windows\\CurrentVersion"]):
+            buckets["registry"].append(s)
+        elif any(kw in s for kw in ["VirtualAlloc", "CreateThread", "WriteProcessMemory", "ptrace", "memfd_create", "CryptEncrypt", "socket", "connect"]):
+            buckets["security_apis"].append(s)
+
+    return buckets
 
 
 # ---------------------------------------------------------------------------
@@ -633,11 +676,82 @@ def run_capa(data: bytes) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def compute_static_risk_profile(
+    entropy: float,
+    capabilities: list[dict[str, Any]],
+    is_packed: bool,
+    pe_info: dict[str, Any] | None,
+    elf_info: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Calculate an objective static threat score (0-100) and severity profile."""
+    score = 0
+    factors: list[str] = []
+
+    # Packing / High entropy
+    if entropy > 7.2:
+        score += 35
+        factors.append(f"Extremely high Shannon entropy ({entropy}/8.0) indicative of packed payload or encryption")
+    elif entropy > 6.8:
+        score += 20
+        factors.append(f"Elevated Shannon entropy ({entropy}/8.0)")
+
+    if is_packed:
+        score += 15
+        factors.append("Packed binary structure detected")
+
+    # Capabilities
+    cap_categories = {c.get("category", "") for c in capabilities}
+    if "Process Injection" in cap_categories:
+        score += 30
+        factors.append("Process injection and remote thread allocation primitives detected")
+    if "Fileless / In-Memory Execution" in cap_categories:
+        score += 25
+        factors.append("Fileless in-memory execution / memfd handles identified")
+    if "Defense Evasion & Anti-Debug" in cap_categories:
+        score += 20
+        factors.append("Anti-debugging and sandbox evasion API checks present")
+    if "Persistence & Autostart" in cap_categories:
+        score += 20
+        factors.append("Autorun, registry run-keys, or cron persistence hooks")
+    if "Credential Access" in cap_categories:
+        score += 30
+        factors.append("Credential dumping and memory harvesting functions found")
+    if "Cryptographic & Ransomware" in cap_categories:
+        score += 25
+        factors.append("High-volume encryption routines and ransomware IOCs identified")
+    if "Network Communications & C2" in cap_categories:
+        score += 15
+        factors.append("Direct low-level network socket and C2 beaconing signatures")
+
+    # Executable header checks
+    if pe_info and pe_info.get("sections"):
+        for sec in pe_info["sections"]:
+            if sec.get("entropy", 0) > 7.5:
+                score += 15
+                factors.append(f"Section {sec.get('name')} exhibits anomalous entropy ({sec.get('entropy')})")
+                break
+
+    final_score = min(100, max(0, score))
+    severity = "clean"
+    if final_score >= 70:
+        severity = "malicious"
+    elif final_score >= 35:
+        severity = "suspicious"
+
+    return {
+        "static_risk_score": final_score,
+        "static_severity": severity,
+        "risk_factors": factors,
+    }
+
+
 def analyze_sample(data: bytes) -> dict:
     """Full static analysis of a blob: strings, IOCs, PE/ELF metadata, entropy,
-    capabilities (heuristic + optional CAPA), imphash, fuzzy_hash."""
+    capabilities (heuristic + optional CAPA), imphash, fuzzy_hash, and risk profile."""
     strings = extract_strings(data)
     entropy = calculate_entropy(data)
+    entropy_hist = calculate_entropy_histogram(data, bins=32)
+    categorized = categorize_strings(strings)
     capabilities = detect_capabilities(data, strings)
 
     capa_report = run_capa(data)
@@ -648,17 +762,24 @@ def analyze_sample(data: bytes) -> dict:
     imphash = pe_info.get("imphash") if pe_info else None
     fuzzy = compute_fuzzy_hash(data)
 
+    is_packed = entropy > 7.1
+    risk_profile = compute_static_risk_profile(entropy, capabilities, is_packed, pe_info, elf_info)
+
     return {
         "strings": strings,
+        "categorized_strings": categorized,
         "iocs": extract_iocs(data),
         "pe": pe_info,
         "elf": elf_info,
         "entropy": entropy,
-        "is_packed": entropy > 7.1,
+        "entropy_histogram": entropy_hist,
+        "is_packed": is_packed,
         "capabilities": capabilities,
         "capa": capa_report,
         "imphash": imphash,
         "fuzzy_hash": fuzzy,
+        **risk_profile,
     }
+
 
 

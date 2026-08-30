@@ -594,7 +594,7 @@ function HostForensicsRadarPanel() {
 
   const procCount = snapshot?.process_count ?? 0;
   const socketCount = snapshot?.socket_count ?? 0;
-  const cpuPct = snapshot?.metrics?.cpu_percent ?? 0;
+  const cpuPct = Math.min(100, Math.max(0, snapshot?.metrics?.cpu_percent ?? 0));
   const memMb = snapshot?.metrics?.memory_used_mb ?? 0;
   const memTotal = snapshot?.metrics?.memory_total_mb ?? 1;
   const memPct = Math.min(100, Math.round((memMb / memTotal) * 100));
@@ -603,8 +603,8 @@ function HostForensicsRadarPanel() {
     <section className="panel mb-6 border border-border-subtle bg-bg-surface/80 backdrop-blur-md p-5 rounded-2xl" aria-label="Host Forensics Real-Time Radar">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle pb-3">
         <div className="flex items-center gap-2.5">
-          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent/15 text-accent">
-            <Icon name="box" size={15} />
+          <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-accent/15 text-accent shadow-[var(--glow-accent)]">
+            <Icon name="box" size={16} />
           </span>
           <div>
             <h3 className="font-mono text-xs font-bold uppercase tracking-wider text-text-primary">
@@ -625,39 +625,43 @@ function HostForensicsRadarPanel() {
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
-        <div className="rounded-xl border border-border-subtle bg-bg-elevated/40 p-3 text-center">
+        <div className="rounded-xl border border-border-subtle bg-bg-elevated/40 p-3 text-center flex flex-col justify-between">
           <span className="text-[10px] font-bold uppercase tracking-wider text-text-faint">Host CPU Load</span>
-          <div className="mt-1 font-mono text-xl font-bold text-text-primary">{cpuPct}%</div>
-          <span className="text-[10px] text-text-muted">baseline</span>
+          <div className="my-1 font-mono text-xl font-bold text-text-primary">{cpuPct}%</div>
+          <div className="h-1.5 w-full bg-border-subtle rounded-full overflow-hidden">
+            <div className="h-full bg-accent transition-all duration-300" style={{ width: `${Math.max(4, cpuPct)}%` }} />
+          </div>
         </div>
 
-        <div className="rounded-xl border border-border-subtle bg-bg-elevated/40 p-3 text-center">
+        <div className="rounded-xl border border-border-subtle bg-bg-elevated/40 p-3 text-center flex flex-col justify-between">
           <span className="text-[10px] font-bold uppercase tracking-wider text-text-faint">Memory Active</span>
-          <div className="mt-1 font-mono text-xl font-bold text-text-primary">{memMb} MB</div>
-          <span className="text-[10px] text-text-muted">{memPct}% allocated</span>
+          <div className="my-1 font-mono text-xl font-bold text-text-primary">{memMb} MB</div>
+          <div className="h-1.5 w-full bg-border-subtle rounded-full overflow-hidden">
+            <div className="h-full bg-signal transition-all duration-300" style={{ width: `${Math.max(4, memPct)}%` }} />
+          </div>
         </div>
 
-        <div className="rounded-xl border border-border-subtle bg-bg-elevated/40 p-3 text-center">
+        <div className="rounded-xl border border-border-subtle bg-bg-elevated/40 p-3 text-center flex flex-col justify-between">
           <span className="text-[10px] font-bold uppercase tracking-wider text-text-faint">Live Processes</span>
-          <div className="mt-1 font-mono text-xl font-bold text-accent">{procCount}</div>
+          <div className="my-1 font-mono text-xl font-bold text-accent">{procCount}</div>
           <span className="text-[10px] text-text-muted">procfs tracks</span>
         </div>
 
-        <div className="rounded-xl border border-border-subtle bg-bg-elevated/40 p-3 text-center">
+        <div className="rounded-xl border border-border-subtle bg-bg-elevated/40 p-3 text-center flex flex-col justify-between">
           <span className="text-[10px] font-bold uppercase tracking-wider text-text-faint">Listening Sockets</span>
-          <div className="mt-1 font-mono text-xl font-bold text-emerald-400">{socketCount}</div>
+          <div className="my-1 font-mono text-xl font-bold text-emerald-400">{socketCount}</div>
           <span className="text-[10px] text-text-muted">IP bindings</span>
         </div>
 
-        <div className="rounded-xl border border-border-subtle bg-bg-elevated/40 p-3 text-center">
+        <div className="rounded-xl border border-border-subtle bg-bg-elevated/40 p-3 text-center flex flex-col justify-between">
           <span className="text-[10px] font-bold uppercase tracking-wider text-text-faint">GPU Render Clients</span>
-          <div className="mt-1 font-mono text-xl font-bold text-purple-400">{catalog?.quick_inspect?.gpu ?? 0}</div>
+          <div className="my-1 font-mono text-xl font-bold text-purple-400">{catalog?.quick_inspect?.gpu ?? 0}</div>
           <span className="text-[10px] text-text-muted">render nodes</span>
         </div>
 
-        <div className="rounded-xl border border-border-subtle bg-bg-elevated/40 p-3 text-center">
+        <div className="rounded-xl border border-border-subtle bg-bg-elevated/40 p-3 text-center flex flex-col justify-between">
           <span className="text-[10px] font-bold uppercase tracking-wider text-text-faint">Audio / Mic Sensors</span>
-          <div className="mt-1 font-mono text-xl font-bold text-amber-400">
+          <div className="my-1 font-mono text-xl font-bold text-amber-400">
             {(catalog?.quick_inspect?.microphone ?? 0) + (catalog?.quick_inspect?.audio ?? 0)}
           </div>
           <span className="text-[10px] text-text-muted">active streams</span>

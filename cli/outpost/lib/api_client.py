@@ -594,6 +594,16 @@ def get_similar_samples(sample_id: str, min_similarity: int = 20) -> dict:
     return _get(f"/samples/{quote(sample_id)}/similar?min_similarity={min_similarity}")
 
 
+def get_sample_static(sample_id: str) -> dict:
+    """Retrieve full static analysis dossier (strings, IOCs, capabilities, entropy, PE/ELF)."""
+    return _get(f"/samples/{quote(sample_id)}/static")
+
+
+def detonate_sample(sample_id: str, timeout: int = 15) -> dict:
+    """Trigger isolated dynamic sandbox execution of a sample binary/script."""
+    return _post(f"/samples/{quote(sample_id)}/detonate?timeout={timeout}", {})
+
+
 def transpile_sigma(sigma_yaml: str) -> dict:
     """Transpile a Sigma YAML detection rule into OutPost rule format."""
     return _post("/rules/sigma/transpile", {"sigma_yaml": sigma_yaml})

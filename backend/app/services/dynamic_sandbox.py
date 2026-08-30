@@ -600,3 +600,96 @@ async def execute_simulation_scenario_live(scenario_id: str) -> dict[str, Any]:
         "process_tree": tree,
         "detonation_delta": detonation_delta,
     }
+
+
+async def execute_sample_detonation(
+    sample_id: str,
+    raw_bytes: bytes,
+    sample_name: str,
+    platform_hint: str = "linux",
+    timeout_seconds: int = 15,
+) -> dict[str, Any]:
+    """Execute uploaded malware sample bytes in an isolated dynamic sandbox, collect telemetry, and evaluate alerts."""
+    run_id = f"dyn_{uuid.uuid4().hex[:12]}"
+    plat = platform_hint or "linux"
+
+    with db_session() as conn:
+        run_store.create_run(
+            conn=conn,
+            run_id=run_id,
+            sample_name=sample_name,
+            platform=plat,
+            session_type="analysis",
+            source="dynamic_sandbox",
+        )
+
+    # Capture baseline before detonation
+    from .host_forensics import capture_baseline_snapshot, compute_snapshot_diff
+    try:
+        capture_baseline_snapshot()
+    except Exception:
+        pass
+
+    events, stdout_s, stderr_s, exit_code = await execute_bytes_sandbox(
+        run_id=run_id,
+        sample_name=sample_name,
+        platform_hint=plat,
+        raw_bytes=raw_bytes,
+        timeout_seconds=timeout_seconds,
+    )
+
+    # Compute post-detonation differential delta
+    detonation_delta = None
+    try:
+        detonation_delta = compute_snapshot_diff()
+    except Exception:
+        pass
+
+    terminal_logs: list[str] = [
+        f"[OutPost Dynamic Sandbox] Detonating sample '{sample_name}' (ID: {sample_id})",
+        f"[OutPost Dynamic Sandbox] Target Platform: {plat.upper()} · Timeout: {timeout_seconds}s",
+        "-" * 60,
+    ]
+    if stdout_s:
+        for line in stdout_s.splitlines():
+            terminal_logs.append(f"  {line}")
+    if stderr_s:
+        for line in stderr_s.splitlines():
+            terminal_logs.append(f"  [stderr] {line}")
+    terminal_logs.append("-" * 60)
+    terminal_logs.append(f"[OutPost Dynamic Sandbox] Execution completed with exit code: {exit_code}")
+
+    with db_session() as conn:
+        for ev in events:
+            ev["id"] = event_store.insert_event(conn, ev)
+
+        new_alerts = detection.evaluate_batch(conn, run_id, events)
+        alert_rows = conn.execute("SELECT * FROM alerts WHERE run_id = ?", (run_id,)).fetchall()
+        alerts = [dict(r) for r in alert_rows]
+        run_store.complete_run(conn, run_id)
+
+    if new_alerts:
+        from ..services import events_stream
+        events_stream.publish_alerts(new_alerts)
+
+    tree_nodes = process_tree.build_process_tree(events)
+    tree = [n.model_dump(mode="json") for n in tree_nodes]
+    risk_score = risk.compute_risk_score([a["rule_id"] for a in alerts]) if alerts else 0
+
+    return {
+        "run_id": run_id,
+        "sample_id": sample_id,
+        "sample_name": sample_name,
+        "platform": plat,
+        "exit_code": exit_code,
+        "terminal_output": "\n".join(terminal_logs),
+        "terminal_lines": terminal_logs,
+        "events": events,
+        "events_count": len(events),
+        "alerts": alerts,
+        "alerts_count": len(alerts),
+        "risk_score": risk_score,
+        "process_tree": tree,
+        "detonation_delta": detonation_delta,
+    }
+

@@ -147,3 +147,55 @@ def test_samples_similar_command(monkeypatch):
     assert "malware_v2.exe" in out
     assert "85%" in out
     assert "YES" in out
+
+
+def test_samples_static_and_detonate_commands(monkeypatch):
+    from outpost.commands.samples import samples
+
+    monkeypatch.setattr(
+        api_client,
+        "get_sample_static",
+        lambda sid: {
+            "available": True,
+            "sha256": "abcdef123456",
+            "entropy": 7.45,
+            "is_packed": True,
+            "static_risk_score": 85,
+            "static_severity": "malicious",
+            "risk_factors": ["High entropy packed binary structure"],
+            "capabilities": [{"category": "Process Injection", "matched": ["VirtualAllocEx"], "confidence": "high"}],
+            "iocs": {"ips": ["185.220.101.5"]},
+            "strings": ["http://evil.com/beacon"],
+        },
+    )
+
+    monkeypatch.setattr(
+        api_client,
+        "detonate_sample",
+        lambda sid, timeout: {
+            "run_id": "dyn_test123",
+            "sample_id": sid,
+            "exit_code": 0,
+            "events_count": 14,
+            "alerts_count": 2,
+            "risk_score": 88,
+            "terminal_output": "[OutPost Dynamic Sandbox] Detonation complete.",
+        },
+    )
+
+    with console.capture() as capture:
+        samples(static_id="sample123")
+    out_static = capture.get()
+    assert "Static Analysis Dossier" in out_static
+    assert "7.45 / 8.0" in out_static
+    assert "PACKED/ENCRYPTED" in out_static
+    assert "Process Injection" in out_static
+    assert "185.220.101.5" in out_static
+
+    with console.capture() as capture:
+        samples(detonate_id="sample123", timeout=10)
+    out_det = capture.get()
+    assert "Detonating sample sample123" in out_det
+    assert "dyn_test123" in out_det
+    assert "Risk Score: 88" in out_det
+
