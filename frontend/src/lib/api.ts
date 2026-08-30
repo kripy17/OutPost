@@ -1131,6 +1131,26 @@ export async function transpileSigmaRule(sigmaYaml: string): Promise<any> {
   return post<any>("/rules/sigma/transpile", { sigma_yaml: sigmaYaml });
 }
 
+/** Get curated SigmaHQ community detection rules (GET /rules/sigma/community). */
+export async function getCommunitySigmaRules(): Promise<Array<{
+  id: string;
+  title: string;
+  platform: string;
+  level: string;
+  severity: string;
+  mitre_tactics: string[];
+  mitre_techniques: string[];
+  description: string;
+  sigma_yaml: string;
+}>> {
+  return get<any[]>("/rules/sigma/community");
+}
+
+/** Import and activate a SigmaHQ detection rule (POST /rules/sigma/import). */
+export async function importSigmaRule(sigmaYaml: string, enabled: boolean = true): Promise<{ status: string; rule: any }> {
+  return post<any>("/rules/sigma/import", { sigma_yaml: sigmaYaml, enabled });
+}
+
 /** Get full live host X-Ray snapshot (metrics, active processes, open sockets). */
 export async function getHostXRaySnapshot(): Promise<{
   metrics: {

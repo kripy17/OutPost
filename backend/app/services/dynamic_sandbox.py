@@ -189,10 +189,13 @@ async def execute_bytes_sandbox(
             bwrap_prefix = [
                 "bwrap",
                 "--ro-bind", "/usr", "/usr",
-                "--ro-bind", "/lib", "/lib",
-                "--ro-bind", "/lib64", "/lib64",
-                "--ro-bind", "/bin", "/bin",
-                "--ro-bind", "/sbin", "/sbin",
+                "--ro-bind-try", "/lib", "/lib",
+                "--ro-bind-try", "/lib64", "/lib64",
+                "--ro-bind-try", "/bin", "/bin",
+                "--ro-bind-try", "/sbin", "/sbin",
+                "--ro-bind-try", "/etc/resolv.conf", "/etc/resolv.conf",
+                "--ro-bind-try", "/etc/ssl", "/etc/ssl",
+                "--ro-bind-try", "/etc/ca-certificates", "/etc/ca-certificates",
                 "--dir", "/tmp",
                 "--bind", str(sandbox_dir), str(sandbox_dir),
                 "--proc", "/proc",
@@ -203,12 +206,6 @@ async def execute_bytes_sandbox(
                 "--unshare-uts",
                 "--die-with-parent",
             ]
-            if Path("/etc/resolv.conf").exists():
-                bwrap_prefix.extend(["--ro-bind", "/etc/resolv.conf", "/etc/resolv.conf"])
-            if Path("/etc/ssl").exists():
-                bwrap_prefix.extend(["--ro-bind", "/etc/ssl", "/etc/ssl"])
-            if Path("/etc/ca-certificates").exists():
-                bwrap_prefix.extend(["--ro-bind", "/etc/ca-certificates", "/etc/ca-certificates"])
             exec_cmd = bwrap_prefix + exec_cmd
 
         start_dt = datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -235,6 +232,8 @@ async def execute_bytes_sandbox(
                 or k.endswith("_TOKEN")
                 or k.endswith("_PASSWORD")
                 or k in ("VT_API_KEY", "ABUSEIPDB_API_KEY", "SHODAN_API_KEY", "GREYNOISE_API_KEY")
+            )
+        }
         child_env["OUTPOST_SANDBOX"] = "1"
         child_env["OUTPOST_RUN_ID"] = run_id
 

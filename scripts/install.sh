@@ -25,6 +25,17 @@ WEB_PORT="${WEB_PORT:-5174}"
 SEED="${SEED:-1}"
 NON_INTERACTIVE="${NON_INTERACTIVE:-0}"
 
+for arg in "$@"; do
+    case "$arg" in
+        -y|--yes|-non-interactive|--non-interactive)
+            NON_INTERACTIVE=1
+            ;;
+        --no-seed)
+            SEED=0
+            ;;
+    esac
+done
+
 # Colors & Formatting
 C_GREEN=$'\033[1;32m'
 C_YELLOW=$'\033[1;33m'
