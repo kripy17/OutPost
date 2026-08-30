@@ -121,6 +121,23 @@ def _safe_get_playbooks() -> list[dict]:
         return []
 
 
+def _safe_get_forensics_snapshot() -> dict:
+    try:
+        res = api_client.get_forensics_snapshot()
+        return res if isinstance(res, dict) else {}
+    except Exception:
+        return {}
+
+
+def _safe_get_forensics_network() -> dict:
+    try:
+        res = api_client.get_forensics_network()
+        return res if isinstance(res, dict) else {}
+    except Exception:
+        return {}
+
+
+
 def _get_key() -> str:
     """Read a single keypress without waiting for Enter."""
     if platform.system().lower() == "windows":
@@ -197,14 +214,14 @@ class OutPostTUI:
         ]
 
         self.sub_menus = {
-            "monitor": ["Live Events", "Findings", "Sessions", "Hosts", "Detection Activity"],
+            "monitor": ["Live Events", "Findings", "Sessions", "Hosts", "Deep Forensics", "Detection Activity"],
             "analyze": ["Attack Playbooks", "Sample Vault", "Static Inspection", "Execution Traces"],
             "investigate": ["Active Cases", "Closed Cases", "Triage Queue", "Case Timeline"],
             "iocs": ["Search IOC", "Threat Watchlist", "Reputation Cache", "Infra Topology"],
             "hosts": ["Online Fleet", "Collector Heartbeats", "Host Activity Timeline"],
             "campaigns": ["Campaign Clusters", "Shared C2 Infrastructure", "Evidence Graph"],
             "reports": ["Session Reports", "Synthesize Detection Suite", "STIX 2.1 Bundles"],
-            "rules": ["37 Heuristic Rules", "ATT&CK Coverage Matrix", "YARA Signatures"],
+            "rules": ["38 Heuristic Rules", "ATT&CK Coverage Matrix", "YARA Signatures"],
             "settings": ["Local Monitor Daemon", "Threat Intel Keys", "System Health & DB"],
         }
 
@@ -530,6 +547,50 @@ class OutPostTUI:
             elif view_name == "Hosts":
                 self.render_hosts_table()
 
+            elif view_name == "Deep Forensics":
+                data = _safe_get_forensics_snapshot()
+                m = data.get("metrics", {})
+                procs = data.get("processes", [])[:10]
+                sockets = data.get("sockets", [])[:6]
+
+                body_elements = []
+                metrics_table = Table(box=ROUNDED, border_style="dim", expand=True)
+                metrics_table.add_column("Platform", style="bold cyan")
+                metrics_table.add_column("CPU %", style="bold")
+                metrics_table.add_column("Memory (Used/Total)", style="bold magenta")
+                metrics_table.add_column("Processes", style="bold green")
+                metrics_table.add_column("Sockets", style="bold yellow")
+                metrics_table.add_row(
+                    m.get("platform", "unknown").upper(),
+                    f"{m.get('cpu_percent', 0):.1f}%",
+                    f"{m.get('memory_used_mb', 0):.0f} / {m.get('memory_total_mb', 0):.0f} MB ({m.get('memory_percent', 0):.1f}%)",
+                    str(data.get("process_count", len(procs))),
+                    str(data.get("socket_count", len(sockets))),
+                )
+                body_elements.append(metrics_table)
+
+                if procs:
+                    proc_table = Table(title="Live Process Telemetry (first 10)", box=ROUNDED, border_style="dim", expand=True)
+                    proc_table.add_column("PID", style="bold", width=8)
+                    proc_table.add_column("Name", style="bold cyan", width=18)
+                    proc_table.add_column("User", width=10)
+                    proc_table.add_column("CPU %", width=8)
+                    proc_table.add_column("RAM (MB)", width=10)
+                    proc_table.add_column("Command Line", style="dim")
+                    for p in procs:
+                        proc_table.add_row(
+                            str(p.get("pid")),
+                            p.get("name", "-"),
+                            str(p.get("user", "-")),
+                            f"{p.get('cpu_percent', 0):.1f}%",
+                            f"{p.get('memory_mb', 0):.1f}",
+                            (p.get("cmdline") or p.get("exe") or "-")[:45],
+                        )
+                    body_elements.append(proc_table)
+
+                console.print(Panel(Group(*body_elements), title=header, box=ROUNDED, border_style="#3FA796"))
+                console.print(Align.center(Text.from_markup("[dim][r] Refresh Telemetry   [b/Esc] Back to Monitor[/dim]")))
+
             elif view_name == "Detection Activity":
                 rules = _safe_get_rules_meta()
                 table = Table(title="Active Detection Heuristics", box=ROUNDED, border_style="dim", expand=True)
@@ -652,7 +713,7 @@ class OutPostTUI:
 
         elif self.current_screen == "rules":
             rules = _safe_get_rules_meta()
-            table = Table(title="37 Heuristic Rules across 14 ATT&CK Tactics", box=ROUNDED, border_style="dim", expand=True)
+            table = Table(title="38 Heuristic Rules across 14 ATT&CK Tactics", box=ROUNDED, border_style="dim", expand=True)
             table.add_column("Rule ID", style="bold cyan", width=24)
             table.add_column("Rule Name", style="white")
             table.add_column("Tactic", style="bold yellow", width=18)
@@ -668,11 +729,17 @@ class OutPostTUI:
             console.print(Align.center(Text.from_markup("[dim][b/Esc] Back to Rules[/dim]")))
 
         elif self.current_screen == "settings":
+            rules_count = len(_safe_get_rules_meta())
+            samples_count = len(_safe_get_samples())
+            watchlist_count = len(_safe_get_watchlist())
             body = (
-                "[bold]API Status:[/bold] Healthy (Connected to http://127.0.0.1:8001)\n"
-                "[bold]Threat Intel Cache:[/bold] Active (Keyless Fallback Ready)\n"
-                "[bold]Air-Gap Enforcement:[/bold] Loopback-only locked\n"
-                "[bold]Rule Synthesis Studio:[/bold] Ready (Sigma / Suricata / YARA)\n"
+                f"[bold]API Status:[/bold] Healthy (Connected to {api_client.BASE_URL})\n"
+                f"[bold]Host Platform:[/bold] {platform.system()} {platform.release()} ({platform.machine()})\n"
+                f"[bold]Detection Heuristics:[/bold] {rules_count} Active Rules across 14 MITRE Tactics\n"
+                f"[bold]Sample Vault:[/bold] {samples_count} Binaries Indexed\n"
+                f"[bold]Threat Watchlist:[/bold] {watchlist_count} Active Indicators\n"
+                f"[bold]Threat Intel Cache:[/bold] Active (Keyless Fallback Ready)\n"
+                f"[bold]Rule Synthesis Studio:[/bold] Ready (Sigma / Suricata / YARA)\n"
             )
             console.print(Panel(Text.from_markup(body), box=ROUNDED, border_style="dim"))
             console.print(Align.center(Text.from_markup("[dim][b/Esc] Back to Menu[/dim]")))
