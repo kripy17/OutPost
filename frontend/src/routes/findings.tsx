@@ -4,7 +4,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { DataProvenanceBadge } from "../components/DataProvenanceBadge";
 import { PageHeader, Panel } from "../components/ui";
-import { addSuppression, bulkUpdateAlertStatus, createInvestigation, getAlertQueue, getRuleMeta } from "../lib/api";
+import { addInvestigationRef, addSuppression, bulkUpdateAlertStatus, createInvestigation, getAlertQueue, getRuleMeta } from "../lib/api";
 import { useEventStream } from "../lib/useEventStream";
 import { SEVERITY_COLORS, SEVERITY_LABEL } from "../lib/constants";
 import { toneFill, toneForSeverity } from "../lib/fillPatterns";
@@ -28,8 +28,10 @@ function FindingRow({
   selected,
   onToggle,
   ruleNames,
+  ruleMap,
   onSuppress,
   suppressing,
+  onStatusChange,
   onInspectIp,
   onInspectPid,
 }: {
@@ -37,12 +39,16 @@ function FindingRow({
   selected: boolean;
   onToggle: (id: number) => void;
   ruleNames: Map<string, string>;
+  ruleMap?: Map<string, { tactic: string; technique: string }>;
   onSuppress: (a: QueueAlert) => void;
   suppressing: boolean;
+  onStatusChange?: (id: number, status: AlertStatus) => void;
   onInspectIp?: (ip: string) => void;
   onInspectPid?: (pid: number) => void;
 }) {
   const sev = a.severity as Severity;
+  const mitre = ruleMap?.get(a.rule_id);
+
   return (
     <li
       className={`group flex items-start gap-3 rounded-xl border bg-bg-surface px-4 py-3 transition-colors duration-150 ${
@@ -66,6 +72,14 @@ function FindingRow({
           <span className="rounded border border-border-subtle px-1 py-px font-mono text-[9px] uppercase tracking-wide text-text-faint">
             {a.rule_id}
           </span>
+          {mitre && (
+            <span
+              className="rounded border border-border-subtle bg-bg-elevated/60 px-1.5 py-px font-mono text-[9px] text-text-faint"
+              title={`MITRE ATT&CK ${mitre.tactic}`}
+            >
+              {mitre.technique} · {mitre.tactic}
+            </span>
+          )}
           <DataProvenanceBadge source={a.run_source || a.source || "live"} />
           <span
             className="ml-auto rounded-full border border-border-subtle px-1.5 py-px font-mono text-[10px] tabular-nums text-text-faint"
@@ -144,16 +158,48 @@ function FindingRow({
               {a.status_comment ? ` — ${a.status_comment}` : ""}
             </span>
           )}
-          {(a.sample_name || a.related_ip) && (
-            <button
-              onClick={() => onSuppress(a)}
-              disabled={suppressing}
-              className="press ml-auto font-mono text-[9px] uppercase tracking-wide text-text-faint transition-colors hover:text-risk-malicious disabled:opacity-40"
-              title={`Suppress ${a.rule_id} for ${a.sample_name || a.related_ip} — future runs of this sample/C2 stop firing it`}
+
+          {/* Quick inline triage actions */}
+          <div className="ml-auto flex items-center gap-1.5 font-mono text-[10px]">
+            {a.status === "open" && onStatusChange && (
+              <button
+                onClick={() => onStatusChange(a.id, "acknowledged")}
+                className="press inline-flex items-center gap-1 rounded border border-border-subtle bg-bg-surface px-1.5 py-0.5 text-text-muted hover:border-signal/50 hover:text-signal transition"
+                title="Acknowledge alert"
+              >
+                <Icon name="check" size={9} />
+                <span>ack</span>
+              </button>
+            )}
+            {a.status !== "resolved" && onStatusChange && (
+              <button
+                onClick={() => onStatusChange(a.id, "resolved")}
+                className="press inline-flex items-center gap-1 rounded border border-border-subtle bg-bg-surface px-1.5 py-0.5 text-text-muted hover:border-risk-clean/50 hover:text-risk-clean transition"
+                title="Resolve alert"
+              >
+                <Icon name="check" size={9} />
+                <span>resolve</span>
+              </button>
+            )}
+            <Link
+              to={`/investigations?create=1&alert_id=${a.id}&title=${encodeURIComponent(a.rule_name + " Incident")}`}
+              className="press inline-flex items-center gap-1 rounded border border-border-subtle bg-bg-surface px-1.5 py-0.5 text-text-muted hover:border-accent/50 hover:text-accent transition"
+              title="Create case from finding"
             >
-              {suppressing ? "…" : "suppress"}
-            </button>
-          )}
+              <Icon name="notes" size={9} />
+              <span>case</span>
+            </Link>
+            {(a.sample_name || a.related_ip) && (
+              <button
+                onClick={() => onSuppress(a)}
+                disabled={suppressing}
+                className="press font-mono text-[9px] uppercase tracking-wide text-text-faint transition-colors hover:text-risk-malicious disabled:opacity-40"
+                title={`Suppress ${a.rule_id} for ${a.sample_name || a.related_ip} — future runs of this sample/C2 stop firing it`}
+              >
+                {suppressing ? "…" : "suppress"}
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </li>
@@ -249,6 +295,22 @@ export default function FindingsPage() {
     for (const r of ruleMeta ?? []) m.set(r.rule_id, r.rule_name);
     return m;
   }, [ruleMeta]);
+
+  const ruleMap = useMemo(() => {
+    const m = new Map<string, { tactic: string; technique: string }>();
+    for (const r of ruleMeta ?? []) m.set(r.rule_id, { tactic: r.tactic, technique: r.technique });
+    return m;
+  }, [ruleMeta]);
+
+  const handleSingleStatus = async (id: number, nextStatus: AlertStatus) => {
+    try {
+      await bulkUpdateAlertStatus([id], nextStatus);
+      await queryClient.invalidateQueries({ queryKey: ["alerts", "queue"] });
+      await queryClient.invalidateQueries({ queryKey: ["statusbar"] });
+    } catch (err) {
+      console.error("Failed to update status:", err);
+    }
+  };
 
   const alerts = data?.alerts ?? [];
   const onPage = alerts.map((a) => a.id);
@@ -378,6 +440,18 @@ export default function FindingsPage() {
         title,
         tags: ["escalated-finding", ...selectedAlerts.map((a) => a.rule_id).slice(0, 3)],
       });
+      // Attach run, host, and ioc evidence references to the new case
+      const seenRuns = new Set<string>();
+      for (const a of selectedAlerts) {
+        if (a.run_id && !seenRuns.has(a.run_id)) {
+          seenRuns.add(a.run_id);
+          try {
+            await addInvestigationRef(inv.id, { ref_type: "run", ref_id: a.run_id });
+          } catch {
+            // continue
+          }
+        }
+      }
       setMsg({ ok: true, text: `Created investigation case: ${title}` });
       setSelected(new Set());
       navigate(`/investigations/${inv.id}`);
@@ -650,6 +724,8 @@ export default function FindingsPage() {
                   selected={selected.has(a.id)}
                   onToggle={toggle}
                   ruleNames={ruleNames}
+                  ruleMap={ruleMap}
+                  onStatusChange={handleSingleStatus}
                   onSuppress={(target) => {
                     setSuppressingId(target.id);
                     void suppress([target]);
