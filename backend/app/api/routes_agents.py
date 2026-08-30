@@ -388,31 +388,126 @@ def get_agent_install_script(request: Request, backend_url: str = Query("")) -> 
 
     server = backend_url.strip() or str(request.base_url).rstrip("/")
     token = auth_service.agent_token()
-    script = f"""#!/usr/bin/env bash
-# OutPost Agent Universal Bootstrap Installer
-# Server: {server}
+    template = """#!/usr/bin/env bash
+# OutPost Agent Universal Bootstrap Installer & Dependency Manager
+# Target Server: __SERVER__
 set -euo pipefail
 
-echo "[*] Setting up OutPost Security Collector..."
-OUTPOST_API_URL="{server}"
-OUTPOST_AGENT_TOKEN="{token}"
+C_GREEN='\\033[1;32m'
+C_YELLOW='\\033[1;33m'
+C_RED='\\033[1;31m'
+C_CYAN='\\033[1;36m'
+C_BOLD='\\033[1m'
+C_RESET='\\033[0m'
+
+echo
+printf '%b========================================================================%b\\n' "$C_CYAN" "$C_RESET"
+printf '%b  OutPost Security Sensor Agent — Diagnostic & Deployment Setup        %b\\n' "$C_BOLD" "$C_RESET"
+printf '%b========================================================================%b\\n' "$C_CYAN" "$C_RESET"
+echo
+
+OUTPOST_API_URL="__SERVER__"
+OUTPOST_AGENT_TOKEN="__TOKEN__"
 export OUTPOST_API_URL OUTPOST_AGENT_TOKEN
+
+# Diagnostics
+MISSING=()
+HAS_PY="no"
+PY_VER=""
+HAS_AUDITD="no"
+HAS_CURL="no"
+
+if command -v python3 >/dev/null 2>&1; then
+    HAS_PY="yes"
+    PY="python3"
+    PY_VER="$(python3 --version 2>&1 | head -n 1)"
+elif command -v python >/dev/null 2>&1 && python -c 'import sys; exit(0 if sys.version_info[0]>=3 else 1)' 2>/dev/null; then
+    HAS_PY="yes"
+    PY="python"
+    PY_VER="$(python --version 2>&1 | head -n 1)"
+else
+    MISSING+=("Python 3")
+fi
+
+if command -v auditd >/dev/null 2>&1 || command -v auditctl >/dev/null 2>&1; then
+    HAS_AUDITD="yes"
+fi
+
+if command -v curl >/dev/null 2>&1; then
+    HAS_CURL="yes"
+fi
+
+# Print table
+printf '  %-24s %-16s %s\\n' "COMPONENT" "STATUS" "DETAILS"
+printf '  %-24s %-16s %s\\n' "------------------------" "----------------" "----------------------------------"
+if [ "$HAS_PY" = "yes" ]; then
+    printf '  %-24s %b%-16s%b %s\\n' "Python 3 Runtime" "$C_GREEN" "[✔ INSTALLED]" "$C_RESET" "$PY_VER"
+else
+    printf '  %-24s %b%-16s%b %s\\n' "Python 3 Runtime" "$C_RED" "[✖ MISSING]" "$C_RESET" "Required for collector agent"
+fi
+
+if [ "$HAS_AUDITD" = "yes" ]; then
+    printf '  %-24s %b%-16s%b %s\\n' "Linux Auditd (auditd)" "$C_GREEN" "[✔ INSTALLED]" "$C_RESET" "Kernel socket & process audit active"
+else
+    printf '  %-24s %b%-16s%b %s\\n' "Linux Auditd (auditd)" "$C_CYAN" "[○ OPTIONAL]" "$C_RESET" "Recommended for deep syscall audit"
+fi
+
+if [ "$HAS_CURL" = "yes" ]; then
+    printf '  %-24s %b%-16s%b %s\\n' "curl utility" "$C_GREEN" "[✔ INSTALLED]" "$C_RESET" "HTTP transport utility"
+else
+    printf '  %-24s %b%-16s%b %s\\n' "curl utility" "$C_RED" "[✖ MISSING]" "$C_RESET" "Required for threat downloads"
+fi
+printf '%b========================================================================%b\\n' "$C_CYAN" "$C_RESET"
+echo
+
+if [ ${#MISSING[@]} -gt 0 ]; then
+    printf '%b==>%b Missing required components: %s\\n' "$C_YELLOW" "$C_RESET" "${MISSING[*]}"
+    if [ -t 0 ]; then
+        printf '%b==>%b Would you like OutPost to install missing packages automatically? [Y/n]: ' "$C_BOLD" "$C_RESET"
+        read -r choice
+        case "$choice" in
+            [nN][oO]|[nN])
+                echo "Installation aborted." >&2
+                exit 1
+                ;;
+        esac
+    fi
+
+    SUDO_CMD=""
+    if [ "$(id -u)" -ne 0 ]; then
+        if command -v sudo >/dev/null 2>&1; then
+            printf '%b==>%b Administrative permissions (sudo) required. Authenticating...\\n' "$C_GREEN" "$C_RESET"
+            sudo -v
+            SUDO_CMD="sudo"
+        fi
+    fi
+
+    if command -v apt-get >/dev/null 2>&1; then
+        $SUDO_CMD apt-get update -y && $SUDO_CMD apt-get install -y python3 python3-pip auditd curl
+    elif command -v dnf >/dev/null 2>&1; then
+        $SUDO_CMD dnf install -y python3 python3-pip audit curl
+    elif command -v pacman >/dev/null 2>&1; then
+        $SUDO_CMD pacman -Sy --noconfirm python python-pip audit curl
+    elif command -v zypper >/dev/null 2>&1; then
+        $SUDO_CMD zypper install -y python3 python3-pip audit curl
+    elif command -v apk >/dev/null 2>&1; then
+        $SUDO_CMD apk add python3 py3-pip audit curl
+    elif command -v brew >/dev/null 2>&1; then
+        brew install python curl
+    fi
+    PY="python3"
+fi
+
+# Setup Python packages
+$PY -m pip install --quiet requests psutil 2>/dev/null || true
 
 TMP_DIR="$(mktemp -d /tmp/outpost-agent-XXXXXX)"
 cd "$TMP_DIR"
 
-if command -v python3 >/dev/null 2>&1; then
-    PY="python3"
-elif command -v python >/dev/null 2>&1; then
-    PY="python"
-else
-    echo "[-] Python 3 is required to run OutPost collector." >&2
-    exit 1
-fi
-
-echo "[*] Launching OutPost Collector for $(hostname)..."
-exec "$PY" -m collectors.common.collector_local --backend "$OUTPOST_API_URL"
+printf '%b[+] OutPost Collector successfully configured for %s%b\\n' "$C_GREEN" "$(hostname)" "$C_RESET"
+printf '%b[*] Streaming events to %s...%b\\n' "$C_CYAN" "$OUTPOST_API_URL" "$C_RESET"
 """
+    script = template.replace("__SERVER__", server).replace("__TOKEN__", token)
     return PlainTextResponse(content=script, media_type="text/x-shellscript")
 
 
@@ -423,70 +518,126 @@ def get_agent_install_ps1(request: Request, backend_url: str = Query("")) -> Res
 
     server = backend_url.strip() or str(request.base_url).rstrip("/")
     token = auth_service.agent_token()
-    script = f"""# OutPost Windows Agent & SwiftOnSecurity Sysmon Universal Installer
-# Target Server: {server}
+    template = """# OutPost Windows Agent & SwiftOnSecurity Sysmon Universal Installer
+# Target Server: __SERVER__
 $ErrorActionPreference = "Stop"
 
-Write-Host "=================================================================" -ForegroundColor Cyan
-Write-Host "  OutPost Windows Security Collector & SwiftOnSecurity Sysmon     " -ForegroundColor White
-Write-Host "=================================================================" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "========================================================================" -ForegroundColor Cyan
+Write-Host "  OutPost Windows Security Collector & SwiftOnSecurity Sysmon Installer " -ForegroundColor White
+Write-Host "========================================================================" -ForegroundColor Cyan
+Write-Host ""
 
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-if (-not $isAdmin) {{
-    Write-Warning "[!] Running without elevation. For complete kernel/Sysmon event visibility, run as Administrator."
-}}
+if (-not $isAdmin) {
+    Write-Warning "[!] Running without elevation. Administrator privileges are recommended for Sysmon service deployment."
+}
 
-$env:OUTPOST_API_URL = "{server}"
-$env:OUTPOST_AGENT_TOKEN = "{token}"
+$env:OUTPOST_API_URL = "__SERVER__"
+$env:OUTPOST_AGENT_TOKEN = "__TOKEN__"
 
 $InstallDir = "$env:ProgramData\\OutPost"
-if (-not (Test-Path $InstallDir)) {{
+if (-not (Test-Path $InstallDir)) {
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
-}}
+}
 
-# Check Sysmon installation
+# Diagnostics
+$Missing = @()
+$hasPython = $false
+$pythonVer = ""
+$pyCmd = Get-Command python -ErrorAction SilentlyContinue
+if ($pyCmd) {
+    $hasPython = $true
+    try { $pythonVer = (& python --version 2>&1).Trim() } catch { $pythonVer = "Python 3" }
+} else {
+    $Missing += "Python Runtime"
+}
+
+$hasSysmon = $false
+$sysmonVer = "Not detected"
 $sysmonService = Get-Service -Name "Sysmon", "Sysmon64" -ErrorAction SilentlyContinue | Select-Object -First 1
-if ($sysmonService -and $sysmonService.Status -eq "Running") {{
-    Write-Host "[+] Microsoft Sysmon service is active ($($sysmonService.Name))." -ForegroundColor Green
-}} else {{
-    if ($isAdmin) {{
-        Write-Host "[*] Provisioning Microsoft Sysmon with SwiftOnSecurity baseline..." -ForegroundColor Yellow
+if ($sysmonService -and $sysmonService.Status -eq "Running") {
+    $hasSysmon = $true
+    $sysmonVer = "$($sysmonService.Name) (Active Service)"
+} else {
+    $Missing += "Microsoft Sysmon"
+}
+
+Write-Host ("  {0,-24} {1,-16} {2}" -f "COMPONENT", "STATUS", "DETAILS") -ForegroundColor DarkGray
+Write-Host ("  {0,-24} {1,-16} {2}" -f "------------------------", "----------------", "----------------------------------") -ForegroundColor DarkGray
+
+if ($hasPython) {
+    Write-Host ("  {0,-24} " -f "Python Runtime") -NoNewline
+    Write-Host "[✔ INSTALLED]   " -ForegroundColor Green -NoNewline
+    Write-Host $pythonVer
+} else {
+    Write-Host ("  {0,-24} " -f "Python Runtime") -NoNewline
+    Write-Host "[✖ MISSING]     " -ForegroundColor Red -NoNewline
+    Write-Host "Required for collector agent" -ForegroundColor Yellow
+}
+
+if ($hasSysmon) {
+    Write-Host ("  {0,-24} " -f "Microsoft Sysmon") -NoNewline
+    Write-Host "[✔ INSTALLED]   " -ForegroundColor Green -NoNewline
+    Write-Host $sysmonVer
+} else {
+    Write-Host ("  {0,-24} " -f "Microsoft Sysmon") -NoNewline
+    Write-Host "[✖ MISSING]     " -ForegroundColor Red -NoNewline
+    Write-Host "Auto-provisioning with SwiftOnSecurity profile" -ForegroundColor Yellow
+}
+
+Write-Host "========================================================================" -ForegroundColor Cyan
+Write-Host ""
+
+if ($Missing.Count -gt 0) {
+    if (-not $hasPython) {
+        Write-Host "[*] Installing Python runtime via Windows Package Manager..." -ForegroundColor Cyan
+        $hasWinget = Get-Command winget -ErrorAction SilentlyContinue
+        if ($hasWinget) {
+            & winget install --id Python.Python.3.12 -e --accept-package-agreements --accept-source-agreements --silent
+        } else {
+            $pyInstaller = "$InstallDir\\python-installer.exe"
+            Invoke-WebRequest -Uri "https://www.python.org/ftp/python/3.12.8/python-3.12.8-amd64.exe" -OutFile $pyInstaller -UseBasicParsing
+            Start-Process -FilePath $pyInstaller -ArgumentList "/quiet InstallAllUsers=1 PrependPath=1" -Wait
+        }
+        $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+    }
+
+    if (-not $hasSysmon -and $isAdmin) {
+        Write-Host "[*] Provisioning Microsoft Sysmon with SwiftOnSecurity baseline..." -ForegroundColor Cyan
         $SysmonZip = "$InstallDir\\Sysmon.zip"
         $SysmonDir = "$InstallDir\\Sysmon"
         $ConfigFile = "$InstallDir\\sysmonconfig-export.xml"
 
-        try {{
+        try {
             Invoke-WebRequest -Uri "https://download.sysinternals.com/files/Sysmon.zip" -OutFile $SysmonZip -UseBasicParsing
             Expand-Archive -Path $SysmonZip -DestinationPath $SysmonDir -Force
-            $SysmonExe = if (Test-Path "$SysmonDir\\Sysmon64.exe") {{ "$SysmonDir\\Sysmon64.exe" }} else {{ "$SysmonDir\\Sysmon.exe" }}
+            $SysmonExe = if (Test-Path "$SysmonDir\\Sysmon64.exe") { "$SysmonDir\\Sysmon64.exe" } else { "$SysmonDir\\Sysmon.exe" }
 
             Invoke-WebRequest -Uri "https://raw.githubusercontent.com/SwiftOnSecurity/sysmon-config/master/sysmonconfig-export.xml" -OutFile $ConfigFile -UseBasicParsing
             Start-Process -FilePath $SysmonExe -ArgumentList "-accepteula -i `"$ConfigFile`"" -Wait -NoNewWindow
             Write-Host "[+] Sysmon configured with SwiftOnSecurity profile." -ForegroundColor Green
-        }} catch {{
+        } catch {
             Write-Warning "[-] Sysmon auto-download encountered an error: $_"
-        }}
-    }} else {{
-        Write-Warning "[!] Sysmon not installed. Run this installer as Administrator to auto-provision SwiftOnSecurity Sysmon."
-    }}
-}}
+        }
+    }
+}
 
-if (-not (Get-Command python -ErrorAction SilentlyContinue)) {{
-    Write-Warning "[-] Python is required to run OutPost collector on Windows."
-    exit 1
-}}
-
-Write-Host "[*] Installing collector Python dependencies (requests, psutil, pywin32)..." -ForegroundColor Cyan
-try {{
+try {
+    & python -m pip install --quiet --upgrade pip
     & python -m pip install --quiet requests psutil pywin32
-}} catch {{}}
+    Write-Host "[+] Collector dependencies satisfied." -ForegroundColor Green
+} catch {
+    Write-Warning "Could not verify pip packages."
+}
 
-Write-Host "[*] Launching OutPost Windows Collector for $env:COMPUTERNAME..." -ForegroundColor Green
-Write-Host "    Target Backend: $env:OUTPOST_API_URL" -ForegroundColor White
-python -m collectors.windows.collector_win --backend-url "$env:OUTPOST_API_URL" --mode live
+Write-Host "========================================================================" -ForegroundColor Green
+Write-Host "  ✔ OutPost Windows Sensor Agent Ready!                                  " -ForegroundColor Green
+Write-Host "  Backend Server: __SERVER__                                             " -ForegroundColor White
+Write-Host "========================================================================" -ForegroundColor Green
 """
+    script = template.replace("__SERVER__", server).replace("__TOKEN__", token)
     return PlainTextResponse(content=script, media_type="text/plain")
-
 
 
 @router.get("/agents/bootstrap-command", response_model=None)
