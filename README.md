@@ -12,9 +12,9 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-backend-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![React](https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=black)](https://react.dev)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
-[![Tests](https://img.shields.io/badge/tests-1251%20passing-brightgreen?style=flat-square)](https://github.com/kripy17/OutPost/actions)
-[![Rules](https://img.shields.io/badge/rules-37%20active-blue?style=flat-square)](docs/11-DETECTION-LOGIC.md)
-[![Commands](https://img.shields.io/badge/cli-31%20commands-orange?style=flat-square)](docs/09-CLI-SPEC.md)
+[![Tests](https://img.shields.io/badge/tests-1391%20passing-brightgreen?style=flat-square)](https://github.com/kripy17/OutPost/actions)
+[![Rules](https://img.shields.io/badge/rules-40%20active-blue?style=flat-square)](docs/11-DETECTION-LOGIC.md)
+[![Commands](https://img.shields.io/badge/cli-32%20commands-orange?style=flat-square)](docs/09-CLI-SPEC.md)
 [![Tactics](https://img.shields.io/badge/tactics-14%2F14%20covered-teal?style=flat-square)](docs/11-DETECTION-LOGIC.md)
 [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
 
@@ -32,7 +32,7 @@
 
 **OutPost** is an authoritative, open-source security monitoring workstation and dynamic malware analysis engine designed for security operations centers (SOC) and malware reverse engineers. 
 
-OutPost pairs real-time kernel telemetry (`auditd`/`eBPF` on Linux, `Sysmon` on Windows, `EndpointSecurity` on macOS) with deep **Host X-Ray Forensics**, **Process Causality Lineage Graphs**, **Network Threat Matrices**, and **Automated Behavioral Heuristics** inspired by modern host inspection toolkits.
+OutPost pairs real-time kernel telemetry (`auditd`/`eBPF` on Linux, `Sysmon` with SwiftOnSecurity baseline on Windows, `EndpointSecurity` on macOS) with deep **Host X-Ray Forensics**, **Process Causality Lineage Graphs**, **Network Threat Matrices**, and **Automated Behavioral Heuristics** inspired by modern host inspection toolkits.
 
 ```text
                                      OUTPOST WORKSTATION
@@ -79,19 +79,19 @@ OutPost pairs real-time kernel telemetry (`auditd`/`eBPF` on Linux, `Sysmon` on 
 
 <br><br>
 
-### ⚡ 4. Differential Host Baseline Delta Engine
+### ⚡ 5. Differential Host Baseline Delta Engine
 *Pre-detonation baseline snapshotting and real-time differential calculation tracking spawned processes, opened ports, and resource spikes.*
 <img src="demo/screenshots/fresh/22_differential_delta.png" alt="Differential Host Baseline Delta" width="85%">
 
 <br><br>
 
-### 🔍 5. Forensic Capsule Differential Comparison
+### 🔍 6. Forensic Capsule Differential Comparison
 *Side-by-side comparison of `.xray.json` forensic dossiers to evaluate capability escalation and mapped library injections.*
 <img src="demo/screenshots/fresh/23_capsule_diff_modal.png" alt="Capsule Differential Comparison" width="85%">
 
 <br><br>
 
-### 🔬 6. Process X-Ray Inspector & Security Posture
+### 🔬 7. Process X-Ray Inspector & Security Posture
 *Deep process inspection featuring Linux Capabilities bitmask decoding, Seccomp mode, shared `.so` libraries, and process freeze/kill controls.*
 <img src="demo/screenshots/fresh/16_process_xray_drawer.png" alt="Process X-Ray Drawer" width="85%">
 
@@ -132,38 +132,57 @@ OutPost pairs real-time kernel telemetry (`auditd`/`eBPF` on Linux, `Sysmon` on 
 
 ## 🚀 Quickstart
 
-### Prerequisites
-- **Python 3.10+**
-- **Node.js 18+**
+### 1-Command Automated Installation
 
-### 1-Command Universal Launcher
+OutPost features automated dependency diagnostics that detect missing tools and install them for you seamlessly:
 
+#### Linux & macOS
 ```bash
 # Clone the repository
 git clone https://github.com/kripy17/OutPost.git
 cd OutPost
 
-# Run setup (creates venv and installs all dependencies)
-./setup.sh
+# Run automated installer (handles Python, Node.js, venv, and optional auditd setup)
+bash scripts/install.sh
 
 # Start the full stack (FastAPI backend on :8001 + React console on :5174)
-./start.sh
+bash scripts/dev.sh start
+```
+
+#### Windows (PowerShell)
+```powershell
+# Clone the repository
+git clone https://github.com/kripy17/OutPost.git
+cd OutPost
+
+# Run automated installer (handles Python, Node.js, venv, and SwiftOnSecurity Sysmon)
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1
+
+# Start the full stack
+powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 start
 ```
 
 - **Web Console**: [http://localhost:5174](http://localhost:5174)
 - **API Documentation**: [http://localhost:8001/docs](http://localhost:8001/docs)
 
-### Docker Deployment
+### 1-Click Remote Agent Deployment
 
-```bash
-docker compose up --build
-```
+Deploy OutPost sensor collectors to remote fleet machines with a single command:
+
+- **Linux / macOS**:
+  ```bash
+  curl -fsSL http://<OUTPOST_SERVER>:8001/api/agents/install.sh | sudo bash
+  ```
+- **Windows**:
+  ```powershell
+  irm http://<OUTPOST_SERVER>:8001/api/agents/install.ps1 | iex
+  ```
 
 ---
 
 ## ⌨️ OutPost CLI & Terminal Console
 
-OutPost provides a standalone executable CLI and interactive full-screen TUI console. Run commands directly using `./cli.sh` (Linux / macOS) or `.\cli.ps1` (Windows), or activate the virtualenv:
+OutPost provides a standalone executable CLI and interactive full-screen TUI console. Run commands directly using `./cli.sh` (Linux / macOS) or `.\cli.ps1` (Windows):
 
 ```bash
 # Launch the interactive SOC Terminal TUI
@@ -182,37 +201,9 @@ OutPost provides a standalone executable CLI and interactive full-screen TUI con
  │  [2] Alerts & Triage Manage SOC queue and acknowledge alerts            │
  │  [3] Host X-Ray      Inspect live processes, sockets & capabilities     │
  │  [4] Investigations  Track ongoing incident response cases             │
- │  [5] Detection Rules View & tune 37 MITRE ATT&CK detection rules       │
+ │  [5] Detection Rules View & tune 40 MITRE ATT&CK detection rules       │
  │                                                                         │
  ╰─────────────────────────────────────────────────────────────────────────╯
-```
-
-### Essential CLI Commands
-
-```bash
-# 1. Live Telemetry & Fleet Operations
-outpost watch                          # Stream live host telemetry with recon markers
-outpost console                        # Launch the interactive Rich TUI SOC Console
-outpost agent run                      # Run host collector in the foreground
-outpost hosts                          # Per-host aggregate telemetry timelines
-
-# 2. Triage & Incident Case Management
-outpost alerts                         # Inspect active alert queue
-outpost triage <alert_id> <status>     # Move alert (open -> acknowledged -> resolved)
-outpost allowlist add --ip 1.1.1.1     # Allowlist benign IP from future alert generation
-outpost watchlist list                 # View monitored indicator watchlist
-outpost investigations list            # View incident investigation cases
-
-# 3. Detection Engineering & Rule Ops
-outpost rules list                     # List all 37 active detection rules & MITRE tactics
-outpost rules knobs                    # Inspect and tune heuristic thresholds
-outpost coverage                       # Display MITRE ATT&CK coverage matrix (14/14)
-outpost yara list                      # List custom YARA signatures
-
-# 4. Threat Intelligence & Forensics
-outpost search <indicator>             # Cross-session search for IP, domain, hash, or process
-outpost campaigns                      # Inspect auto-clustered adversary campaigns
-outpost export <run_id> --format stix  # Export session data as STIX 2.1 or JSON
 ```
 
 ---
@@ -222,19 +213,28 @@ outpost export <run_id> --format stix  # Export session data as STIX 2.1 or JSON
 OutPost maintains a rigorous quality gate verifying every backend service, API endpoint, collector shipper, and frontend component:
 
 ```bash
-# Run full verification suite (Backend, Collectors, CLI, Frontend, E2E)
-./test_ui.sh
+# Run backend tests
+./.venv/bin/pytest backend
+
+# Run collector tests
+./.venv/bin/pytest collectors/tests
+
+# Run CLI tests
+./.venv/bin/pytest cli/tests
+
+# Run frontend tests
+npm --prefix frontend test -- --run
 ```
 
 | Test Suite | Count | Result |
 |---|---|---|
-| Backend Pytest | **730 tests** | **100% Passed** |
-| Collector Pytest | **38 tests** | **100% Passed** |
-| CLI Pytest | **134 tests** | **100% Passed** |
+| Backend Pytest | **812 tests** | **100% Passed** |
+| Collector Pytest | **40 tests** | **100% Passed** |
+| CLI Pytest | **146 tests** | **100% Passed** |
 | Frontend Vitest | **365 tests** | **100% Passed** |
 | Playwright E2E | **21 route tests** | **100% Passed** |
 | Telemetry Authenticity | **7 live tests** | **100% Passed** |
-| **Total Test Count** | **1,295 tests** | **100% Green / 0 Failures** |
+| **Total Test Count** | **1,391 tests** | **100% Green / 0 Failures** |
 
 ---
 
