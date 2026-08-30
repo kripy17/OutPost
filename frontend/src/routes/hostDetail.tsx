@@ -251,6 +251,14 @@ export default function HostDetailPage() {
         lede="Everything OutPost knows about this machine in one chronological feed — events, findings, sessions/jobs, IOCs, and the investigations its findings belong to."
         actions={
           <div className="flex items-center gap-2">
+            <Link
+              to={`/investigations?create=1&title=${encodeURIComponent(`Host Incident — ${hostId}`)}&evidence_type=host&evidence_id=${encodeURIComponent(hostId ?? "")}`}
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/40 bg-accent/10 px-3 py-1.5 font-mono text-[11px] font-semibold text-accent hover:bg-accent/20"
+              title="Escalate this host and its timeline into a formal incident dossier"
+            >
+              <Icon name="notes" size={12} />
+              Escalate Case
+            </Link>
             <button
               onClick={() => toggleIsolation.mutate(!isIsolated)}
               disabled={toggleIsolation.isPending}

@@ -221,6 +221,86 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
         icon: "box" as IconName,
         to: "/samples",
       },
+      {
+        kind: "action",
+        label: "🛡️ Author New Sigma Detection Rule",
+        hint: "Open SigmaHQ detection workbench editor",
+        icon: "shield" as IconName,
+        to: "/rules?create=1",
+      },
+      {
+        kind: "action",
+        label: "📝 Open Incident Investigation Case",
+        hint: "Spin up a new forensic case dossier",
+        icon: "notes" as IconName,
+        to: "/investigations?create=1",
+      },
+      {
+        kind: "action",
+        label: "🔤 Font: JetBrains Mono",
+        hint: "Apply developer monospace ligatures",
+        icon: "terminal" as IconName,
+        onRun: () => {
+          document.documentElement.dataset.fontMono = "jetbrains";
+          localStorage.setItem("outpost-font-mono", "jetbrains");
+          setResult("Applied JetBrains Mono typography.");
+        },
+      },
+      {
+        kind: "action",
+        label: "🔤 Font: Fira Code",
+        hint: "Apply clean geometric monospace",
+        icon: "terminal" as IconName,
+        onRun: () => {
+          document.documentElement.dataset.fontMono = "fira";
+          localStorage.setItem("outpost-font-mono", "fira");
+          setResult("Applied Fira Code typography.");
+        },
+      },
+      {
+        kind: "action",
+        label: "🔤 Font: IBM Plex Mono (Default)",
+        hint: "Restore default high-contrast SOC typography",
+        icon: "terminal" as IconName,
+        onRun: () => {
+          delete document.documentElement.dataset.fontMono;
+          localStorage.removeItem("outpost-font-mono");
+          setResult("Restored default IBM Plex Mono typography.");
+        },
+      },
+      {
+        kind: "action",
+        label: "📐 UI Density: Compact (90%)",
+        hint: "High information density for SOC multi-monitors",
+        icon: "sliders" as IconName,
+        onRun: () => {
+          document.documentElement.dataset.uiDensity = "compact";
+          localStorage.setItem("outpost-ui-density", "compact");
+          setResult("Set UI Density to Compact (90%).");
+        },
+      },
+      {
+        kind: "action",
+        label: "📐 UI Density: Standard (100%)",
+        hint: "Optimal balance for desktop workstations",
+        icon: "sliders" as IconName,
+        onRun: () => {
+          delete document.documentElement.dataset.uiDensity;
+          localStorage.removeItem("outpost-ui-density");
+          setResult("Set UI Density to Standard (100%).");
+        },
+      },
+      {
+        kind: "action",
+        label: "📐 UI Density: Comfortable (110%)",
+        hint: "Enlarged interface for wallboards and high-DPI",
+        icon: "sliders" as IconName,
+        onRun: () => {
+          document.documentElement.dataset.uiDensity = "comfortable";
+          localStorage.setItem("outpost-ui-density", "comfortable");
+          setResult("Set UI Density to Comfortable (110%).");
+        },
+      },
       ...NAV_ITEMS,
       {
         kind: "action",

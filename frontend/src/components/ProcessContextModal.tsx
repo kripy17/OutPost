@@ -360,7 +360,21 @@ export function ProcessContextModal({
                   <DeviceAccessPanel access={xrayData?.device_access} />
 
                   <div className="rounded-xl border border-border-subtle bg-bg-base/60 p-4 space-y-3">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-text-faint">Full Command Line</span>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-text-faint">Full Command Line</span>
+                      <button
+                        onClick={() => {
+                          void navigator.clipboard.writeText(cmdLine);
+                          setActionStatus("Copied command line to clipboard");
+                          setTimeout(() => setActionStatus(null), 2500);
+                        }}
+                        className="press inline-flex items-center gap-1 text-[10px] text-text-muted hover:text-accent font-mono"
+                        title="Copy complete command line arguments"
+                      >
+                        <Icon name="copy" size={10} />
+                        Copy Command
+                      </button>
+                    </div>
                     <pre className="overflow-x-auto rounded-lg border border-border-subtle bg-bg-inset p-3 text-[11px] leading-relaxed text-text-primary break-all">
                       {cmdLine}
                     </pre>
