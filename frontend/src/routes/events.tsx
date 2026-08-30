@@ -33,11 +33,13 @@ const CATEGORIES: { type: EventType | ""; label: string; icon: "list" | "process
 // shipped event with its exact log channel, so the collector stream splits by
 // channel (auditd / sysmon) — explicit provenance, not platform inference —
 // with a coarse Collectors tab and the webapp/sandbox provenance tabs beside.
-const SOURCE_TABS: { v: EventSource | ""; label: string; icon: "terminal" | "linux" | "windows" | "box" | "grid" }[] = [
+const SOURCE_TABS: { v: EventSource | ""; label: string; icon: "terminal" | "linux" | "windows" | "mac" | "box" | "grid" }[] = [
   { v: "", label: "All sources", icon: "grid" },
   { v: "live", label: "Collectors", icon: "terminal" },
   { v: "auditd", label: "Auditd", icon: "linux" },
+  { v: "ebpf", label: "eBPF", icon: "linux" },
   { v: "sysmon", label: "Sysmon", icon: "windows" },
+  { v: "endpointsecurity", label: "EndpointSecurity", icon: "mac" },
   { v: "webapp", label: "Webapp", icon: "grid" },
   { v: "sandbox", label: "Sandbox", icon: "box" },
 ];
@@ -56,7 +58,9 @@ const FOCUS_PRESETS: { label: string; type: EventType | ""; icon: "list" | "netw
 function sourceLabel(e: EventFeedEvent): string {
   // The stamped channel is authoritative when present.
   if (e.log_source === "auditd") return "auditd";
+  if (e.log_source === "ebpf") return "ebpf";
   if (e.log_source === "sysmon") return "sysmon";
+  if (e.log_source === "endpointsecurity" || e.log_source === "eslogger") return "endpointsecurity";
   if (e.source.startsWith("sandbox:")) return "sandbox";
   return "webapp";
 }

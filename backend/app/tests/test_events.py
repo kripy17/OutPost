@@ -247,9 +247,12 @@ def test_events_counts_one_query_for_whole_rail(client):
     assert typed["channels"]["live"] == 1
     assert typed["channels"]["auditd"] == 0  # cnt-aud.exe is process_create
 
-    # Shared validation: unknown event_type → 422.
+    # Shared validation: unknown event_type → 422, valid sources/platforms → 200
     assert client.get("/events/counts", params={"event_type": "bogus"}).status_code == 422
     assert client.get("/events/counts", params={"source": "bogus"}).status_code == 422
+    assert client.get("/events/counts", params={"source": "endpointsecurity"}).status_code == 200
+    assert client.get("/events/counts", params={"source": "ebpf"}).status_code == 200
+    assert client.get("/events/counts", params={"platform": "macos"}).status_code == 200
 
     # Close the live run so /runs/active-live's 404 contract holds.
     client.post(f"/runs/{live}/complete")
