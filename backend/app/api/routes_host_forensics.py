@@ -25,6 +25,7 @@ class ProcessActionIn(BaseModel):
     expected_create_time: float | None = None
 
 
+@router.get("/system/forensics/snapshot", response_model=None)
 @router.get("/system/xray/snapshot", response_model=None)
 def get_xray_snapshot() -> dict:
     """Full live host snapshot: metrics, all processes, and open sockets."""
@@ -41,6 +42,7 @@ def get_xray_snapshot() -> dict:
     }
 
 
+@router.get("/system/forensics/process/{pid}", response_model=None)
 @router.get("/system/xray/process/{pid}", response_model=None)
 def get_xray_process_detail(pid: int) -> dict:
     """Deep inspection of a single process PID."""
@@ -53,9 +55,10 @@ def get_xray_process_detail(pid: int) -> dict:
     return detail
 
 
+@router.get("/system/forensics/process/{pid}/capsule", response_model=None)
 @router.get("/system/xray/process/{pid}/capsule", response_model=None)
 def export_xray_capsule(pid: int) -> dict:
-    """Export complete forensic snapshot (.xray.json) for a process PID."""
+    """Export complete forensic snapshot for a process PID."""
     capsule = host_xray.generate_forensic_capsule(pid)
     if not capsule:
         raise HTTPException(
@@ -65,6 +68,7 @@ def export_xray_capsule(pid: int) -> dict:
     return capsule
 
 
+@router.post("/system/forensics/process/{pid}/action", response_model=None)
 @router.post("/system/xray/process/{pid}/action", response_model=None)
 def perform_xray_process_action(pid: int, body: ProcessActionIn, request: Request) -> dict:
     """Execute lifecycle controls on a process (freeze, resume, terminate, kill) with audit log."""
@@ -77,6 +81,7 @@ def perform_xray_process_action(pid: int, body: ProcessActionIn, request: Reques
     )
 
 
+@router.post("/system/forensics/process/{pid}/kill", response_model=None)
 @router.post("/system/xray/process/{pid}/kill", response_model=None)
 def kill_xray_process(pid: int, body: ProcessKillIn, request: Request) -> dict:
     """Terminate or kill a process PID with audit log."""
@@ -86,36 +91,42 @@ def kill_xray_process(pid: int, body: ProcessKillIn, request: Request) -> dict:
     return host_xray.control_process(pid, action=action, request_user=user)
 
 
+@router.get("/system/forensics/search", response_model=None)
 @router.get("/system/xray/search", response_model=None)
 def search_xray_targets(q: str = Query(..., min_length=1)) -> dict:
-    """Universal target resolver (Omarchy X-Ray style): :port, file:, service:, pid:, etc."""
+    """Universal target resolver: :port, file:, service:, pid:, etc."""
     return host_xray.resolve_target_search(q)
 
 
+@router.get("/system/forensics/tree", response_model=None)
 @router.get("/system/xray/tree", response_model=None)
 def get_xray_process_tree() -> list[dict]:
     """Hierarchical process causality tree for dynamic execution analysis."""
     return host_xray.get_process_tree()
 
 
+@router.get("/system/forensics/network", response_model=None)
 @router.get("/system/xray/network", response_model=None)
 def get_xray_network_matrix() -> dict:
     """Deep network socket & connection matrix categorized by threat domain."""
     return host_xray.get_categorized_network_matrix()
 
 
+@router.get("/system/forensics/explanations", response_model=None)
 @router.get("/system/xray/explanations", response_model=None)
 def get_xray_behavioral_explanations() -> list[dict]:
     """Automated behavioral heuristic explanations & findings cards."""
     return host_xray.generate_behavioral_explanations()
 
 
+@router.post("/system/forensics/snapshot/baseline", response_model=None)
 @router.post("/system/xray/snapshot/baseline", response_model=None)
 def capture_xray_baseline_snapshot() -> dict:
     """Capture a new host system baseline for differential dynamic execution comparison."""
     return host_xray.capture_baseline_snapshot()
 
 
+@router.get("/system/forensics/snapshot/diff", response_model=None)
 @router.get("/system/xray/snapshot/diff", response_model=None)
 def get_xray_snapshot_differential() -> dict:
     """Compute differential delta (+/-) between captured baseline and current host state."""
@@ -127,21 +138,24 @@ class CapsuleCompareIn(BaseModel):
     capsule_b: dict
 
 
+@router.post("/system/forensics/capsule/compare", response_model=None)
 @router.post("/system/xray/capsule/compare", response_model=None)
 def compare_xray_forensic_capsules(body: CapsuleCompareIn) -> dict:
-    """Compare two forensic capsules (.xray.json) side-by-side."""
+    """Compare two forensic capsules side-by-side."""
     return host_xray.compare_two_capsules(body.capsule_a, body.capsule_b)
 
 
+@router.get("/system/forensics/catalog", response_model=None)
 @router.get("/system/xray/catalog", response_model=None)
 def get_xray_target_catalog() -> dict:
-    """Target catalog (Omarchy X-Ray style) for rapid inspection of Apps, Procs, Ports, and Devices."""
+    """Target catalog for rapid inspection of Apps, Procs, Ports, and Devices."""
     return host_xray.get_target_catalog()
 
 
+@router.get("/system/forensics/process/{pid}/full", response_model=None)
 @router.get("/system/xray/process/{pid}/full", response_model=None)
 def get_xray_full_target_dossier(pid: int) -> dict:
-    """Unified full target dossier for X-Ray Command Cockpit."""
+    """Unified full target dossier for Deep Host Forensics."""
     dossier = host_xray.get_full_target_dossier(pid)
     if not dossier:
         raise HTTPException(
