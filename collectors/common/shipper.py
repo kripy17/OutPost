@@ -133,6 +133,7 @@ class Shipper:
         spool_path: str | None = None,
         max_retries: int = 3,
         host_id: str | None = None,
+        compress: bool = False,
     ):
         self.backend_url = backend_url.rstrip("/")
         self.run_id = run_id
@@ -140,6 +141,7 @@ class Shipper:
         self.flush_interval = flush_interval
         self.max_retries = max_retries
         self.host_id = host_id or _default_host_id()
+        self.compress = compress
         self.buffer: list[dict] = []
         self.last_flush = time.time()
         self.spool_path = spool_path or str(Path.cwd() / f"outpost-spool-{run_id}.jsonl")
@@ -213,9 +215,17 @@ class Shipper:
         self.buffer = []
 
         if batch:
+            headers = _auth_headers()
             for attempt in range(self.max_retries):
                 try:
-                    resp = requests.post(f"{self.backend_url}/ingest/batch", json=batch, headers=_auth_headers(), timeout=5)
+                    if self.compress:
+                        import gzip as _gzip
+                        raw = json.dumps(batch).encode("utf-8")
+                        payload = _gzip.compress(raw)
+                        headers_comp = {**headers, "Content-Encoding": "gzip", "Content-Type": "application/json"}
+                        resp = requests.post(f"{self.backend_url}/ingest/batch", data=payload, headers=headers_comp, timeout=5)
+                    else:
+                        resp = requests.post(f"{self.backend_url}/ingest/batch", json=batch, headers=headers, timeout=5)
                     resp.raise_for_status()
                     self._replay_spool()
                     self.last_flush = time.time()

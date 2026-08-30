@@ -184,3 +184,66 @@ def test_runs_list_hides_synthetic_by_default(client, conn):
         for rid in (real, cli_run, prov, seed, demo, legacy, sand):
             conn.execute("DELETE FROM runs WHERE run_id = ?", (rid,))
         conn.commit()
+
+
+def test_ingest_batch_gzip_compressed(client):
+    import gzip
+    import json
+    from datetime import datetime, timezone
+
+    run_id = make_run(client)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    events = [
+        {
+            "run_id": run_id,
+            "platform": "linux",
+            "event_type": "process_create",
+            "timestamp": now_iso,
+            "pid": 2048,
+            "ppid": 1,
+            "process_name": "gzip_test_proc",
+            "command_line": "/usr/bin/gzip_test_proc --daemon",
+        }
+    ]
+    raw = json.dumps(events).encode("utf-8")
+    compressed = gzip.compress(raw)
+
+    resp = client.post(
+        "/ingest/batch",
+        content=compressed,
+        headers={"Content-Encoding": "gzip", "Content-Type": "application/json"},
+    )
+    assert resp.status_code == 202
+    assert resp.json()["accepted"] == 1
+
+
+def test_ingest_batch_deflate_compressed(client):
+    import zlib
+    import json
+    from datetime import datetime, timezone
+
+    run_id = make_run(client)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    events = [
+        {
+            "run_id": run_id,
+            "platform": "windows",
+            "event_type": "network_connection",
+            "timestamp": now_iso,
+            "pid": 4096,
+            "dest_ip": "198.51.100.77",
+            "dest_port": 8443,
+            "protocol": "tcp",
+        }
+    ]
+    raw = json.dumps(events).encode("utf-8")
+    compressed = zlib.compress(raw)
+
+    resp = client.post(
+        "/ingest/batch",
+        content=compressed,
+        headers={"Content-Encoding": "deflate", "Content-Type": "application/json"},
+    )
+    assert resp.status_code == 202
+    assert resp.json()["accepted"] == 1
+

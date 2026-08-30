@@ -670,8 +670,11 @@ export async function getSampleStatic(sampleId: string): Promise<SampleStatic> {
   return get<SampleStatic>(`/samples/${sampleId}/static`);
 }
 
-export async function detonateSample(sampleId: string, timeout = 15): Promise<SampleDetonationResult> {
-  return post<SampleDetonationResult>(`/samples/${encodeURIComponent(sampleId)}/detonate?timeout=${timeout}`, {});
+export async function detonateSample(sampleId: string, timeout = 15, isolationDriver = "auto"): Promise<SampleDetonationResult> {
+  return post<SampleDetonationResult>(
+    `/samples/${encodeURIComponent(sampleId)}/detonate?timeout=${timeout}&isolation_driver=${encodeURIComponent(isolationDriver)}`,
+    {},
+  );
 }
 
 export async function downloadSample(sampleId: string, name: string): Promise<void> {
@@ -1054,8 +1057,13 @@ export async function getLocalMonitorStatus(): Promise<any> {
 }
 
 /** Execute dynamic trace detonation in isolated sandbox (POST /sandbox/detonate/dynamic). */
-export async function detonateDynamic(body: { sample_id: string }): Promise<any> {
+export async function detonateDynamic(body: { sample_id: string; isolation_driver?: string }): Promise<any> {
   return post<any>("/sandbox/detonate/dynamic", body);
+}
+
+/** Get available sandbox isolation drivers (GET /sandbox/drivers). */
+export async function getSandboxDrivers(): Promise<Array<{ id: string; name: string; available: boolean; description: string; type: string }>> {
+  return get<any[]>("/sandbox/drivers");
 }
 
 /** Get structured Sigma, Suricata, and YARA detection suite for a run (GET /runs/{id}/rules/suite). */

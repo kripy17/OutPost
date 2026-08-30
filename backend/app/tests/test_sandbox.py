@@ -637,3 +637,28 @@ def test_demo_detonation_publishes_watchlist_hits(client, conn, monkeypatch):
         "SELECT ioc_value FROM watchlist_hits WHERE run_id = ?", (task["run_id"],)
     ).fetchall()
     assert any(r["ioc_value"] == "203.0.113.88" for r in rows)
+
+
+def test_get_sandbox_drivers(client):
+    resp = client.get("/sandbox/drivers")
+    assert resp.status_code == 200
+    drivers = resp.json()
+    assert isinstance(drivers, list)
+    driver_ids = [d["id"] for d in drivers]
+    assert "tempdir" in driver_ids
+    assert "bubblewrap" in driver_ids
+    assert "wine" in driver_ids
+    assert "container" in driver_ids
+
+
+def test_dynamic_detonation_isolation_driver(client):
+    sample = _upload(client, "isolation_test.py")
+    resp = client.post(
+        "/sandbox/detonate/dynamic",
+        json={"sample_id": sample["sample_id"], "isolation_driver": "tempdir"},
+    )
+    assert resp.status_code == 200
+    res = resp.json()
+    assert "isolation_driver" in res
+    assert res["isolation_driver"] in ("tempdir", "bubblewrap", "wine")
+

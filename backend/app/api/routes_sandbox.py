@@ -134,6 +134,13 @@ def get_task(task_id: str) -> SandboxTaskOut:
     return SandboxTaskOut(**sandbox_service.task_out(task))
 
 
+@router.get("/sandbox/drivers", response_model=None)
+def get_sandbox_drivers() -> list[dict]:
+    """Inspect and list available sandbox isolation drivers (Bubblewrap, Wine, TempDir, Container)."""
+    from ..services import dynamic_sandbox
+    return dynamic_sandbox.get_available_isolation_drivers()
+
+
 @router.post("/sandbox/detonate/dynamic", response_model=None)
 async def detonate_dynamic(body: SandboxDetonateIn) -> dict:
     """Execute and trace a sample dynamically in an isolated subprocess environment."""
@@ -143,6 +150,7 @@ async def detonate_dynamic(body: SandboxDetonateIn) -> dict:
         result = await dynamic_sandbox.execute_and_trace(
             sample_id=body.sample_id,
             timeout_seconds=10,
+            isolation_driver=body.isolation_driver or "auto",
         )
         return result
     except ValueError as e:

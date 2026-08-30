@@ -271,6 +271,30 @@ RULE_META: dict[str, RuleMeta] = {
         "weight": 18,
         "severity": "malicious",
     },
+    "macos-tcc-bypass": {
+        "technique": "T1548.002",
+        "tactic": "Defense Evasion",
+        "weight": 20,
+        "severity": "malicious",
+    },
+    "macos-launchagent-persistence": {
+        "technique": "T1543.001",
+        "tactic": "Persistence",
+        "weight": 16,
+        "severity": "suspicious",
+    },
+    "macos-dylib-hijack": {
+        "technique": "T1574.002",
+        "tactic": "Defense Evasion",
+        "weight": 18,
+        "severity": "malicious",
+    },
+    "macos-gatekeeper-bypass": {
+        "technique": "T1553.001",
+        "tactic": "Defense Evasion",
+        "weight": 18,
+        "severity": "malicious",
+    },
 }
 
 
@@ -328,6 +352,10 @@ RULE_NAMES: dict[str, str] = {
     "shadow-copy-deletion": "Volume Shadow Copy & backup deletion (ransomware inhibitor)",
     "remote-thread-injection": "Remote thread injection into system process",
     "ifeo-persistence": "IFEO debugger registry persistence",
+    "macos-tcc-bypass": "macOS TCC privacy database tampering",
+    "macos-launchagent-persistence": "macOS LaunchAgent/LaunchDaemon persistence",
+    "macos-dylib-hijack": "macOS dynamic linker injection (DYLD)",
+    "macos-gatekeeper-bypass": "macOS Gatekeeper quarantine bypass",
 }
 
 
@@ -397,5 +425,25 @@ RULE_REMEDIATION: dict[str, list[str]] = {
         "Remove the malicious Debugger / SilentProcessExit key under Image File Execution Options",
         "Kill any resident processes launched by the hook",
         "Audit registry permissions on HKLM\\Software\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options",
+    ],
+    "macos-tcc-bypass": [
+        "Inspect process lineage of the non-system binary that targeted TCC.db",
+        "Audit and reset system privacy permissions using 'tccutil reset All'",
+        "Verify Full Disk Access (FDA) entitlements on system binaries",
+    ],
+    "macos-launchagent-persistence": [
+        "Unload the suspicious LaunchAgent/Daemon using 'launchctl bootout'",
+        "Remove rogue .plist files from ~/Library/LaunchAgents or /Library/LaunchDaemons",
+        "Review startup items in macOS System Settings -> General -> Login Items",
+    ],
+    "macos-dylib-hijack": [
+        "Inspect the parent process execution environment for injected DYLD variables",
+        "Verify Mach-O code signature validity using 'codesign --verify --deep'",
+        "Quarantine untrusted dylib libraries",
+    ],
+    "macos-gatekeeper-bypass": [
+        "Re-enable Gatekeeper system policy assessments using 'spctl --master-enable'",
+        "Check recently downloaded files for missing com.apple.quarantine xattr",
+        "Quarantine unauthorized third-party binaries",
     ],
 }
