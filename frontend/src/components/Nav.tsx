@@ -64,6 +64,34 @@ function useTheme() {
   return { theme, toggle };
 }
 
+function useCustomTitle() {
+  const [title, setTitle] = useState(() => {
+    try {
+      return localStorage.getItem("outpost-custom-title") || "OutPost";
+    } catch {
+      return "OutPost";
+    }
+  });
+
+  useEffect(() => {
+    const handler = () => {
+      try {
+        setTitle(localStorage.getItem("outpost-custom-title") || "OutPost");
+      } catch {
+        setTitle("OutPost");
+      }
+    };
+    window.addEventListener("outpost-title-changed", handler);
+    window.addEventListener("storage", handler);
+    return () => {
+      window.removeEventListener("outpost-title-changed", handler);
+      window.removeEventListener("storage", handler);
+    };
+  }, []);
+
+  return title;
+}
+
 /* ── Mark ──────────────────────────────────────────────────────────────── */
 
 function Mark() {
@@ -285,6 +313,7 @@ function CommandButton({
 /* ── Mobile header ─────────────────────────────────────────────────────── */
 
 function MobileMenu({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const customTitle = useCustomTitle();
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 lg:hidden">
@@ -292,7 +321,7 @@ function MobileMenu({ open, onClose }: { open: boolean; onClose: () => void }) {
       <div className="animate-slide-in absolute inset-y-0 left-0 w-72 max-w-[85vw] overflow-y-auto border-r border-border-subtle bg-bg-surface p-4">
         <div className="mb-4 flex items-center justify-between">
           <span className="flex items-center gap-2 font-bold text-text-primary">
-            <Mark /> OutPost
+            <Mark /> {customTitle}
           </span>
           <button onClick={onClose} aria-label="Close menu" className="flex h-8 w-8 items-center justify-center rounded-lg text-text-muted hover:bg-bg-elevated">
             <Icon name="x" size={16} />
@@ -403,6 +432,8 @@ export default function Nav() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  const customTitle = useCustomTitle();
+
   return (
     <>
       {/* Desktop — left rail (collapsible to an icon-only activity bar) */}
@@ -413,7 +444,7 @@ export default function Nav() {
       >
         <div className={`flex w-full items-center gap-2.5 pb-2 ${railCollapsed ? "flex-col gap-1.5 px-0 pb-0 pt-4" : "px-4 pt-5"}`}>
           <Mark />
-          {!railCollapsed && <span className="text-[15px] font-bold tracking-tight text-text-primary">OutPost</span>}
+          {!railCollapsed && <span className="text-[15px] font-bold tracking-tight text-text-primary">{customTitle}</span>}
           <button
             onClick={toggleRail}
             aria-label={railCollapsed ? "Expand rail" : "Collapse rail"}
@@ -494,7 +525,7 @@ export default function Nav() {
             <IconMenu />
           </button>
           <span className="flex items-center gap-2 font-bold text-text-primary">
-            <Mark /> OutPost
+            <Mark /> {customTitle}
           </span>
           <div className="ml-auto flex items-center gap-2">
             <span className="flex items-center gap-1 text-[11px] text-text-faint">

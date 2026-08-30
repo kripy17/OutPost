@@ -8,14 +8,19 @@
     <title>OutPost — Behavioral Security Monitor</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <script>
-      // Theme before first paint — dark-first. Uses a fresh storage key so any
-      // "light" saved under the old key is ignored: every session starts dark.
+      // Theme, font, title, and density before first paint.
       (function () {
         try {
           var saved = localStorage.getItem("outpost-theme-v2");
           document.documentElement.dataset.theme = saved || "dark";
           var pal = localStorage.getItem("outpost-palette");
           if (pal) document.documentElement.dataset.palette = pal;
+          var font = localStorage.getItem("outpost-font-mono");
+          if (font) document.documentElement.dataset.fontMono = font;
+          var density = localStorage.getItem("outpost-ui-density");
+          if (density) document.documentElement.dataset.uiDensity = density;
+          var customTitle = localStorage.getItem("outpost-custom-title");
+          if (customTitle) document.title = customTitle + " — Behavioral Security Monitor";
           // Icon-only rail — restore before paint so the offset never flashes.
           if (localStorage.getItem("outpost-rail") === "collapsed") document.documentElement.dataset.rail = "collapsed";
         } catch (e) {

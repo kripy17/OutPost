@@ -79,9 +79,34 @@ function Field({
  *  palette. Applied instantly to <html data-palette> and persisted. */
 import { THEME_PRESETS, THEME_PALETTES } from "../components/ThemePalettePopover";
 
+const MONO_FONTS = [
+  { id: "default", name: "IBM Plex Mono", desc: "Default SOC typography" },
+  { id: "jetbrains", name: "JetBrains Mono", desc: "Developer ligatures" },
+  { id: "fira", name: "Fira Code", desc: "Clean geometric" },
+  { id: "cascadia", name: "Cascadia Code", desc: "Microsoft terminal" },
+  { id: "source", name: "Source Code Pro", desc: "Adobe readable" },
+  { id: "system", name: "System Monospace", desc: "Native OS fallback" },
+];
+
+const UI_DENSITIES = [
+  { id: "compact", name: "Compact (90%)", desc: "High density for multi-monitor SOCs" },
+  { id: "default", name: "Standard (100%)", desc: "Optimal balance" },
+  { id: "comfortable", name: "Comfortable (110%)", desc: "Enlarged for wallboards and high-DPI" },
+];
+
 function ThemePalettePanel() {
   const [activeTheme, setActiveTheme] = useState(() => document.documentElement.dataset.theme ?? "dark");
   const [activePalette, setActivePalette] = useState(() => document.documentElement.dataset.palette ?? "");
+  const [activeFont, setActiveFont] = useState(() => document.documentElement.dataset.fontMono ?? "default");
+  const [activeDensity, setActiveDensity] = useState(() => document.documentElement.dataset.uiDensity ?? "default");
+  const [customTitle, setCustomTitle] = useState(() => {
+    try {
+      return localStorage.getItem("outpost-custom-title") || "OutPost";
+    } catch {
+      return "OutPost";
+    }
+  });
+  const [titleSaved, setTitleSaved] = useState(false);
 
   const applyTheme = (id: string) => {
     document.documentElement.dataset.theme = id;
@@ -108,10 +133,42 @@ function ThemePalettePanel() {
     setActivePalette(id);
   };
 
+  const applyFont = (id: string) => {
+    if (id === "default") {
+      delete document.documentElement.dataset.fontMono;
+      localStorage.removeItem("outpost-font-mono");
+    } else {
+      document.documentElement.dataset.fontMono = id;
+      localStorage.setItem("outpost-font-mono", id);
+    }
+    setActiveFont(id);
+  };
+
+  const applyDensity = (id: string) => {
+    if (id === "default") {
+      delete document.documentElement.dataset.uiDensity;
+      localStorage.removeItem("outpost-ui-density");
+    } else {
+      document.documentElement.dataset.uiDensity = id;
+      localStorage.setItem("outpost-ui-density", id);
+    }
+    setActiveDensity(id);
+  };
+
+  const saveCustomTitle = (newTitle: string) => {
+    const trimmed = newTitle.trim() || "OutPost";
+    setCustomTitle(trimmed);
+    localStorage.setItem("outpost-custom-title", trimmed);
+    document.title = `${trimmed} — Behavioral Security Monitor`;
+    window.dispatchEvent(new CustomEvent("outpost-title-changed"));
+    setTitleSaved(true);
+    setTimeout(() => setTitleSaved(false), 2000);
+  };
+
   return (
     <Panel
-      kicker="Appearance"
-      title="Theme & visual customization studio"
+      kicker="Appearance & Quality of Life"
+      title="Theme, Typography & Customization Studio"
       right={
         <div className="flex items-center gap-2">
           <span className="rounded bg-accent/15 px-2 py-0.5 font-mono text-[10px] font-bold text-accent uppercase">
@@ -126,11 +183,60 @@ function ThemePalettePanel() {
       }
     >
       <p className="mb-4 text-xs leading-relaxed text-text-muted">
-        Select a cohesive visual identity or customize individual accent palettes. Applied instantly across the entire interface and persisted in your browser.
+        Customize the console title branding, color themes, monospace typography, and layout scale. Applied instantly across the interface and persisted in your browser.
       </p>
 
-      {/* Theme Presets */}
-      <div className="mb-5">
+      {/* 1. Project / Deployment Branding */}
+      <div className="mb-6 rounded-xl border border-border-subtle bg-bg-elevated/40 p-4">
+        <span className="font-mono text-[11px] font-bold uppercase tracking-wider text-text-faint">
+          Console Branding &amp; Deployment Title
+        </span>
+        <p className="mt-1 text-xs text-text-muted">
+          Rename the console title for your SOC team, customer engagement, or threat hunting lab.
+        </p>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <input
+            type="text"
+            value={customTitle}
+            onChange={(e) => setCustomTitle(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") saveCustomTitle(customTitle);
+            }}
+            placeholder="e.g., Acme Defense SOC"
+            className="w-72 rounded-lg border border-border-subtle bg-bg-base px-3 py-1.5 font-mono text-xs text-text-primary focus:border-accent/60 focus:outline-none"
+          />
+          <button
+            onClick={() => saveCustomTitle(customTitle)}
+            className="press rounded-lg border border-accent/60 bg-accent/10 px-3.5 py-1.5 font-mono text-xs font-semibold text-accent hover:bg-accent/20"
+          >
+            Apply Title
+          </button>
+          {customTitle !== "OutPost" && (
+            <button
+              onClick={() => saveCustomTitle("OutPost")}
+              className="press rounded-lg border border-border-subtle px-3 py-1.5 font-mono text-xs text-text-muted hover:text-text-primary"
+            >
+              Reset to Default
+            </button>
+          )}
+          {titleSaved && <span className="font-mono text-xs text-risk-clean">✓ Title updated across console</span>}
+        </div>
+        <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+          <span className="font-mono text-[10px] text-text-faint">Presets:</span>
+          {["OutPost SOC", "Red Team Operations", "Sentinel Threat Lab", "Incident Response Cockpit"].map((p) => (
+            <button
+              key={p}
+              onClick={() => saveCustomTitle(p)}
+              className="press rounded border border-border-subtle bg-bg-surface px-2 py-0.5 font-mono text-[10px] text-text-muted hover:border-accent/50 hover:text-accent"
+            >
+              {p}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* 2. Theme Presets */}
+      <div className="mb-6">
         <span className="font-mono text-[11px] font-bold uppercase tracking-wider text-text-faint">
           Full Theme Presets
         </span>
@@ -176,8 +282,8 @@ function ThemePalettePanel() {
         </div>
       </div>
 
-      {/* Accent Overrides */}
-      <div>
+      {/* 3. Accent Overrides */}
+      <div className="mb-6">
         <span className="font-mono text-[11px] font-bold uppercase tracking-wider text-text-faint">
           Accent Palette Overrides
         </span>
@@ -200,6 +306,66 @@ function ThemePalettePanel() {
                 {isCurrent && (
                   <span className="font-mono text-[8px] uppercase tracking-wider text-accent">Active</span>
                 )}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* 4. Typography & Monospace Engine */}
+      <div className="mb-6">
+        <span className="font-mono text-[11px] font-bold uppercase tracking-wider text-text-faint">
+          Monospace Font Family
+        </span>
+        <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {MONO_FONTS.map((f) => {
+            const isCurrent = activeFont === f.id;
+            return (
+              <button
+                key={f.id}
+                onClick={() => applyFont(f.id)}
+                aria-pressed={isCurrent}
+                className={`press flex items-center justify-between rounded-xl border p-3 text-left transition ${
+                  isCurrent
+                    ? "border-accent/70 bg-accent/15 font-bold text-accent shadow-sm"
+                    : "border-border-subtle bg-bg-surface text-text-muted hover:border-accent/40"
+                }`}
+              >
+                <div>
+                  <div className="font-mono text-xs text-text-primary">{f.name}</div>
+                  <div className="text-[10px] text-text-faint">{f.desc}</div>
+                </div>
+                {isCurrent && <span className="font-mono text-xs text-accent">✓</span>}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* 5. UI Scale / Density */}
+      <div>
+        <span className="font-mono text-[11px] font-bold uppercase tracking-wider text-text-faint">
+          Display Density &amp; UI Scale
+        </span>
+        <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
+          {UI_DENSITIES.map((d) => {
+            const isCurrent = activeDensity === d.id;
+            return (
+              <button
+                key={d.id}
+                onClick={() => applyDensity(d.id)}
+                aria-pressed={isCurrent}
+                className={`press flex items-center justify-between rounded-xl border p-3 text-left transition ${
+                  isCurrent
+                    ? "border-accent/70 bg-accent/15 font-bold text-accent shadow-sm"
+                    : "border-border-subtle bg-bg-surface text-text-muted hover:border-accent/40"
+                }`}
+              >
+                <div>
+                  <div className="text-xs font-semibold text-text-primary">{d.name}</div>
+                  <div className="text-[10px] text-text-faint">{d.desc}</div>
+                </div>
+                {isCurrent && <span className="font-mono text-xs text-accent">✓</span>}
               </button>
             );
           })}
@@ -894,6 +1060,56 @@ export default function SettingsPage() {
   const telegramActive = Boolean(ready?.telegram_bot_token && ready?.telegram_chat_id);
   const smtpActive = Boolean(ready?.smtp_host && ready?.smtp_to);
 
+  const [testingChannel, setTestingChannel] = useState<string | null>(null);
+  const [testResult, setTestResult] = useState<{ channel: string; msg: string; ok: boolean } | null>(null);
+
+  const testChannelPayload = async (channel: "webhook" | "slack" | "discord", url?: string) => {
+    if (!url) {
+      setTestResult({ channel, msg: "Please enter a destination URL first", ok: false });
+      return;
+    }
+    setTestingChannel(channel);
+    setTestResult(null);
+    try {
+      let body: any;
+      if (channel === "slack") {
+        body = JSON.stringify({
+          text: `🚨 *[OutPost Connectivity Test]* - Verification payload sent from SOC console at ${new Date().toLocaleTimeString()}`,
+        });
+      } else if (channel === "discord") {
+        body = JSON.stringify({
+          content: `🚨 **[OutPost Connectivity Test]** - Verification payload sent at ${new Date().toLocaleTimeString()}`,
+          embeds: [
+            {
+              title: "OutPost Channel Test",
+              description: "Live connectivity test verified successfully.",
+              color: 65280,
+            },
+          ],
+        });
+      } else {
+        body = JSON.stringify({
+          event: "connectivity_test",
+          source: "OutPost SOC Settings",
+          status: "verified",
+          timestamp: new Date().toISOString(),
+        });
+      }
+
+      await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+        mode: "no-cors",
+      });
+      setTestResult({ channel, msg: "Test payload dispatched successfully!", ok: true });
+    } catch (e: any) {
+      setTestResult({ channel, msg: `Failed: ${e?.message || "Network error"}`, ok: false });
+    } finally {
+      setTestingChannel(null);
+    }
+  };
+
   return (
     <div className="mx-auto max-w-3xl px-6 py-10">
       <PageHeader
@@ -1058,7 +1274,20 @@ export default function SettingsPage() {
         <div className="mt-6 space-y-4">
           <Panel
             title="Webhook endpoint"
-            right={<ChannelBadge active={webhookActive} />}
+            right={
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => testChannelPayload("webhook", ready.webhook_url)}
+                  disabled={!ready.webhook_url || testingChannel === "webhook"}
+                  className="press inline-flex items-center gap-1 rounded border border-border-subtle bg-bg-base px-2 py-0.5 font-mono text-[10px] text-text-muted hover:border-accent/50 hover:text-accent disabled:opacity-40"
+                >
+                  <Icon name={testingChannel === "webhook" ? "refresh" : "zap"} size={10} className={testingChannel === "webhook" ? "animate-spin" : ""} />
+                  Test Payload
+                </button>
+                <ChannelBadge active={webhookActive} />
+              </div>
+            }
           >
             <div className="space-y-3">
               <Field
@@ -1071,12 +1300,30 @@ export default function SettingsPage() {
                 Receives the raw JSON payload: {"{ event, severity, rule_id, rule_name, run_id, details, triggered_at }"} per
                 alert — compatible with ntfy, your own sink, or any generic receiver.
               </p>
+              {testResult?.channel === "webhook" && (
+                <p className={`font-mono text-xs ${testResult.ok ? "text-risk-clean" : "text-risk-malicious"}`}>
+                  {testResult.msg}
+                </p>
+              )}
             </div>
           </Panel>
 
           <Panel
             title="Slack"
-            right={<ChannelBadge active={slackActive} />}
+            right={
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => testChannelPayload("slack", ready.slack_webhook)}
+                  disabled={!ready.slack_webhook || testingChannel === "slack"}
+                  className="press inline-flex items-center gap-1 rounded border border-border-subtle bg-bg-base px-2 py-0.5 font-mono text-[10px] text-text-muted hover:border-accent/50 hover:text-accent disabled:opacity-40"
+                >
+                  <Icon name={testingChannel === "slack" ? "refresh" : "zap"} size={10} className={testingChannel === "slack" ? "animate-spin" : ""} />
+                  Test Payload
+                </button>
+                <ChannelBadge active={slackActive} />
+              </div>
+            }
           >
             <Field
               label="Incoming webhook URL"
@@ -1085,11 +1332,29 @@ export default function SettingsPage() {
               placeholder="https://hooks.slack.com/services/T000/B000/XXXX"
             />
             <p className="mt-2 font-mono text-[10px] text-text-faint">Posts a text message per finding.</p>
+            {testResult?.channel === "slack" && (
+              <p className={`mt-2 font-mono text-xs ${testResult.ok ? "text-risk-clean" : "text-risk-malicious"}`}>
+                {testResult.msg}
+              </p>
+            )}
           </Panel>
 
           <Panel
             title="Discord"
-            right={<ChannelBadge active={discordActive} />}
+            right={
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => testChannelPayload("discord", ready.discord_webhook)}
+                  disabled={!ready.discord_webhook || testingChannel === "discord"}
+                  className="press inline-flex items-center gap-1 rounded border border-border-subtle bg-bg-base px-2 py-0.5 font-mono text-[10px] text-text-muted hover:border-accent/50 hover:text-accent disabled:opacity-40"
+                >
+                  <Icon name={testingChannel === "discord" ? "refresh" : "zap"} size={10} className={testingChannel === "discord" ? "animate-spin" : ""} />
+                  Test Payload
+                </button>
+                <ChannelBadge active={discordActive} />
+              </div>
+            }
           >
             <Field
               label="Webhook URL"
@@ -1098,6 +1363,11 @@ export default function SettingsPage() {
               placeholder="https://discord.com/api/webhooks/…/…"
             />
             <p className="mt-2 font-mono text-[10px] text-text-faint">Posts an embed colored by severity (red = malicious, amber = suspicious).</p>
+            {testResult?.channel === "discord" && (
+              <p className={`mt-2 font-mono text-xs ${testResult.ok ? "text-risk-clean" : "text-risk-malicious"}`}>
+                {testResult.msg}
+              </p>
+            )}
           </Panel>
 
           <Panel
