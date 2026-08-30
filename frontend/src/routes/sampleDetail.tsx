@@ -429,9 +429,20 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
                   Risk: {result.risk_score}/100
                 </span>
               </div>
-              <Link to={`/runs/${result.run_id}`} className="font-mono text-xs text-accent hover:underline">
-                Open Full Run Dossier →
-              </Link>
+              <div className="flex items-center gap-2">
+                {(result.alerts || []).length > 0 && (
+                  <Link
+                    to={`/investigations?create=1&run_id=${result.run_id}&title=${encodeURIComponent(sample.original_name + " Malware Detonation")}`}
+                    className="press inline-flex items-center gap-1.5 rounded-lg border border-risk-malicious/50 bg-risk-malicious/15 px-3 py-1 font-mono text-xs font-semibold text-risk-malicious hover:bg-risk-malicious/25"
+                  >
+                    <Icon name="shield" size={12} />
+                    Escalate to Case Dossier
+                  </Link>
+                )}
+                <Link to={`/runs/${result.run_id}`} className="font-mono text-xs text-accent hover:underline">
+                  Open Full Run Dossier →
+                </Link>
+              </div>
             </div>
 
             <div className="flex flex-wrap gap-2 font-mono text-xs">
