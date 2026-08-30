@@ -339,9 +339,21 @@ html[data-rail="collapsed"] {
   --color-border-subtle: var(--border-subtle);
   --color-border-strong: var(--border-strong);
 
-  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --font-sans: var(--font-sans-custom, "IBM Plex Sans"), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-mono-custom, "IBM Plex Mono"), ui-monospace, monospace;
 }
+
+/* Custom Typography Preferences */
+html[data-font-mono="jetbrains"] { --font-mono-custom: "JetBrains Mono"; }
+html[data-font-mono="fira"] { --font-mono-custom: "Fira Code"; }
+html[data-font-mono="cascadia"] { --font-mono-custom: "Cascadia Code"; }
+html[data-font-mono="source"] { --font-mono-custom: "Source Code Pro"; }
+html[data-font-mono="system"] { --font-mono-custom: ui-monospace; }
+
+/* Custom UI Density Preferences */
+html[data-ui-density="compact"] { font-size: 14.5px; }
+html[data-ui-density="default"] { font-size: 16px; }
+html[data-ui-density="comfortable"] { font-size: 17.5px; }
 
 /* Smooth cross-fade when switching themes (skipped under reduced motion). */
 html,
