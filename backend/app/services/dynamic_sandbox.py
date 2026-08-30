@@ -235,13 +235,19 @@ async def execute_bytes_sandbox(
                 or k.endswith("_TOKEN")
                 or k.endswith("_PASSWORD")
                 or k in ("VT_API_KEY", "ABUSEIPDB_API_KEY", "SHODAN_API_KEY", "GREYNOISE_API_KEY")
-            )
-        }
         child_env["OUTPOST_SANDBOX"] = "1"
         child_env["OUTPOST_RUN_ID"] = run_id
+
+        # Strip all display and desktop session variables to guarantee headless execution
+        for gui_var in ("DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "HYPRLAND_INSTANCE_SIGNATURE", "SWAYSOCK", "XAUTHORITY"):
+            child_env.pop(gui_var, None)
+
         if "wine" in active_driver or any("wine" in str(c) for c in cmd):
             child_env["WINEDEBUG"] = "-all"
+            child_env["WINEDLLOVERRIDES"] = "mscoree,mshtml="
+            child_env["WINE_NO_AUTO_CABINET"] = "1"
             child_env["DISPLAY"] = ""
+            child_env["WAYLAND_DISPLAY"] = ""
             child_env["WINEPREFIX"] = str(sandbox_dir / ".wine")
 
         try:
