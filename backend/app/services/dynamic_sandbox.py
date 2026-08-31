@@ -383,6 +383,9 @@ async def execute_and_trace(
     elif alerts:
         verdict = "suspicious"
 
+    terminal_output = stdout_data or stderr_data or f"Subprocess exited with code {exit_code}"
+    terminal_lines = [l for l in (stdout_data + "\n" + stderr_data).splitlines() if l.strip()]
+
     return {
         "run_id": run_id,
         "sample_id": sample_id,
@@ -393,6 +396,8 @@ async def execute_and_trace(
         "exit_code": exit_code,
         "stdout": stdout_data,
         "stderr": stderr_data,
+        "terminal_output": terminal_output,
+        "terminal_lines": terminal_lines,
         "risk_score": risk_score,
         "alerts_count": len(alerts),
         "alerts": alerts,
