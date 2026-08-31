@@ -958,6 +958,14 @@ def control_process(
         "kill": signal.SIGKILL,
     }
 
+    if pid <= 1:
+        return {
+            "pid": pid,
+            "action": action,
+            "success": False,
+            "message": f"Action blocked by safety policy: cannot signal system init or broadcast group (PID {pid})",
+        }
+
     if action not in action_map:
         return {
             "pid": pid,

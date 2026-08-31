@@ -208,21 +208,6 @@ async def execute_bytes_sandbox(
             ]
             exec_cmd = bwrap_prefix + exec_cmd
 
-        start_dt = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        main_pid = os.getpid() + 1000 + (hash(run_id) % 5000)
-        events_batch.append({
-            "run_id": run_id,
-            "platform": sample_plat,
-            "event_type": "process_create",
-            "timestamp": start_dt,
-            "pid": main_pid,
-            "ppid": os.getpid(),
-            "process_name": safe_name,
-            "command_line": " ".join(cmd),
-            "exe_path": str(target_file),
-            "host_id": "local",
-        })
-
         child_env = {
             k: v
             for k, v in os.environ.items()
@@ -249,6 +234,9 @@ async def execute_bytes_sandbox(
             child_env["WAYLAND_DISPLAY"] = ""
             child_env["WINEPREFIX"] = str(sandbox_dir / ".wine")
 
+        start_dt = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        main_pid = os.getpid() + 1000 + (hash(run_id) % 5000)
+
         try:
             proc = await asyncio.create_subprocess_exec(
                 *exec_cmd,
@@ -258,6 +246,24 @@ async def execute_bytes_sandbox(
                 env=child_env,
             )
             main_pid = proc.pid
+
+            proc_ev = {
+                "run_id": run_id,
+                "platform": sample_plat,
+                "event_type": "process_create",
+                "timestamp": start_dt,
+                "pid": main_pid,
+                "ppid": os.getpid(),
+                "process_name": safe_name,
+                "command_line": " ".join(cmd),
+                "exe_path": str(target_file),
+                "host_id": "local",
+            }
+            events_batch.append(proc_ev)
+            with db_session() as conn:
+                proc_ev["id"] = event_store.insert_event(conn, proc_ev)
+            from ..services import events_stream
+            events_stream.publish_run_update(run_id, len(events_batch))
 
             try:
                 out_b, err_b = await asyncio.wait_for(proc.communicate(), timeout=timeout_seconds)
@@ -274,11 +280,26 @@ async def execute_bytes_sandbox(
         except Exception as exc:
             stderr_data += f"\n[OutPost Sandbox] Execution error ({active_driver}): {exc}"
             exit_code = 127
+            proc_ev = {
+                "run_id": run_id,
+                "platform": sample_plat,
+                "event_type": "process_create",
+                "timestamp": start_dt,
+                "pid": main_pid,
+                "ppid": os.getpid(),
+                "process_name": safe_name,
+                "command_line": " ".join(cmd),
+                "exe_path": str(target_file),
+                "host_id": "local",
+            }
+            events_batch.append(proc_ev)
+            with db_session() as conn:
+                proc_ev["id"] = event_store.insert_event(conn, proc_ev)
 
         for p in sandbox_dir.iterdir():
             if p != target_file:
                 try:
-                    events_batch.append({
+                    fe = {
                         "run_id": run_id,
                         "platform": sample_plat,
                         "event_type": "file_write",
@@ -286,14 +307,17 @@ async def execute_bytes_sandbox(
                         "pid": main_pid,
                         "file_path": str(p),
                         "host_id": "local",
-                    })
+                    }
+                    events_batch.append(fe)
+                    with db_session() as conn:
+                        fe["id"] = event_store.insert_event(conn, fe)
                 except Exception:
                     pass
 
         ip_matches = set(re.findall(r"\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b", stdout_data + stderr_data))
         for ip in ip_matches:
             if not ip.startswith(("127.", "0.", "255.")):
-                events_batch.append({
+                ne = {
                     "run_id": run_id,
                     "platform": sample_plat,
                     "event_type": "network_connection",
@@ -303,7 +327,10 @@ async def execute_bytes_sandbox(
                     "dest_port": 4444 if ":4444" in (stdout_data + stderr_data) else 80,
                     "protocol": "tcp",
                     "host_id": "local",
-                })
+                }
+                events_batch.append(ne)
+                with db_session() as conn:
+                    ne["id"] = event_store.insert_event(conn, ne)
     finally:
         try:
             shutil.rmtree(sandbox_dir, ignore_errors=True)
@@ -365,7 +392,8 @@ async def execute_and_trace(
 
     with db_session() as conn:
         for ev in events_batch:
-            event_store.insert_event(conn, ev)
+            if not ev.get("id"):
+                ev["id"] = event_store.insert_event(conn, ev)
         detection.evaluate_batch(conn, run_id, events_batch)
         run_store.complete_run(conn, run_id)
         alert_rows = conn.execute("SELECT * FROM alerts WHERE run_id = ?", (run_id,)).fetchall()
@@ -606,7 +634,7 @@ async def execute_simulation_scenario_live(scenario_id: str) -> dict[str, Any]:
                 },
             )
 
-            events.append({
+            proc_ev = {
                 "run_id": run_id,
                 "platform": plat,
                 "event_type": "process_create",
@@ -617,7 +645,12 @@ async def execute_simulation_scenario_live(scenario_id: str) -> dict[str, Any]:
                 "command_line": stage_cmd,
                 "exe_path": "/bin/sh",
                 "host_id": "local",
-            })
+            }
+            events.append(proc_ev)
+            with db_session() as conn:
+                proc_ev["id"] = event_store.insert_event(conn, proc_ev)
+            from ..services import events_stream
+            events_stream.publish_run_update(run_id, len(events))
 
             try:
                 out_b, err_b = await asyncio.wait_for(proc.communicate(), timeout=8)
@@ -655,7 +688,7 @@ async def execute_simulation_scenario_live(scenario_id: str) -> dict[str, Any]:
         # Scan for created files
         for p in sandbox_dir.glob("**/*"):
             if p.is_file():
-                events.append({
+                fe = {
                     "run_id": run_id,
                     "platform": plat,
                     "event_type": "file_write",
@@ -663,11 +696,14 @@ async def execute_simulation_scenario_live(scenario_id: str) -> dict[str, Any]:
                     "pid": os.getpid(),
                     "file_path": str(p),
                     "host_id": "local",
-                })
+                }
+                events.append(fe)
+                with db_session() as conn:
+                    fe["id"] = event_store.insert_event(conn, fe)
 
         # Add network event if scenario involves network
         if "c2" in scenario_id or "beacon" in scenario_id:
-            events.append({
+            ne = {
                 "run_id": run_id,
                 "platform": plat,
                 "event_type": "network_connection",
@@ -677,7 +713,10 @@ async def execute_simulation_scenario_live(scenario_id: str) -> dict[str, Any]:
                 "dest_port": 443,
                 "protocol": "tcp",
                 "host_id": "local",
-            })
+            }
+            events.append(ne)
+            with db_session() as conn:
+                ne["id"] = event_store.insert_event(conn, ne)
 
     finally:
         try:
@@ -696,9 +735,6 @@ async def execute_simulation_scenario_live(scenario_id: str) -> dict[str, Any]:
     terminal_logs.append("[OutPost Simulation Lab] Execution completed. Ingesting telemetry into detection engine...")
 
     with db_session() as conn:
-        for ev in events:
-            ev["id"] = event_store.insert_event(conn, ev)
-
         # Evaluate rules and trigger alerts
         new_alerts = detection.evaluate_batch(conn, run_id, events)
         alert_rows = conn.execute("SELECT * FROM alerts WHERE run_id = ?", (run_id,)).fetchall()
@@ -894,7 +930,8 @@ async def execute_sample_detonation(
 
     with db_session() as conn:
         for ev in events:
-            ev["id"] = event_store.insert_event(conn, ev)
+            if not ev.get("id"):
+                ev["id"] = event_store.insert_event(conn, ev)
 
         new_alerts = detection.evaluate_batch(conn, run_id, events)
         alert_rows = conn.execute("SELECT * FROM alerts WHERE run_id = ?", (run_id,)).fetchall()
