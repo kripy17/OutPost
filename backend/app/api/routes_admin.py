@@ -318,6 +318,9 @@ async def restore(request: Request) -> dict:
     re-initialized (idempotent migrations) on the restored store."""
     actor = _require_admin(request)
     data = await request.body()
+    _MAX_RESTORE_SIZE = 500 * 1024 * 1024  # 500 MB
+    if len(data) > _MAX_RESTORE_SIZE:
+        raise HTTPException(status_code=413, detail="Uploaded backup exceeds the 500 MB limit")
     if config.DATABASE_URL:
         raise HTTPException(
             status_code=400,

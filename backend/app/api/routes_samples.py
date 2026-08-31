@@ -126,9 +126,14 @@ def _store_bytes(sample_id: str, body: bytes) -> None:
 
 def _load_bytes(sample_id: str) -> bytes | None:
     """Read a stored sample's raw bytes; None when absent (pre-persistence
-    uploads, or a failed write)."""
+    uploads, or a failed write). Blocks path traversal."""
+    if not sample_id or "/" in sample_id or "\\" in sample_id or ".." in sample_id:
+        return None
     try:
-        return (config.SAMPLES_DIR / f"{sample_id}.bin").read_bytes()
+        path = (config.SAMPLES_DIR / f"{sample_id}.bin").resolve()
+        if not str(path).startswith(str(config.SAMPLES_DIR.resolve())):
+            return None
+        return path.read_bytes()
     except OSError:
         return None
 

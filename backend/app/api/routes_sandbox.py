@@ -47,8 +47,13 @@ def get_session_screenshot(run_id: str, name: str):
 
 def _load_bytes(sample_id: str) -> bytes | None:
     """Read a stored sample's bytes (mirrors routes_samples._load_bytes)."""
+    if not sample_id or "/" in sample_id or "\\" in sample_id or ".." in sample_id:
+        return None
     try:
-        return (config.SAMPLES_DIR / f"{sample_id}.bin").read_bytes()
+        path = (config.SAMPLES_DIR / f"{sample_id}.bin").resolve()
+        if not str(path).startswith(str(config.SAMPLES_DIR.resolve())):
+            return None
+        return path.read_bytes()
     except OSError:
         return None
 

@@ -47,9 +47,9 @@ def search_ioc(value: str = Query(..., min_length=1)):
             JOIN runs r ON r.run_id = e.run_id
             WHERE {where}
             ORDER BY e.timestamp DESC
-            LIMIT {_SEARCH_LIMIT}
+            LIMIT ?
             """,
-            (value, value, like, like, like),
+            (value, value, like, like, like, _SEARCH_LIMIT),
         ).fetchall()
         matches = [dict(r) for r in rows]
 
