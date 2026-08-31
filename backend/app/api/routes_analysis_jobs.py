@@ -46,8 +46,13 @@ _NONTERMINAL = ("queued", "running")
 
 
 def _load_bytes(sample_id: str) -> bytes | None:
+    if not sample_id or "/" in sample_id or "\\" in sample_id or ".." in sample_id:
+        return None
     try:
-        return (config.SAMPLES_DIR / f"{sample_id}.bin").read_bytes()
+        path = (config.SAMPLES_DIR / f"{sample_id}.bin").resolve()
+        if not str(path).startswith(str(config.SAMPLES_DIR.resolve())):
+            return None
+        return path.read_bytes()
     except OSError:
         return None
 

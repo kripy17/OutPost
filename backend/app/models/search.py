@@ -153,8 +153,8 @@ def search_findings(
             FROM alerts a JOIN runs r ON r.run_id = a.run_id
             {where_sql}
             ORDER BY a.triggered_at DESC
-            LIMIT {limit}""",
-        params,
+            LIMIT ?""",
+        params + [limit],
     ).fetchall()
     hits = [
         {
@@ -202,8 +202,8 @@ def search_iocs(
         f"""SELECT ioc_id, value, type, disposition, label, first_seen, last_seen, reputation
             FROM iocs {where_sql}
             ORDER BY first_seen DESC
-            LIMIT {limit}""",
-        params,
+            LIMIT ?""",
+        params + [limit],
     ).fetchall()
     hits = [
         {
@@ -243,8 +243,8 @@ def search_artifacts(
         f"""SELECT sample_id, original_name, sha256, size, detected_platform, created_at
             FROM samples {where_sql}
             ORDER BY created_at DESC
-            LIMIT {limit}""",
-        params,
+            LIMIT ?""",
+        params + [limit],
     ).fetchall()
     hits = [
         {
@@ -285,8 +285,8 @@ def search_hosts(
     rows = conn.execute(
         f"""SELECT host_id, platform, version, last_heartbeat FROM agent_heartbeats {where_sql}
             ORDER BY last_heartbeat DESC
-            LIMIT {limit}""",
-        params,
+            LIMIT ?""",
+        params + [limit],
     ).fetchall()
     hits = [
         {
@@ -319,8 +319,8 @@ def search_hosts(
             ev_params.append(quals["host"])
         ev_sql = ("WHERE " + " AND ".join(ev_where)) if ev_where else ""
         ev_rows = conn.execute(
-            f"SELECT DISTINCT host_id FROM events {ev_sql} ORDER BY host_id LIMIT {limit}",
-            ev_params,
+            f"SELECT DISTINCT host_id FROM events {ev_sql} ORDER BY host_id LIMIT ?",
+            ev_params + [limit],
         ).fetchall()
         hits = [
             {
@@ -364,8 +364,8 @@ def search_sessions(
         f"""SELECT run_id, sample_name, platform, kind, session_type, started_at, completed_at, source
             FROM runs {where_sql}
             ORDER BY started_at DESC
-            LIMIT {limit}""",
-        params,
+            LIMIT ?""",
+        params + [limit],
     ).fetchall()
     hits = [
         {
@@ -418,8 +418,8 @@ def search_investigations(
             FROM investigations i
             {where_sql}
             ORDER BY i.updated_at DESC
-            LIMIT {limit}""",
-        params,
+            LIMIT ?""",
+        params + [limit],
     ).fetchall()
     hits = [
         {

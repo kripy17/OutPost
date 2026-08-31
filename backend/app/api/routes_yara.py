@@ -42,10 +42,15 @@ def _load_bytes(sample_id: str) -> bytes | None:
     """Same storage contract as routes_samples._load_bytes — the sample vault
     persists raw bytes under SAMPLES_DIR/{id}.bin for static analysis and the
     signature lab to share."""
+    if not sample_id or "/" in sample_id or "\\" in sample_id or ".." in sample_id:
+        return None
     from ..core import config
 
     try:
-        return (config.SAMPLES_DIR / f"{sample_id}.bin").read_bytes()
+        path = (config.SAMPLES_DIR / f"{sample_id}.bin").resolve()
+        if not str(path).startswith(str(config.SAMPLES_DIR.resolve())):
+            return None
+        return path.read_bytes()
     except OSError:
         return None
 

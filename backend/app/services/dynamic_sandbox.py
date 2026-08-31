@@ -329,12 +329,13 @@ async def execute_and_trace(
     sample_plat = sample.get("detected_platform") or sample.get("platform") or platform.system().lower()
 
     raw_bytes = None
-    try:
-        sample_path = config.SAMPLES_DIR / f"{sample_id}.bin"
-        if sample_path.exists():
-            raw_bytes = sample_path.read_bytes()
-    except Exception:
-        pass
+    if sample_id and "/" not in sample_id and "\\" not in sample_id and ".." not in sample_id:
+        try:
+            sample_path = (config.SAMPLES_DIR / f"{sample_id}.bin").resolve()
+            if str(sample_path).startswith(str(config.SAMPLES_DIR.resolve())) and sample_path.exists():
+                raw_bytes = sample_path.read_bytes()
+        except Exception:
+            pass
 
     if not raw_bytes:
         raise ValueError(f"Sample binary for {sample_id} not available on disk")

@@ -125,17 +125,21 @@ class DecompressionMiddleware:
                         break
                 raw_body = b"".join(body_parts)
 
+                _MAX_DECOMPRESS = 50 * 1024 * 1024  # 50 MB decompression limit
                 if raw_body:
                     try:
                         if encoding == "gzip":
                             decompressed = _gzip.decompress(raw_body)
+                            if len(decompressed) > _MAX_DECOMPRESS:
+                                decompressed = decompressed[:_MAX_DECOMPRESS]
                         elif encoding in ("deflate", "zlib"):
-                            decompressed = _zlib.decompress(raw_body)
+                            decompressor = _zlib.decompressobj()
+                            decompressed = decompressor.decompress(raw_body, _MAX_DECOMPRESS)
                         elif encoding == "zstd":
                             try:
                                 import zstandard as _zstd
                                 dctx = _zstd.ZstdDecompressor()
-                                decompressed = dctx.decompress(raw_body)
+                                decompressed = dctx.decompress(raw_body, max_output_size=_MAX_DECOMPRESS)
                             except ImportError:
                                 decompressed = raw_body
                         else:
