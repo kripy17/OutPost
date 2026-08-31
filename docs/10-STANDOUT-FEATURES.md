@@ -90,6 +90,29 @@ Start simple (one rule per malicious IP) — a naive but *correct* rule is more 
 
 ---
 
-## Priority If Time Is Short
+## Implemented Enterprise Flagship Capabilities (Shipped & Verified)
 
-If you only get through Tier 1: **IOC export + cross-run search** are the two that make this genuinely useful to you personally after the semester ends — everything else is either demo polish or a bigger investment. If you have room for one Tier 3 feature, the **Suricata/Sigma rule generator** is the strongest portfolio differentiator of everything in this document.
+### 10. Unified Host X-Ray Forensics & Process Causality
+- **Deep Procfs Introspection**: Live `/proc` inspection with Linux 64-bit Capabilities bitmask decoding (`CAP_SYS_ADMIN`, `CAP_NET_RAW`, `CAP_SYS_PTRACE`), Seccomp mode, `NoNewPrivs`, namespaces, and mapped `.so` libraries.
+- **Process Causality Tree**: Hierarchical parent-child process tree built directly from `/proc` PPID mapping with package manager provenance (`pacman`, `dpkg`, `rpm`).
+- **Safe Process Lifecycle Controls**: Real-time process controls (`SIGSTOP`, `SIGCONT`, `SIGTERM`, `SIGKILL`) with PID start-time identity validation to prevent PID reuse race conditions.
+
+### 11. 4-Domain Network Threat Matrix
+- **Socket Categorization**: Categorizes all host sockets into Public Listeners (`0.0.0.0`), Outbound C2 / External Sockets, Loopback IPC, and Multicast discovery with suspicious port heuristics (e.g. 4444, 1337, 8888).
+
+### 12. Pre/Post-Detonation Differential Baseline Delta Engine
+- **Host Baseline Snapshots**: Captures a snapshot of host processes, network listeners, and system metrics before detonation.
+- **Real-Time Differential Delta**: Automatically computes added/removed processes, newly opened sockets, dropped temporary files, and resource deltas upon execution completion.
+
+### 13. Side-by-Side Forensic Capsule Diffs
+- **Portable Forensic Dossiers**: 1-click export of sanitized `.xray.json` forensic capsules.
+- **Interactive Visual Diffing**: Side-by-side modal diff comparing two capsules to highlight capability divergence, new network listeners, and injected libraries.
+
+### 14. Live Adversary Simulation Lab & Subprocess Streaming
+- **Live Multi-Stage Scenarios**: Executes deterministic attack scenarios in isolated sandboxes.
+- **Real-Time Telemetry & Lineage**: Streams genuine OS process IDs, command lines, and terminal stdout/stderr live to the web console via Server-Sent Events (SSE).
+- **Automated Behavioral Detections**: Automatically evaluates the detection rule engine against live events, triggering alerts and updating risk scores.
+
+### 15. Incident Investigation Dossiers & Timeline Workflows
+- **Case Dossier Management**: Create and manage investigations with attached findings, evidence timelines, notes, and lifecycle status (`open`, `in_progress`, `closed`).
+- **1-Click Findings Escalation**: Seamlessly escalate alerts from the findings queue, sample detonations, or simulation runs directly into case dossiers.
