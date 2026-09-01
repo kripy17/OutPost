@@ -1,281 +1,265 @@
 <div align="center">
 
-# 🛡️ OutPost
+<img src="demo/screenshots/fresh/01_overview.png" alt="OutPost — Behavioral Security Workstation" width="96%">
 
-### Enterprise Cross-Platform Behavioral Security Workstation & Dynamic Malware Sandbox
+# OutPost
 
-*An explainable, self-hosted SOC monitoring platform, host forensics engine, and dynamic malware analysis sandbox with dual first-class interfaces: a reactive web console and an interactive terminal TUI.*
+**Open-Source Behavioral Security Workstation & Dynamic Malware Analysis Engine**
 
-`FastAPI` · `React 19` · `TypeScript 5.6` · `Vite 6` · `SQLite / PostgreSQL` · `Typer` · `Rich TUI` · `TailwindCSS`
+*Real-time host forensics, live adversary simulation, and incident response — all in one self-hosted platform.*
 
-[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
-[![FastAPI](https://img.shields.io/badge/FastAPI-backend-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
-[![React](https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=black)](https://react.dev)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
-[![Tests](https://img.shields.io/badge/tests-1376%20passing-brightgreen?style=flat-square)](https://github.com/kripy17/OutPost/actions)
-[![Rules](https://img.shields.io/badge/rules-45%20active-blue?style=flat-square)](docs/11-DETECTION-LOGIC.md)
-[![Commands](https://img.shields.io/badge/cli-32%20commands-orange?style=flat-square)](docs/09-CLI-SPEC.md)
-[![Tactics](https://img.shields.io/badge/tactics-14%2F14%20covered-teal?style=flat-square)](docs/11-DETECTION-LOGIC.md)
-[![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
+<br>
 
-<p align="center">
-  <img src="demo/screenshots/fresh/01_overview.png" alt="OutPost Command Deck" width="92%">
-  <br>
-  <em>The OutPost Command Deck — real-time risk trends, live telemetry, posture analytics, and SOC findings queue.</em>
-</p>
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
+[![React 19](https://img.shields.io/badge/React-19-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://react.dev)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://typescriptlang.org)
+[![Vite 6](https://img.shields.io/badge/Vite-6-646CFF?style=for-the-badge&logo=vite&logoColor=white)](https://vite.dev)
+[![TailwindCSS](https://img.shields.io/badge/Tailwind-4-06B6D4?style=for-the-badge&logo=tailwindcss&logoColor=white)](https://tailwindcss.com)
+
+<br>
+
+![Tests](https://img.shields.io/badge/tests-1376_passing-brightgreen?style=flat-square)
+![Rules](https://img.shields.io/badge/detection_rules-45_active-blue?style=flat-square)
+![CLI](https://img.shields.io/badge/cli-32_commands-orange?style=flat-square)
+![MITRE](https://img.shields.io/badge/MITRE_ATT%26CK-14%2F14_tactics-teal?style=flat-square)
+![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
+![Air-Gap](https://img.shields.io/badge/air--gap-verified-critical?style=flat-square)
 
 </div>
 
 ---
 
-## 📖 What is OutPost?
+## What is OutPost?
 
-**OutPost** is an authoritative, open-source security monitoring workstation and dynamic malware analysis engine designed for Security Operations Centers (SOC), incident responders, and malware analysts. 
+**OutPost** is a self-hosted security workstation built for SOC analysts, incident responders, and malware researchers. It watches what's running on your machines, flags suspicious behavior using 45 detection rules mapped to the MITRE ATT&CK framework, and lets you investigate threats from a web dashboard or a terminal CLI.
 
-OutPost pairs real-time kernel telemetry (`auditd`/`eBPF` on Linux, `Sysmon` with SwiftOnSecurity baseline on Windows, and `EndpointSecurity` on macOS) with deep **Host X-Ray Forensics**, **Process Causality Lineage Graphs**, **4-Domain Network Threat Matrices**, and **Automated Behavioral Explanations**.
+It's built around three core pillars:
 
 ```text
-                                     OUTPOST WORKSTATION
-                                              │
-        ┌─────────────────────────────────────┼─────────────────────────────────────┐
-        │                                     │                                     │
- 1. LIVE HOST FORENSICS & X-RAY        2. DYNAMIC MALWARE SANDBOX            3. SOC INCIDENT OPS & TRIAGE
- (Procfs / Sockets / Lineage)         (Live Subprocess Detonations)         (Triage / Cases / SigmaHQ)
-        │                                     │                                     │
-  • Process Causality Trees             • Live Subprocess Execution           • SOC Findings Queue
-  • 4-Domain Network Threat Matrix      • Real Terminal stdout/stderr         • Multi-Stage MITRE ATT&CK
-  • Behavioral Heuristic Insights       • Real-Time Process Lineage           • 1-Click Investigation Dossiers
-  • Linux Capabilities & Seccomp        • Dynamic Rule Firing & Alerts        • Campaign Correlation & Clusters
-  • Process Controls (Freeze/Kill)      • Dropped Binary Tracing & I/O        • High-Risk IOC Watchlist
-  • Differential Baseline Engine        • YARA & Entropy String Analysis      • Tamper-Evident Audit Trail
-  • Forensic Capsule Comparison         • Isolation Drivers (bwrap/wine)      • Full-Screen Terminal TUI
+                                  ┌─────────────────────────────────────┐
+                                  │         OUTPOST WORKSTATION         │
+                                  └──────────────┬──────────────────────┘
+         ┌───────────────────────────────────────┼───────────────────────────────────────┐
+         │                                       │                                       │
+   HOST FORENSICS                      DYNAMIC SANDBOX                          SOC OPERATIONS
+   & X-RAY ENGINE                     & SIMULATION LAB                        & INCIDENT RESPONSE
+         │                                       │                                       │
+  • Live /proc introspection            • Live binary detonation              • MITRE ATT&CK triage queue
+  • Process causality trees             • Real stdout/stderr streaming        • Investigation case dossiers
+  • Network threat matrix               • Multi-stage attack scenarios        • IOC search & watchlists
+  • Linux capabilities decoder          • YARA & entropy analysis             • Detection rule engineering
+  • Process freeze/kill controls        • Isolation drivers (bwrap/wine)      • Tamper-evident audit trail
+  • Differential baseline deltas        • Automated rule evaluation           • Fleet agent management
+  • Forensic capsule comparison         • Process lineage tracking            • Notification integrations
 ```
 
----
+### Why OutPost?
 
-## 📸 Visual Tour & Key Interfaces
-
-### Pillar I: Live Host Forensics & X-Ray Workstation
-
-<div align="center">
-
-#### 🎛️ 1. Unified Host X-Ray Command Cockpit
-*Full-spectrum target catalog, supervisor launch chains, 8-sensor device access matrix (microphone, camera, GPU, screen capture), open file & deleted inode forensics, live process tree, and PID lifecycle controls.*
-<p align="center">
-  <img src="demo/screenshots/fresh/24_host_xray_command_cockpit.png" alt="Host X-Ray Command Cockpit" width="88%">
-</p>
-
-<br>
-
-#### 🌳 2. Interactive Process Causality Tree
-*Hierarchical parent-child process graph tracking process creation, command lines, CPU/memory footprint, and package manager provenance.*
-<p align="center">
-  <img src="demo/screenshots/fresh/19_process_causality_tree.png" alt="Process Causality Tree" width="88%">
-</p>
-
-<br>
-
-#### 🌐 3. Deep 4-Domain Network Threat Matrix
-*Host sockets categorized into Public Listeners (`0.0.0.0`), Outbound C2 / Remote Sockets, Loopback IPC, and Multicast discovery with suspicious port tagging.*
-<p align="center">
-  <img src="demo/screenshots/fresh/20_network_threat_matrix.png" alt="Network Threat Matrix" width="88%">
-</p>
-
-<br>
-
-#### 💡 4. Automated Behavioral Heuristic Insights
-*Real-time reasoning cards flagging dropped binaries in temp directories, unmanaged processes, public listeners, and elevated Linux capabilities with actionable remediation steps.*
-<p align="center">
-  <img src="demo/screenshots/fresh/21_behavioral_insights.png" alt="Behavioral Explanations" width="88%">
-</p>
-
-<br>
-
-#### 🔬 5. Process Deep Inspector & Security Posture
-*Deep process inspection featuring 64-bit Linux Capabilities bitmask decoding, Seccomp mode, mapped `.so` shared libraries, and safe process freeze/kill controls.*
-<p align="center">
-  <img src="demo/screenshots/fresh/16_process_xray_drawer.png" alt="Process X-Ray Drawer" width="88%">
-</p>
-
-<br>
-
-#### ⚡ 6. Differential Host Baseline Delta Engine
-*Pre-detonation baseline snapshotting and real-time differential calculation tracking spawned processes, opened ports, and system resource deltas.*
-<p align="center">
-  <img src="demo/screenshots/fresh/22_differential_delta.png" alt="Differential Host Baseline Delta" width="88%">
-</p>
-
-<br>
-
-#### 🔍 7. Forensic Capsule Differential Comparison
-*Side-by-side comparison of portable `.xray.json` forensic dossiers to evaluate capability escalation and mapped library injections between environments.*
-<p align="center">
-  <img src="demo/screenshots/fresh/23_capsule_diff_modal.png" alt="Capsule Differential Comparison" width="88%">
-</p>
-
-</div>
+- **Not a wrapper** — Original detection logic with documented rationale for every rule, not a GUI over someone else's tool.
+- **Two equal interfaces** — Web dashboard and Rich terminal TUI both talk to the same backend. Use whichever fits your workflow.
+- **Air-gapped by design** — Zero external CDNs, tracking scripts, or font downloads. Ships self-contained, verified offline.
+- **Cross-platform telemetry** — Normalizes `auditd`/`eBPF` (Linux), `Sysmon` (Windows), and `EndpointSecurity` (macOS) into one unified schema.
 
 ---
 
-### Pillar II: Dynamic Malware Sandbox & Adversary Simulation
+## 📸 Feature Tour
 
-<div align="center">
+### 🎛️ SOC Command Deck — Overview Dashboard
 
-#### 🧪 8. Live Adversary Simulation Cockpit
-*Deterministic multi-stage adversary scenarios executed live in an isolated sandbox with real-time terminal stdout/stderr streaming, live process PID tracking, and automated detection rule evaluation.*
+The entry point. Real-time risk trends, live host telemetry pulse, MITRE ATT&CK tactical distribution, and a posture summary across all monitored endpoints.
+
 <p align="center">
-  <img src="demo/screenshots/fresh/14_live_simulation_cockpit.png" alt="Adversary Simulation Lab" width="88%">
+  <img src="demo/screenshots/fresh/01_overview.png" alt="SOC Command Deck" width="90%">
 </p>
-
-<br>
-
-#### 📦 9. Malware Sample Vault & Dynamic Detonation
-*Secure sample repository featuring SHA256/SSDEEP hashing, Shannon entropy distributions, extracted strings, YARA signatures, and 1-click micro-sandbox detonation.*
-<p align="center">
-  <img src="demo/screenshots/fresh/06_samples.png" alt="Malware Sample Vault" width="88%">
-</p>
-
-</div>
 
 ---
 
-### Pillar III: SOC Incident Response, Threat Hunting & Governance
+### 🔬 Host X-Ray — Deep Process Forensics
 
-<div align="center">
+Full-spectrum live forensics: every running process with CPU/memory, command lines, parent-child lineage, package manager provenance, Linux capabilities (`CAP_SYS_ADMIN`, `CAP_NET_RAW`, `CAP_SYS_PTRACE`), Seccomp mode, mapped `.so` libraries, open file descriptors, and 8-sensor device access detection (microphone, camera, GPU, screen capture).
 
-#### 🚨 10. SOC Findings Queue & Alert Triage
-*Centralized alert triage queue mapped to MITRE ATT&CK techniques, featuring 1-click allowlisting, process context inspection, and instant case escalation.*
 <p align="center">
-  <img src="demo/screenshots/fresh/03_findings.png" alt="SOC Findings Queue" width="88%">
+  <img src="demo/screenshots/fresh/24_host_xray_command_cockpit.png" alt="Host X-Ray Command Cockpit" width="90%">
 </p>
 
+<details>
+<summary><b>🌳 Process Causality Tree</b> — Hierarchical parent-child execution graph</summary>
 <br>
-
-#### 📂 11. Incident Investigation Case Dossiers
-*Full incident response lifecycle management with attached telemetry findings, evidence timelines, forensic artifact attachments, and analyst notes.*
 <p align="center">
-  <img src="demo/screenshots/fresh/05_investigations.png" alt="Investigations Dossier" width="88%">
+  <img src="demo/screenshots/fresh/19_process_causality_tree.png" alt="Process Causality Tree" width="90%">
 </p>
+</details>
 
+<details>
+<summary><b>🌐 Network Threat Matrix</b> — 4-domain socket classification</summary>
 <br>
-
-#### 📡 12. Fleet Telemetry Collectors & Agent Health
-*Live monitoring of distributed endpoint agents across Linux (`auditd`/`eBPF`), Windows (`Sysmon`), and macOS (`EndpointSecurity`) with heartbeat tracking and collector diagnostics.*
+Categorizes every active connection: Public Listeners (<code>0.0.0.0</code>), Outbound C2/External, Loopback IPC, and Multicast — with suspicious port heuristics.
 <p align="center">
-  <img src="demo/screenshots/fresh/04_agents.png" alt="Fleet Telemetry Agents" width="88%">
+  <img src="demo/screenshots/fresh/20_network_threat_matrix.png" alt="Network Threat Matrix" width="90%">
 </p>
+</details>
 
+<details>
+<summary><b>💡 Behavioral Insights</b> — Automated heuristic explanations</summary>
 <br>
-
-#### 🎯 13. Universal Forensic Search & Active Watchlist
-*Sub-millisecond global search across IOCs, hosts, hashes, and processes, paired with an active surveillance watchlist flagging suspicious connections in real time.*
+Real-time reasoning cards that flag anomalies: dropped binaries in temp directories, unmanaged processes, public-facing listeners, and elevated Linux capabilities — with actionable remediation steps.
 <p align="center">
-  <img src="demo/screenshots/fresh/08_search.png" alt="Universal Search" width="88%">
+  <img src="demo/screenshots/fresh/21_behavioral_insights.png" alt="Behavioral Insights" width="90%">
 </p>
+</details>
 
+<details>
+<summary><b>🔍 Process Deep Inspector</b> — Per-process security posture</summary>
 <br>
-
-#### 📐 14. Detection Rule Studio & MITRE ATT&CK Coverage
-*45 active behavioral detection rules with live tuning parameters, custom YARA rule compiler, false-positive suppressions, and a 14/14 MITRE ATT&CK tactic coverage heatmap.*
+64-bit Linux capabilities bitmask decoding, Seccomp filter mode, <code>NoNewPrivs</code>, namespace isolation, mapped shared libraries, and safe process freeze/kill controls with start-time identity validation.
 <p align="center">
-  <img src="demo/screenshots/fresh/10_coverage.png" alt="MITRE ATT&CK Coverage Matrix" width="88%">
+  <img src="demo/screenshots/fresh/16_process_xray_drawer.png" alt="Process Inspector" width="90%">
 </p>
+</details>
 
+<details>
+<summary><b>⚡ Differential Baseline Delta</b> — Pre/post-detonation comparison</summary>
 <br>
-
-#### 🔐 15. Tamper-Evident Audit Trail & Console Themes
-*Cryptographically hashed audit log recording every analyst mutation, paired with alert notification integrations (Slack, Discord, Telegram, Webhook, SMTP) and customizable theme studio.*
+Captures a host snapshot before detonation and computes real-time deltas: spawned processes, opened ports, dropped files, and memory metrics.
 <p align="center">
-  <img src="demo/screenshots/fresh/12_audit.png" alt="Tamper-Evident Audit Trail" width="88%">
+  <img src="demo/screenshots/fresh/22_differential_delta.png" alt="Differential Delta" width="90%">
 </p>
+</details>
 
-</div>
+<details>
+<summary><b>📑 Forensic Capsule Diffs</b> — Side-by-side environment comparison</summary>
+<br>
+Export portable <code>.xray.json</code> forensic capsules and visually diff two environments to spot capability escalation, injected libraries, and new listeners.
+<p align="center">
+  <img src="demo/screenshots/fresh/23_capsule_diff_modal.png" alt="Forensic Capsule Diff" width="90%">
+</p>
+</details>
 
 ---
 
-## ✨ Flagship Capabilities Matrix
+### 🧪 Live Simulation Lab — Dynamic Malware Sandbox
 
-| Capability | Description |
-|---|---|
-| ⚡ **Live Subprocess Sandbox** | Executes binaries in isolated micro-sandboxes (Bubblewrap `bwrap`, Headless Wine, or Tempdir) capturing genuine OS PIDs, parent-child lineages, and live stdout/stderr streams. |
-| 📊 **Differential Baseline Delta** | Captures host snapshot prior to detonation and computes differential deltas across spawned processes, listening sockets, dropped files, and memory metrics. |
-| 🌳 **Process Causality Graphs** | Reconstructs deep parent-child process execution trees with package manager provenance (`dpkg`, `rpm`, `pacman`), command lines, and container attribution (`Docker`, `Podman`, `K8s`). |
-| 🌐 **4-Domain Network Threat Matrix** | Classifies active connections into Public Listeners (`0.0.0.0`), Outbound C2 / External Sockets (with suspicious port heuristics), Loopback IPC, and Multicast discovery. |
-| 🛡️ **Linux Posture & Capability Decoder** | Decodes 64-bit Linux capabilities (`CAP_SYS_ADMIN`, `CAP_NET_RAW`, `CAP_SYS_PTRACE`), Seccomp filter modes, `NoNewPrivs`, and open file descriptor inodes. |
-| 🛑 **Process Lifecycle Controls** | Safe process controls (Freeze `SIGSTOP`, Resume `SIGCONT`, Terminate `SIGTERM`, Kill `SIGKILL`) with start-time identity validation to prevent PID reuse hazards. |
-| 🎯 **Universal Target Resolver** | Syntax search supporting `:8000` (port), `pid:1234`, `file:/etc/passwd`, `service:systemd`, IP lookups, and keyword resolution. |
-| 📑 **Portable Forensic Capsules** | 1-click export of sanitized `.xray.json` forensic capsules and side-by-side visual diffing between baseline and compromised states. |
-| ⌨️ **Standalone SOC Terminal (TUI)** | 32 commands, live telemetry watchers, rich full-screen TUI console, and headless scripting workflows. |
-| 🔒 **Air-Gapped by Design** | Zero external CDNs, fonts, or tracking scripts. Self-contained fonts and verified offline runtime guarantees. |
+Execute deterministic multi-stage adversary attack scenarios in isolated sandboxes. Real OS subprocesses run live — genuine PIDs, real terminal stdout/stderr streaming, and automated detection rule evaluation in real time.
+
+<p align="center">
+  <img src="demo/screenshots/fresh/14_live_simulation_cockpit.png" alt="Adversary Simulation Lab" width="90%">
+</p>
 
 ---
 
-## 🚀 Quickstart
+### 📦 Malware Sample Vault
 
-### 1-Command Automated Installation
+Secure sample repository with SHA-256/SSDEEP hashing, Shannon entropy distributions, extracted strings, YARA signature matching, and 1-click micro-sandbox detonation with isolation drivers (Bubblewrap `bwrap`, Wine, or Tempdir).
 
-OutPost includes automated dependency diagnostics that detect environment requirements and configure them seamlessly:
-
-#### Linux & macOS
-```bash
-# Clone the repository
-git clone https://github.com/kripy17/OutPost.git
-cd OutPost
-
-# Run automated installer (configures Python 3.10+, venv, Node.js, and dependencies)
-bash scripts/install.sh
-
-# Start the full stack (FastAPI backend on :8001 + React console on :5174)
-bash scripts/dev.sh start
-```
-
-#### Windows (PowerShell)
-```powershell
-# Clone the repository
-git clone https://github.com/kripy17/OutPost.git
-cd OutPost
-
-# Run automated installer (handles Python, Node.js, venv, and SwiftOnSecurity Sysmon)
-powershell -ExecutionPolicy Bypass -File scripts\install.ps1
-
-# Start the full stack
-powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 start
-```
-
-- **Web Console**: [http://localhost:5174](http://localhost:5174)
-- **API Documentation (Swagger UI)**: [http://localhost:8001/docs](http://localhost:8001/docs)
-
-### 1-Click Remote Fleet Agent Deployment
-
-Deploy OutPost sensor collectors to remote fleet machines with a single command:
-
-- **Linux & macOS**:
-  ```bash
-  curl -fsSL http://<OUTPOST_SERVER>:8001/api/agents/install.sh | sudo bash
-  ```
-- **Windows**:
-  ```powershell
-  irm http://<OUTPOST_SERVER>:8001/api/agents/install.ps1 | iex
-  ```
+<p align="center">
+  <img src="demo/screenshots/fresh/06_samples.png" alt="Malware Sample Vault" width="90%">
+</p>
 
 ---
 
-## ⌨️ OutPost CLI & Interactive SOC Terminal
+### 🚨 Incident Findings & Alert Triage
 
-OutPost includes a powerful standalone executable CLI and full-screen Rich TUI console. Run commands directly using `./cli.sh` (Linux / macOS) or `.\cli.ps1` (Windows):
+Centralized SOC alert queue with MITRE ATT&CK technique mapping, severity filtering, 1-click acknowledgment, false-positive suppression, and instant escalation to investigation case dossiers.
+
+<p align="center">
+  <img src="demo/screenshots/fresh/03_findings.png" alt="SOC Findings Queue" width="90%">
+</p>
+
+---
+
+### 📂 Investigation Case Dossiers
+
+Full incident response lifecycle: create cases, attach findings and evidence, build timelines, write analyst notes, and track status from `open` → `in_progress` → `closed`.
+
+<p align="center">
+  <img src="demo/screenshots/fresh/05_investigations.png" alt="Investigation Dossiers" width="90%">
+</p>
+
+---
+
+### 📡 Fleet Agents & Telemetry Collectors
+
+Monitor distributed endpoint agents across Linux (`auditd`/`eBPF`), Windows (`Sysmon`), and macOS (`EndpointSecurity`). Heartbeat tracking, collector diagnostics, and 1-click remote agent deployment.
+
+<p align="center">
+  <img src="demo/screenshots/fresh/04_agents.png" alt="Fleet Agents" width="90%">
+</p>
+
+---
+
+### 🎯 MITRE ATT&CK Detection Coverage
+
+45 active behavioral detection rules with full MITRE ATT&CK tactic/technique mapping across all 14 tactics. Interactive heatmap, rule weight visualization, gap analysis, and ATT&CK Navigator layer export.
+
+<p align="center">
+  <img src="demo/screenshots/fresh/10_coverage.png" alt="MITRE ATT&CK Coverage" width="90%">
+</p>
+
+---
+
+<details>
+<summary><b>More pages: Event Manager, Rules, Search, Settings, Audit</b></summary>
+<br>
+
+#### Event Manager — Real-time Telemetry Stream
+<p align="center">
+  <img src="demo/screenshots/fresh/02_events.png" alt="Event Manager" width="90%">
+</p>
+
+#### Detection Rules — Rule Engineering Studio
+<p align="center">
+  <img src="demo/screenshots/fresh/09_rules.png" alt="Detection Rules" width="90%">
+</p>
+
+#### Global Search & IOC Watchlist
+<p align="center">
+  <img src="demo/screenshots/fresh/08_search.png" alt="Search" width="90%">
+</p>
+
+#### Settings & Notification Integrations
+<p align="center">
+  <img src="demo/screenshots/fresh/11_settings.png" alt="Settings" width="90%">
+</p>
+
+#### Tamper-Evident Audit Trail
+<p align="center">
+  <img src="demo/screenshots/fresh/12_audit.png" alt="Audit Trail" width="90%">
+</p>
+
+</details>
+
+---
+
+## ⌨️ CLI & Interactive SOC Terminal
+
+OutPost ships a standalone CLI with **32 commands** and a full-screen Rich TUI console. Every feature available in the web dashboard is also accessible from the terminal.
 
 ```bash
-# Launch the interactive SOC Terminal TUI
+# Launch the interactive SOC Terminal
 ./cli.sh console
 
-# Stream live host telemetry & recon markers
+# Stream live host telemetry
 ./cli.sh watch
 
-# View and acknowledge open SOC alerts
+# View and triage SOC alerts
 ./cli.sh alerts
 
-# Inspect live host processes, sockets & capabilities
-./cli.sh xray
+# Deep host forensics — process tree, sockets, capabilities
+./cli.sh forensics snapshot
+./cli.sh forensics tree
+./cli.sh forensics network
+
+# Malware analysis
+./cli.sh samples list
+./cli.sh analysis launch <sample_id>
+
+# Search IOCs across all runs
+./cli.sh search 192.168.1.100
+
+# Detection engineering
+./cli.sh rules generate <run_id>
+./cli.sh coverage
 ```
 
 ```text
@@ -285,45 +269,222 @@ OutPost includes a powerful standalone executable CLI and full-screen Rich TUI c
  │  [2] Alerts & Triage   Manage SOC queue, view findings & acknowledge alerts      │
  │  [3] Host X-Ray        Inspect live processes, sockets & Linux capabilities      │
  │  [4] Investigations    Track ongoing incident response cases & evidence          │
- │  [5] Detection Rules   View, tune & test 45 MITRE ATT&CK detection rules         │
+ │  [5] Detection Rules   View, tune & test 45 MITRE ATT&CK detection rules        │
  │  [6] Malware Vault     List samples, inspect YARA matches & detonate binaries    │
  │                                                                                  │
  ╰──────────────────────────────────────────────────────────────────────────────────╯
 ```
 
+<details>
+<summary><b>Full CLI command reference</b></summary>
+<br>
+
+| Command | Description |
+|---|---|
+| `console` / `tui` | Launch the interactive SOC Terminal TUI |
+| `watch` | Live monitoring — real-time process activity & alert feed |
+| `alerts` | View open alerts with severity, rule, and process context |
+| `triage` | Move alerts through `open` → `acknowledged` → `resolved` |
+| `list` | List past monitoring sessions and analysis runs |
+| `show <run_id>` | Full report for one session |
+| `export <run_id>` | Export to JSON, PDF, CSV, or STIX format |
+| `run <sample>` | Bounded analysis — execute, observe, report |
+| `search <ioc>` | Cross-run IOC search ("have I seen this before?") |
+| `compare <id1> <id2>` | Diff two runs — unique processes, IPs, shared artifacts |
+| `forensics snapshot` | Capture live host forensic snapshot |
+| `forensics tree` | Display process causality tree |
+| `forensics network` | Network connection matrix |
+| `forensics baseline` | Create a pre-detonation baseline |
+| `forensics diff` | Compute differential delta |
+| `forensics freeze/thaw` | Process lifecycle controls (SIGSTOP/SIGCONT) |
+| `forensics caps` | Linux capabilities inspection |
+| `rules generate` | Auto-generate Suricata/Sigma rules from findings |
+| `rules backtest` | Backtest rules against historical data |
+| `coverage` | View MITRE ATT&CK detection coverage |
+| `samples` | List and manage the malware sample vault |
+| `analysis launch` | Launch a detonation analysis job |
+| `watchlist add/list` | Personal IOC watchlist management |
+| `yara list/test` | YARA rule management and testing |
+| `investigations` | Investigation case management |
+| `playbooks run` | Execute curated attack scenario playbooks |
+| `intel import` | Threat-intel feed import |
+| `agent run/install` | Host-agent bootstrap and collector management |
+| `admin` | Fleet and backend maintenance |
+
+</details>
+
 ---
 
-## 🧪 Automated Verification Suite
+## 🚀 Installation & Setup
 
-OutPost maintains a rigorous quality gate verifying every backend service, API endpoint, collector shipper, CLI tool, and frontend component:
+### Prerequisites
+
+| Requirement | Version |
+|---|---|
+| **Python** | 3.10 or higher |
+| **Node.js** | 18 or higher |
+| **Git** | Any recent version |
+
+### Linux & macOS
 
 ```bash
-# Run complete test suite (Backend, Collectors, CLI, and Frontend)
+# 1. Clone the repository
+git clone https://github.com/kripy17/OutPost.git
+cd OutPost
+
+# 2. Run the automated installer
+#    Detects your OS, installs Python/Node dependencies, creates a virtual environment,
+#    and builds the frontend — all in one step.
+bash scripts/install.sh
+
+# 3. Start OutPost
+#    Launches FastAPI backend on port 8001 and React frontend on port 5174.
+bash scripts/dev.sh start
+```
+
+### Windows (PowerShell)
+
+```powershell
+# 1. Clone the repository
+git clone https://github.com/kripy17/OutPost.git
+cd OutPost
+
+# 2. Run the automated installer
+#    Sets up Python venv, Node dependencies, and optionally configures
+#    SwiftOnSecurity Sysmon for endpoint telemetry collection.
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1
+
+# 3. Start OutPost
+powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 start
+```
+
+### Access OutPost
+
+Once running, open your browser:
+
+| Service | URL |
+|---|---|
+| **Web Console** | [http://localhost:5174](http://localhost:5174) |
+| **API Docs (Swagger)** | [http://localhost:8001/docs](http://localhost:8001/docs) |
+| **CLI** | `./cli.sh --help` (Linux/macOS) or `.\cli.ps1 --help` (Windows) |
+
+### Deploy Agents to Remote Machines
+
+Deploy OutPost telemetry collectors to monitored endpoints with a single command:
+
+**Linux & macOS:**
+```bash
+curl -fsSL http://<OUTPOST_SERVER>:8001/api/agents/install.sh | sudo bash
+```
+
+**Windows (PowerShell):**
+```powershell
+irm http://<OUTPOST_SERVER>:8001/api/agents/install.ps1 | iex
+```
+
+---
+
+## 🏗️ Architecture
+
+```text
+┌────────────────────┐    ┌────────────────────┐    ┌────────────────────┐
+│  Linux Endpoint    │    │  Windows Endpoint   │    │  macOS Endpoint    │
+│  auditd / eBPF     │    │  Sysmon             │    │  EndpointSecurity  │
+│  collector_linux.py │    │  collector_win.py   │    │  collector_macos.py│
+└─────────┬──────────┘    └─────────┬──────────┘    └─────────┬──────────┘
+          │  POST /ingest/batch     │                         │
+          └─────────────────────────┼─────────────────────────┘
+                                    ▼
+                    ┌───────────────────────────────┐
+                    │     FastAPI Backend (:8001)    │
+                    │  ┌──────────────────────────┐ │
+                    │  │ Normalizer → Detection   │ │
+                    │  │ Enrichment → Process Tree │ │
+                    │  │ Sandbox → Rule Engine     │ │
+                    │  └──────────────────────────┘ │
+                    │       SQLite / PostgreSQL      │
+                    └───────────────┬────────────────┘
+                                    │ REST API
+                    ┌───────────────┴────────────────┐
+                    ▼                                ▼
+        ┌──────────────────┐            ┌──────────────────┐
+        │  React Web App   │            │  CLI & Rich TUI  │
+        │  (:5174)         │            │  32 commands      │
+        │  Vite + TS + TW  │            │  Typer + Rich     │
+        └──────────────────┘            └──────────────────┘
+```
+
+### Tech Stack
+
+| Layer | Technologies |
+|---|---|
+| **Backend** | Python 3.10+, FastAPI, Pydantic, Uvicorn, SQLite/PostgreSQL |
+| **Frontend** | React 19, TypeScript 5.6, Vite 6, TailwindCSS 4, TanStack Query |
+| **CLI** | Typer, Rich TUI, PyFiglet, Plyer notifications |
+| **Collectors** | `auditd`/`eBPF` (Linux), `Sysmon` (Windows), `EndpointSecurity` (macOS) |
+| **Testing** | Pytest (backend/collectors/CLI), Vitest (frontend), Playwright (E2E) |
+| **Deployment** | Docker Compose, systemd units, 1-command install scripts |
+
+---
+
+## 🧪 Test Suite
+
+OutPost maintains a rigorous quality gate across all layers:
+
+```bash
+# Run the full test suite
 ./.venv/bin/pytest backend collectors/tests cli/tests
 npm --prefix frontend test -- --run
 ```
 
-| Component | Test Suite | Test Count | Result |
+| Component | Framework | Tests | Status |
 |---|---|---|---|
-| **Backend Core & APIs** | Pytest (`backend/`) | **822 tests** | **100% Passed** |
-| **Telemetry Collectors** | Pytest (`collectors/tests/`) | **43 tests** | **100% Passed** |
-| **CLI & SOC Terminal** | Pytest (`cli/tests/`) | **146 tests** | **100% Passed** |
-| **Frontend Web Console** | Vitest (`frontend/src/test/`) | **365 tests** | **100% Passed** |
-| **Total Automated Tests** | **Full Quality Gate** | **1,376 tests** | **100% Green / 0 Failures** |
+| Backend Core & APIs | Pytest | **822** | ✅ Passing |
+| Telemetry Collectors | Pytest | **43** | ✅ Passing |
+| CLI & SOC Terminal | Pytest | **146** | ✅ Passing |
+| Frontend Web Console | Vitest | **365** | ✅ Passing |
+| **Total** | | **1,376** | **✅ 100% Green** |
 
 ---
 
-## 🔒 Security Architecture & Air-Gap Design
+## 🔒 Security & Air-Gap Design
 
-OutPost is built exclusively as a **defensive security monitoring workstation and dynamic malware analysis engine**.
+OutPost is built exclusively as a **defensive** security monitoring tool.
 
-- **100% Air-Gapped Operation**: Operates fully isolated without external CDN dependencies, self-hosted fonts (`IBM Plex Mono`, `JetBrains Mono`), and local-only assets.
-- **Fail-Closed Privacy**: External threat intelligence enrichment (VirusTotal, AbuseIPDB) requires explicit user-configured API keys and defaults to safe offline analysis when unconfigured.
-- **Process Identity Verification**: Prevents PID collision attacks by verifying start-time identity hashes before applying process freeze or termination signals.
-- **Decompression & Payload Hardening**: Hardened with 50 MB bounded decompression bomb protection, strict path traversal defenses, and SQL query parameterization.
+| Principle | Implementation |
+|---|---|
+| **100% Air-Gapped** | Zero external CDN dependencies. Self-hosted fonts (`IBM Plex Mono`, `JetBrains Mono`). Verified offline operation. |
+| **Fail-Closed Privacy** | Threat intel enrichment (VirusTotal, AbuseIPDB) requires explicit API keys. Defaults to safe offline analysis when unconfigured. |
+| **Process Safety** | PID start-time identity validation prevents collision attacks before applying freeze/kill controls. |
+| **Input Hardening** | 50 MB decompression bomb protection, path traversal canonicalization, parameterized SQL queries, 500 MB upload size limits. |
+
+---
+
+## 📄 Documentation
+
+Full technical specifications live in [`docs/`](docs/):
+
+| Document | Contents |
+|---|---|
+| [`01-ARCHITECTURE.md`](docs/01-ARCHITECTURE.md) | System design, repo structure |
+| [`02-BACKEND-SPEC.md`](docs/02-BACKEND-SPEC.md) | API endpoints, database schema, Pydantic models |
+| [`03-COLLECTOR-SPEC.md`](docs/03-COLLECTOR-SPEC.md) | Monitoring agent (Windows + Linux + macOS) |
+| [`04-FRONTEND-SPEC.md`](docs/04-FRONTEND-SPEC.md) | Webapp routes and components |
+| [`05-DEPLOYMENT-SETUP.md`](docs/05-DEPLOYMENT-SETUP.md) | Installation and safety notes |
+| [`09-CLI-SPEC.md`](docs/09-CLI-SPEC.md) | CLI command reference |
+| [`11-DETECTION-LOGIC.md`](docs/11-DETECTION-LOGIC.md) | All 45 detection heuristics with rationale |
+| [`18-AIR-GAP.md`](docs/18-AIR-GAP.md) | Air-gap verification and offline guarantees |
 
 ---
 
 ## 📄 License
 
 Distributed under the [MIT License](LICENSE).
+
+---
+
+<div align="center">
+
+**Built by [Krish Patel](https://github.com/kripy17)**
+
+</div>
