@@ -4,7 +4,7 @@ import fs from "fs";
 import path from "path";
 
 const ROOT = path.resolve(process.cwd());
-const SCREENSHOT_DIR = "/home/kripy/.gemini/antigravity/brain/e36d59a0-8b3c-428a-bc79-acbabd56891b/screenshots";
+const SCREENSHOT_DIR = path.join(ROOT, "demo", "screenshots", "fresh");
 const BACKEND_PORT = 8092;
 const FRONTEND_PORT = 5195;
 const DB_PATH = `/tmp/visual_test_${Date.now()}.db`;
