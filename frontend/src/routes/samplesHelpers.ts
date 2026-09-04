@@ -28,3 +28,39 @@ export function iocTotal(iocs: {
 }): number {
   return iocs.urls.length + iocs.ips.length + iocs.domains.length + iocs.hashes.length + iocs.emails.length;
 }
+
+/** Builds the VirusTotal external pivot URL for a cryptographic file hash (SHA-256 / SHA-1 / MD5). */
+export function getVirusTotalFileUrl(hash: string): string {
+  return `https://www.virustotal.com/gui/file/${encodeURIComponent(hash.trim())}`;
+}
+
+/** Builds the VirusTotal external pivot URL for a network domain. */
+export function getVirusTotalDomainUrl(domain: string): string {
+  return `https://www.virustotal.com/gui/domain/${encodeURIComponent(domain.trim())}`;
+}
+
+/** Builds the VirusTotal external pivot URL for an IP address. */
+export function getVirusTotalIpUrl(ip: string): string {
+  return `https://www.virustotal.com/gui/ip-address/${encodeURIComponent(ip.trim())}`;
+}
+
+/** Builds the VirusTotal external search URL for a URL or arbitrary indicator string. */
+export function getVirusTotalSearchUrl(query: string): string {
+  return `https://www.virustotal.com/gui/search/${encodeURIComponent(query.trim())}`;
+}
+
+/** Returns the appropriate VirusTotal pivot URL based on IOC category. */
+export function getVirusTotalIocUrl(category: "urls" | "ips" | "domains" | "hashes" | "emails", value: string): string {
+  switch (category) {
+    case "hashes":
+      return getVirusTotalFileUrl(value);
+    case "domains":
+      return getVirusTotalDomainUrl(value);
+    case "ips":
+      return getVirusTotalIpUrl(value);
+    case "urls":
+    case "emails":
+    default:
+      return getVirusTotalSearchUrl(value);
+  }
+}

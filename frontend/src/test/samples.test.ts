@@ -4,7 +4,16 @@
 // detail page's StaticAnalysis panel renders.
 
 import { describe, expect, it } from "vitest";
-import { filterStrings, formatBytes, iocTotal } from "../routes/samplesHelpers";
+import {
+  filterStrings,
+  formatBytes,
+  getVirusTotalDomainUrl,
+  getVirusTotalFileUrl,
+  getVirusTotalIocUrl,
+  getVirusTotalIpUrl,
+  getVirusTotalSearchUrl,
+  iocTotal,
+} from "../routes/samplesHelpers";
 
 describe("formatBytes", () => {
   it("keeps sub-KB sizes in whole bytes", () => {
@@ -70,5 +79,43 @@ describe("iocTotal", () => {
 
   it("counts each bucket independently", () => {
     expect(iocTotal({ urls: ["u1"], ips: [], domains: ["d1", "d2"], hashes: [], emails: [] })).toBe(3);
+  });
+});
+
+describe("VirusTotal URL helpers", () => {
+  it("builds valid file lookup URL for SHA-256 / hash", () => {
+    expect(getVirusTotalFileUrl("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")).toBe(
+      "https://www.virustotal.com/gui/file/e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    );
+    expect(getVirusTotalFileUrl("  md5hash  ")).toBe("https://www.virustotal.com/gui/file/md5hash");
+  });
+
+  it("builds valid domain lookup URL", () => {
+    expect(getVirusTotalDomainUrl("c2.evil-corp.com")).toBe(
+      "https://www.virustotal.com/gui/domain/c2.evil-corp.com",
+    );
+    expect(getVirusTotalDomainUrl("  test.org ")).toBe(
+      "https://www.virustotal.com/gui/domain/test.org",
+    );
+  });
+
+  it("builds valid IP lookup URL", () => {
+    expect(getVirusTotalIpUrl("198.51.100.42")).toBe(
+      "https://www.virustotal.com/gui/ip-address/198.51.100.42",
+    );
+  });
+
+  it("builds valid search URL for URLs and generic indicators", () => {
+    expect(getVirusTotalSearchUrl("http://malware.site/drop.exe")).toBe(
+      "https://www.virustotal.com/gui/search/http%3A%2F%2Fmalware.site%2Fdrop.exe",
+    );
+  });
+
+  it("maps IOC categories to appropriate VirusTotal URLs", () => {
+    expect(getVirusTotalIocUrl("hashes", "abcdef")).toBe("https://www.virustotal.com/gui/file/abcdef");
+    expect(getVirusTotalIocUrl("domains", "bad.com")).toBe("https://www.virustotal.com/gui/domain/bad.com");
+    expect(getVirusTotalIocUrl("ips", "1.2.3.4")).toBe("https://www.virustotal.com/gui/ip-address/1.2.3.4");
+    expect(getVirusTotalIocUrl("urls", "https://evil.com/pay")).toBe("https://www.virustotal.com/gui/search/https%3A%2F%2Fevil.com%2Fpay");
+    expect(getVirusTotalIocUrl("emails", "hacker@bad.com")).toBe("https://www.virustotal.com/gui/search/hacker%40bad.com");
   });
 });

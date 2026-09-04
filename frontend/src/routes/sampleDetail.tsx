@@ -8,7 +8,7 @@ import { deleteSample, detonateDynamic, detonateSample, downloadSample, getRuns,
 import { ProcessCausalityTree } from "../components/ProcessCausalityTree";
 import { NetworkProtocolInspector } from "../components/NetworkProtocolInspector";
 import type { Platform, RunSummary, SampleDetonationResult, SampleStatic, SandboxTask } from "../types";
-import { filterStrings, formatBytes, iocTotal } from "./samplesHelpers";
+import { filterStrings, formatBytes, getVirusTotalFileUrl, getVirusTotalIocUrl, iocTotal } from "./samplesHelpers";
 
 /* ── Static analysis (strings / IOCs / PE / ELF) ─────────────────────────── */
 
@@ -48,6 +48,36 @@ function StaticAnalysis({ sample }: { sample: { sample_id: string; sha256: strin
 
   return (
     <div className="mt-6 space-y-6">
+      {/* Safe SOC Static Triage Status Banner */}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-500/30 bg-emerald-500/5 px-4 py-3 font-mono text-xs">
+        <div className="flex items-center gap-2.5">
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-500/20 text-emerald-400">
+            <Icon name="shield" size={14} />
+          </span>
+          <div>
+            <span className="font-bold text-emerald-300">Mode 1: Safe Static Triage (Zero Execution Risk)</span>
+            <p className="text-[11px] text-text-muted">
+              Deep binary telemetry extracted directly from raw file bytes without executing. External threat pivots linked to VirusTotal.
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <a
+            href={getVirusTotalFileUrl(sample.sha256)}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Inspect SHA-256 file report on VirusTotal"
+            className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/50 bg-accent/15 px-3 py-1.5 text-[11px] font-bold text-accent transition hover:bg-accent/25 hover:shadow-[var(--glow-accent)]"
+          >
+            <span>VirusTotal Intelligence</span>
+            <Icon name="external" size={11} />
+          </a>
+          <span className="rounded bg-emerald-500/20 px-2 py-1 text-[10px] font-bold text-emerald-400 uppercase">
+            Static Safe
+          </span>
+        </div>
+      </div>
+
       <Panel
         kicker="Static · on-demand"
         title="Strings & candidate IOCs"
@@ -72,7 +102,7 @@ function StaticAnalysis({ sample }: { sample: { sample_id: string; sha256: strin
         )}
         {st && st.available && (
           <>
-            {/* IOC buckets — each chip jumps to search (pre-filled) or watchlists. */}
+            {/* IOC buckets — each chip jumps to internal search, external VirusTotal pivot, or watchlist. */}
             {totalIocs > 0 ? (
               <div className="mb-5 space-y-3">
                 {(
@@ -94,12 +124,23 @@ function StaticAnalysis({ sample }: { sample: { sample_id: string; sha256: strin
                           <span key={`${g.key}-${v}`} className="group inline-flex items-center gap-1">
                             <Link
                               to={`/search?q=${encodeURIComponent(v)}`}
-                              title={`Search history for ${v}`}
+                              title={`Search OutPost event history for ${v}`}
                               className="press inline-flex max-w-[260px] items-center gap-1 truncate rounded border border-border-subtle bg-bg-elevated/40 px-2 py-1 font-mono text-[11px] text-text-primary transition-colors duration-150 hover:border-accent/60 hover:text-accent"
                             >
                               <Icon name={g.icon} size={10} className="text-text-faint" />
                               <span className="truncate">{v}</span>
                             </Link>
+                            <a
+                              href={getVirusTotalIocUrl(g.key, v)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              title={`VirusTotal external threat intelligence lookup for ${v}`}
+                              aria-label={`VirusTotal external threat intelligence lookup for ${v}`}
+                              className="press inline-flex h-5 items-center gap-0.5 rounded border border-accent/40 bg-accent/10 px-1.5 font-mono text-[9px] font-semibold text-accent transition-colors duration-150 hover:border-accent hover:bg-accent/20"
+                            >
+                              <span>VT</span>
+                              <Icon name="external" size={9} />
+                            </a>
                             <button
                               onClick={() => void addToWatchlist(v)}
                               disabled={watchlisted.has(v)}
@@ -365,430 +406,628 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
   const queryClient = useQueryClient();
   const [detonating, setDetonating] = useState(false);
   const [isolationDriver, setIsolationDriver] = useState<string>("auto");
+  const [timeoutSeconds, setTimeoutSeconds] = useState<number>(15);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<SampleDetonationResult | null>(null);
-  const [simTab, setSimTab] = useState<"timeline" | "tree" | "artifacts" | "alerts" | "syscalls" | "sinkhole" | "terminal" | "delta">("timeline");
+  const [inspectorTab, setInspectorTab] = useState<"files" | "processes" | "network" | "detections" | "syscalls" | "timeline">("files");
+  const [copiedTerminal, setCopiedTerminal] = useState(false);
+  const [executionTimer, setExecutionTimer] = useState<number>(0);
+  const timerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const terminalEndRef = useRef<HTMLDivElement>(null);
 
   const handleDetonateLive = async () => {
     setDetonating(true);
     setError(null);
+    setExecutionTimer(0);
+    const startTime = Date.now();
+    timerIntervalRef.current = setInterval(() => {
+      setExecutionTimer(Math.floor((Date.now() - startTime) / 1000));
+    }, 250);
+
     try {
-      const res = await detonateSample(sample.sample_id, 15, isolationDriver);
+      const res = await detonateSample(sample.sample_id, timeoutSeconds, isolationDriver);
       setResult(res);
-      setSimTab("timeline");
+      if ((res.alerts || []).length > 0) {
+        setInspectorTab("detections");
+      } else if ((res.dropped_artifacts || []).length > 0) {
+        setInspectorTab("files");
+      } else {
+        setInspectorTab("timeline");
+      }
       void queryClient.invalidateQueries({ queryKey: ["runs"] });
       void queryClient.invalidateQueries({ queryKey: ["events"] });
       void queryClient.invalidateQueries({ queryKey: ["alerts"] });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Detonation failed");
     } finally {
+      if (timerIntervalRef.current) {
+        clearInterval(timerIntervalRef.current);
+        timerIntervalRef.current = null;
+      }
       setDetonating(false);
     }
   };
 
+  const handleResetCockpit = () => {
+    setResult(null);
+    setError(null);
+    setExecutionTimer(0);
+  };
+
+  const handleCopyTerminal = () => {
+    const text = result?.terminal_output || "";
+    if (!text) return;
+    void navigator.clipboard.writeText(text);
+    setCopiedTerminal(true);
+    setTimeout(() => setCopiedTerminal(false), 2000);
+  };
+
+  const displayFiles = result?.dropped_artifacts || [];
+  const displayProcesses = result?.process_tree || [];
+  const displayNetwork = [
+    ...(result?.sinkhole_traffic || []),
+    ...((result?.events || []).filter((e) => e.event_type === "network_connection" || e.event_type === "socket_listen")),
+  ];
+  const displayAlerts = result?.alerts || [];
+
   return (
-    <Panel kicker="Dynamic Execution · Sandbox" title="Live Isolated Execution & Dynamic Trace">
-      <div className="space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border-subtle bg-bg-base/60 p-4">
-          <div>
-            <h4 className="font-mono text-xs font-bold text-text-primary">Instant Sandbox Detonation</h4>
-            <p className="mt-0.5 text-[11px] text-text-muted">
-              Executes binary in an isolated micro-environment, tracking process creation, disk I/O, network sockets, and behavioral detection alerts.
-            </p>
-            <div className="mt-3 flex items-center gap-2">
-              <label className="font-mono text-[11px] text-text-muted">Isolation Driver:</label>
-              <select
-                value={isolationDriver}
-                onChange={(e) => setIsolationDriver(e.target.value)}
-                className="rounded-lg border border-border-subtle bg-bg-surface px-2.5 py-1 font-mono text-xs text-text-primary outline-none focus:border-accent/60"
-              >
-                <option value="auto">Auto-Detect Best Driver</option>
-                <option value="bubblewrap">Bubblewrap Micro-Sandbox (bwrap)</option>
-                <option value="wine">Headless Wine Emulation</option>
-                <option value="tempdir">Standard Isolation (Tempdir)</option>
-              </select>
-            </div>
-          </div>
-          <button
-            onClick={() => void handleDetonateLive()}
-            disabled={detonating}
-            className="press inline-flex items-center gap-1.5 rounded-xl border border-accent/60 bg-accent/15 px-4 py-2 font-mono text-xs font-bold text-accent transition hover:bg-accent/25 hover:shadow-[var(--glow-accent)] disabled:opacity-50"
-          >
-            <Icon name={detonating ? "refresh" : "play"} size={13} className={detonating ? "animate-spin" : ""} />
-            <span>{detonating ? "Executing in Sandbox..." : "Detonate Live Now"}</span>
-          </button>
-        </div>
-
-        {error && <p className="font-mono text-xs text-risk-malicious">{error}</p>}
-
-        {result && (
-          <div className="space-y-4 rounded-xl border border-border-subtle bg-bg-surface p-4">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle pb-3">
-              <div className="flex items-center gap-2 font-mono text-xs">
-                <span className="h-2 w-2 rounded-full bg-signal animate-pulse" />
-                <span className="font-bold text-text-primary">Execution Result (Exit Code {result.exit_code})</span>
-                <span className="rounded bg-accent/20 px-2 py-0.5 text-[10px] font-bold text-accent">
-                  Risk: {result.risk_score}/100
+    <div className="space-y-4 font-mono">
+      {/* Cockpit Shell */}
+      <div className="overflow-hidden rounded-2xl border border-border-subtle bg-bg-surface/90 shadow-xl backdrop-blur">
+        {/* Cockpit Status Header Strip */}
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border-subtle bg-bg-base/80 px-5 py-3.5 text-xs">
+          <div className="flex items-center gap-3">
+            <span className="flex h-8 w-8 items-center justify-center rounded-xl border border-accent/40 bg-accent/15 text-accent shadow-[var(--glow-accent)]">
+              <Icon name="play" size={15} />
+            </span>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-text-primary text-sm">Mode 2: Dynamic Sandbox Cockpit</span>
+                <span className="rounded bg-accent/15 px-2 py-0.5 text-[10px] font-bold text-accent uppercase">
+                  Isolated Flight Recorder
                 </span>
               </div>
-              <div className="flex items-center gap-2">
-                {(result.alerts || []).length > 0 && (
-                  <Link
-                    to={`/investigations?create=1&run_id=${result.run_id}&title=${encodeURIComponent(sample.original_name + " Malware Detonation")}`}
-                    className="press inline-flex items-center gap-1.5 rounded-lg border border-risk-malicious/50 bg-risk-malicious/15 px-3 py-1 font-mono text-xs font-semibold text-risk-malicious hover:bg-risk-malicious/25"
+              <p className="text-[11px] text-text-muted">
+                Live sandbox cage execution · Files, processes, network egress &amp; detection rules tracked in real time
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {result && (
+              <button
+                onClick={handleResetCockpit}
+                disabled={detonating}
+                className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-surface px-3 py-1.5 text-xs text-text-muted transition hover:border-accent/40 hover:text-text-primary disabled:opacity-50"
+              >
+                <Icon name="refresh" size={12} />
+                <span>Reset to Standby</span>
+              </button>
+            )}
+            <button
+              onClick={() => void handleDetonateLive()}
+              disabled={detonating}
+              className="press inline-flex items-center gap-2 rounded-xl border border-accent/70 bg-accent/20 px-4 py-2 text-xs font-bold text-accent transition hover:bg-accent/30 hover:shadow-[var(--glow-accent)] disabled:opacity-50"
+            >
+              <Icon name={detonating ? "refresh" : "play"} size={13} className={detonating ? "animate-spin" : ""} />
+              <span>{detonating ? `Executing in Sandbox (${executionTimer}s)...` : result ? "Re-Detonate in Sandbox" : "Detonate Live Now"}</span>
+            </button>
+          </div>
+        </div>
+
+        {error && (
+          <div className="mx-5 mt-4 rounded-xl border border-risk-malicious/40 bg-risk-malicious/10 p-3 text-xs text-risk-malicious flex items-center justify-between">
+            <span>{error}</span>
+            <button onClick={() => setError(null)} className="press text-text-muted hover:text-text-primary">
+              <Icon name="x" size={12} />
+            </button>
+          </div>
+        )}
+
+        {/* Dual-Deck Grid Layout */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-border-subtle">
+          {/* ── LEFT DECK: Sandbox Terminal Console (7 Cols) ───── */}
+          <div className="lg:col-span-7 flex flex-col justify-between bg-[#04060a] p-4 text-xs">
+            <div className="space-y-3">
+              {/* Terminal Title & Controls Bar */}
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-2.5">
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1.5" aria-hidden>
+                    <span className="h-2.5 w-2.5 rounded-full bg-rose-500/80" />
+                    <span className="h-2.5 w-2.5 rounded-full bg-amber-500/80" />
+                    <span className="h-2.5 w-2.5 rounded-full bg-emerald-500/80" />
+                  </div>
+                  <span className="text-[11px] font-bold text-[#c9d1d9] pl-1">
+                    cage:~/sandbox/{sample.original_name}
+                  </span>
+                  <span className={`ml-1 inline-flex items-center gap-1 rounded px-2 py-0.5 text-[9px] font-bold uppercase ${
+                    detonating
+                      ? "bg-amber-500/20 text-amber-300 animate-pulse"
+                      : result
+                        ? result.exit_code === 0
+                          ? "bg-emerald-500/20 text-emerald-400"
+                          : "bg-rose-500/20 text-rose-400"
+                        : "bg-white/10 text-text-muted"
+                  }`}>
+                    {detonating ? "Cage Active" : result ? `Exit: ${result.exit_code}` : "Standby"}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {/* Isolation Driver Dropdown */}
+                  <div className="flex items-center gap-1.5 text-[11px] text-text-muted">
+                    <label className="text-[10px] text-text-faint">Driver:</label>
+                    <select
+                      value={isolationDriver}
+                      onChange={(e) => setIsolationDriver(e.target.value)}
+                      disabled={detonating}
+                      className="rounded border border-white/15 bg-bg-surface px-2 py-1 text-[11px] text-text-primary outline-none focus:border-accent"
+                    >
+                      <option value="auto">Auto-Detect</option>
+                      <option value="bubblewrap">Bubblewrap Micro-Sandbox</option>
+                      <option value="wine">Headless Wine Emulation</option>
+                      <option value="tempdir">Standard TempDir Cage</option>
+                    </select>
+                  </div>
+
+                  {/* Timeout Dropdown */}
+                  <div className="flex items-center gap-1.5 text-[11px] text-text-muted">
+                    <label className="text-[10px] text-text-faint">Timeout:</label>
+                    <select
+                      value={timeoutSeconds}
+                      onChange={(e) => setTimeoutSeconds(Number(e.target.value))}
+                      disabled={detonating}
+                      className="rounded border border-white/15 bg-bg-surface px-2 py-1 text-[11px] text-text-primary outline-none focus:border-accent"
+                    >
+                      <option value={5}>5s</option>
+                      <option value={15}>15s</option>
+                      <option value={30}>30s</option>
+                      <option value={60}>60s</option>
+                    </select>
+                  </div>
+
+                  <button
+                    onClick={handleCopyTerminal}
+                    disabled={!result}
+                    className="press rounded border border-white/15 bg-white/5 px-2 py-1 text-[10px] text-text-muted hover:text-text-primary disabled:opacity-30"
+                    title="Copy terminal console log"
                   >
-                    <Icon name="shield" size={12} />
-                    Escalate to Case Dossier
-                  </Link>
-                )}
-                <Link to={`/runs/${result.run_id}`} className="font-mono text-xs text-accent hover:underline">
-                  Open Full Run Dossier →
-                </Link>
+                    {copiedTerminal ? "Copied" : "Copy"}
+                  </button>
+                </div>
               </div>
-            </div>
 
-            <div className="flex flex-wrap gap-2 font-mono text-xs">
-              {[
-                { id: "timeline", label: `Timeline (${result.timeline?.length ?? 0})` },
-                { id: "tree", label: `Process Tree (${result.process_tree?.length ?? 0})` },
-                { id: "artifacts", label: `Dropped Files (${result.dropped_artifacts?.length ?? 0})` },
-                { id: "alerts", label: `Alerts (${result.alerts?.length ?? 0})` },
-                { id: "syscalls", label: `Syscalls (${result.syscalls?.length ?? 0})` },
-                { id: "sinkhole", label: `C2 Sinkhole (${result.sinkhole_traffic?.length ?? 0})` },
-                { id: "terminal", label: "Terminal Log" },
-                { id: "delta", label: "Baseline Delta" },
-              ].map((tab) => (
-                <button
-                  key={tab.id}
-                  onClick={() => setSimTab(tab.id as any)}
-                  className={`rounded-lg px-3 py-1.5 transition ${
-                    simTab === tab.id ? "bg-accent/15 font-bold text-accent shadow-sm" : "text-text-muted hover:text-text-primary"
-                  }`}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
-
-            {simTab === "timeline" && (
-              <div className="space-y-3 font-mono text-xs">
-                {(!result.timeline || result.timeline.length === 0) ? (
-                  <p className="text-xs text-text-muted py-4 text-center">No behavioral timeline events recorded.</p>
-                ) : (
-                  <div className="space-y-2">
-                    {result.timeline.map((ev, i) => {
-                      const isMal = ev.severity === "malicious";
-                      const isSus = ev.severity === "suspicious";
+              {/* Terminal Screen Console */}
+              <div className="rounded-xl border border-white/10 bg-[#06080d] p-4 font-mono text-[11px] leading-relaxed max-h-[420px] overflow-y-auto shadow-inner selection:bg-accent selection:text-black">
+                {detonating ? (
+                  <div className="space-y-2 py-12 text-center text-accent">
+                    <Icon name="refresh" size={24} className="mx-auto animate-spin" />
+                    <p className="font-bold">Detonating {sample.original_name} in isolated sandbox cage...</p>
+                    <p className="text-[10px] text-text-muted">
+                      Trapping process creation, disk writes, and socket connections ({executionTimer}s elapsed)
+                    </p>
+                  </div>
+                ) : result ? (
+                  <div className="space-y-1">
+                    <div className="text-emerald-400 font-bold mb-2 flex items-center gap-1.5">
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                      <span>[OutPost Dynamic Sandbox Cage Active · Process PID Isolated]</span>
+                    </div>
+                    {(result.terminal_lines || (result.terminal_output ? result.terminal_output.split("\n") : [])).map((line, lidx) => {
+                      const isCmd = line.startsWith("$") || line.includes("Executing") || line.startsWith(">>>");
+                      const isErr = line.toLowerCase().includes("error") || line.toLowerCase().includes("stderr") || line.includes("[!]");
+                      const isInfo = line.startsWith("[*]") || line.startsWith("[OutPost");
                       return (
                         <div
-                          key={i}
-                          className={`flex items-start gap-3 rounded-xl border p-3.5 transition ${
-                            isMal
-                              ? "border-risk-malicious/40 bg-risk-malicious/10"
-                              : isSus
-                              ? "border-amber-500/40 bg-amber-500/10"
-                              : "border-border-subtle bg-bg-base/50"
+                          key={lidx}
+                          className={`whitespace-pre-wrap break-all ${
+                            isCmd
+                              ? "text-accent font-bold"
+                              : isErr
+                                ? "text-rose-400"
+                                : isInfo
+                                  ? "text-emerald-400"
+                                  : "text-[#c9d1d9]"
                           }`}
                         >
-                          <div className="shrink-0 flex flex-col items-center">
-                            <span className="rounded bg-bg-elevated px-2 py-0.5 text-[10px] font-bold text-text-faint">
-                              +{((ev.elapsed_ms || 0) / 1000).toFixed(2)}s
-                            </span>
-                            <span className="mt-1 text-[9px] uppercase tracking-wider text-text-faint font-semibold">
-                              {ev.category}
-                            </span>
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span className="font-bold text-text-primary">{ev.title}</span>
-                              <span
-                                className={`rounded px-1.5 py-0.2 text-[9px] font-bold uppercase ${
-                                  isMal
-                                    ? "bg-risk-malicious/20 text-risk-malicious"
-                                    : isSus
-                                    ? "bg-amber-500/20 text-amber-400"
-                                    : "bg-bg-elevated text-text-muted"
-                                }`}
-                              >
-                                {ev.severity}
-                              </span>
-                            </div>
-                            <p className="mt-1 text-[11px] text-text-muted break-words">{ev.details}</p>
-                          </div>
+                          {line}
                         </div>
                       );
                     })}
+                    <div ref={terminalEndRef} />
+                  </div>
+                ) : (
+                  /* Standby Readiness State */
+                  <div className="flex flex-col items-center justify-center min-h-[260px] text-center space-y-3 py-8">
+                    <div className="h-12 w-12 rounded-2xl border border-accent/40 bg-accent/10 flex items-center justify-center text-accent shadow-[var(--glow-accent)]">
+                      <Icon name="terminal" size={24} />
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-text-primary font-bold text-sm">Sandbox Terminal Standby</p>
+                      <p className="text-text-muted text-xs max-w-sm">
+                        Binary has been safely triaged statically. Click <span className="text-accent font-bold">"Detonate Live Now"</span> above to execute in the isolated cage and stream live flight telemetry.
+                      </p>
+                    </div>
+                    <div className="rounded-lg bg-bg-surface border border-border-subtle px-3 py-1.5 text-[11px] text-accent">
+                      outpost-sandbox:~$ <span className="animate-pulse">_</span>
+                    </div>
                   </div>
                 )}
               </div>
-            )}
+            </div>
 
-            {simTab === "artifacts" && (
-              <div className="space-y-3 font-mono text-xs">
-                {(!result.dropped_artifacts || result.dropped_artifacts.length === 0) ? (
-                  <p className="text-xs text-text-muted py-6 text-center border border-border-subtle rounded-xl bg-bg-base/30">
-                    No files or payload artifacts were dropped to disk during this sandbox execution.
-                  </p>
-                ) : (
-                  <div className="space-y-3">
-                    {result.dropped_artifacts.map((art, idx) => (
+            {/* Terminal Status Strip */}
+            <div className="mt-3 pt-2.5 border-t border-white/10 flex items-center justify-between text-[10px] text-text-faint">
+              <span className="flex items-center gap-1.5">
+                <span className={`h-2 w-2 rounded-full ${result ? "bg-emerald-400" : detonating ? "bg-amber-400 animate-pulse" : "bg-text-faint"}`} />
+                <span>Target: {sample.original_name} ({sample.detected_platform})</span>
+              </span>
+              <span>Isolation: {result?.isolation_driver || isolationDriver}</span>
+            </div>
+          </div>
+
+          {/* ── RIGHT DECK: Live Behavioral Flight Recorder (5 Cols) ───── */}
+          <div className="lg:col-span-5 flex flex-col justify-between bg-bg-surface p-4 text-xs space-y-4">
+            <div className="space-y-4">
+              {/* 4 Real-Time Behavioral KPI Cards */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-2 gap-2 text-center">
+                <div className="rounded-xl border border-border-subtle bg-bg-base/70 p-2.5 space-y-0.5">
+                  <div className="flex items-center justify-center gap-1 text-accent text-[11px]">
+                    <Icon name="file" size={13} />
+                    <span className="font-bold">Files Created</span>
+                  </div>
+                  <div className="text-lg font-bold text-text-primary">
+                    {displayFiles.length}
+                  </div>
+                  <span className="text-[9px] text-text-faint uppercase block">on disk</span>
+                </div>
+
+                <div className="rounded-xl border border-border-subtle bg-bg-base/70 p-2.5 space-y-0.5">
+                  <div className="flex items-center justify-center gap-1 text-cyan-400 text-[11px]">
+                    <Icon name="process" size={13} />
+                    <span className="font-bold">Processes</span>
+                  </div>
+                  <div className="text-lg font-bold text-text-primary">
+                    {displayProcesses.length}
+                  </div>
+                  <span className="text-[9px] text-text-faint uppercase block">spawned</span>
+                </div>
+
+                <div className="rounded-xl border border-border-subtle bg-bg-base/70 p-2.5 space-y-0.5">
+                  <div className="flex items-center justify-center gap-1 text-emerald-400 text-[11px]">
+                    <Icon name="network" size={13} />
+                    <span className="font-bold">Network Sockets</span>
+                  </div>
+                  <div className="text-lg font-bold text-text-primary">
+                    {displayNetwork.length}
+                  </div>
+                  <span className="text-[9px] text-text-faint uppercase block">outbound</span>
+                </div>
+
+                <div className="rounded-xl border border-border-subtle bg-bg-base/70 p-2.5 space-y-0.5">
+                  <div className="flex items-center justify-center gap-1 text-rose-400 text-[11px]">
+                    <Icon name="alert" size={13} />
+                    <span className="font-bold">Rule Hits</span>
+                  </div>
+                  <div className={`text-lg font-bold ${displayAlerts.length > 0 ? "text-rose-400" : "text-text-primary"}`}>
+                    {displayAlerts.length}
+                  </div>
+                  <span className="text-[9px] text-text-faint uppercase block">detections</span>
+                </div>
+              </div>
+
+              {/* Inspector Sub-Tabs */}
+              <div className="flex flex-wrap items-center gap-1 border-b border-border-subtle pb-2 text-[11px]">
+                <button
+                  onClick={() => setInspectorTab("files")}
+                  className={`flex items-center gap-1 rounded-lg px-2.5 py-1 transition ${
+                    inspectorTab === "files" ? "bg-accent/20 font-bold text-accent" : "text-text-muted hover:text-text-primary"
+                  }`}
+                >
+                  <Icon name="file" size={12} />
+                  <span>Files ({displayFiles.length})</span>
+                </button>
+                <button
+                  onClick={() => setInspectorTab("processes")}
+                  className={`flex items-center gap-1 rounded-lg px-2.5 py-1 transition ${
+                    inspectorTab === "processes" ? "bg-accent/20 font-bold text-accent" : "text-text-muted hover:text-text-primary"
+                  }`}
+                >
+                  <Icon name="process" size={12} />
+                  <span>Processes ({displayProcesses.length})</span>
+                </button>
+                <button
+                  onClick={() => setInspectorTab("network")}
+                  className={`flex items-center gap-1 rounded-lg px-2.5 py-1 transition ${
+                    inspectorTab === "network" ? "bg-accent/20 font-bold text-accent" : "text-text-muted hover:text-text-primary"
+                  }`}
+                >
+                  <Icon name="network" size={12} />
+                  <span>Network ({displayNetwork.length})</span>
+                </button>
+                <button
+                  onClick={() => setInspectorTab("detections")}
+                  className={`flex items-center gap-1 rounded-lg px-2.5 py-1 transition ${
+                    inspectorTab === "detections" ? "bg-accent/20 font-bold text-accent" : "text-text-muted hover:text-text-primary"
+                  }`}
+                >
+                  <Icon name="alert" size={12} />
+                  <span>Rules ({displayAlerts.length})</span>
+                </button>
+                <button
+                  onClick={() => setInspectorTab("syscalls")}
+                  className={`flex items-center gap-1 rounded-lg px-2 py-1 transition ${
+                    inspectorTab === "syscalls" ? "bg-accent/20 font-bold text-accent" : "text-text-muted hover:text-text-primary"
+                  }`}
+                >
+                  <span>Syscalls</span>
+                </button>
+                <button
+                  onClick={() => setInspectorTab("timeline")}
+                  className={`flex items-center gap-1 rounded-lg px-2 py-1 transition ${
+                    inspectorTab === "timeline" ? "bg-accent/20 font-bold text-accent" : "text-text-muted hover:text-text-primary"
+                  }`}
+                >
+                  <span>Timeline</span>
+                </button>
+              </div>
+
+              {/* Tab 1: Files Created & Dropped Artifacts */}
+              {inspectorTab === "files" && (
+                <div className="space-y-2.5 max-h-[300px] overflow-y-auto pr-1">
+                  {displayFiles.length === 0 ? (
+                    <div className="rounded-xl border border-dashed border-border-subtle p-6 text-center text-text-muted">
+                      <Icon name="file" size={20} className="mx-auto text-text-faint mb-2" />
+                      <p className="font-semibold text-text-primary">No Dropped Files Detected</p>
+                      <p className="text-[11px] text-text-muted mt-1">
+                        When the sample writes canary payloads, drops second-stage tools, or modifies disk files, they will appear here.
+                      </p>
+                    </div>
+                  ) : (
+                    displayFiles.map((art, fidx) => (
                       <div
-                        key={idx}
-                        className="rounded-xl border border-border-subtle bg-bg-base/60 p-4 space-y-3 hover:border-accent/50 transition"
+                        key={fidx}
+                        className="rounded-xl border border-border-subtle bg-bg-base/60 p-3 space-y-2 hover:border-accent/40 transition"
                       >
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div className="flex items-center gap-2">
-                            <Icon name="file" size={14} className="text-accent" />
-                            <span className="font-bold text-text-primary">{art.name}</span>
-                            <span className="rounded bg-bg-elevated px-2 py-0.5 text-[10px] text-text-faint">
-                              {art.size_bytes} bytes
-                            </span>
-                            {art.is_high_entropy && (
-                              <span className="rounded bg-risk-malicious/20 border border-risk-malicious/40 px-2 py-0.5 text-[9px] font-bold text-risk-malicious uppercase">
-                                High Entropy ({art.entropy}/8.0)
-                              </span>
-                            )}
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="space-y-0.5 truncate">
+                            <div className="flex items-center gap-1.5 font-bold text-text-primary">
+                              <Icon name="file" size={12} className="text-accent shrink-0" />
+                              <span className="truncate">{art.name}</span>
+                            </div>
+                            <div className="flex items-center gap-2 text-[10px] text-text-faint">
+                              <span>{art.size_bytes} bytes</span>
+                              {art.is_high_entropy && (
+                                <span className="rounded bg-rose-500/20 px-1 py-0.2 text-[9px] font-bold text-rose-400">
+                                  High Entropy ({art.entropy}/8.0)
+                                </span>
+                              )}
+                            </div>
                           </div>
-
-                          <a
-                            href={getSandboxArtifactUrl(result.run_id, art.filename)}
-                            download
-                            className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/50 bg-accent/15 px-3 py-1 text-[11px] font-bold text-accent hover:bg-accent/25"
-                          >
-                            <Icon name="download" size={11} />
-                            <span>Download File</span>
-                          </a>
+                          {result && (
+                            <a
+                              href={getSandboxArtifactUrl(result.run_id, art.filename)}
+                              download
+                              className="press shrink-0 inline-flex items-center gap-1 rounded border border-accent/40 bg-accent/10 px-2 py-0.5 text-[10px] font-bold text-accent hover:bg-accent/20"
+                            >
+                              <Icon name="download" size={10} />
+                              <span>Download</span>
+                            </a>
+                          )}
                         </div>
 
-                        {/* Shannon Entropy Bar */}
+                        {/* Shannon Entropy Visual Bar */}
                         <div className="space-y-1">
-                          <div className="flex justify-between text-[10px] text-text-faint">
-                            <span>Shannon Entropy: {art.entropy} / 8.0</span>
-                            <span>{art.entropy > 7.0 ? "Encrypted / Packed / Shellcode" : art.entropy > 5.0 ? "Structured Binary / Script" : "Plaintext / Sparse"}</span>
+                          <div className="flex justify-between text-[9px] text-text-faint">
+                            <span>Entropy: {art.entropy} / 8.0</span>
+                            <span>{art.entropy > 7.0 ? "Encrypted / Packed" : art.entropy > 5.0 ? "Binary / Code" : "Plaintext"}</span>
                           </div>
-                          <div className="h-2 w-full bg-border-subtle rounded-full overflow-hidden">
+                          <div className="h-1.5 w-full bg-border-subtle rounded-full overflow-hidden">
                             <div
                               className={`h-full rounded-full ${
-                                art.entropy > 7.0 ? "bg-risk-malicious" : art.entropy > 5.0 ? "bg-amber-400" : "bg-signal"
+                                art.entropy > 7.0 ? "bg-rose-500" : art.entropy > 5.0 ? "bg-amber-400" : "bg-emerald-400"
                               }`}
                               style={{ width: `${Math.min(100, (art.entropy / 8.0) * 100)}%` }}
                             />
                           </div>
                         </div>
 
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-[11px] text-text-muted bg-bg-surface p-2.5 rounded-lg border border-border-subtle">
-                          <div>
-                            <span className="text-text-faint uppercase text-[9px] block">SHA-256</span>
-                            <span className="break-all font-mono">{art.sha256}</span>
-                          </div>
-                          <div>
-                            <span className="text-text-faint uppercase text-[9px] block">MD5</span>
-                            <span className="break-all font-mono">{art.md5}</span>
-                          </div>
+                        <div className="text-[10px] text-text-muted bg-bg-surface p-2 rounded border border-border-subtle/50 space-y-0.5">
+                          <div className="truncate"><span className="text-text-faint uppercase text-[9px]">SHA256:</span> {art.sha256}</div>
+                          <div className="truncate"><span className="text-text-faint uppercase text-[9px]">MD5:</span> {art.md5}</div>
                         </div>
 
                         {art.preview && art.preview.length > 0 && (
-                          <div>
-                            <span className="text-text-faint text-[10px] block mb-1">Extracted Strings Preview:</span>
-                            <div className="bg-[#0a0c10] p-2 rounded text-[10px] font-mono text-emerald-400 max-h-24 overflow-y-auto space-y-0.5">
-                              {art.preview.map((line, lidx) => (
-                                <div key={lidx} className="truncate">{line}</div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-
-                        {art.yara_hits && art.yara_hits.length > 0 && (
-                          <div className="rounded-lg border border-purple-500/30 bg-purple-500/5 p-3 space-y-2">
-                            <div className="flex items-center justify-between">
-                              <span className="text-[10px] font-bold uppercase tracking-wider text-purple-400 flex items-center gap-1.5">
-                                <Icon name="shield" size={12} />
-                                Matched YARA Forensic Signatures ({art.yara_hits.length})
-                              </span>
-                              <span className="rounded bg-purple-500/20 border border-purple-500/40 px-1.5 py-0.5 text-[9px] font-bold text-purple-300 uppercase">
-                                Verified Hits
-                              </span>
-                            </div>
-                            <div className="flex flex-wrap gap-1.5">
-                              {art.yara_hits.map((hit, hidx) => (
-                                <div
-                                  key={hidx}
-                                  className="rounded border border-purple-500/40 bg-purple-950/40 px-2 py-1 text-[11px] font-mono flex items-center gap-2"
-                                >
-                                  <span className="font-bold text-purple-200">{hit.name}</span>
-                                  <span className="text-[9px] rounded bg-purple-800/40 px-1.5 py-0.5 text-purple-300 uppercase">
-                                    {hit.family}
-                                  </span>
-                                  {hit.description && (
-                                    <span className="text-text-muted text-[10px] hidden sm:inline">
-                                      · {hit.description}
-                                    </span>
-                                  )}
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-
-                        {art.config && (
-                          <div className="rounded-lg border border-accent/30 bg-accent/5 p-3 space-y-2">
-                            <div className="flex items-center justify-between">
-                              <span className="text-[10px] font-bold uppercase tracking-wider text-accent">
-                                Extracted Malware Configuration & Threat Indicators
-                              </span>
-                              <span
-                                className={`rounded px-1.5 py-0.5 text-[9px] font-bold uppercase ${
-                                  art.config.verdict === "MALICIOUS"
-                                    ? "bg-risk-malicious/20 text-risk-malicious border border-risk-malicious/40"
-                                    : art.config.verdict === "SUSPICIOUS"
-                                      ? "bg-amber-500/20 text-amber-400 border border-amber-500/40"
-                                      : "bg-risk-clean/20 text-risk-clean border border-risk-clean/40"
-                                }`}
-                              >
-                                {art.config.verdict} (Score: {art.config.threat_score}/100)
-                              </span>
-                            </div>
-
-                            {art.config.c2_ips && art.config.c2_ips.length > 0 && (
-                              <div className="flex flex-wrap items-center gap-1.5">
-                                <span className="text-[10px] text-text-faint">C2 Endpoints:</span>
-                                {art.config.c2_ips.map((ip: string) => (
-                                  <span key={ip} className="rounded bg-bg-surface border border-border-subtle px-1.5 py-0.5 text-[10px] font-mono text-cyan-400">
-                                    {ip}
-                                  </span>
-                                ))}
-                              </div>
-                            )}
-
-                            {art.config.crypto_wallets && art.config.crypto_wallets.length > 0 && (
-                              <div className="flex flex-wrap items-center gap-1.5">
-                                <span className="text-[10px] text-text-faint">Ransom Wallets:</span>
-                                {art.config.crypto_wallets.map((w: string) => (
-                                  <span key={w} className="rounded bg-bg-surface border border-border-subtle px-1.5 py-0.5 text-[10px] font-mono text-amber-400">
-                                    {w}
-                                  </span>
-                                ))}
-                              </div>
-                            )}
-
-                            {art.config.behavioral_indicators && art.config.behavioral_indicators.length > 0 && (
-                              <ul className="text-[10px] text-text-muted list-disc list-inside space-y-0.5">
-                                {art.config.behavioral_indicators.map((ind: string, iidx: number) => (
-                                  <li key={iidx}>{ind}</li>
-                                ))}
-                              </ul>
-                            )}
+                          <div className="bg-[#0a0c10] p-2 rounded text-[10px] font-mono text-emerald-400 max-h-20 overflow-y-auto space-y-0.5">
+                            {art.preview.slice(0, 5).map((p, pidx) => (
+                              <div key={pidx} className="truncate">{p}</div>
+                            ))}
                           </div>
                         )}
                       </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {simTab === "terminal" && (
-              <pre className="max-h-72 overflow-y-auto rounded-xl border border-border-subtle bg-[#0a0c10] p-4 font-mono text-xs text-[#c9d1d9]">
-                {result.terminal_output}
-              </pre>
-            )}
-
-            {simTab === "tree" && (
-              <div className="rounded-xl border border-border-subtle bg-bg-base/80 p-4">
-                <ProcessCausalityTree nodes={result.process_tree || []} />
-              </div>
-            )}
-
-            {simTab === "alerts" && (
-              <div className="space-y-2">
-                {(result.alerts || []).length === 0 ? (
-                  <p className="text-xs text-text-muted">Zero heuristics triggered for this execution.</p>
-                ) : (
-                  (result.alerts || []).map((al: any, idx: number) => (
-                    <div key={idx} className="flex items-center justify-between rounded-lg border border-risk-malicious/30 bg-risk-malicious/10 p-3 text-xs">
-                      <div>
-                        <span className="font-bold text-text-primary">{al.rule_name}</span>
-                        <p className="text-[11px] text-text-muted">{al.details}</p>
-                      </div>
-                      <span className="rounded bg-risk-malicious/20 px-2 py-0.5 text-[9px] uppercase font-bold text-risk-malicious">
-                        {al.severity}
-                      </span>
-                    </div>
-                  ))
-                )}
-              </div>
-            )}
-
-            {simTab === "delta" && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs font-mono">
-                <div className="rounded-lg border border-border-subtle bg-bg-base/50 p-3">
-                  <span className="font-bold text-signal">+ Spawned Processes ({result.detonation_delta?.new_processes?.length ?? 0})</span>
-                  {(result.detonation_delta?.new_processes || []).map((p: any, i: number) => (
-                    <div key={i} className="mt-1 text-[11px] text-text-muted">PID {p.pid}: {p.name}</div>
-                  ))}
+                    ))
+                  )}
                 </div>
-                <div className="rounded-lg border border-border-subtle bg-bg-base/50 p-3">
-                  <span className="font-bold text-accent">+ Opened Sockets ({result.detonation_delta?.new_sockets?.length ?? 0})</span>
-                  {(result.detonation_delta?.new_sockets || []).map((s: any, i: number) => (
-                    <div key={i} className="mt-1 text-[11px] text-text-muted">{s.protocol} {s.local_ip}:{s.local_port}</div>
-                  ))}
-                </div>
-              </div>
-            )}
+              )}
 
-            {simTab === "syscalls" && (
-              <div className="space-y-2">
-                {(!result.syscalls || result.syscalls.length === 0) ? (
-                  <p className="text-xs text-text-muted py-3">No low-level system call traces captured in this run.</p>
-                ) : (
-                  <div className="max-h-72 overflow-y-auto rounded-xl border border-border-subtle bg-[#0a0c10] p-3 font-mono text-[11px]">
-                    <div className="grid grid-cols-12 gap-2 border-b border-border-subtle pb-1.5 font-bold text-text-faint uppercase text-[9px]">
-                      <span className="col-span-1">PID</span>
-                      <span className="col-span-2">Syscall</span>
-                      <span className="col-span-6">Arguments</span>
-                      <span className="col-span-1">Result</span>
-                      <span className="col-span-2">Category</span>
+              {/* Tab 2: Process Causality Tree */}
+              {inspectorTab === "processes" && (
+                <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
+                  {displayProcesses.length === 0 ? (
+                    <div className="rounded-xl border border-dashed border-border-subtle p-6 text-center text-text-muted">
+                      <Icon name="process" size={20} className="mx-auto text-text-faint mb-2" />
+                      <p className="font-semibold text-text-primary">No Processes Spawned</p>
+                      <p className="text-[11px] text-text-muted mt-1">
+                        Any child processes, shell commands, or subprocess forks will populate the causality tree here.
+                      </p>
                     </div>
-                    {result.syscalls.map((sc, i) => (
-                      <div key={i} className="grid grid-cols-12 gap-2 py-1 border-b border-border-subtle/30 text-[#c9d1d9] hover:bg-accent/5">
-                        <span className="col-span-1 text-text-faint">{sc.pid ?? "-"}</span>
-                        <span className="col-span-2 font-bold text-accent">{sc.syscall}</span>
-                        <span className="col-span-6 truncate text-text-muted" title={sc.arguments}>{sc.arguments}</span>
-                        <span className="col-span-1 text-emerald-400">{sc.result}</span>
-                        <span className="col-span-2 capitalize text-text-faint">{sc.category}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
+                  ) : (
+                    <div className="rounded-xl border border-border-subtle bg-bg-base/80 p-3">
+                      <ProcessCausalityTree nodes={displayProcesses} />
+                    </div>
+                  )}
+                </div>
+              )}
 
-            {simTab === "sinkhole" && (
-              <div className="space-y-2">
-                {(!result.sinkhole_traffic || result.sinkhole_traffic.length === 0) ? (
-                  <p className="text-xs text-text-muted py-3">Zero outbound DNS/C2 beacon requests intercepted by sandbox sinkhole.</p>
-                ) : (
-                  <div className="space-y-1.5 font-mono text-xs">
-                    {result.sinkhole_traffic.map((req, i) => (
-                      <div key={i} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5">
+              {/* Tab 3: Network Sockets & Sinkhole */}
+              {inspectorTab === "network" && (
+                <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
+                  {displayNetwork.length === 0 ? (
+                    <div className="rounded-xl border border-dashed border-border-subtle p-6 text-center text-text-muted">
+                      <Icon name="network" size={20} className="mx-auto text-text-faint mb-2" />
+                      <p className="font-semibold text-text-primary">Zero Outbound Egress</p>
+                      <p className="text-[11px] text-text-muted mt-1">
+                        Outbound socket connections, C2 beacons, or DNS queries will be intercepted and listed here.
+                      </p>
+                    </div>
+                  ) : (
+                    displayNetwork.map((net: any, nidx: number) => (
+                      <div
+                        key={nidx}
+                        className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-2.5 text-xs"
+                      >
                         <div className="flex items-center gap-2">
                           <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[9px] font-bold text-amber-400 uppercase">
-                            {req.type.replace("_", " ")}
+                            {net.type ? net.type.replace("_", " ") : net.protocol || "SOCKET"}
                           </span>
-                          <span className="font-bold text-text-primary">{req.target}</span>
-                          {req.method && <span className="text-text-muted">({req.method} {req.path})</span>}
+                          <span className="font-bold text-text-primary">
+                            {net.target || `${net.dest_ip}:${net.dest_port}`}
+                          </span>
                         </div>
-                        <span className="text-[10px] text-amber-300/80">{req.intercepted_response}</span>
+                        <span className="text-[10px] text-amber-300">
+                          {net.intercepted_response || "Sinkholed / Intercepted"}
+                        </span>
                       </div>
-                    ))}
-                  </div>
+                    ))
+                  )}
+                </div>
+              )}
+
+              {/* Tab 4: Detection Rules Fired */}
+              {inspectorTab === "detections" && (
+                <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
+                  {displayAlerts.length === 0 ? (
+                    <div className="rounded-xl border border-dashed border-border-subtle p-6 text-center text-text-muted">
+                      <Icon name="shield" size={20} className="mx-auto text-text-faint mb-2" />
+                      <p className="font-semibold text-text-primary">No Detection Rules Triggered</p>
+                      <p className="text-[11px] text-text-muted mt-1">
+                        When behavior matches OutPost heuristic detection rules or Sigma signatures, alerts fire here.
+                      </p>
+                    </div>
+                  ) : (
+                    displayAlerts.map((al: any, aidx: number) => {
+                      const isMal = al.severity === "malicious";
+                      return (
+                        <div
+                          key={aidx}
+                          className={`rounded-lg border p-2.5 text-xs space-y-1 ${
+                            isMal
+                              ? "border-rose-500/40 bg-rose-500/10"
+                              : "border-amber-500/40 bg-amber-500/10"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-text-primary">{al.rule_name}</span>
+                            <span className={`rounded px-1.5 py-0.2 text-[9px] font-bold uppercase ${
+                              isMal ? "bg-rose-500/20 text-rose-400" : "bg-amber-500/20 text-amber-400"
+                            }`}>
+                              {al.severity}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-text-muted">{al.details}</p>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              )}
+
+              {/* Tab 5: Syscalls */}
+              {inspectorTab === "syscalls" && (
+                <div className="max-h-[300px] overflow-y-auto pr-1">
+                  {(!result?.syscalls || result.syscalls.length === 0) ? (
+                    <p className="text-xs text-text-muted py-6 text-center">No system calls recorded yet.</p>
+                  ) : (
+                    <div className="rounded-xl border border-border-subtle bg-[#0a0c10] p-2.5 font-mono text-[10px]">
+                      <div className="grid grid-cols-12 gap-1 border-b border-border-subtle pb-1 font-bold text-text-faint uppercase text-[9px]">
+                        <span className="col-span-1">PID</span>
+                        <span className="col-span-2">Call</span>
+                        <span className="col-span-6">Args</span>
+                        <span className="col-span-1">Res</span>
+                        <span className="col-span-2">Type</span>
+                      </div>
+                      {result.syscalls.slice(0, 100).map((sc, scidx) => (
+                        <div key={scidx} className="grid grid-cols-12 gap-1 py-0.5 border-b border-white/5 text-[#c9d1d9]">
+                          <span className="col-span-1 text-text-faint">{sc.pid ?? "-"}</span>
+                          <span className="col-span-2 font-bold text-accent">{sc.syscall}</span>
+                          <span className="col-span-6 truncate text-text-muted" title={sc.arguments}>{sc.arguments}</span>
+                          <span className="col-span-1 text-emerald-400">{sc.result}</span>
+                          <span className="col-span-2 capitalize text-text-faint">{sc.category}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Tab 6: Timeline */}
+              {inspectorTab === "timeline" && (
+                <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
+                  {(!result?.timeline || result.timeline.length === 0) ? (
+                    <p className="text-xs text-text-muted py-6 text-center">No timeline events recorded yet.</p>
+                  ) : (
+                    result.timeline.map((ev, tidx) => (
+                      <div
+                        key={tidx}
+                        className="flex items-start gap-2.5 rounded-lg border border-border-subtle bg-bg-base/40 p-2 text-xs"
+                      >
+                        <span className="rounded bg-bg-elevated px-1.5 py-0.5 text-[9px] font-bold text-text-faint">
+                          +{((ev.elapsed_ms || 0) / 1000).toFixed(2)}s
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-bold text-text-primary">{ev.title}</span>
+                            <span className="rounded bg-bg-elevated px-1 py-0.2 text-[8px] text-text-muted uppercase">
+                              {ev.severity}
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-text-muted truncate">{ev.details}</p>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Right Deck Footer Actions */}
+            {result && (
+              <div className="mt-3 pt-2.5 border-t border-border-subtle flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                <div className="flex items-center gap-2">
+                  <Link to={`/runs/${result.run_id}`} className="press text-accent hover:underline flex items-center gap-1">
+                    <span>Run Dossier</span>
+                    <Icon name="arrowRight" size={11} />
+                  </Link>
+                  <span className="text-text-faint">·</span>
+                  <Link to={`/events?run_id=${result.run_id}`} className="press text-text-muted hover:text-accent">
+                    Host Events
+                  </Link>
+                </div>
+                {(result.alerts || []).length > 0 && (
+                  <Link
+                    to={`/investigations?create=1&run_id=${result.run_id}&title=${encodeURIComponent(sample.original_name + " Detonation Analysis")}`}
+                    className="press inline-flex items-center gap-1 rounded bg-rose-500/15 border border-rose-500/40 px-2.5 py-0.5 font-bold text-rose-400 hover:bg-rose-500/25"
+                  >
+                    <Icon name="shield" size={11} />
+                    <span>Escalate to Case</span>
+                  </Link>
                 )}
               </div>
             )}
           </div>
-        )}
+        </div>
       </div>
-    </Panel>
+    </div>
   );
 }
 
@@ -1225,6 +1464,7 @@ export default function SampleDetailPage() {
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [detonating, setDetonating] = useState(false);
   const [detonationError, setDetonationError] = useState<string | null>(null);
+  const [dossierTab, setDossierTab] = useState<"static" | "dynamic" | "history" | "similarity">("static");
 
   const { data: sample, isLoading, isError } = useQuery({
     queryKey: ["sample", sampleId],
@@ -1267,8 +1507,6 @@ export default function SampleDetailPage() {
       </div>
     );
   }
-
-  const [dossierTab, setDossierTab] = useState<"static" | "dynamic" | "history" | "similarity">("static");
 
   const platName = sample.detected_platform === "windows" ? "Windows" : sample.detected_platform === "linux" ? "Linux" : sample.detected_platform === "macos" ? "macOS" : "unknown";
   const platIcon = sample.detected_platform === "macos" || sample.detected_platform === "windows" || sample.detected_platform === "linux" ? platformIconName(sample.detected_platform) : "terminal";
@@ -1367,9 +1605,21 @@ export default function SampleDetailPage() {
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Panel kicker="Signature" title="Full SHA-256">
-          <code className="block break-all rounded border border-border-subtle bg-bg-elevated/50 px-3 py-2 font-mono text-xs leading-relaxed text-text-primary">
-            {sample.sha256}
-          </code>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <code className="min-w-0 flex-1 break-all rounded border border-border-subtle bg-bg-elevated/50 px-3 py-2 font-mono text-xs leading-relaxed text-text-primary">
+              {sample.sha256}
+            </code>
+            <a
+              href={getVirusTotalFileUrl(sample.sha256)}
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Inspect file hash report on VirusTotal"
+              className="press inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-accent/60 bg-accent/15 px-3 py-2 font-mono text-xs font-bold text-accent transition-all hover:bg-accent/25 hover:shadow-[var(--glow-accent)]"
+            >
+              <span>VirusTotal Intel</span>
+              <Icon name="external" size={12} />
+            </a>
+          </div>
           <div className="mt-4 flex flex-wrap items-center gap-2">
             <Chip tone={sample.detected_platform === "macos" ? "suspicious" : sample.detected_platform === "linux" ? "clean" : "accent"} dot title={`Detected ${sample.detected_platform}`}>
               <Icon name={platIcon} size={11} />
@@ -1381,9 +1631,16 @@ export default function SampleDetailPage() {
               </Chip>
             )}
             {sample.vt_detections !== null ? (
-              <Chip tone={sample.vt_detections > 0 ? "malicious" : "clean"} dot>
-                {sample.vt_detections} VT detection{sample.vt_detections === 1 ? "" : "s"}
-              </Chip>
+              <a
+                href={getVirusTotalFileUrl(sample.sha256)}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="View VirusTotal detection report"
+              >
+                <Chip tone={sample.vt_detections > 0 ? "malicious" : "clean"} dot>
+                  {sample.vt_detections} VT detection{sample.vt_detections === 1 ? "" : "s"} ↗
+                </Chip>
+              </a>
             ) : (
               <Chip tone="muted">no VT intel</Chip>
             )}
@@ -1409,26 +1666,96 @@ export default function SampleDetailPage() {
       </div>
 
       {/* Analysis Workspace Mode Switcher */}
-      <div className="mt-8 flex flex-wrap items-center gap-2 border-b border-border-subtle pb-3 font-mono text-xs">
-        {[
-          { id: "static", label: "Static Analysis & Dossier", icon: "box" },
-          { id: "dynamic", label: "Live Dynamic Sandbox", icon: "play" },
-          { id: "history", label: `Detonation Runs (${runs.length})`, icon: "timeline" },
-          { id: "similarity", label: "Binary Similarity (CTPH)", icon: "copy" },
-        ].map((tab) => (
+      <div className="mt-8 rounded-2xl border border-border-subtle bg-bg-surface/80 p-2 shadow-sm font-mono">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
           <button
-            key={tab.id}
-            onClick={() => setDossierTab(tab.id as any)}
-            className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 font-medium transition-all ${
-              dossierTab === tab.id
-                ? "bg-accent/15 font-bold text-accent shadow-[var(--glow-accent)]"
-                : "text-text-muted hover:bg-bg-elevated hover:text-text-primary"
+            onClick={() => setDossierTab("static")}
+            className={`flex flex-col items-start gap-1 rounded-xl p-3 text-left transition ${
+              dossierTab === "static"
+                ? "border border-accent/60 bg-accent/15 text-accent shadow-[var(--glow-accent)]"
+                : "border border-transparent bg-bg-base/40 text-text-muted hover:bg-bg-elevated hover:text-text-primary"
             }`}
           >
-            <Icon name={tab.icon as any} size={13} />
-            {tab.label}
+            <div className="flex w-full items-center justify-between">
+              <span className="flex items-center gap-1.5 text-xs font-bold">
+                <Icon name="box" size={14} />
+                Mode 1: Static Triage
+              </span>
+              <span className="rounded bg-emerald-500/20 px-1.5 py-0.2 text-[9px] font-bold text-emerald-400 uppercase">
+                Safe · No Exec
+              </span>
+            </div>
+            <p className="text-[11px] text-text-muted">
+              Raw bytes inspection, Shannon entropy, YARA rules &amp; VirusTotal pivots.
+            </p>
           </button>
-        ))}
+
+          <button
+            onClick={() => setDossierTab("dynamic")}
+            className={`flex flex-col items-start gap-1 rounded-xl p-3 text-left transition ${
+              dossierTab === "dynamic"
+                ? "border border-accent/60 bg-accent/15 text-accent shadow-[var(--glow-accent)]"
+                : "border border-transparent bg-bg-base/40 text-text-muted hover:bg-bg-elevated hover:text-text-primary"
+            }`}
+          >
+            <div className="flex w-full items-center justify-between">
+              <span className="flex items-center gap-1.5 text-xs font-bold">
+                <Icon name="play" size={14} />
+                Mode 2: Dynamic Sandbox
+              </span>
+              <span className="rounded bg-accent/20 px-1.5 py-0.2 text-[9px] font-bold text-accent uppercase">
+                Live Cockpit
+              </span>
+            </div>
+            <p className="text-[11px] text-text-muted">
+              Isolated cage execution with real-time flight recorder of files, processes &amp; sockets.
+            </p>
+          </button>
+
+          <button
+            onClick={() => setDossierTab("history")}
+            className={`flex flex-col items-start gap-1 rounded-xl p-3 text-left transition ${
+              dossierTab === "history"
+                ? "border border-accent/60 bg-accent/15 text-accent shadow-[var(--glow-accent)]"
+                : "border border-transparent bg-bg-base/40 text-text-muted hover:bg-bg-elevated hover:text-text-primary"
+            }`}
+          >
+            <div className="flex w-full items-center justify-between">
+              <span className="flex items-center gap-1.5 text-xs font-bold">
+                <Icon name="activity" size={14} />
+                Detonation Runs ({runs.length})
+              </span>
+              <span className="rounded bg-bg-elevated px-1.5 py-0.2 text-[9px] font-bold text-text-faint uppercase">
+                History
+              </span>
+            </div>
+            <p className="text-[11px] text-text-muted">
+              Historical sandbox runs, risk scores, and protocol network forensics.
+            </p>
+          </button>
+
+          <button
+            onClick={() => setDossierTab("similarity")}
+            className={`flex flex-col items-start gap-1 rounded-xl p-3 text-left transition ${
+              dossierTab === "similarity"
+                ? "border border-accent/60 bg-accent/15 text-accent shadow-[var(--glow-accent)]"
+                : "border border-transparent bg-bg-base/40 text-text-muted hover:bg-bg-elevated hover:text-text-primary"
+            }`}
+          >
+            <div className="flex w-full items-center justify-between">
+              <span className="flex items-center gap-1.5 text-xs font-bold">
+                <Icon name="copy" size={14} />
+                Binary Similarity
+              </span>
+              <span className="rounded bg-bg-elevated px-1.5 py-0.2 text-[9px] font-bold text-text-faint uppercase">
+                CTPH
+              </span>
+            </div>
+            <p className="text-[11px] text-text-muted">
+              Fuzzy hash comparison across vault samples for shared code reuse.
+            </p>
+          </button>
+        </div>
       </div>
 
       {dossierTab === "static" && <StaticAnalysis sample={sample} />}
@@ -1436,7 +1763,14 @@ export default function SampleDetailPage() {
       {dossierTab === "dynamic" && (
         <div className="mt-6 space-y-6">
           <LiveDynamicSandboxCockpit sample={sample} />
-          <SandboxDetonation sample={sample} />
+          <details className="rounded-xl border border-border-subtle bg-bg-surface/60 p-4 transition">
+            <summary className="cursor-pointer font-mono text-xs text-text-muted hover:text-accent select-none">
+              ▸ Advanced Sandbox Task Dispatcher (Asynchronous Background Jobs)
+            </summary>
+            <div className="mt-4">
+              <SandboxDetonation sample={sample} />
+            </div>
+          </details>
         </div>
       )}
 

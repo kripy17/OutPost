@@ -566,6 +566,7 @@ export interface SampleDetonationResult {
   sinkhole_traffic?: SinkholeTrafficItem[];
   timeline?: TimelineEventItem[];
   dropped_artifacts?: DroppedArtifactItem[];
+  isolation_driver?: string;
 }
 
 export interface SimulationStageResult {
