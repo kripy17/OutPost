@@ -7,7 +7,7 @@ import { platformIconName } from "../components/iconMeta";
 import { Chip, PageHeader, Panel, Stat } from "../components/ui";
 import { deleteAllSamples, deleteSample, exportSamplesCsv, getSamples, saveBlob, uploadSample } from "../lib/api";
 import type { SampleRow } from "../types";
-import { formatBytes } from "./samplesHelpers";
+import { formatBytes, getVirusTotalFileUrl } from "./samplesHelpers";
 
 const PLATFORM_META: Record<SampleRow["detected_platform"], { label: string; tone: "accent" | "clean" | "suspicious" | "muted" }> = {
   windows: { label: "win", tone: "accent" },
@@ -90,11 +90,28 @@ function SampleTile({ s, onDelete }: { s: SampleRow; onDelete: (id: string, name
 
       <div className="mt-auto flex items-center justify-between pt-3">
         {vt !== null ? (
-          <Chip tone={vt > 0 ? "malicious" : "clean"} dot title="VirusTotal detections">
-            {vt > 0 ? `${vt} detections` : "clean intel"}
-          </Chip>
+          <a
+            href={getVirusTotalFileUrl(s.sha256)}
+            target="_blank"
+            rel="noopener noreferrer"
+            title={`View VirusTotal detection report for ${s.original_name}`}
+            className="hover:opacity-80 transition"
+          >
+            <Chip tone={vt > 0 ? "malicious" : "clean"} dot>
+              {vt > 0 ? `${vt} detections` : "clean intel"} ↗
+            </Chip>
+          </a>
         ) : (
-          <span className="font-mono text-[10px] text-text-faint">no intel</span>
+          <a
+            href={getVirusTotalFileUrl(s.sha256)}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Inspect file hash on VirusTotal"
+            className="font-mono text-[10px] text-text-faint hover:text-accent inline-flex items-center gap-0.5"
+          >
+            <span>VT lookup</span>
+            <Icon name="external" size={9} />
+          </a>
         )}
         <div className="flex items-center gap-1.5">
           {s.runs_count > 0 ? (
@@ -302,7 +319,7 @@ export default function SamplesPage() {
         <AnalysisPage />
       ) : (
         <>
-          {/* Binary Upload Dropzone */}
+          {/* Dual-Mode Binary Upload & Analysis Dropzone */}
           <div
             onDragOver={(e) => {
               e.preventDefault();
@@ -321,31 +338,43 @@ export default function SamplesPage() {
                 : "border-border-subtle bg-bg-surface/60 hover:border-accent/50 hover:bg-bg-surface"
             }`}
           >
-        <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-border-subtle bg-bg-elevated text-accent">
-          <Icon name="box" size={20} />
-        </div>
-        <p className="mt-2.5 font-sans text-xs font-semibold text-text-primary">
-          Upload Sample Binary for Static & Dynamic Analysis
-        </p>
-        <p className="mt-0.5 text-[11px] text-text-muted">
-          Drag &amp; drop executable binaries (.exe, .elf, .dll, .so, scripts) or click to browse
-        </p>
-        <label className="press mt-3 inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/15 px-3.5 py-1.5 font-mono text-xs font-semibold text-accent transition-colors hover:bg-accent/25">
-          <Icon name="plus" size={12} />
-          <span>{uploading ? "Analyzing binary…" : "Select File"}</span>
-          <input
-            type="file"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) void handleUpload(file);
-            }}
-            disabled={uploading}
-            className="sr-only"
-            aria-label="Upload sample binary"
-          />
-        </label>
-        {uploadError && <p className="mt-2 font-mono text-xs text-risk-malicious">{uploadError}</p>}
-      </div>
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-border-subtle bg-bg-elevated text-accent">
+              <Icon name="box" size={20} />
+            </div>
+            <p className="mt-2.5 font-sans text-xs font-semibold text-text-primary">
+              Upload Sample Binary for Dual-Mode Static &amp; Dynamic Analysis
+            </p>
+            <p className="mt-1 max-w-xl text-[11px] text-text-muted">
+              Drag &amp; drop executable binaries (.exe, .elf, .dll, .so, scripts) or click to browse.
+              Uploaded files are <span className="text-emerald-400 font-semibold">safely triaged statically</span> (never executed automatically) with Shannon entropy, YARA rules, and VirusTotal pivots, then ready for <span className="text-accent font-semibold">on-demand live dynamic sandbox detonation</span>.
+            </p>
+            <div className="mt-2 flex flex-wrap items-center justify-center gap-2 text-[10px] font-mono text-text-faint">
+              <span className="rounded bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 text-emerald-400">
+                ✓ Mode 1: Safe Static Triage (No Execution)
+              </span>
+              <span className="rounded bg-accent/10 border border-accent/30 px-2 py-0.5 text-accent">
+                ✓ Mode 2: Live Dynamic Sandbox Cockpit
+              </span>
+              <span className="rounded bg-bg-elevated border border-border-subtle px-2 py-0.5 text-text-muted">
+                ✓ 1-Click VirusTotal External Pivots
+              </span>
+            </div>
+            <label className="press mt-3.5 inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/15 px-4 py-2 font-mono text-xs font-semibold text-accent transition-colors hover:bg-accent/25 hover:shadow-[var(--glow-accent)]">
+              <Icon name="plus" size={12} />
+              <span>{uploading ? "Analyzing binary bytes safely…" : "Select Binary to Upload"}</span>
+              <input
+                type="file"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) void handleUpload(file);
+                }}
+                disabled={uploading}
+                className="sr-only"
+                aria-label="Upload sample binary"
+              />
+            </label>
+            {uploadError && <p className="mt-2 font-mono text-xs text-risk-malicious">{uploadError}</p>}
+          </div>
 
       <dl className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
         {(
