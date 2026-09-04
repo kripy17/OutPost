@@ -14,6 +14,7 @@ import {
   setAlertInvestigation,
   synthesizeInvestigation,
   getInvestigationExportUrl,
+  getRemediationScriptUrl,
 } from "../lib/api";
 import { useEventStream } from "../lib/useEventStream";
 import { toneFill, toneForSeverity } from "../lib/fillPatterns";
@@ -22,6 +23,8 @@ import DataProvenanceBadge from "../components/DataProvenanceBadge";
 import NetworkContextModal from "../components/NetworkContextModal";
 import ProcessContextModal from "../components/ProcessContextModal";
 import InvestigationEvidenceGraph from "../components/InvestigationEvidenceGraph";
+import { InvestigationTasksManager } from "../components/InvestigationTasksManager";
+import { InvestigationTimelineCard } from "../components/InvestigationTimelineCard";
 
 const REF_TYPES: InvestigationRefType[] = ["run", "host", "ioc", "artifact", "campaign"];
 const STATUSES: InvestigationStatus[] = ["created", "triage", "active", "contained", "resolved"];
@@ -49,6 +52,12 @@ export default function InvestigationDetailPage() {
   const [narrative, setNarrative] = useState<InvestigationNarrativeResult | null>(null);
   const [synthesizing, setSynthesizing] = useState(false);
   const [completedRemediations, setCompletedRemediations] = useState<Record<string, boolean>>({});
+  const [workspaceTab, setWorkspaceTab] = useState<"all" | "graph" | "tasks" | "timeline">("all");
+
+  const handleDownloadRemediationScript = (shell: "bash" | "powershell" = "bash") => {
+    const url = getRemediationScriptUrl(investigationId, shell);
+    window.open(url, "_blank");
+  };
 
   const handleSynthesize = async () => {
     setSynthesizing(true);
@@ -191,6 +200,24 @@ export default function InvestigationDetailPage() {
                 title="Download Structured Case Dossier (.json)"
               >
                 JSON
+              </button>
+            </div>
+            <div className="inline-flex rounded-lg border border-border-subtle bg-bg-surface overflow-hidden">
+              <button
+                className="px-3 py-1.5 text-xs font-semibold text-text hover:bg-bg-elevated transition flex items-center gap-1.5"
+                onClick={() => handleDownloadRemediationScript("bash")}
+                title="Download Non-Destructive POSIX Containment Script (.sh)"
+              >
+                <Icon name="terminal" size={12} className="text-emerald-400" />
+                <span>Remediation (.sh)</span>
+              </button>
+              <div className="w-[1px] bg-border-subtle" />
+              <button
+                className="px-2 py-1.5 text-xs font-semibold text-text-muted hover:text-text hover:bg-bg-elevated transition"
+                onClick={() => handleDownloadRemediationScript("powershell")}
+                title="Download PowerShell Containment Script (.ps1)"
+              >
+                PS1
               </button>
             </div>
             {inv.status !== "closed" ? (
@@ -353,26 +380,64 @@ export default function InvestigationDetailPage() {
         </Panel>
       )}
 
+      {/* Workspace Mode Selector */}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border-subtle pb-3 mb-6">
+        <div className="flex items-center gap-1.5">
+          {[
+            { id: "all", label: "Complete Overview", icon: "box" },
+            { id: "tasks", label: "Containment Checklist", icon: "check" },
+            { id: "timeline", label: "Causality Timeline", icon: "terminal" },
+            { id: "graph", label: "Evidence Graph", icon: "network" },
+          ].map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setWorkspaceTab(tab.id as any)}
+              className={`press inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold ${
+                workspaceTab === tab.id
+                  ? "border border-accent/40 bg-accent/15 text-accent"
+                  : "text-text-muted hover:bg-bg-elevated hover:text-text-normal"
+              }`}
+            >
+              <Icon name={tab.icon as any} size={13} />
+              <span>{tab.label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Containment Tasks Checklist */}
+      {(workspaceTab === "all" || workspaceTab === "tasks") && (
+        <InvestigationTasksManager investigationId={investigationId} />
+      )}
+
+      {/* Chronological Causality Timeline */}
+      {(workspaceTab === "all" || workspaceTab === "timeline") && (
+        <InvestigationTimelineCard investigationId={investigationId} />
+      )}
+
       {/* Incident Visual Evidence Graph */}
-      <Panel
-        kicker="Incident Response · Evidence Correlation Graph"
-        title="Interactive Incident Correlation & Attack Graph"
-        right={
-          <span className="font-mono text-[10px] text-text-faint">
-            Correlating Case, Hosts, Runs, Findings & Extracted IOCs
-          </span>
-        }
-        className="mb-6"
-      >
-        <InvestigationEvidenceGraph
-          investigation={inv}
-          onSelectNode={(type, id) => {
-            if (type === "ioc" && id.includes(".")) {
-              setInspectIp(id);
-            }
-          }}
-        />
-      </Panel>
+      {(workspaceTab === "all" || workspaceTab === "graph") && (
+        <Panel
+          kicker="Incident Response · Evidence Correlation Graph"
+          title="Interactive Incident Correlation & Attack Graph"
+          right={
+            <span className="font-mono text-[10px] text-text-faint">
+              Correlating Case, Hosts, Runs, Findings & Extracted IOCs
+            </span>
+          }
+          className="mb-6"
+        >
+          <InvestigationEvidenceGraph
+            investigation={inv}
+            onSelectNode={(type, id) => {
+              if (type === "ioc" && id.includes(".")) {
+                setInspectIp(id);
+              }
+            }}
+          />
+        </Panel>
+      )}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[3fr_2fr]">
         {/* Findings */}

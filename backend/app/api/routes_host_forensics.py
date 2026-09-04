@@ -42,6 +42,21 @@ def get_xray_snapshot() -> dict:
     }
 
 
+@router.post("/system/forensics/scan/yara", response_model=None)
+def scan_live_memory_yara_endpoint(limit: int = Query(50, ge=1, le=200)) -> dict:
+    """Scan memory and executable bytes of active running processes against OutPost YARA engine."""
+    return host_forensics.scan_live_memory_yara(limit_pids=limit)
+
+
+@router.get("/system/forensics/sockets", response_model=None)
+def get_live_sockets_endpoint() -> dict:
+    """Capture active sockets and enrich foreign IP addresses with threat intelligence."""
+    from ..core.db import db_session
+    with db_session() as conn:
+        sockets = host_forensics.get_enriched_live_sockets(conn)
+    return {"total": len(sockets), "sockets": sockets}
+
+
 @router.get("/system/forensics/process/{pid}", response_model=None)
 @router.get("/system/xray/process/{pid}", response_model=None)
 def get_xray_process_detail(pid: int) -> dict:

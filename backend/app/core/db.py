@@ -90,6 +90,23 @@ CREATE TABLE IF NOT EXISTS investigation_refs (
     UNIQUE (investigation_id, ref_type, ref_id)
 );
 
+CREATE TABLE IF NOT EXISTS investigation_tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    investigation_id TEXT NOT NULL REFERENCES investigations(id),
+    title TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'triage'
+        CHECK(category IN ('containment', 'eradication', 'evidence_collection', 'remediation', 'triage')),
+    status TEXT NOT NULL DEFAULT 'todo'
+        CHECK(status IN ('todo', 'in_progress', 'completed', 'cancelled')),
+    priority TEXT NOT NULL DEFAULT 'medium'
+        CHECK(priority IN ('low', 'medium', 'high', 'critical')),
+    assignee TEXT,
+    due_at TEXT,
+    completed_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS alerts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     run_id TEXT NOT NULL REFERENCES runs(run_id),

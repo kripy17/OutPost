@@ -474,6 +474,42 @@ class InvestigationNoteDTO(BaseModel):
     created_at: datetime
 
 
+TaskCategory = Literal["containment", "eradication", "evidence_collection", "remediation", "triage"]
+TaskStatus = Literal["todo", "in_progress", "completed", "cancelled"]
+TaskPriority = Literal["low", "medium", "high", "critical"]
+
+
+class InvestigationTaskIn(BaseModel):
+    title: str = Field(min_length=1, max_length=256)
+    category: TaskCategory = "triage"
+    priority: TaskPriority = "medium"
+    assignee: str | None = None
+    due_at: str | None = None
+
+
+class InvestigationTaskPatchIn(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=256)
+    category: TaskCategory | None = None
+    status: TaskStatus | None = None
+    priority: TaskPriority | None = None
+    assignee: str | None = None
+    due_at: str | None = None
+
+
+class InvestigationTaskDTO(BaseModel):
+    id: int
+    investigation_id: str
+    title: str
+    category: TaskCategory
+    status: TaskStatus
+    priority: TaskPriority
+    assignee: str | None = None
+    due_at: str | None = None
+    completed_at: str | None = None
+    created_at: str
+    updated_at: str | None = None
+
+
 class InvestigationDetailDTO(InvestigationDTO):
     """The investigation workspace payload: the header, its tags, the attached
     findings (from the canonical alerts model — never duplicated), the
@@ -482,6 +518,7 @@ class InvestigationDetailDTO(InvestigationDTO):
     findings: list[Alert] = []
     refs: list[InvestigationRefDTO] = []
     notes: list[InvestigationNoteDTO] = []
+    tasks: list[InvestigationTaskDTO] = []
 
 
 class InvestigationCloseIn(BaseModel):

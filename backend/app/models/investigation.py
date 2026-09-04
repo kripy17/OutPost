@@ -336,3 +336,360 @@ def findings_for_investigation(conn: sqlite3.Connection, investigation_id: str) 
         _parse_related_pids(d)
         out.append(d)
     return out
+
+
+# -- tasks -------------------------------------------------------------------
+
+
+def create_task(
+    conn: sqlite3.Connection,
+    investigation_id: str,
+    title: str,
+    category: str = "triage",
+    priority: str = "medium",
+    assignee: str | None = None,
+    due_at: str | None = None,
+) -> dict:
+    now = _now()
+    cur = conn.execute(
+        "INSERT INTO investigation_tasks (investigation_id, title, category, status, priority, assignee, due_at, created_at) "
+        "VALUES (?, ?, ?, 'todo', ?, ?, ?, ?)",
+        (investigation_id, title, category, priority, assignee, due_at, now),
+    )
+    task_id = cur.lastrowid
+    conn.execute(
+        "UPDATE investigations SET updated_at = ? WHERE id = ?", (now, investigation_id)
+    )
+    return get_task(conn, task_id)
+
+
+def get_task(conn: sqlite3.Connection, task_id: int) -> dict | None:
+    row = conn.execute(
+        "SELECT * FROM investigation_tasks WHERE id = ?", (task_id,)
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def list_tasks(
+    conn: sqlite3.Connection,
+    investigation_id: str,
+    status: str | None = None,
+    category: str | None = None,
+) -> list[dict]:
+    query = "SELECT * FROM investigation_tasks WHERE investigation_id = ?"
+    params: list = [investigation_id]
+    if status:
+        query += " AND status = ?"
+        params.append(status)
+    if category:
+        query += " AND category = ?"
+        params.append(category)
+    query += " ORDER BY CASE priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END, created_at ASC"
+    rows = conn.execute(query, params).fetchall()
+    return [dict(r) for r in rows]
+
+
+def update_task(
+    conn: sqlite3.Connection,
+    task_id: int,
+    *,
+    title: str | None = None,
+    category: str | None = None,
+    status: str | None = None,
+    priority: str | None = None,
+    assignee: str | None = None,
+    due_at: str | None = None,
+) -> dict | None:
+    current = get_task(conn, task_id)
+    if not current:
+        return None
+    sets: list[str] = ["updated_at = ?"]
+    now = _now()
+    values: list = [now]
+    if title is not None:
+        sets.append("title = ?")
+        values.append(title)
+    if category is not None:
+        sets.append("category = ?")
+        values.append(category)
+    if status is not None:
+        sets.append("status = ?")
+        values.append(status)
+        if status == "completed":
+            sets.append("completed_at = ?")
+            values.append(now)
+        elif current.get("completed_at"):
+            sets.append("completed_at = NULL")
+    if priority is not None:
+        sets.append("priority = ?")
+        values.append(priority)
+    if assignee is not None:
+        sets.append("assignee = ?")
+        values.append(assignee)
+    if due_at is not None:
+        sets.append("due_at = ?")
+        values.append(due_at)
+
+    conn.execute(
+        f"UPDATE investigation_tasks SET {', '.join(sets)} WHERE id = ?",
+        [*values, task_id],
+    )
+    conn.execute(
+        "UPDATE investigations SET updated_at = ? WHERE id = ?", (now, current["investigation_id"])
+    )
+    return get_task(conn, task_id)
+
+
+def delete_task(conn: sqlite3.Connection, task_id: int) -> bool:
+    row = get_task(conn, task_id)
+    if not row:
+        return False
+    conn.execute("DELETE FROM investigation_tasks WHERE id = ?", (task_id,))
+    conn.execute(
+        "UPDATE investigations SET updated_at = ? WHERE id = ?", (_now(), row["investigation_id"])
+    )
+    return True
+
+
+def generate_recommended_tasks(conn: sqlite3.Connection, investigation_id: str) -> list[dict]:
+    """Inspect attached alerts, IOCs, and hosts to generate high-impact IR tasks."""
+    existing = list_tasks(conn, investigation_id)
+    existing_titles = {t["title"].lower() for t in existing}
+
+    new_tasks: list[dict] = []
+    findings = findings_for_investigation(conn, investigation_id)
+    has_creds = any("credential" in f["rule_id"].lower() or "shadow" in f["rule_id"].lower() for f in findings)
+    has_rwx_or_inject = any("memory" in f["rule_id"].lower() or "rwx" in f["rule_id"].lower() for f in findings)
+
+    refs = list_refs(conn, investigation_id)
+    hosts = [r["ref_id"] for r in refs if r["ref_type"] == "host"]
+    iocs = [r["ref_id"] for r in refs if r["ref_type"] == "ioc"]
+
+    # Host isolation task
+    for h in hosts:
+        title = f"Isolate endpoint {h} from production subnet and preserve volatile state"
+        if title.lower() not in existing_titles:
+            new_tasks.append(create_task(conn, investigation_id, title, category="containment", priority="critical"))
+            existing_titles.add(title.lower())
+
+    # C2 IOC Blocking task
+    if iocs:
+        title = f"Apply perimeter firewall egress blocks and DNS sinkhole for {len(iocs)} attached IOCs"
+        if title.lower() not in existing_titles:
+            new_tasks.append(create_task(conn, investigation_id, title, category="containment", priority="high"))
+            existing_titles.add(title.lower())
+
+    # Credential reset task
+    if has_creds:
+        title = "Force global credential revocation and terminate active SSO/Kerberos sessions"
+        if title.lower() not in existing_titles:
+            new_tasks.append(create_task(conn, investigation_id, title, category="remediation", priority="critical"))
+            existing_titles.add(title.lower())
+
+    # In-memory carving / memory dump task
+    if has_rwx_or_inject:
+        title = "Acquire process memory dumps and analyze carved RWX shellcode buffers"
+        if title.lower() not in existing_titles:
+            new_tasks.append(create_task(conn, investigation_id, title, category="evidence_collection", priority="high"))
+            existing_titles.add(title.lower())
+
+    # General baseline review
+    title = "Review SIEM/EDR log continuity and verify sensor health across affected segments"
+    if title.lower() not in existing_titles:
+        new_tasks.append(create_task(conn, investigation_id, title, category="triage", priority="medium"))
+        existing_titles.add(title.lower())
+
+    return new_tasks
+
+
+def build_investigation_timeline(conn: sqlite3.Connection, investigation_id: str) -> list[dict]:
+    """Collate chronological causality timeline of alerts, notes, tasks, and evidence."""
+    timeline: list[dict] = []
+
+    inv = get(conn, investigation_id)
+    if not inv:
+        return []
+    timeline.append({
+        "timestamp": inv["created_at"],
+        "event_type": "lifecycle",
+        "title": f"Investigation Created: {inv['title']}",
+        "description": f"Opened by {inv.get('created_by') or 'system'}",
+        "severity": "info",
+        "actor": inv.get("created_by") or "system",
+    })
+
+    alerts = findings_for_investigation(conn, investigation_id)
+    for a in alerts:
+        timeline.append({
+            "timestamp": a["triggered_at"],
+            "event_type": "alert",
+            "title": f"Security Alert: {a['rule_name']}",
+            "description": a.get("details") or "",
+            "severity": a.get("severity") or "suspicious",
+            "actor": a.get("source") or "detection",
+            "ref_id": str(a["id"]),
+            "rule_id": a["rule_id"],
+        })
+
+    refs = list_refs(conn, investigation_id)
+    for r in refs:
+        timeline.append({
+            "timestamp": r["added_at"],
+            "event_type": "evidence",
+            "title": f"Attached Evidence: {r['ref_type'].upper()}",
+            "description": f"Linked {r['ref_type']}: {r['ref_id']}",
+            "severity": "info",
+            "actor": "analyst",
+            "ref_type": r["ref_type"],
+            "ref_id": r["ref_id"],
+        })
+
+    notes = list_notes(conn, investigation_id)
+    for n in notes:
+        timeline.append({
+            "timestamp": n["created_at"],
+            "event_type": "note",
+            "title": f"Analyst Journal: {n['actor']}",
+            "description": n["note"],
+            "severity": "info",
+            "actor": n["actor"],
+            "ref_id": str(n["id"]),
+        })
+
+    tasks = list_tasks(conn, investigation_id)
+    for t in tasks:
+        timeline.append({
+            "timestamp": t["created_at"],
+            "event_type": "task",
+            "title": f"IR Task Created: {t['title']}",
+            "description": f"Category: {t['category']} | Priority: {t['priority']} | Status: {t['status']}",
+            "severity": "suspicious" if t["priority"] in ("high", "critical") else "info",
+            "actor": t.get("assignee") or "unassigned",
+            "ref_id": str(t["id"]),
+        })
+        if t.get("completed_at"):
+            timeline.append({
+                "timestamp": t["completed_at"],
+                "event_type": "task",
+                "title": f"IR Task Completed: {t['title']}",
+                "description": f"Successfully completed by {t.get('assignee') or 'analyst'}",
+                "severity": "clean",
+                "actor": t.get("assignee") or "analyst",
+                "ref_id": str(t["id"]),
+            })
+
+    timeline.sort(key=lambda x: x["timestamp"])
+    return timeline
+
+
+def generate_remediation_script(conn: sqlite3.Connection, investigation_id: str, shell: str = "bash") -> str:
+    """Generate safe, non-destructive SOC remediation and containment script."""
+    inv = get(conn, investigation_id)
+    if not inv:
+        return "# Investigation not found\n"
+
+    refs = list_refs(conn, investigation_id)
+    iocs = []
+    for r in refs:
+        if r["ref_type"] == "ioc":
+            ioc_row = conn.execute("SELECT * FROM iocs WHERE id = ?", (r["ref_id"],)).fetchone()
+            if ioc_row:
+                iocs.append(dict(ioc_row))
+
+    alerts = findings_for_investigation(conn, investigation_id)
+    pids = set()
+    for a in alerts:
+        if a.get("related_pid"):
+            pids.add(a["related_pid"])
+        for pid in (a.get("related_pids") or []):
+            pids.add(pid)
+
+    now = _now()
+    if shell.lower() == "powershell":
+        lines = [
+            "# OutPost SOC Automated Remediation Script (PowerShell)",
+            f"# Generated: {now}",
+            f"# Investigation ID: {investigation_id} - {inv['title']}",
+            "# Execution Mode: Non-destructive / Audited containment",
+            "# SAFETY NOTICE: Review commands before executing in production.",
+            "",
+            "$ErrorActionPreference = 'Stop'",
+            "Write-Host '[*] OutPost Incident Response Containment Protocol Initiated' -ForegroundColor Cyan",
+            "",
+        ]
+        ip_iocs = [i for i in iocs if i.get("ioc_type") == "ip"]
+        if ip_iocs:
+            lines.append("# --- Step 1: Perimeter & Host Outbound Firewall Isolation ---")
+            for i in ip_iocs:
+                val = i["value"]
+                lines.append(f"Write-Host '[+] Blocking outbound traffic to C2 IP: {val}' -ForegroundColor Yellow")
+                lines.append(f"New-NetFirewallRule -DisplayName 'OutPost-Block-{val}' -Direction Outbound -RemoteAddress '{val}' -Action Block -ErrorAction SilentlyContinue")
+            lines.append("")
+
+        if pids:
+            lines.append("# --- Step 2: Volatile Process Freeze & Termination ---")
+            for p in sorted(pids):
+                lines.append(f"Write-Host '[+] Suspending / Terminating malicious PID: {p}' -ForegroundColor Red")
+                lines.append(f"Stop-Process -Id {p} -Force -ErrorAction SilentlyContinue")
+            lines.append("")
+
+        lines.extend([
+            "Write-Host '[✓] OutPost Containment Actions Executed Successfully' -ForegroundColor Green",
+            "# Rollback hint: Get-NetFirewallRule -DisplayName 'OutPost-Block-*' | Remove-NetFirewallRule",
+            "",
+        ])
+        return "\n".join(lines)
+
+    # Default Bash
+    lines = [
+        "#!/usr/bin/env bash",
+        "# OutPost SOC Automated Remediation Script (POSIX Bash)",
+        f"# Generated: {now}",
+        f"# Investigation ID: {investigation_id} - {inv['title']}",
+        "# Execution Mode: Non-destructive / Audited containment",
+        "# SAFETY NOTICE: Dry-run and review commands before applying in production environments.",
+        "set -euo pipefail",
+        "",
+        "echo '[*] OutPost Incident Response Containment Protocol Initiated'",
+        "",
+    ]
+    ip_iocs = [i for i in iocs if i.get("ioc_type") == "ip"]
+    if ip_iocs:
+        lines.append("# --- Step 1: Perimeter & Host Outbound Firewall Isolation ---")
+        for i in ip_iocs:
+            val = i["value"]
+            lines.append(f"echo '[+] Blocking outbound egress to malicious IP: {val}'")
+            lines.append(f"iptables -C OUTPUT -d {val} -j DROP 2>/dev/null || iptables -A OUTPUT -d {val} -j DROP")
+        lines.append("")
+
+    file_iocs = [i for i in iocs if i.get("ioc_type") == "filepath"]
+    if file_iocs:
+        lines.append("# --- Step 2: File Quarantine (Preserve Evidence Without Deletion) ---")
+        lines.append("QUARANTINE_DIR=\"/opt/outpost/quarantine/$(date +%s)\"")
+        lines.append("mkdir -p \"$QUARANTINE_DIR\"")
+        for f in file_iocs:
+            val = f["value"]
+            lines.append(f"if [ -f \"{val}\" ]; then")
+            lines.append(f"    echo '[+] Quarantining payload: {val}'")
+            lines.append(f"    sha256sum \"{val}\" >> \"$QUARANTINE_DIR/hashes.txt\"")
+            lines.append(f"    chmod 000 \"{val}\"")
+            lines.append(f"    mv -f \"{val}\" \"$QUARANTINE_DIR/\"")
+            lines.append("fi")
+        lines.append("")
+
+    if pids:
+        lines.append("# --- Step 3: Malicious Process Termination ---")
+        for p in sorted(pids):
+            lines.append(f"if kill -0 {p} 2>/dev/null; then")
+            lines.append(f"    echo '[+] Terminating suspicious PID: {p}'")
+            lines.append(f"    kill -9 {p} 2>/dev/null || true")
+            lines.append("fi")
+        lines.append("")
+
+    lines.extend([
+        "echo '[✓] OutPost Containment Actions Applied Successfully'",
+        "# Rollback hint: Review $QUARANTINE_DIR and inspect iptables -L OUTPUT -n -v",
+        "",
+    ])
+    return "\n".join(lines)
+

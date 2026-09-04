@@ -13,7 +13,15 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Icon, type IconName } from "../components/Icon";
 import { PageHeader, Panel } from "../components/ui";
-import { getHostContainment, getHostTimeline, isolateHost, listForensicProbes, runForensicProbe } from "../lib/api";
+import {
+  getHostContainment,
+  getHostTimeline,
+  isolateHost,
+  listForensicProbes,
+  runForensicProbe,
+  scanLiveMemoryYara,
+  getLiveSockets,
+} from "../lib/api";
 import { useEventStream } from "../lib/useEventStream";
 import { toneFill, toneForReputation, toneForSeverity } from "../lib/fillPatterns";
 import type { EventType, ForensicProbeItem, ForensicProbeResult, HostTimelineEntry, TimelineKind } from "../types";
@@ -174,6 +182,39 @@ export default function HostDetailPage() {
   };
 
   const [kind, setKind] = useState<TimelineKind | "">("");
+  const [yaraScanning, setYaraScanning] = useState(false);
+  const [yaraResult, setYaraResult] = useState<{
+    total_processes_scanned: number;
+    matches_found: number;
+    matches: Array<{
+      pid: number;
+      name: string;
+      rule: string;
+      target: string;
+      tags?: string[];
+      meta?: Record<string, any>;
+    }>;
+    errors: number;
+  } | null>(null);
+  const [socketsOpen, setSocketsOpen] = useState(false);
+
+  const { data: liveSocketsData, isLoading: socketsLoading, refetch: refetchSockets } = useQuery({
+    queryKey: ["live-enriched-sockets", hostId],
+    queryFn: () => getLiveSockets(),
+    enabled: activeView === "hunts" && socketsOpen,
+  });
+
+  const handleRunYaraScan = async () => {
+    setYaraScanning(true);
+    try {
+      const res = await scanLiveMemoryYara(50);
+      setYaraResult(res);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setYaraScanning(false);
+    }
+  };
   const [eventType, setEventType] = useState<EventType | "">("");
   const [q, setQ] = useState("");
   const [debouncedQ, setDebouncedQ] = useState("");
@@ -407,6 +448,186 @@ export default function HostDetailPage() {
           }
           className="space-y-6"
         >
+          {/* Forensic Capabilities Action Bar */}
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border-subtle bg-bg-elevated/40 p-3">
+            <div className="flex items-center gap-2 text-xs text-text-muted">
+              <Icon name="shield" size={14} className="text-accent" />
+              <span className="font-semibold text-text-primary">Advanced Host Forensic Scanners</span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={handleRunYaraScan}
+                disabled={yaraScanning}
+                className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/40 bg-accent/15 px-3 py-1.5 font-mono text-xs font-semibold text-accent hover:bg-accent/25 disabled:opacity-50"
+              >
+                <Icon name={yaraScanning ? "refresh" : "zap"} size={12} className={yaraScanning ? "animate-spin" : ""} />
+                <span>{yaraScanning ? "Scanning Memory..." : "Live Memory YARA Scan"}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setSocketsOpen((prev) => !prev)}
+                className={`press inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 font-mono text-xs font-semibold transition ${
+                  socketsOpen
+                    ? "border-signal/50 bg-signal/15 text-signal"
+                    : "border-border-subtle bg-bg-surface text-text-muted hover:text-text-primary"
+                }`}
+              >
+                <Icon name="network" size={12} />
+                <span>{socketsOpen ? "Hide Enriched Sockets" : "Active Sockets & Intel"}</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Live Memory YARA Scan Results Card */}
+          {yaraResult && (
+            <div className="rounded-xl border border-accent/40 bg-bg-surface p-4 font-mono text-xs space-y-3">
+              <div className="flex items-center justify-between border-b border-border-subtle pb-2">
+                <div className="flex items-center gap-2">
+                  <Icon name="zap" size={14} className="text-accent" />
+                  <span className="font-bold text-text-primary">Process Memory YARA Inspection</span>
+                  <span className="rounded bg-accent/20 px-2 py-0.5 text-[10px] font-bold text-accent">
+                    {yaraResult.total_processes_scanned} Processes Scanned
+                  </span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span
+                    className={
+                      yaraResult.matches_found > 0 ? "text-rose-400 font-bold" : "text-emerald-400 font-bold"
+                    }
+                  >
+                    {yaraResult.matches_found > 0
+                      ? `${yaraResult.matches_found} Signature Match${yaraResult.matches_found > 1 ? "es" : ""}`
+                      : "Zero Matches · Clean"}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setYaraResult(null)}
+                    className="hover:text-accent font-bold text-text-muted"
+                  >
+                    Close ×
+                  </button>
+                </div>
+              </div>
+
+              {yaraResult.matches_found === 0 ? (
+                <p className="py-2 text-text-muted text-xs">
+                  All running process binaries and anonymous memory allocations verified clean against OutPost signature catalog.
+                </p>
+              ) : (
+                <div className="max-h-72 overflow-y-auto space-y-2">
+                  {yaraResult.matches.map((m, idx) => (
+                    <div
+                      key={idx}
+                      className="p-3 rounded-lg border border-rose-500/40 bg-rose-500/10 text-rose-300 space-y-1"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-white">{m.name}</span>
+                          <span className="text-[10px] text-text-muted">PID: {m.pid}</span>
+                          <span className="rounded bg-rose-500/20 px-1.5 py-0.2 text-[9px] uppercase font-bold text-rose-300">
+                            {m.target}
+                          </span>
+                        </div>
+                        <span className="font-bold text-rose-400">{m.rule}</span>
+                      </div>
+                      {m.tags && m.tags.length > 0 && (
+                        <div className="flex items-center gap-1 pt-1">
+                          {m.tags.map((t) => (
+                            <span key={t} className="rounded bg-bg-base px-1.5 py-0.2 text-[9px] text-text-faint">
+                              #{t}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Active Sockets & Threat Intelligence Card */}
+          {socketsOpen && (
+            <div className="rounded-xl border border-border-subtle bg-bg-surface p-4 font-mono text-xs space-y-3">
+              <div className="flex items-center justify-between border-b border-border-subtle pb-2">
+                <div className="flex items-center gap-2">
+                  <Icon name="network" size={14} className="text-signal" />
+                  <span className="font-bold text-text-primary">Live Sockets & Threat Intelligence</span>
+                  <span className="text-text-muted text-[10px]">
+                    ({liveSocketsData?.total ?? 0} active endpoints)
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => refetchSockets()}
+                    disabled={socketsLoading}
+                    className="hover:text-accent font-mono text-[10px] text-text-muted"
+                  >
+                    {socketsLoading ? "Refreshing..." : "↻ Refresh"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSocketsOpen(false)}
+                    className="hover:text-accent font-bold ml-2 text-text-muted"
+                  >
+                    Close ×
+                  </button>
+                </div>
+              </div>
+
+              {socketsLoading ? (
+                <div className="flex items-center justify-center py-6 text-text-muted">
+                  <Icon name="refresh" className="animate-spin mr-2" size={14} />
+                  Enumerating host sockets and evaluating intelligence...
+                </div>
+              ) : !liveSocketsData || liveSocketsData.sockets.length === 0 ? (
+                <p className="py-4 text-center text-text-muted">No active sockets enumerated on host.</p>
+              ) : (
+                <div className="max-h-72 overflow-y-auto divide-y divide-border-subtle/50">
+                  {liveSocketsData.sockets.map((s, sidx) => {
+                    const isFlagged = s.threat_intel?.flagged;
+                    return (
+                      <div
+                        key={sidx}
+                        className={`flex items-center justify-between py-2 text-[11px] ${
+                          isFlagged ? "bg-rose-500/10 px-2 rounded" : ""
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <span className="font-bold text-text-primary">{s.laddr}</span>
+                          <span className="text-text-faint">→</span>
+                          <span className={isFlagged ? "text-rose-400 font-bold" : "text-text-muted"}>
+                            {s.raddr || "*"}
+                          </span>
+                          <span className="text-[10px] text-text-faint">
+                            {s.process_name} (PID {s.pid})
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="rounded bg-bg-base px-1.5 py-0.2 text-[9px] uppercase text-text-faint">
+                            {s.status}
+                          </span>
+                          {isFlagged ? (
+                            <span className="rounded bg-rose-500/20 px-1.5 py-0.2 text-[9px] font-bold uppercase text-rose-300">
+                              Threat Score: {s.threat_intel?.threat_score ?? "Flagged"}
+                            </span>
+                          ) : (
+                            <span className="rounded bg-emerald-500/15 px-1.5 py-0.2 text-[9px] font-bold text-emerald-400">
+                              Clean
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Active Probe Result */}
           {activeProbeResult && (
             <div className="rounded-xl border border-accent/40 bg-bg-surface p-4 font-mono text-xs space-y-3">

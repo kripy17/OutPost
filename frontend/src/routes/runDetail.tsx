@@ -20,6 +20,7 @@ import { AllowlistPanel, QuickAllowlist, SuppressionPanel } from "../components/
 import RulesPanel from "../components/RulesPanel/RulesPanel";
 import TimelineView from "../components/TimelineView/TimelineView";
 import Topology from "../components/Topology/Topology";
+import { NetworkProtocolInspector } from "../components/NetworkProtocolInspector";
 import { RISK_COLORS, enumKindsFromDetails, intelAgeLabel, riskBand } from "../lib/constants";
 import { addInvestigationRef, bulkUpdateAlertStatus, getCampaigns, getRunDetail, getRunIocsCsv, getSandboxArtifactUrl, listInvestigations, listSandboxArtifacts, markFalsePositive, reEnrichRun, refreshIpIntel, updateAlertStatus } from "../lib/api";
 import type { AlertStatus, NetworkConnection, ProcessNode, Reputation, RunDetail } from "../types";
@@ -811,6 +812,10 @@ export default function RunDetailPage() {
       </div>
 
       <div className="mt-6 space-y-6">
+        <Panel kicker="Protocol Intelligence" title="Network Conversation Flows & C2 Beaconing">
+          <NetworkProtocolInspector runId={runId} />
+        </Panel>
+
         {runArtifacts.length > 0 && (
           <Panel kicker="Forensics · Sandbox" title={`Captured Sandbox Artifacts (${runArtifacts.length})`}>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 font-mono text-xs">

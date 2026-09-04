@@ -30,6 +30,9 @@ from ..core.schema import (
     InvestigationPatchIn,
     InvestigationRefDTO,
     InvestigationRefIn,
+    InvestigationTaskDTO,
+    InvestigationTaskIn,
+    InvestigationTaskPatchIn,
 )
 from ..models import audit
 from ..models import investigation as inv_store
@@ -118,7 +121,8 @@ def get_investigation(investigation_id: str) -> InvestigationDetailDTO:
         findings = inv_store.findings_for_investigation(conn, investigation_id)
         refs = inv_store.list_refs(conn, investigation_id)
         notes = inv_store.list_notes(conn, investigation_id)
-    return InvestigationDetailDTO(**row, findings=findings, refs=refs, notes=notes)
+        tasks = inv_store.list_tasks(conn, investigation_id)
+    return InvestigationDetailDTO(**row, findings=findings, refs=refs, notes=notes, tasks=tasks)
 
 
 @router.patch("/investigations/{investigation_id}", response_model=InvestigationDTO)
@@ -297,5 +301,148 @@ def export_investigation(
                     "Content-Disposition": f'attachment; filename="outpost-incident-brief-{investigation_id}.md"'
                 },
             )
+
+
+# -- Incident Response Tasks & Checklist -------------------------------------
+
+
+@router.get("/investigations/{investigation_id}/tasks", response_model=list[InvestigationTaskDTO])
+def list_investigation_tasks(
+    investigation_id: str,
+    status: str | None = Query(None, description="todo | in_progress | completed | cancelled"),
+    category: str | None = Query(None, description="containment | eradication | evidence_collection | remediation | triage"),
+) -> list[InvestigationTaskDTO]:
+    with db_session() as conn:
+        _require_investigation(conn, investigation_id)
+        rows = inv_store.list_tasks(conn, investigation_id, status=status, category=category)
+    return [InvestigationTaskDTO(**r) for r in rows]
+
+
+@router.post("/investigations/{investigation_id}/tasks", status_code=201, response_model=InvestigationTaskDTO)
+def create_investigation_task(
+    investigation_id: str,
+    body: InvestigationTaskIn,
+    request: Request,
+) -> InvestigationTaskDTO:
+    actor = auth.role_from_request(request)
+    with db_session() as conn:
+        _require_investigation(conn, investigation_id)
+        task = inv_store.create_task(
+            conn,
+            investigation_id,
+            title=body.title.strip(),
+            category=body.category,
+            priority=body.priority,
+            assignee=body.assignee,
+            due_at=body.due_at,
+        )
+        audit.log(
+            conn, actor, "investigation.task.create",
+            target_type="investigation", target_id=investigation_id,
+            detail=f"task #{task['id']} {task['title']!r} [{task['category']}]",
+        )
+    return InvestigationTaskDTO(**task)
+
+
+@router.patch("/investigations/{investigation_id}/tasks/{task_id}", response_model=InvestigationTaskDTO)
+def update_investigation_task(
+    investigation_id: str,
+    task_id: int,
+    body: InvestigationTaskPatchIn,
+    request: Request,
+) -> InvestigationTaskDTO:
+    actor = auth.role_from_request(request)
+    with db_session() as conn:
+        _require_investigation(conn, investigation_id)
+        task = inv_store.update_task(
+            conn,
+            task_id,
+            title=body.title.strip() if body.title else None,
+            category=body.category,
+            status=body.status,
+            priority=body.priority,
+            assignee=body.assignee,
+            due_at=body.due_at,
+        )
+        if not task:
+            raise HTTPException(status_code=404, detail=f"Unknown task: {task_id}")
+        audit.log(
+            conn, actor, "investigation.task.update",
+            target_type="investigation", target_id=investigation_id,
+            detail=f"task #{task_id} status={task['status']} priority={task['priority']}",
+        )
+    return InvestigationTaskDTO(**task)
+
+
+@router.delete("/investigations/{investigation_id}/tasks/{task_id}", status_code=204)
+def delete_investigation_task(
+    investigation_id: str,
+    task_id: int,
+    request: Request,
+) -> None:
+    actor = auth.role_from_request(request)
+    with db_session() as conn:
+        _require_investigation(conn, investigation_id)
+        deleted = inv_store.delete_task(conn, task_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail=f"Unknown task: {task_id}")
+        audit.log(
+            conn, actor, "investigation.task.delete",
+            target_type="investigation", target_id=investigation_id,
+            detail=f"deleted task #{task_id}",
+        )
+
+
+@router.post("/investigations/{investigation_id}/tasks/generate-recommended", response_model=list[InvestigationTaskDTO])
+def generate_recommended_investigation_tasks(
+    investigation_id: str,
+    request: Request,
+) -> list[InvestigationTaskDTO]:
+    actor = auth.role_from_request(request)
+    with db_session() as conn:
+        _require_investigation(conn, investigation_id)
+        created = inv_store.generate_recommended_tasks(conn, investigation_id)
+        audit.log(
+            conn, actor, "investigation.tasks.generate_recommended",
+            target_type="investigation", target_id=investigation_id,
+            detail=f"generated {len(created)} recommended response tasks",
+        )
+    return [InvestigationTaskDTO(**t) for t in created]
+
+
+# -- Investigation Timeline & Causality ---------------------------------------
+
+
+@router.get("/investigations/{investigation_id}/timeline", response_model=None)
+def get_investigation_timeline(investigation_id: str) -> dict:
+    with db_session() as conn:
+        _require_investigation(conn, investigation_id)
+        events = inv_store.build_investigation_timeline(conn, investigation_id)
+    return {"investigation_id": investigation_id, "total": len(events), "events": events}
+
+
+# -- Automated Remediation Script Generator -----------------------------------
+
+
+@router.get("/investigations/{investigation_id}/remediation-script")
+def get_investigation_remediation_script(
+    investigation_id: str,
+    shell: str = Query("bash", description="bash | powershell"),
+):
+    from fastapi.responses import PlainTextResponse
+
+    with db_session() as conn:
+        _require_investigation(conn, investigation_id)
+        script = inv_store.generate_remediation_script(conn, investigation_id, shell=shell)
+        ext = "ps1" if shell.lower() == "powershell" else "sh"
+        media = "text/plain"
+        return PlainTextResponse(
+            content=script,
+            media_type=media,
+            headers={
+                "Content-Disposition": f'attachment; filename="outpost-remediate-{investigation_id}.{ext}"'
+            },
+        )
+
 
 
