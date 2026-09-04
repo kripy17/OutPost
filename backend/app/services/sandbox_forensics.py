@@ -172,7 +172,7 @@ async def poll_sandbox_process_tree(
                 except Exception:
                     pass
 
-            # 3. Check memory maps for RWX pages (shellcode / unpacked payloads)
+            # 3. Check memory maps for RWX pages & carve in-memory payloads
             for p in list(seen_pids):
                 maps_file = Path(f"/proc/{p}/maps")
                 if maps_file.exists():
@@ -193,12 +193,103 @@ async def poll_sandbox_process_tree(
                                         "details": f"PID {p} mapped RWX memory page without backing file: {line.strip()}",
                                         "severity": "malicious",
                                     })
+
+                                    # Attempt in-memory carving from /proc/[pid]/mem
+                                    try:
+                                        addr_parts = line.split()[0].split("-")
+                                        start_addr = int(addr_parts[0], 16)
+                                        end_addr = int(addr_parts[1], 16)
+                                        carve_size = min(end_addr - start_addr, 512 * 1024)
+                                        mem_path = Path(f"/proc/{p}/mem")
+                                        if mem_path.exists() and carve_size > 0:
+                                            with open(mem_path, "rb") as mf:
+                                                mf.seek(start_addr)
+                                                carved = mf.read(carve_size)
+                                                if carved and any(b != 0 for b in carved[:256]):
+                                                    c_ent = calculate_entropy(carved)
+                                                    c_name = f"memdump_pid_{p}_{hex(start_addr)}.bin"
+                                                    art_dir = config.DATA_DIR / "sandbox_artifacts" / run_id
+                                                    art_dir.mkdir(parents=True, exist_ok=True)
+                                                    (art_dir / c_name).write_bytes(carved)
+                                                    timeline_events.append({
+                                                        "timestamp": now_iso,
+                                                        "elapsed_ms": elapsed_ms,
+                                                        "category": "memory",
+                                                        "title": f"In-Memory Carved Payload ({c_name})",
+                                                        "details": f"Extracted {len(carved)} bytes from PID {p} memory space. Shannon Entropy: {c_ent}/8.0",
+                                                        "severity": "malicious",
+                                                    })
+                                    except Exception:
+                                        pass
                     except Exception:
                         pass
         except Exception:
             pass
 
         await asyncio.sleep(0.05)
+
+
+def extract_malware_config(sample_bytes: bytes, text_content: str = "") -> dict[str, Any]:
+    """Automated Malware Config & Threat Score Extractor.
+    Extracts embedded C2 IP endpoints, URLs, crypto ransom wallets, and behavioral tags.
+    """
+    decoded = text_content
+    if not decoded and sample_bytes:
+        decoded = sample_bytes.decode("latin1", errors="ignore")
+
+    ip_pattern = re.compile(r"\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b")
+    all_ips = set(ip_pattern.findall(decoded))
+    c2_ips = [
+        ip for ip in all_ips
+        if not (ip.startswith("127.") or ip.startswith("0.") or ip.startswith("255.") or ip == "8.8.8.8" or ip == "1.1.1.1")
+    ]
+
+    url_pattern = re.compile(r"https?://[a-zA-Z0-9_\-\.:]+(?:/[a-zA-Z0-9_\-\./\?=&%]*)?")
+    urls = list(set(url_pattern.findall(decoded)))[:8]
+
+    btc_pattern = re.compile(r"\b[13][a-km-zA-HJ-NP-Z1-9]{25,34}\b")
+    monero_pattern = re.compile(r"\b4[0-9AB][1-9A-HJ-NP-Za-km-z]{93}\b")
+    wallets = list(set(btc_pattern.findall(decoded) + monero_pattern.findall(decoded)))[:5]
+
+    ransom_keywords = ["ransom", "bitcoin", "decrypt", "restore your files", "encrypted", ".lockbit", "shadows delete"]
+    found_ransom = [kw for kw in ransom_keywords if kw in decoded.lower()]
+
+    score = 0
+    indicators = []
+    if c2_ips:
+        score += min(len(c2_ips) * 15, 30)
+        indicators.append(f"Contains {len(c2_ips)} external C2 network endpoint(s)")
+    if urls:
+        score += min(len(urls) * 10, 20)
+        indicators.append(f"Embedded URLs identified ({len(urls)})")
+    if wallets:
+        score += 35
+        indicators.append(f"Cryptocurrency extortion wallet address identified")
+    if found_ransom:
+        score += 25
+        indicators.append(f"Ransomware terminology identified: {', '.join(found_ransom[:3])}")
+
+    ent = calculate_entropy(sample_bytes) if sample_bytes else 0.0
+    if ent > 7.1:
+        score += 25
+        indicators.append(f"High Shannon entropy ({ent:.2f}/8.0) indicating packed/encrypted payload")
+    elif ent > 6.4:
+        score += 15
+        indicators.append(f"Elevated Shannon entropy ({ent:.2f}/8.0)")
+
+    score = min(score, 100)
+    verdict = "MALICIOUS" if score >= 60 else "SUSPICIOUS" if score >= 30 else "BENIGN"
+
+    return {
+        "threat_score": score,
+        "verdict": verdict,
+        "entropy": ent,
+        "c2_ips": c2_ips[:8],
+        "urls": urls,
+        "crypto_wallets": wallets,
+        "ransom_indicators": found_ransom,
+        "behavioral_indicators": indicators,
+    }
 
 
 def extract_dropped_artifacts(
@@ -247,6 +338,8 @@ def extract_dropped_artifacts(
                     if len(text_preview) >= 8:
                         break
 
+                parsed_config = extract_malware_config(raw, " ".join(text_preview))
+
                 artifacts.append({
                     "name": str(rel),
                     "filename": path.name,
@@ -256,6 +349,7 @@ def extract_dropped_artifacts(
                     "entropy": ent,
                     "is_high_entropy": ent > 7.0,
                     "preview": text_preview,
+                    "config": parsed_config,
                     "artifact_id": f"{run_id}_{sha256[:12]}",
                     "download_url": f"/api/sandbox/artifacts/{run_id}/{artifact_filename}",
                 })
@@ -265,3 +359,4 @@ def extract_dropped_artifacts(
         pass
 
     return artifacts
+

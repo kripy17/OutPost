@@ -486,3 +486,86 @@ def io(pid: int = typer.Argument(..., help="PID to inspect disk I/O throughput")
     )
     console.print(table)
 
+
+@app.command("probes")
+def list_probes(
+    host: str = typer.Option("local", "--host", "-h", help="Target host identifier"),
+) -> None:
+    """List available on-demand live host forensic artifact hunting probes."""
+    show_banner(primary=False)
+    try:
+        probes = api_client.get_forensic_probes(host_id=host)
+    except api_client.APIError as exc:
+        console.print(f"[bold #C4453B]Failed to load forensic probes: {exc}[/bold #C4453B]")
+        raise typer.Exit(1)
+
+    table = Table(title=f"OutPost — Live Host Forensic Hunt Probes ({len(probes)})", border_style="dim")
+    table.add_column("Probe ID", style="cyan bold", no_wrap=True)
+    table.add_column("Probe Name", style="bold")
+    table.add_column("Tactic", style="magenta")
+    table.add_column("Technique", style="dim")
+    table.add_column("Description")
+
+    for p in probes:
+        table.add_row(
+            p["id"],
+            p["name"],
+            p.get("tactic", ""),
+            p.get("technique", ""),
+            p.get("description", ""),
+        )
+
+    console.print(table)
+    console.print("\n[dim]Execute a forensic probe with:[/dim] [bold cyan]outpost forensics hunt <probe_id>[/bold cyan]")
+
+
+@app.command("hunt")
+def hunt(
+    probe_id: str = typer.Argument(..., help="Forensic hunt probe ID (e.g. deleted_binaries, crontab_persistence)"),
+    host: str = typer.Option("local", "--host", "-h", help="Target host identifier"),
+) -> None:
+    """Execute an on-demand live host forensic hunt probe."""
+    show_banner(primary=False)
+    console.print(f"[#D9A441]Executing forensic hunt probe '[bold]{probe_id}[/bold]' on host '{host}'...[/#D9A441]")
+
+    try:
+        res = api_client.run_forensic_probe(probe_id, host_id=host)
+    except api_client.APIError as exc:
+        console.print(f"[bold #C4453B]Forensic hunt failed: {exc}[/bold #C4453B]")
+        raise typer.Exit(1)
+
+    anomalies = res.get("anomalies_count", 0)
+    anom_color = "red" if anomalies > 0 else "green"
+
+    console.print(
+        Panel(
+            f"[bold]{res.get('name')}[/bold]\n"
+            f"[dim]Tactic:[/dim] [magenta]{res.get('tactic')}[/magenta]  ·  "
+            f"[dim]Technique:[/dim] [dim]{res.get('technique')}[/dim]\n"
+            f"[dim]Total Scanned:[/dim] [bold]{res.get('total_items', 0)} items[/bold]  ·  "
+            f"[dim]Anomalies / Hits:[/dim] [bold {anom_color}]{anomalies}[/bold {anom_color}]",
+            title="[bold #3B82F6]Live Host Forensic Hunt Results[/bold #3B82F6]",
+            border_style="#3B82F6",
+        )
+    )
+
+    findings = res.get("findings", [])
+    if findings:
+        table = Table(title=f"Discovered Hunt Findings ({len(findings)})", border_style="dim")
+        # Extract keys from first finding
+        keys = [k for k in findings[0].keys() if k not in ("raw", "details")][:5]
+        for k in keys:
+            table.add_column(k.replace("_", " ").title(), style="bold")
+        if any("details" in f for f in findings):
+            table.add_column("Details", style="dim")
+
+        for f in findings:
+            row = [str(f.get(k, "")) for k in keys]
+            if any("details" in f for f in findings):
+                row.append(str(f.get("details", "")))
+            table.add_row(*row)
+
+        console.print(table)
+    else:
+        console.print("[green]✓ No forensic anomalies or IOCs discovered for this hunt.[/green]")
+

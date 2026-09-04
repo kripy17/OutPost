@@ -983,6 +983,7 @@ async def execute_simulation_scenario_stage(
     stage_number: int,
     run_id: str | None = None,
     sandbox_dir_str: str | None = None,
+    facts: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Execute a single stage of an adversary simulation playbook in an isolated workspace."""
     scenario = SIMULATION_SCENARIOS.get(scenario_id) or SIMULATION_SCENARIOS["recon_sweep"]
@@ -1012,6 +1013,12 @@ async def execute_simulation_scenario_stage(
 
     stage_name = stage["name"]
     stage_cmd = stage["cmd"]
+
+    # Dynamic runtime fact interpolation
+    current_facts = dict(facts or {})
+    for fk, fv in current_facts.items():
+        stage_cmd = stage_cmd.replace(f"${{{fk}}}", str(fv)).replace(f"${fk}", str(fv))
+
     start_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
     start_mono = time.monotonic()
 
@@ -1066,6 +1073,14 @@ async def execute_simulation_scenario_stage(
 
     elapsed_ms = int((time.monotonic() - start_mono) * 1000)
 
+    # Dynamic fact extraction from stdout (OUTPOST_FACT:KEY=VAL)
+    for line in out_s.splitlines():
+        if "OUTPOST_FACT:" in line:
+            fact_part = line.split("OUTPOST_FACT:", 1)[1].strip()
+            if "=" in fact_part:
+                fk, fv = fact_part.split("=", 1)
+                current_facts[fk.strip()] = fv.strip()
+
     # Scan created files in workspace
     for p in ws.glob("**/*"):
         if p.is_file():
@@ -1118,6 +1133,7 @@ async def execute_simulation_scenario_stage(
         "events_count": len(events),
         "is_final_stage": is_final,
         "dropped_artifacts": dropped_artifacts,
+        "facts": current_facts,
     }
 
 
@@ -1339,5 +1355,177 @@ async def execute_sample_detonation(
         "timeline": timeline_events,
         "dropped_artifacts": dropped_artifacts,
     }
+
+
+async def execute_technique_test(
+    test_id: str,
+    run_id: str | None = None,
+    platform_override: str | None = None,
+) -> dict[str, Any]:
+    """Execute a single adversary technique unit test with prerequisite verification,
+    telemetry capture, detection evaluation, and automated cleanup."""
+    from . import technique_catalog
+    tech = technique_catalog.get_technique_test(test_id)
+    if not tech:
+        raise ValueError(f"Technique test '{test_id}' not found in catalog")
+
+    plat = platform_override or platform.system().lower()
+    if not run_id:
+        run_id = f"tech_{uuid.uuid4().hex[:10]}"
+        with db_session() as conn:
+            run_store.create_run(
+                conn=conn,
+                run_id=run_id,
+                sample_name=f"{tech['id']}.sh",
+                platform=plat,
+                session_type="analysis",
+                source="simulation",
+            )
+
+    ws = Path(tempfile.mkdtemp(prefix=f"outpost_sim_{run_id}_"))
+    start_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    start_mono = time.monotonic()
+
+    # 1. Check prerequisites
+    prereqs_met = True
+    prereq_output = []
+    for prereq in tech.get("prereqs", []):
+        p_cmd = prereq.get("command")
+        if p_cmd:
+            try:
+                p_proc = await asyncio.create_subprocess_shell(
+                    p_cmd,
+                    cwd=str(ws),
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                p_out, p_err = await asyncio.wait_for(p_proc.communicate(), timeout=5)
+                if p_proc.returncode != 0:
+                    prereqs_met = False
+                    prereq_output.append(f"FAILED: {prereq.get('description', p_cmd)}")
+                else:
+                    prereq_output.append(f"OK: {prereq.get('description', p_cmd)}")
+            except Exception as e:
+                prereqs_met = False
+                prereq_output.append(f"ERROR: {prereq.get('description', p_cmd)} ({e})")
+
+    # 2. Execute Attack Command
+    attack_cmd = tech["attack_command"]
+    proc = await asyncio.create_subprocess_shell(
+        attack_cmd,
+        cwd=str(ws),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env={
+            **os.environ,
+            "OUTPOST_SIMULATION": "1",
+            "OUTPOST_RUN_ID": run_id,
+            "OUTPOST_TECHNIQUE_ID": tech["id"],
+        },
+    )
+
+    events: list[dict[str, Any]] = []
+    proc_ev = {
+        "run_id": run_id,
+        "platform": plat,
+        "event_type": "process_create",
+        "timestamp": start_iso,
+        "pid": proc.pid,
+        "ppid": os.getpid(),
+        "process_name": attack_cmd.split()[0] if attack_cmd else "sh",
+        "command_line": attack_cmd,
+        "exe_path": "/bin/sh",
+        "host_id": "local",
+    }
+    events.append(proc_ev)
+    with db_session() as conn:
+        proc_ev["id"] = event_store.insert_event(conn, proc_ev)
+
+    out_s, err_s = "", ""
+    exit_code = 0
+    try:
+        out_b, err_b = await asyncio.wait_for(proc.communicate(), timeout=15)
+        out_s = out_b.decode("utf-8", errors="replace").strip()
+        err_s = err_b.decode("utf-8", errors="replace").strip()
+        exit_code = proc.returncode if proc.returncode is not None else 0
+    except asyncio.TimeoutError:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        exit_code = -1
+        err_s += "\n[!] Technique simulation execution timed out"
+
+    # 3. Workspace File Ingestion
+    for p in ws.glob("**/*"):
+        if p.is_file():
+            fe = {
+                "run_id": run_id,
+                "platform": plat,
+                "event_type": "file_write",
+                "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "pid": proc.pid,
+                "file_path": str(p),
+                "host_id": "local",
+            }
+            events.append(fe)
+            with db_session() as conn:
+                fe["id"] = event_store.insert_event(conn, fe)
+
+    # 4. Evaluate Detections
+    alerts = []
+    with db_session() as conn:
+        detection.evaluate_batch(conn, run_id, events)
+        alert_rows = conn.execute("SELECT * FROM alerts WHERE run_id = ?", (run_id,)).fetchall()
+        alerts = [dict(r) for r in alert_rows]
+
+    # 5. Automated Cleanup Contract
+    cleanup_cmd = tech.get("cleanup_command")
+    cleanup_status = "not_needed"
+    if cleanup_cmd and cleanup_cmd != "true":
+        try:
+            c_proc = await asyncio.create_subprocess_shell(
+                cleanup_cmd,
+                cwd=str(ws),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await asyncio.wait_for(c_proc.communicate(), timeout=5)
+            cleanup_status = "success" if c_proc.returncode == 0 else "failed"
+        except Exception:
+            cleanup_status = "failed"
+
+    try:
+        shutil.rmtree(ws, ignore_errors=True)
+    except Exception:
+        pass
+
+    with db_session() as conn:
+        run_store.complete_run(conn, run_id)
+
+    elapsed_ms = int((time.monotonic() - start_mono) * 1000)
+    risk_score = risk.compute_risk_score([a["rule_id"] for a in alerts]) if alerts else 0
+
+    return {
+        "run_id": run_id,
+        "test_id": tech["id"],
+        "technique_id": tech["technique_id"],
+        "technique_name": tech["technique_name"],
+        "tactic": tech["tactic"],
+        "name": tech["name"],
+        "status": "success" if exit_code == 0 else "failed",
+        "exit_code": exit_code,
+        "elapsed_ms": elapsed_ms,
+        "prereqs_met": prereqs_met,
+        "prereq_output": prereq_output,
+        "cleanup_status": cleanup_status,
+        "stdout": out_s,
+        "stderr": err_s,
+        "alerts": alerts,
+        "alerts_count": len(alerts),
+        "events_count": len(events),
+        "risk_score": risk_score,
+    }
+
 
 

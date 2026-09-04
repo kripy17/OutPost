@@ -220,3 +220,47 @@ def test_forensics_io_cli(monkeypatch):
     assert "10.00 MB" in res.stdout
     assert "50.00 MB" in res.stdout
 
+
+def test_forensics_probes_cli(monkeypatch):
+    monkeypatch.setattr(
+        api_client,
+        "get_forensic_probes",
+        lambda host_id="local": [
+            {
+                "id": "test_probe",
+                "name": "Test Probe",
+                "tactic": "Persistence",
+                "technique": "T1053.003",
+                "description": "Test probe description",
+            }
+        ],
+    )
+    res = runner.invoke(app, ["probes"])
+    assert res.exit_code == 0
+    assert "Live Host Forensic Hunt Probes" in res.stdout
+    assert "test_probe" in res.stdout
+    assert "Test Probe" in res.stdout
+
+
+def test_forensics_hunt_cli(monkeypatch):
+    monkeypatch.setattr(
+        api_client,
+        "run_forensic_probe",
+        lambda probe_id, host_id="local": {
+            "probe_id": probe_id,
+            "name": "Test Probe",
+            "tactic": "Persistence",
+            "technique": "T1053.003",
+            "total_items": 10,
+            "anomalies_count": 1,
+            "findings": [{"key": "canary_val", "details": "Found suspicious item"}],
+        },
+    )
+    res = runner.invoke(app, ["hunt", "test_probe"])
+    assert res.exit_code == 0
+    assert "Live Host Forensic Hunt Results" in res.stdout
+    assert "Test Probe" in res.stdout
+    assert "Discovered Hunt Findings" in res.stdout
+    assert "canary_val" in res.stdout
+
+

@@ -198,6 +198,7 @@ class PlaybookStageIn(BaseModel):
     stage_number: int
     run_id: str | None = None
     sandbox_dir: str | None = None
+    facts: dict[str, str] | None = None
 
 
 @router.post("/sandbox/detonate/playbook", status_code=201, response_model=None)
@@ -235,11 +236,47 @@ async def simulate_scenario_stage(body: PlaybookStageIn) -> dict:
             stage_number=body.stage_number,
             run_id=body.run_id,
             sandbox_dir_str=body.sandbox_dir,
+            facts=body.facts,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Stage execution failed: {e}")
+
+
+class TechniqueRunIn(BaseModel):
+    test_id: str
+    run_id: str | None = None
+    platform: str | None = None
+
+
+@router.get("/sandbox/techniques", response_model=None)
+def get_techniques(tactic: str | None = None, platform: str | None = None, q: str | None = None) -> list[dict]:
+    """List and filter modular adversary technique emulation tests."""
+    from ..services.technique_catalog import list_technique_tests
+    return list_technique_tests(tactic=tactic, platform=platform, q=q)
+
+
+@router.get("/sandbox/techniques/{test_id}", response_model=None)
+def get_technique_detail(test_id: str) -> dict:
+    """Retrieve details and commands for a specific technique test."""
+    from ..services.technique_catalog import get_technique_test
+    res = get_technique_test(test_id)
+    if not res:
+        raise HTTPException(status_code=404, detail="Technique test not found")
+    return res
+
+
+@router.post("/sandbox/techniques/run", status_code=200, response_model=None)
+async def run_technique(body: TechniqueRunIn) -> dict:
+    """Execute a single adversary technique test with pre-checks, telemetry capture, and automated cleanup."""
+    from ..services.dynamic_sandbox import execute_technique_test
+    try:
+        return await execute_technique_test(body.test_id, run_id=body.run_id, platform_override=body.platform)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Technique simulation failed: {e}")
 
 
 @router.get("/sandbox/artifacts/{run_id}", response_model=None)
