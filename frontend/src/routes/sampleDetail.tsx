@@ -597,6 +597,38 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
                           </div>
                         )}
 
+                        {art.yara_hits && art.yara_hits.length > 0 && (
+                          <div className="rounded-lg border border-purple-500/30 bg-purple-500/5 p-3 space-y-2">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-purple-400 flex items-center gap-1.5">
+                                <Icon name="shield" size={12} />
+                                Matched YARA Forensic Signatures ({art.yara_hits.length})
+                              </span>
+                              <span className="rounded bg-purple-500/20 border border-purple-500/40 px-1.5 py-0.5 text-[9px] font-bold text-purple-300 uppercase">
+                                Verified Hits
+                              </span>
+                            </div>
+                            <div className="flex flex-wrap gap-1.5">
+                              {art.yara_hits.map((hit, hidx) => (
+                                <div
+                                  key={hidx}
+                                  className="rounded border border-purple-500/40 bg-purple-950/40 px-2 py-1 text-[11px] font-mono flex items-center gap-2"
+                                >
+                                  <span className="font-bold text-purple-200">{hit.name}</span>
+                                  <span className="text-[9px] rounded bg-purple-800/40 px-1.5 py-0.5 text-purple-300 uppercase">
+                                    {hit.family}
+                                  </span>
+                                  {hit.description && (
+                                    <span className="text-text-muted text-[10px] hidden sm:inline">
+                                      · {hit.description}
+                                    </span>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
                         {art.config && (
                           <div className="rounded-lg border border-accent/30 bg-accent/5 p-3 space-y-2">
                             <div className="flex items-center justify-between">

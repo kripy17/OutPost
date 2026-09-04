@@ -271,3 +271,31 @@ def synthesize_case_narrative(investigation_id: str) -> dict:
         _require_investigation(conn, investigation_id)
         return synthesize_investigation_narrative(conn, investigation_id)
 
+
+@router.get("/investigations/{investigation_id}/export")
+def export_investigation(
+    investigation_id: str,
+    format: str = Query("markdown", description="markdown | json"),
+):
+    """Export an executive Incident Response Case Brief in Markdown or full JSON format."""
+    from fastapi.responses import PlainTextResponse
+    from ..services.report import (
+        build_investigation_json_export,
+        build_investigation_markdown_export,
+    )
+
+    with db_session() as conn:
+        _require_investigation(conn, investigation_id)
+        if format.lower() == "json":
+            return build_investigation_json_export(conn, investigation_id)
+        else:
+            md_text = build_investigation_markdown_export(conn, investigation_id)
+            return PlainTextResponse(
+                content=md_text,
+                media_type="text/markdown",
+                headers={
+                    "Content-Disposition": f'attachment; filename="outpost-incident-brief-{investigation_id}.md"'
+                },
+            )
+
+

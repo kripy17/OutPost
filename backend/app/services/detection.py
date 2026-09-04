@@ -442,6 +442,9 @@ _KILL_CHAIN_STAGE = {
     "macos-launchagent-persistence": "Persistence",
     "macos-dylib-hijack": "Defense Evasion",
     "macos-gatekeeper-bypass": "Defense Evasion",
+    "anonymous-rwx-memory": "Defense Evasion",
+    "fileless-unlinked-binary": "Defense Evasion",
+    "gtfobins-suid-execution": "Privilege Escalation",
 }
 
 
@@ -1217,6 +1220,115 @@ def check_macos_gatekeeper_bypass(event: dict) -> Alert | None:
             f"Gatekeeper security control evasion detected via command: {event.get('command_line')[:100]}",
         )
     return None
+
+
+# ---------------------------------------------------------------------------
+# Rule 36 — Unbacked RWX Memory Allocation (T1055.001)
+# ---------------------------------------------------------------------------
+def check_anonymous_rwx_memory(event: dict) -> Alert | None:
+    """Detect unbacked RWX (read-write-execute) memory mapping, indicative of
+    in-memory shellcode execution, reflective DLL loading, or fileless payload staging.
+    """
+    cmd = (event.get("command_line") or "").lower()
+    details = (event.get("details") or "").lower()
+    fpath = (event.get("file_path") or "").lower()
+    raw = (event.get("raw_record") or "").lower()
+    mem_prot = (event.get("memory_protection") or "").upper()
+    flags = (event.get("flags") or "").lower()
+
+    combined = f"{cmd} {details} {fpath} {raw} {flags}"
+
+    is_rwx = (
+        mem_prot in ("RWX", "PAGE_EXECUTE_READWRITE", "EXECUTE_READWRITE")
+        or "rwxp" in combined
+        or "rwx anonymous" in combined
+        or "rwx memory page" in combined
+        or "execute_readwrite" in combined
+        or ("mprotect" in cmd and ("0x7" in cmd or "prot_exec" in cmd))
+        or ("virtualalloc" in combined and "0x40" in combined)
+    )
+
+    if is_rwx:
+        pname = _proc_name(event) or "process"
+        pid = event.get("pid") or "unknown"
+        return _make_alert(
+            event["run_id"], "anonymous-rwx-memory",
+            "Unbacked RWX Memory Allocation (Fileless Shellcode Staging)",
+            "malicious", event,
+            f"Process '{pname}' (PID {pid}) allocated writable and executable (RWX) memory page without disk backing",
+        )
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Rule 37 — Fileless Execution from Unlinked Binary Inode (T1027)
+# ---------------------------------------------------------------------------
+def check_fileless_unlinked_binary(event: dict) -> Alert | None:
+    """Detect running processes or descriptors where the backing executable file
+    has been unlinked from disk (`(deleted)` inode or anonymous memfd descriptor),
+    a classic evasion tactic for memory-only implants.
+    """
+    exe = (event.get("exe_path") or "").lower()
+    fpath = (event.get("file_path") or "").lower()
+    cmd = (event.get("command_line") or "").lower()
+    details = (event.get("details") or "").lower()
+
+    is_unlinked = (
+        "(deleted)" in exe
+        or "(deleted)" in fpath
+        or "(deleted)" in details
+        or "memfd:" in exe
+        or "memfd:" in fpath
+        or "memfd_create" in cmd
+        or "unlinked payload in memory" in details
+    )
+
+    if is_unlinked:
+        pname = _proc_name(event) or "process"
+        pid = event.get("pid") or "unknown"
+        target_path = exe or fpath or details
+        return _make_alert(
+            event["run_id"], "fileless-unlinked-binary",
+            "Fileless Execution from Unlinked Binary Inode",
+            "malicious", event,
+            f"Process '{pname}' (PID {pid}) running from unlinked on-disk inode or anonymous in-memory descriptor: {target_path[:100]}",
+        )
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Rule 38 — Privilege Escalation via SUID / Breakout Utility (T1548.001)
+# ---------------------------------------------------------------------------
+_SUID_BREAKOUT_PATTERNS = [
+    (r"\bfind\b.*-exec\s+(/bin/)?(ba)?sh", "find -exec shell breakout"),
+    (r"\bvim?\b.*-c\s+['\"]:?!(/bin/)?(ba)?sh", "vim shell escape command"),
+    (r"\b(view|nano|man)\b.*-c\s+['\"]:?!(/bin/)?(ba)?sh", "editor/pager shell breakout"),
+    (r"\bpkexec\s+(/bin/)?(ba)?sh", "pkexec root shell elevation"),
+    (r"\b(g|m)?awk\b.*BEGIN\s*\{\s*system\(", "awk inline system breakout"),
+    (r"\benv\s+(/bin/)?(ba)?sh", "env shell wrapper elevation"),
+    (r"\bnmap\b.*--interactive", "nmap legacy interactive shell escape"),
+    (r"\binstall\s+-m\s+[42][0-7]{3}\s+", "install utility setting SUID/SGID bits"),
+]
+
+
+def check_gtfobins_suid_execution(event: dict) -> Alert | None:
+    """Detect execution of known privileged binaries with breakout or elevation flags."""
+    if event.get("event_type") != "process_create":
+        return None
+    cmd = event.get("command_line") or ""
+    if not cmd:
+        return None
+    for pattern, desc in _SUID_BREAKOUT_PATTERNS:
+        if re.search(pattern, cmd, re.IGNORECASE):
+            pname = _proc_name(event) or "process"
+            return _make_alert(
+                event["run_id"], "gtfobins-suid-execution",
+                "Privilege Escalation via SUID / Breakout Utility",
+                "malicious", event,
+                f"Process '{pname}' executed known privilege breakout invocation: {desc} ({cmd[:100]})",
+            )
+    return None
+
 
 
 
@@ -2786,6 +2898,9 @@ def evaluate_batch(conn: sqlite3.Connection, run_id: str, events: list[dict]) ->
             check_macos_launchagent_persistence(event),
             check_macos_dylib_hijack(event),
             check_macos_gatekeeper_bypass(event),
+            check_anonymous_rwx_memory(event),
+            check_fileless_unlinked_binary(event),
+            check_gtfobins_suid_execution(event),
         ]
         if custom_sigma_rules:
             candidates.extend(check_custom_sigma_rules(custom_sigma_rules, event))
@@ -3038,6 +3153,18 @@ def backtest_rule(conn: sqlite3.Connection, rule_id: str, max_events: int = 2000
             elif rule_id == "macos-gatekeeper-bypass" and (("xattr" in cmd.lower() and "com.apple.quarantine" in cmd.lower()) or ("spctl" in cmd.lower() and "--master-disable" in cmd.lower())):
                 is_match = True
                 match_reason = f"macOS Gatekeeper bypass syntax: {cmd[:60]}"
+            elif rule_id == "anonymous-rwx-memory":
+                if any(kw in (fpath + " " + cmd + " " + str(ev.get("details", ""))).lower() for kw in ("rwx", "rwxp", "execute_readwrite")):
+                    is_match = True
+                    match_reason = "Unbacked RWX memory allocation pattern"
+            elif rule_id == "fileless-unlinked-binary":
+                if any(kw in (fpath + " " + cmd + " " + str(ev.get("exe_path", ""))).lower() for kw in ("(deleted)", "memfd:")):
+                    is_match = True
+                    match_reason = "Fileless unlinked binary descriptor"
+            elif rule_id == "gtfobins-suid-execution":
+                if any(kw in cmd.lower() for kw in ("-exec sh", "-c :!sh", "pkexec", "system(", "--interactive")):
+                    is_match = True
+                    match_reason = "Privilege breakout invocation pattern"
             else:
                 if (rule_id.replace("-", " ") in cmd.lower()) or (rule_id.replace("-", " ") in pname.lower()):
                     is_match = True

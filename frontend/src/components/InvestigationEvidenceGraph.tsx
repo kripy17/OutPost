@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
+import { Link } from "react-router-dom";
 import { Icon } from "./Icon";
 import { Chip } from "./ui";
 
@@ -492,6 +493,90 @@ export default function InvestigationEvidenceGraph({
               <span className="text-[10px] text-text-muted font-mono">
                 ID: {selectedNode.id}
               </span>
+            </div>
+
+            {/* 1-Click Interactive Evidence Pivot Actions */}
+            <div className="pt-3 border-t border-border-subtle/70 space-y-1.5">
+              <span className="text-[10px] text-text-muted font-mono uppercase tracking-wider block">
+                Evidence Pivoting & Actions
+              </span>
+              <div className="flex flex-col gap-1.5">
+                {selectedNode.type === "ioc" && (
+                  <>
+                    <Link
+                      to={`/events?q=${encodeURIComponent(selectedNode.metadata?.ref_id || selectedNode.label)}`}
+                      className="press inline-flex items-center justify-between rounded-lg border border-accent/40 bg-accent/10 px-2.5 py-1.5 text-xs text-accent hover:bg-accent/20 transition"
+                    >
+                      <span className="flex items-center gap-1.5">
+                        <Icon name="search" size={13} />
+                        <span>Filter Telemetry Events</span>
+                      </span>
+                      <Icon name="external" size={11} className="text-accent/70" />
+                    </Link>
+                    <Link
+                      to={`/forensics?q=${encodeURIComponent(selectedNode.metadata?.ref_id || selectedNode.label)}`}
+                      className="press inline-flex items-center justify-between rounded-lg border border-border-subtle bg-panel-muted px-2.5 py-1.5 text-xs text-text hover:bg-panel transition"
+                    >
+                      <span className="flex items-center gap-1.5">
+                        <Icon name="target" size={13} className="text-purple-400" />
+                        <span>Hunt Across Endpoints</span>
+                      </span>
+                      <Icon name="external" size={11} className="text-text-muted" />
+                    </Link>
+                  </>
+                )}
+
+                {selectedNode.type === "host" && (
+                  <>
+                    <Link
+                      to={`/hosts/${encodeURIComponent(selectedNode.metadata?.ref_id || selectedNode.label)}`}
+                      className="press inline-flex items-center justify-between rounded-lg border border-accent/40 bg-accent/10 px-2.5 py-1.5 text-xs text-accent hover:bg-accent/20 transition"
+                    >
+                      <span className="flex items-center gap-1.5">
+                        <Icon name="box" size={13} />
+                        <span>View Host Forensics</span>
+                      </span>
+                      <Icon name="external" size={11} className="text-accent/70" />
+                    </Link>
+                    <Link
+                      to={`/events?q=${encodeURIComponent(selectedNode.metadata?.ref_id || selectedNode.label)}`}
+                      className="press inline-flex items-center justify-between rounded-lg border border-border-subtle bg-panel-muted px-2.5 py-1.5 text-xs text-text hover:bg-panel transition"
+                    >
+                      <span className="flex items-center gap-1.5">
+                        <Icon name="activity" size={13} className="text-signal" />
+                        <span>Filter Host Events</span>
+                      </span>
+                      <Icon name="external" size={11} className="text-text-muted" />
+                    </Link>
+                  </>
+                )}
+
+                {selectedNode.type === "run" && (
+                  <Link
+                    to={`/runs/${encodeURIComponent(selectedNode.metadata?.ref_id || selectedNode.id.replace("run_", ""))}`}
+                    className="press inline-flex items-center justify-between rounded-lg border border-accent/40 bg-accent/10 px-2.5 py-1.5 text-xs text-accent hover:bg-accent/20 transition"
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <Icon name="play" size={13} />
+                      <span>Open Run Analysis</span>
+                    </span>
+                    <Icon name="external" size={11} className="text-accent/70" />
+                  </Link>
+                )}
+
+                {selectedNode.type === "finding" && (
+                  <Link
+                    to="/alerts"
+                    className="press inline-flex items-center justify-between rounded-lg border border-risk-malicious/40 bg-risk-malicious/10 px-2.5 py-1.5 text-xs text-risk-malicious hover:bg-risk-malicious/20 transition"
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <Icon name="alert" size={13} />
+                      <span>View Alert Findings</span>
+                    </span>
+                    <Icon name="external" size={11} className="text-risk-malicious/70" />
+                  </Link>
+                )}
+              </div>
             </div>
           </div>
         </div>
