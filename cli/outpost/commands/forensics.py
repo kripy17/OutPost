@@ -32,8 +32,25 @@ def snapshot() -> None:
     try:
         data = api_client.get_forensics_snapshot()
     except api_client.APIError as exc:
-        console.print(f"[bold #C4453B]Forensic snapshot failed: {exc}[/bold #C4453B]")
-        raise typer.Exit(1)
+        try:
+            import sys
+            from pathlib import Path
+            root = Path(__file__).resolve().parent.parent.parent.parent
+            if str(root / "backend") not in sys.path:
+                sys.path.insert(0, str(root / "backend"))
+            from app.services import host_forensics
+            console.print("[dim yellow]Notice: Backend offline — inspecting host system metrics directly from /proc (offline mode)[/dim yellow]\n")
+            m = host_forensics.get_current_system_metrics()
+            procs = host_forensics.get_live_processes()
+            data = {
+                "metrics": m,
+                "process_count": len(procs),
+                "socket_count": 0,
+                "processes": procs,
+            }
+        except Exception:
+            console.print(f"[bold #C4453B]Forensic snapshot failed: {exc}[/bold #C4453B]")
+            raise typer.Exit(1)
 
     m = data.get("metrics", {})
     console.print(
@@ -149,8 +166,18 @@ def tree() -> None:
     try:
         nodes = api_client.get_forensics_tree()
     except api_client.APIError as exc:
-        console.print(f"[bold #C4453B]Process tree failed: {exc}[/bold #C4453B]")
-        raise typer.Exit(1)
+        try:
+            import sys
+            from pathlib import Path
+            root = Path(__file__).resolve().parent.parent.parent.parent
+            if str(root / "backend") not in sys.path:
+                sys.path.insert(0, str(root / "backend"))
+            from app.services import host_forensics
+            console.print("[dim yellow]Notice: Backend offline — building process causality tree directly from /proc (offline mode)[/dim yellow]\n")
+            nodes = host_forensics.get_process_tree()
+        except Exception:
+            console.print(f"[bold #C4453B]Process tree failed: {exc}[/bold #C4453B]")
+            raise typer.Exit(1)
 
     console.print("[bold #3B82F6]System Process Causality Tree[/bold #3B82F6]\n")
 

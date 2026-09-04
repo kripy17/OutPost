@@ -1182,28 +1182,28 @@ function LiveDetonationPlayground() {
 
   const SCENARIOS = [
     {
-      id: "discovery_recon",
-      name: "Discovery & Recon",
-      icon: "search" as const,
-      desc: "Enumerates users, network interfaces & services (T1082, T1087)",
+      id: "apt29-cloud-intrusion",
+      name: "APT-29 / Midnight Blizzard",
+      icon: "shield" as const,
+      desc: "Multi-stage intrusion: discovery, in-memory stager, credential hunt & C2",
     },
     {
-      id: "ransomware_burst",
-      name: "Ransomware Encryption",
+      id: "lockbit-ransomware",
+      name: "LockBit 3.0 Ransomware",
       icon: "alert" as const,
-      desc: "High-velocity file encryption and shadow tampering (T1486)",
+      desc: "Canary traversal, recovery inhibit, high-entropy encryption & ransom note",
     },
     {
-      id: "c2_beaconing",
-      name: "C2 Beaconing",
-      icon: "globe" as const,
-      desc: "Periodic outbound callbacks to suspicious external IPs (T1071)",
-    },
-    {
-      id: "persistence_cron",
-      name: "Cron Persistence",
+      id: "lotl-privilege-escalation",
+      name: "LotL PrivEsc Campaign",
       icon: "terminal" as const,
-      desc: "Installs backdoor cron job & autorun persistence (T1053)",
+      desc: "SUID discovery, sudoers check, GTFOBins emulation & root backdoor",
+    },
+    {
+      id: "cryptominer-worm",
+      name: "Cryptomining Worm",
+      icon: "zap" as const,
+      desc: "Subnet scan, in-memory miner drop in /dev/shm & stratum pool handshake",
     },
   ];
 

@@ -10,7 +10,40 @@ from urllib.parse import quote
 
 import requests
 
-BASE_URL = (os.getenv("OUTPOST_API_URL") or os.getenv("OUTPOST_BACKEND_URL") or "http://127.0.0.1:8000").rstrip("/")
+def _probe_url(url: str) -> bool:
+    try:
+        r = requests.get(f"{url}/health", timeout=0.25)
+        return r.status_code == 200
+    except Exception:
+        return False
+
+
+def resolve_base_url() -> str:
+    """Intelligently detect whether the backend is on port 8001 (default dev/prod),
+    port 8000, or a user-specified OUTPOST_API_URL/OUTPOST_BACKEND_URL.
+    """
+    env_url = os.getenv("OUTPOST_API_URL") or os.getenv("OUTPOST_BACKEND_URL")
+    if env_url:
+        return env_url.rstrip("/")
+    # Probe 8001 first (default OutPost dev/prod port)
+    if _probe_url("http://127.0.0.1:8001"):
+        return "http://127.0.0.1:8001"
+    # Probe 8000 second
+    if _probe_url("http://127.0.0.1:8000"):
+        return "http://127.0.0.1:8000"
+    # Default to 8001
+    return "http://127.0.0.1:8001"
+
+
+BASE_URL = resolve_base_url()
+
+
+def get_base_url() -> str:
+    global BASE_URL
+    # If the current BASE_URL isn't answering, attempt a quick re-probe of alternative ports
+    if not _probe_url(BASE_URL):
+        BASE_URL = resolve_base_url()
+    return BASE_URL
 
 
 class APIError(RuntimeError):
@@ -29,30 +62,33 @@ def _auth_headers() -> dict:
 
 
 def _get(path: str) -> Any:
+    base = get_base_url()
     try:
-        resp = requests.get(f"{BASE_URL}{path}", headers=_auth_headers(), timeout=15)
+        resp = requests.get(f"{base}{path}", headers=_auth_headers(), timeout=15)
     except requests.RequestException as exc:
-        raise APIError(f"Backend unreachable at {BASE_URL} — is OutPost running? ({exc})") from exc
+        raise APIError(f"Backend unreachable at {base} — is OutPost running? Start it with `bash scripts/dev.sh start`") from None
     if not resp.ok:
         raise APIError(f"GET {path} → {resp.status_code}: {resp.text[:200]}")
     return resp.json()
 
 
 def _post(path: str, body: dict | None = None) -> Any:
+    base = get_base_url()
     try:
-        resp = requests.post(f"{BASE_URL}{path}", json=body or {}, headers=_auth_headers(), timeout=15)
-    except requests.RequestException as exc:
-        raise APIError(f"Backend unreachable at {BASE_URL} — is OutPost running? ({exc})") from exc
+        resp = requests.post(f"{base}{path}", json=body or {}, headers=_auth_headers(), timeout=15)
+    except requests.RequestException:
+        raise APIError(f"Backend unreachable at {base} — is OutPost running? Start it with `bash scripts/dev.sh start`") from None
     if not resp.ok:
         raise APIError(f"POST {path} → {resp.status_code}: {resp.text[:200]}")
     return resp.json()
 
 
 def _patch(path: str, body: dict | None = None) -> Any:
+    base = get_base_url()
     try:
-        resp = requests.patch(f"{BASE_URL}{path}", json=body or {}, headers=_auth_headers(), timeout=15)
-    except requests.RequestException as exc:
-        raise APIError(f"Backend unreachable at {BASE_URL} — is OutPost running? ({exc})") from exc
+        resp = requests.patch(f"{base}{path}", json=body or {}, headers=_auth_headers(), timeout=15)
+    except requests.RequestException:
+        raise APIError(f"Backend unreachable at {base} — is OutPost running? Start it with `bash scripts/dev.sh start`") from None
     if not resp.ok:
         raise APIError(f"PATCH {path} → {resp.status_code}: {resp.text[:200]}")
     return resp.json()
@@ -62,10 +98,11 @@ def _delete(path: str) -> None:
     """DELETE that accepts both 200 and 204 — the CLI parity rule for
     DELETE (mirror of the webapp's relaxed `del()`; a backend that 200s a
     DELETE with a body must not throw a misleading error)."""
+    base = get_base_url()
     try:
-        resp = requests.delete(f"{BASE_URL}{path}", headers=_auth_headers(), timeout=15)
-    except requests.RequestException as exc:
-        raise APIError(f"Backend unreachable at {BASE_URL} — is OutPost running? ({exc})") from exc
+        resp = requests.delete(f"{base}{path}", headers=_auth_headers(), timeout=15)
+    except requests.RequestException:
+        raise APIError(f"Backend unreachable at {base} — is OutPost running? Start it with `bash scripts/dev.sh start`") from None
     if resp.status_code not in (200, 204):
         raise APIError(f"DELETE {path} → {resp.status_code}: {resp.text[:200]}")
 
