@@ -6,6 +6,7 @@ import { platformIconName } from "../components/iconMeta";
 import { Chip, PageHeader, Panel } from "../components/ui";
 import { deleteSample, detonateDynamic, detonateSample, downloadSample, getRuns, getSample, getSampleStatic, getSandboxArtifactUrl, getSandboxProviders, getSandboxTask, getSimilarSamples, sandboxDetonate, watchlistAdd } from "../lib/api";
 import { ProcessCausalityTree } from "../components/ProcessCausalityTree";
+import { NetworkProtocolInspector } from "../components/NetworkProtocolInspector";
 import type { Platform, RunSummary, SampleDetonationResult, SampleStatic, SandboxTask } from "../types";
 import { filterStrings, formatBytes, iocTotal } from "./samplesHelpers";
 
@@ -1496,6 +1497,12 @@ export default function SampleDetailPage() {
               </table>
             </div>
           )}
+        </Panel>
+      )}
+
+      {runs && runs.length > 0 && (
+        <Panel kicker="Protocol Forensics" title="Aggregated Network & C2 Conversation Analysis">
+          <NetworkProtocolInspector sampleId={sampleId} />
         </Panel>
       )}
     </div>

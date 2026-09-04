@@ -24,10 +24,21 @@ from ..core import config
 from ..core.db import db_session
 from ..models import samples as samples_store
 from ..models.run import SYNTHETIC_SOURCES
-from ..services import enrichment, static_analysis
+from ..services import enrichment, network_protocol_analyzer, static_analysis
 from ..services import yara as yara_service
 
 router = APIRouter(tags=["samples"])
+
+
+@router.get("/samples/{sample_id}/network-analysis", response_model=None)
+def get_sample_network_analysis_endpoint(sample_id: str) -> dict:
+    """Aggregate protocol conversations and C2 beaconing analysis across all runs of this sample."""
+    with db_session() as conn:
+        sample = conn.execute("SELECT sample_id FROM samples WHERE sample_id = ?", (sample_id,)).fetchone()
+        if not sample:
+            raise HTTPException(status_code=404, detail=f"Unknown sample: {sample_id}")
+        return network_protocol_analyzer.analyze_sample(conn, sample_id)
+
 
 # (magic prefix, platform, human family) — checked in order. Fixed headers
 # first; containers and scripts need their own (cheap) content peek.

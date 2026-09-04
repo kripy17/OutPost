@@ -723,6 +723,112 @@ def get_live_sockets() -> list[dict[str, Any]]:
     return sockets
 
 
+def get_enriched_live_sockets(conn: Any = None) -> list[dict[str, Any]]:
+    """Capture live sockets and enrich foreign IP addresses with threat intelligence."""
+    raw_sockets = get_live_sockets()
+    if not conn:
+        return raw_sockets
+
+    enrichment_map: dict[str, str] = {}
+    remote_ips = [s["remote_ip"] for s in raw_sockets if s.get("remote_ip") and s["remote_ip"] != "127.0.0.1"]
+    if remote_ips:
+        try:
+            placeholders = ",".join("?" for _ in remote_ips)
+            rows = conn.execute(
+                f"SELECT ip, reputation FROM enrichment_cache WHERE ip IN ({placeholders})",
+                remote_ips,
+            ).fetchall()
+            for r in rows:
+                enrichment_map[r["ip"]] = r["reputation"]
+
+            ioc_rows = conn.execute(
+                f"SELECT value, disposition FROM iocs WHERE value IN ({placeholders})",
+                remote_ips,
+            ).fetchall()
+            for r in ioc_rows:
+                enrichment_map[r["value"]] = "malicious" if r["disposition"] == "confirmed-malicious" else "suspicious"
+        except Exception:
+            pass
+
+    for s in raw_sockets:
+        rip = s.get("remote_ip")
+        if not rip or rip == "127.0.0.1" or rip == "::1" or rip.startswith("10.") or rip.startswith("192.168."):
+            s["reputation"] = "clean"
+        elif rip in enrichment_map:
+            s["reputation"] = enrichment_map[rip]
+        else:
+            s["reputation"] = "unknown"
+
+    return raw_sockets
+
+
+def scan_live_memory_yara(limit_pids: int = 50) -> dict[str, Any]:
+    """Scan memory and executable bytes of active running processes against OutPost YARA engine."""
+    from . import yara as yara_service
+
+    hits: list[dict[str, Any]] = []
+    scanned_count = 0
+    scanned_pids: list[int] = []
+
+    if psutil:
+        for p in psutil.process_iter(["pid", "name", "cmdline", "exe"]):
+            if scanned_count >= limit_pids:
+                break
+            try:
+                pid = p.info["pid"]
+                name = p.info["name"] or "unknown"
+                exe = p.info.get("exe")
+                matched_rules: list[dict] = []
+
+                if exe and Path(exe).exists() and not str(exe).startswith("/proc"):
+                    try:
+                        data = Path(exe).read_bytes()[: 512 * 1024]
+                        matched_rules = yara_service.scan_sample(data)
+                    except Exception:
+                        pass
+
+                if not matched_rules and Path(f"/proc/{pid}/maps").exists():
+                    try:
+                        maps = Path(f"/proc/{pid}/maps").read_text(errors="ignore")
+                        for line in maps.splitlines():
+                            if "rwxp" in line and "[anon]" in line:
+                                parts = line.split()[0].split("-")
+                                start = int(parts[0], 16)
+                                end = int(parts[1], 16)
+                                sz = min(end - start, 256 * 1024)
+                                with open(f"/proc/{pid}/mem", "rb") as mf:
+                                    mf.seek(start)
+                                    buf = mf.read(sz)
+                                    if buf:
+                                        m = yara_service.scan_sample(buf)
+                                        if m:
+                                            matched_rules.extend(m)
+                                            break
+                    except Exception:
+                        pass
+
+                scanned_count += 1
+                scanned_pids.append(pid)
+                if matched_rules:
+                    hits.append({
+                        "pid": pid,
+                        "process_name": name,
+                        "exe_path": exe,
+                        "matches": matched_rules,
+                        "severity": "malicious",
+                    })
+            except Exception:
+                continue
+
+    return {
+        "total_scanned_processes": scanned_count,
+        "scanned_pids": scanned_pids[:20],
+        "threat_count": len(hits),
+        "threats": hits,
+        "clean": len(hits) == 0,
+    }
+
+
 def get_process_xray_detail(pid: int) -> dict[str, Any] | None:
     """Deep inspection for a specific PID: lineage, sockets, files, environment."""
     proc_info: dict[str, Any] = {

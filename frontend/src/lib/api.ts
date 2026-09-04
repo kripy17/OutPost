@@ -88,6 +88,9 @@ import type {
   InvestigationRef,
   InvestigationRefType,
   InvestigationNote,
+  InvestigationTask,
+  InvestigationTimelineEvent,
+  NetworkAnalysisResult,
   PlaybookScenario,
   SimulationStageResult,
 } from "../types";
@@ -1054,6 +1057,90 @@ export async function exportInvestigationMarkdown(investigationId: string): Prom
   });
   if (!resp.ok) throw new Error(`Export failed (${resp.status})`);
   return resp.text();
+}
+
+/** Get comprehensive network protocol analysis for a run (GET /runs/{id}/network-analysis). */
+export async function getRunNetworkAnalysis(runId: string): Promise<NetworkAnalysisResult> {
+  return get<NetworkAnalysisResult>(`/runs/${encodeURIComponent(runId)}/network-analysis`);
+}
+
+/** Get aggregated network protocol analysis for a sample (GET /samples/{id}/network-analysis). */
+export async function getSampleNetworkAnalysis(sampleId: string): Promise<NetworkAnalysisResult> {
+  return get<NetworkAnalysisResult>(`/samples/${encodeURIComponent(sampleId)}/network-analysis`);
+}
+
+/** List incident response tasks for an investigation (GET /investigations/{id}/tasks). */
+export async function listInvestigationTasks(
+  investigationId: string,
+  params: { status?: string; category?: string } = {},
+): Promise<InvestigationTask[]> {
+  const qs = new URLSearchParams();
+  if (params.status) qs.set("status", params.status);
+  if (params.category) qs.set("category", params.category);
+  const s = qs.toString();
+  return get<InvestigationTask[]>(`/investigations/${encodeURIComponent(investigationId)}/tasks${s ? `?${s}` : ""}`);
+}
+
+/** Create an incident response task (POST /investigations/{id}/tasks). */
+export async function createInvestigationTask(
+  investigationId: string,
+  body: { title: string; category?: string; priority?: string; assignee?: string; due_at?: string },
+): Promise<InvestigationTask> {
+  return post<InvestigationTask>(`/investigations/${encodeURIComponent(investigationId)}/tasks`, body);
+}
+
+/** Update an incident response task (PATCH /investigations/{id}/tasks/{taskId}). */
+export async function patchInvestigationTask(
+  investigationId: string,
+  taskId: number,
+  body: Partial<InvestigationTask>,
+): Promise<InvestigationTask> {
+  return patch<InvestigationTask>(`/investigations/${encodeURIComponent(investigationId)}/tasks/${taskId}`, body);
+}
+
+/** Delete an incident response task (DELETE /investigations/{id}/tasks/{taskId}). */
+export async function deleteInvestigationTask(investigationId: string, taskId: number): Promise<void> {
+  return del(`/investigations/${encodeURIComponent(investigationId)}/tasks/${taskId}`);
+}
+
+/** Generate recommended incident response tasks (POST /investigations/{id}/tasks/generate-recommended). */
+export async function generateRecommendedTasks(investigationId: string): Promise<InvestigationTask[]> {
+  return post<InvestigationTask[]>(`/investigations/${encodeURIComponent(investigationId)}/tasks/generate-recommended`, {});
+}
+
+/** Get chronological causality timeline for an investigation (GET /investigations/{id}/timeline). */
+export async function getInvestigationTimeline(
+  investigationId: string,
+): Promise<{ investigation_id: string; total: number; events: InvestigationTimelineEvent[] }> {
+  return get<{ investigation_id: string; total: number; events: InvestigationTimelineEvent[] }>(
+    `/investigations/${encodeURIComponent(investigationId)}/timeline`,
+  );
+}
+
+/** URL for remediation script download (GET /investigations/{id}/remediation-script). */
+export function getRemediationScriptUrl(investigationId: string, shell: "bash" | "powershell" = "bash"): string {
+  return `${BASE_URL}/investigations/${encodeURIComponent(investigationId)}/remediation-script?shell=${shell}`;
+}
+
+export async function downloadRemediationScript(
+  investigationId: string,
+  shell: "bash" | "powershell" = "bash",
+): Promise<string> {
+  const resp = await fetch(getRemediationScriptUrl(investigationId, shell), {
+    headers: { Authorization: `Bearer ${getAuthToken() ?? ""}` },
+  });
+  if (!resp.ok) throw new Error(`Download failed (${resp.status})`);
+  return resp.text();
+}
+
+/** Trigger host live memory YARA scan (POST /system/forensics/scan/yara). */
+export async function scanLiveMemoryYara(limit = 50): Promise<any> {
+  return post<any>(`/system/forensics/scan/yara?limit=${limit}`, {});
+}
+
+/** Get live enriched sockets with threat intelligence (GET /system/forensics/sockets). */
+export async function getLiveSockets(): Promise<{ total: number; sockets: any[] }> {
+  return get<{ total: number; sockets: any[] }>("/system/forensics/sockets");
 }
 
 /** Start in-process local host live monitor (POST /agents/local/start). */

@@ -252,6 +252,133 @@ TECHNIQUE_TESTS: List[Dict[str, Any]] = [
     },
 
     # -------------------------------------------------------------------------
+    # TA0005: Defense Evasion
+    # -------------------------------------------------------------------------
+    {
+        "id": "T1027-unlinked-payload",
+        "technique_id": "T1027",
+        "technique_name": "Obfuscated Files or Information: Unlinked Inode Execution",
+        "tactic": "Defense Evasion",
+        "tactic_id": "TA0005",
+        "supported_platforms": ["linux", "darwin"],
+        "name": "Fileless Unlinked Inode Execution Canary",
+        "description": "Executes a temporary binary and immediately unlinks the on-disk file, verifying detection of fileless (deleted) processes.",
+        "prereqs": [],
+        "attack_command": "cp /bin/sleep /tmp/outpost_unlinked_canary && /tmp/outpost_unlinked_canary 1 & sleep 0.1 && rm -f /tmp/outpost_unlinked_canary",
+        "cleanup_command": "pkill -f outpost_unlinked_canary 2>/dev/null || true; rm -f /tmp/outpost_unlinked_canary",
+        "expected_telemetry": ["process_create", "file_delete"],
+        "severity": "malicious",
+    },
+    {
+        "id": "T1036.005-masquerade",
+        "technique_id": "T1036.005",
+        "technique_name": "Masquerading: Match Legitimate Name or Location",
+        "tactic": "Defense Evasion",
+        "tactic_id": "TA0005",
+        "supported_platforms": ["linux"],
+        "name": "Kernel Thread / System Daemon Masquerading",
+        "description": "Spawns a process named [kworker/0:0] or [systemd-udev] from /tmp, testing masquerading detection.",
+        "prereqs": [],
+        "attack_command": "cp /bin/sleep /tmp/kworker_0_0 && /tmp/kworker_0_0 1 & sleep 0.1",
+        "cleanup_command": "pkill -f kworker_0_0 2>/dev/null || true; rm -f /tmp/kworker_0_0",
+        "expected_telemetry": ["process_create"],
+        "severity": "suspicious",
+    },
+
+    # -------------------------------------------------------------------------
+    # TA0006: Credential Access
+    # -------------------------------------------------------------------------
+    {
+        "id": "T1003.008-shadow-probe",
+        "technique_id": "T1003.008",
+        "technique_name": "OS Credential Dumping: /etc/passwd and /etc/shadow",
+        "tactic": "Credential Access",
+        "tactic_id": "TA0006",
+        "supported_platforms": ["linux"],
+        "name": "Simulated Password Shadow File Access Sweep",
+        "description": "Attempts unprivileged read or permission probe against shadow and security credential files.",
+        "prereqs": [],
+        "attack_command": "cat /etc/shadow 2>/dev/null || head -n 5 /etc/passwd > /tmp/outpost_passwd_probe.txt",
+        "cleanup_command": "rm -f /tmp/outpost_passwd_probe.txt",
+        "expected_telemetry": ["process_create", "file_create"],
+        "severity": "suspicious",
+    },
+    {
+        "id": "T1552.001-creds-scan",
+        "technique_id": "T1552.001",
+        "technique_name": "Unsecured Credentials: Credentials in Files",
+        "tactic": "Credential Access",
+        "tactic_id": "TA0006",
+        "supported_platforms": ["linux", "darwin"],
+        "name": "Plaintext Secrets & Private Key Discovery Sweep",
+        "description": "Searches home and temporary directories for private keys (.pem, id_rsa) and credential tokens.",
+        "prereqs": [],
+        "attack_command": "grep -rn 'PRIVATE KEY' /tmp 2>/dev/null || echo 'NO_PRIVATE_KEYS' > /tmp/outpost_key_probe.txt",
+        "cleanup_command": "rm -f /tmp/outpost_key_probe.txt",
+        "expected_telemetry": ["process_create", "file_create"],
+        "severity": "info",
+    },
+
+    # -------------------------------------------------------------------------
+    # TA0008: Lateral Movement
+    # -------------------------------------------------------------------------
+    {
+        "id": "T1021.002-smb-probe",
+        "technique_id": "T1021.002",
+        "technique_name": "Remote Services: SMB/Windows Admin Shares",
+        "tactic": "Lateral Movement",
+        "tactic_id": "TA0008",
+        "supported_platforms": ["linux", "darwin"],
+        "name": "Local Subnet SMB & RPC Port Connectivity Probe",
+        "description": "Simulates lateral movement reconnaissance by probing TCP port 445 and 139.",
+        "prereqs": [],
+        "attack_command": "nc -z -w 1 127.0.0.1 445 2>/dev/null || timeout 1 bash -c '</dev/tcp/127.0.0.1/445' 2>/dev/null || echo 'smb_probe_completed'",
+        "cleanup_command": "true",
+        "expected_telemetry": ["process_create", "network_connect"],
+        "severity": "suspicious",
+    },
+
+    # -------------------------------------------------------------------------
+    # TA0011: Command and Control
+    # -------------------------------------------------------------------------
+    {
+        "id": "T1071.001-web-c2-beacon",
+        "technique_id": "T1071.001",
+        "technique_name": "Application Layer Protocol: Web Protocols",
+        "tactic": "Command and Control",
+        "tactic_id": "TA0011",
+        "supported_platforms": ["linux", "darwin", "windows"],
+        "name": "Synthetic HTTP C2 Check-in & Heartbeat Pulse",
+        "description": "Generates a structured HTTP C2 check-in request with simulated agent parameters.",
+        "prereqs": [],
+        "attack_command": "curl -s -m 1 'http://127.0.0.1:8001/api/v1/health?beacon=canary&agent=outpost' || true",
+        "cleanup_command": "true",
+        "expected_telemetry": ["process_create", "network_connect"],
+        "severity": "suspicious",
+    },
+
+    # -------------------------------------------------------------------------
+    # TA0040: Impact
+    # -------------------------------------------------------------------------
+    {
+        "id": "T1485-canary-encryption",
+        "technique_id": "T1485",
+        "technique_name": "Data Destruction / In-Place Canary Encryption",
+        "tactic": "Impact",
+        "tactic_id": "TA0040",
+        "supported_platforms": ["linux", "darwin"],
+        "name": "Ransomware Multi-File In-Place Encryption Simulation",
+        "description": "Creates mock target files and encrypts them using openssl aes-256-cbc, staging canary .locked extensions.",
+        "prereqs": [
+            {"command": "which openssl", "description": "openssl binary available"}
+        ],
+        "attack_command": "mkdir -p /tmp/outpost_ransom_stage && echo 'UNENCRYPTED_CANARY' > /tmp/outpost_ransom_stage/doc1.txt && openssl enc -aes-256-cbc -salt -in /tmp/outpost_ransom_stage/doc1.txt -out /tmp/outpost_ransom_stage/doc1.txt.locked -k 'canary123' -pbkdf2 && rm -f /tmp/outpost_ransom_stage/doc1.txt",
+        "cleanup_command": "rm -rf /tmp/outpost_ransom_stage",
+        "expected_telemetry": ["process_create", "file_create", "file_delete"],
+        "severity": "malicious",
+    },
+
+    # -------------------------------------------------------------------------
     # TA0010: Exfiltration
     # -------------------------------------------------------------------------
     {

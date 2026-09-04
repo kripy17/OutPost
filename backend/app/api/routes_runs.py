@@ -29,10 +29,20 @@ from ..models import event as event_store
 from ..models import run as run_store
 from ..models import run_notes as notes_store
 from pydantic import BaseModel
-from ..services import enrichment, killchain, memory_forensics, process_tree
+from ..services import enrichment, killchain, memory_forensics, network_protocol_analyzer, process_tree
 from ..services.detection import allowlist_matches, load_run_sample_sha256
 
 router = APIRouter(tags=["runs"])
+
+
+@router.get("/runs/{run_id}/network-analysis", response_model=None)
+def get_run_network_analysis_endpoint(run_id: str) -> dict:
+    """Extract and reconstruct protocol conversations (DNS, HTTP, TLS) and C2 beaconing metrics."""
+    with db_session() as conn:
+        run = conn.execute("SELECT run_id FROM runs WHERE run_id = ?", (run_id,)).fetchone()
+        if not run:
+            raise HTTPException(status_code=404, detail=f"Unknown run: {run_id}")
+        return network_protocol_analyzer.analyze_run(conn, run_id)
 
 
 class MemoryScanIn(BaseModel):

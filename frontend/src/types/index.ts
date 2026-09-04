@@ -998,10 +998,130 @@ export interface InvestigationNote {
   created_at: string;
 }
 
+export type TaskCategory = "containment" | "eradication" | "evidence_collection" | "remediation" | "triage";
+export type TaskStatus = "todo" | "in_progress" | "completed" | "cancelled";
+export type TaskPriority = "low" | "medium" | "high" | "critical";
+
+export interface InvestigationTask {
+  id: number;
+  investigation_id: string;
+  title: string;
+  category: TaskCategory;
+  status: TaskStatus;
+  priority: TaskPriority;
+  assignee?: string | null;
+  due_at?: string | null;
+  completed_at?: string | null;
+  created_at: string;
+  updated_at?: string | null;
+}
+
+export interface InvestigationTimelineEvent {
+  timestamp: string;
+  event_type: "lifecycle" | "alert" | "evidence" | "note" | "task";
+  title: string;
+  description: string;
+  severity: string;
+  actor: string;
+  ref_type?: string;
+  ref_id?: string;
+  rule_id?: string;
+}
+
+export interface DnsConversationItem {
+  query: string;
+  record_type: string;
+  resolved_ips: string[];
+  query_count: number;
+  first_seen: string;
+  last_seen: string;
+  dga_score: number;
+  is_dga_suspect: boolean;
+  threat_indicators: string[];
+  category: string;
+}
+
+export interface HttpRequestItem {
+  timestamp: string;
+  method: string;
+  url: string;
+  host: string;
+  path: string;
+  dest_ip: string;
+  dest_port: number;
+  status_code: number;
+  is_suspicious: boolean;
+  threat_indicators: string[];
+  process_name?: string;
+  pid?: number;
+}
+
+export interface TlsHandshakeItem {
+  timestamp: string;
+  dest_ip: string;
+  dest_port: number;
+  sni?: string;
+  ja3?: string;
+  known_tool?: string;
+  severity: string;
+  process_name?: string;
+  pid?: number;
+}
+
+export interface NetworkFlowItem {
+  flow_id: string;
+  protocol: string;
+  dest_ip: string;
+  dest_port: number;
+  process_name?: string;
+  pid?: number;
+  direction: string;
+  first_seen: string;
+  last_seen: string;
+  connection_count: number;
+  reputation: Reputation;
+  threat_indicators: string[];
+}
+
+export interface BeaconStats {
+  dest_ip?: string;
+  is_beaconing: boolean;
+  beaconing_score: number;
+  connection_count: number;
+  interval_mean_sec: number;
+  interval_stdev_sec: number;
+  jitter_pct: number;
+  verdict: string;
+}
+
+export interface NetworkAnalysisResult {
+  dns_conversations: DnsConversationItem[];
+  http_requests: HttpRequestItem[];
+  tls_handshakes: TlsHandshakeItem[];
+  flows: NetworkFlowItem[];
+  c2_beaconing: {
+    evaluated_endpoints: number;
+    beaconing_detected: boolean;
+    beacon_count: number;
+    beacons: BeaconStats[];
+    details_by_ip: Record<string, BeaconStats>;
+  };
+  metrics: {
+    total_dns_queries: number;
+    dga_suspect_count: number;
+    http_request_count: number;
+    suspicious_http_count: number;
+    tls_handshake_count: number;
+    unique_destinations_count: number;
+    unique_flows_count: number;
+  };
+}
+
 export interface InvestigationDetail extends Investigation {
   findings: Finding[];
   refs: InvestigationRef[];
   notes: InvestigationNote[];
+  tasks?: InvestigationTask[];
 }
 
 export interface InvestigationListResponse {
