@@ -88,6 +88,8 @@ import type {
   InvestigationRef,
   InvestigationRefType,
   InvestigationNote,
+  PlaybookScenario,
+  SimulationStageResult,
 } from "../types";
 
 export const BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
@@ -1072,8 +1074,8 @@ export async function getRunDetectionSuite(runId: string): Promise<any> {
 }
 
 /** List curated attack scenario playbooks (GET /sandbox/playbooks). */
-export async function getPlaybooks(): Promise<any[]> {
-  return get<any[]>("/sandbox/playbooks");
+export async function getPlaybooks(): Promise<PlaybookScenario[]> {
+  return get<PlaybookScenario[]>("/sandbox/playbooks");
 }
 
 /** Detonate a curated attack scenario playbook (POST /sandbox/detonate/playbook). */
@@ -1450,6 +1452,35 @@ export async function runLiveSimulation(scenarioId: string): Promise<{
   process_tree: any[];
 }> {
   return post<any>("/sandbox/simulate/live", { playbook_id: scenarioId });
+}
+
+/** Execute a single stage of an adversary simulation campaign interactively. */
+export async function executeSimulationStage(
+  scenarioId: string,
+  stageNumber: number,
+  runId?: string,
+  sandboxDir?: string | null,
+): Promise<SimulationStageResult> {
+  return post<SimulationStageResult>("/sandbox/simulate/stage", {
+    scenario_id: scenarioId,
+    stage_number: stageNumber,
+    run_id: runId || null,
+    sandbox_dir: sandboxDir || null,
+  });
+}
+
+/** List all persisted artifacts for a sandbox or simulation run. */
+export async function listSandboxArtifacts(runId: string): Promise<Array<{
+  filename: string;
+  size_bytes: number;
+  download_url: string;
+}>> {
+  return get<any[]>(`/sandbox/artifacts/${encodeURIComponent(runId)}`);
+}
+
+/** Get absolute URL to download a dropped artifact. */
+export function getSandboxArtifactUrl(runId: string, filename: string): string {
+  return `${BASE_URL}/sandbox/artifacts/${encodeURIComponent(runId)}/${encodeURIComponent(filename)}`;
 }
 
 /** Capture a new host system baseline for differential comparison. */

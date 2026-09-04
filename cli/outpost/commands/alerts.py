@@ -53,8 +53,24 @@ def alerts(
     try:
         data = api_client.get_alert_queue(status=status, provenance=provenance, q=q.strip(), limit=limit, offset=offset)
     except api_client.APIError as exc:
-        console.print(f"[bold #C4453B]Queue failed: {exc}[/bold #C4453B]")
-        raise typer.Exit(1)
+        if "Backend unreachable" in str(exc):
+            from ..lib import offline_store
+            offline_rows = offline_store.get_offline_alerts(status=status, limit=limit)
+            if offline_rows is not None:
+                console.print("[dim yellow]Notice: Backend offline — showing alerts directly from local SQLite database (offline mode)[/dim yellow]\n")
+                data = {
+                    "alerts": offline_rows,
+                    "total": len(offline_rows),
+                    "open": sum(1 for r in offline_rows if r.get("status") == "open"),
+                    "acknowledged": sum(1 for r in offline_rows if r.get("status") == "acknowledged"),
+                    "resolved": sum(1 for r in offline_rows if r.get("status") == "resolved"),
+                }
+            else:
+                console.print(f"[bold #C4453B]Queue failed: {exc}[/bold #C4453B]")
+                raise typer.Exit(1)
+        else:
+            console.print(f"[bold #C4453B]Queue failed: {exc}[/bold #C4453B]")
+            raise typer.Exit(1)
 
     rows = data.get("alerts") or []
     if not rows:

@@ -18,4 +18,5 @@ if [ ! -d ".venv" ] || [ ! -x ".venv/bin/python" ]; then
   ./setup.sh
 fi
 
+export OUTPOST_API_URL="${OUTPOST_API_URL:-http://127.0.0.1:8001}"
 exec "$ROOT/.venv/bin/python" -m outpost.main "$@"

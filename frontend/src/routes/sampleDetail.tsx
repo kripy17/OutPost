@@ -4,7 +4,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { platformIconName } from "../components/iconMeta";
 import { Chip, PageHeader, Panel } from "../components/ui";
-import { deleteSample, detonateDynamic, detonateSample, downloadSample, getRuns, getSample, getSampleStatic, getSandboxProviders, getSandboxTask, getSimilarSamples, sandboxDetonate, watchlistAdd } from "../lib/api";
+import { deleteSample, detonateDynamic, detonateSample, downloadSample, getRuns, getSample, getSampleStatic, getSandboxArtifactUrl, getSandboxProviders, getSandboxTask, getSimilarSamples, sandboxDetonate, watchlistAdd } from "../lib/api";
 import { ProcessCausalityTree } from "../components/ProcessCausalityTree";
 import type { Platform, RunSummary, SampleDetonationResult, SampleStatic, SandboxTask } from "../types";
 import { filterStrings, formatBytes, iocTotal } from "./samplesHelpers";
@@ -366,7 +366,7 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
   const [isolationDriver, setIsolationDriver] = useState<string>("auto");
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<SampleDetonationResult | null>(null);
-  const [simTab, setSimTab] = useState<"terminal" | "tree" | "alerts" | "delta" | "syscalls" | "sinkhole">("terminal");
+  const [simTab, setSimTab] = useState<"timeline" | "tree" | "artifacts" | "alerts" | "syscalls" | "sinkhole" | "terminal" | "delta">("timeline");
 
   const handleDetonateLive = async () => {
     setDetonating(true);
@@ -374,6 +374,7 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
     try {
       const res = await detonateSample(sample.sample_id, 15, isolationDriver);
       setResult(res);
+      setSimTab("timeline");
       void queryClient.invalidateQueries({ queryKey: ["runs"] });
       void queryClient.invalidateQueries({ queryKey: ["events"] });
       void queryClient.invalidateQueries({ queryKey: ["alerts"] });
@@ -446,28 +447,161 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
             </div>
 
             <div className="flex flex-wrap gap-2 font-mono text-xs">
-              {(["terminal", "tree", "alerts", "delta", "syscalls", "sinkhole"] as const).map((t) => (
+              {[
+                { id: "timeline", label: `Timeline (${result.timeline?.length ?? 0})` },
+                { id: "tree", label: `Process Tree (${result.process_tree?.length ?? 0})` },
+                { id: "artifacts", label: `Dropped Files (${result.dropped_artifacts?.length ?? 0})` },
+                { id: "alerts", label: `Alerts (${result.alerts?.length ?? 0})` },
+                { id: "syscalls", label: `Syscalls (${result.syscalls?.length ?? 0})` },
+                { id: "sinkhole", label: `C2 Sinkhole (${result.sinkhole_traffic?.length ?? 0})` },
+                { id: "terminal", label: "Terminal Log" },
+                { id: "delta", label: "Baseline Delta" },
+              ].map((tab) => (
                 <button
-                  key={t}
-                  onClick={() => setSimTab(t)}
+                  key={tab.id}
+                  onClick={() => setSimTab(tab.id as any)}
                   className={`rounded-lg px-3 py-1.5 transition ${
-                    simTab === t ? "bg-accent/15 font-bold text-accent" : "text-text-muted hover:text-text-primary"
+                    simTab === tab.id ? "bg-accent/15 font-bold text-accent shadow-sm" : "text-text-muted hover:text-text-primary"
                   }`}
                 >
-                  {t === "terminal"
-                    ? "Terminal Log"
-                    : t === "tree"
-                    ? `Process Tree (${result.process_tree?.length ?? 0})`
-                    : t === "alerts"
-                    ? `Triggered Alerts (${result.alerts?.length ?? 0})`
-                    : t === "delta"
-                    ? "Baseline Delta"
-                    : t === "syscalls"
-                    ? `Syscall Trace (${result.syscalls?.length ?? 0})`
-                    : `C2 Sinkhole (${result.sinkhole_traffic?.length ?? 0})`}
+                  {tab.label}
                 </button>
               ))}
             </div>
+
+            {simTab === "timeline" && (
+              <div className="space-y-3 font-mono text-xs">
+                {(!result.timeline || result.timeline.length === 0) ? (
+                  <p className="text-xs text-text-muted py-4 text-center">No behavioral timeline events recorded.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {result.timeline.map((ev, i) => {
+                      const isMal = ev.severity === "malicious";
+                      const isSus = ev.severity === "suspicious";
+                      return (
+                        <div
+                          key={i}
+                          className={`flex items-start gap-3 rounded-xl border p-3.5 transition ${
+                            isMal
+                              ? "border-risk-malicious/40 bg-risk-malicious/10"
+                              : isSus
+                              ? "border-amber-500/40 bg-amber-500/10"
+                              : "border-border-subtle bg-bg-base/50"
+                          }`}
+                        >
+                          <div className="shrink-0 flex flex-col items-center">
+                            <span className="rounded bg-bg-elevated px-2 py-0.5 text-[10px] font-bold text-text-faint">
+                              +{((ev.elapsed_ms || 0) / 1000).toFixed(2)}s
+                            </span>
+                            <span className="mt-1 text-[9px] uppercase tracking-wider text-text-faint font-semibold">
+                              {ev.category}
+                            </span>
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-text-primary">{ev.title}</span>
+                              <span
+                                className={`rounded px-1.5 py-0.2 text-[9px] font-bold uppercase ${
+                                  isMal
+                                    ? "bg-risk-malicious/20 text-risk-malicious"
+                                    : isSus
+                                    ? "bg-amber-500/20 text-amber-400"
+                                    : "bg-bg-elevated text-text-muted"
+                                }`}
+                              >
+                                {ev.severity}
+                              </span>
+                            </div>
+                            <p className="mt-1 text-[11px] text-text-muted break-words">{ev.details}</p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {simTab === "artifacts" && (
+              <div className="space-y-3 font-mono text-xs">
+                {(!result.dropped_artifacts || result.dropped_artifacts.length === 0) ? (
+                  <p className="text-xs text-text-muted py-6 text-center border border-border-subtle rounded-xl bg-bg-base/30">
+                    No files or payload artifacts were dropped to disk during this sandbox execution.
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    {result.dropped_artifacts.map((art, idx) => (
+                      <div
+                        key={idx}
+                        className="rounded-xl border border-border-subtle bg-bg-base/60 p-4 space-y-3 hover:border-accent/50 transition"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <Icon name="file" size={14} className="text-accent" />
+                            <span className="font-bold text-text-primary">{art.name}</span>
+                            <span className="rounded bg-bg-elevated px-2 py-0.5 text-[10px] text-text-faint">
+                              {art.size_bytes} bytes
+                            </span>
+                            {art.is_high_entropy && (
+                              <span className="rounded bg-risk-malicious/20 border border-risk-malicious/40 px-2 py-0.5 text-[9px] font-bold text-risk-malicious uppercase">
+                                High Entropy ({art.entropy}/8.0)
+                              </span>
+                            )}
+                          </div>
+
+                          <a
+                            href={getSandboxArtifactUrl(result.run_id, art.filename)}
+                            download
+                            className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/50 bg-accent/15 px-3 py-1 text-[11px] font-bold text-accent hover:bg-accent/25"
+                          >
+                            <Icon name="download" size={11} />
+                            <span>Download File</span>
+                          </a>
+                        </div>
+
+                        {/* Shannon Entropy Bar */}
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-[10px] text-text-faint">
+                            <span>Shannon Entropy: {art.entropy} / 8.0</span>
+                            <span>{art.entropy > 7.0 ? "Encrypted / Packed / Shellcode" : art.entropy > 5.0 ? "Structured Binary / Script" : "Plaintext / Sparse"}</span>
+                          </div>
+                          <div className="h-2 w-full bg-border-subtle rounded-full overflow-hidden">
+                            <div
+                              className={`h-full rounded-full ${
+                                art.entropy > 7.0 ? "bg-risk-malicious" : art.entropy > 5.0 ? "bg-amber-400" : "bg-signal"
+                              }`}
+                              style={{ width: `${Math.min(100, (art.entropy / 8.0) * 100)}%` }}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-[11px] text-text-muted bg-bg-surface p-2.5 rounded-lg border border-border-subtle">
+                          <div>
+                            <span className="text-text-faint uppercase text-[9px] block">SHA-256</span>
+                            <span className="break-all font-mono">{art.sha256}</span>
+                          </div>
+                          <div>
+                            <span className="text-text-faint uppercase text-[9px] block">MD5</span>
+                            <span className="break-all font-mono">{art.md5}</span>
+                          </div>
+                        </div>
+
+                        {art.preview && art.preview.length > 0 && (
+                          <div>
+                            <span className="text-text-faint text-[10px] block mb-1">Extracted Strings Preview:</span>
+                            <div className="bg-[#0a0c10] p-2 rounded text-[10px] font-mono text-emerald-400 max-h-24 overflow-y-auto space-y-0.5">
+                              {art.preview.map((line, lidx) => (
+                                <div key={lidx} className="truncate">{line}</div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
             {simTab === "terminal" && (
               <pre className="max-h-72 overflow-y-auto rounded-xl border border-border-subtle bg-[#0a0c10] p-4 font-mono text-xs text-[#c9d1d9]">

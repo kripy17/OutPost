@@ -17,6 +17,7 @@ import datetime
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from fastapi.responses import FileResponse, Response
 
 from ..core import config
 from ..core.db import db_session
@@ -27,7 +28,6 @@ from ..models import samples as samples_store
 from ..services import detection
 from ..services import sandbox as sandbox_service
 from ..services import screenshots as ss
-from fastapi.responses import Response
 
 router = APIRouter(tags=["sandbox"])
 
@@ -183,6 +183,7 @@ def get_playbooks() -> list[dict]:
             "description": s["description"],
             "techniques": s["techniques"],
             "stages_count": len(s["stages"]),
+            "stages": [{"name": st["name"], "cmd": st["cmd"]} for st in s.get("stages", [])],
         })
     return scenarios
 
@@ -190,6 +191,13 @@ def get_playbooks() -> list[dict]:
 class PlaybookDetonateIn(BaseModel):
     playbook_id: str
     mode: str = "live"
+
+
+class PlaybookStageIn(BaseModel):
+    scenario_id: str
+    stage_number: int
+    run_id: str | None = None
+    sandbox_dir: str | None = None
 
 
 @router.post("/sandbox/detonate/playbook", status_code=201, response_model=None)
@@ -214,3 +222,61 @@ async def simulate_live_scenario(body: PlaybookDetonateIn) -> dict:
     from ..services.dynamic_sandbox import execute_simulation_scenario_live
 
     return await execute_simulation_scenario_live(body.playbook_id)
+
+
+@router.post("/sandbox/simulate/stage", status_code=200, response_model=None)
+async def simulate_scenario_stage(body: PlaybookStageIn) -> dict:
+    """Execute a single stage of an adversary campaign interactively."""
+    from ..services.dynamic_sandbox import execute_simulation_scenario_stage
+
+    try:
+        return await execute_simulation_scenario_stage(
+            scenario_id=body.scenario_id,
+            stage_number=body.stage_number,
+            run_id=body.run_id,
+            sandbox_dir_str=body.sandbox_dir,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Stage execution failed: {e}")
+
+
+@router.get("/sandbox/artifacts/{run_id}", response_model=None)
+def list_sandbox_artifacts(run_id: str) -> list[dict]:
+    """List all persisted artifacts for a sandbox run."""
+    if "/" in run_id or "\\" in run_id or ".." in run_id:
+        raise HTTPException(status_code=400, detail="Invalid run_id")
+    artifact_dir = (config.DATA_DIR / "sandbox_artifacts" / run_id).resolve()
+    base_dir = (config.DATA_DIR / "sandbox_artifacts").resolve()
+    if not str(artifact_dir).startswith(str(base_dir)) or not artifact_dir.is_dir():
+        return []
+    res = []
+    for p in sorted(artifact_dir.iterdir()):
+        if p.is_file():
+            res.append({
+                "filename": p.name,
+                "size_bytes": p.stat().st_size,
+                "download_url": f"/sandbox/artifacts/{run_id}/{p.name}",
+            })
+    return res
+
+
+@router.get("/sandbox/artifacts/{run_id}/{filename}")
+def get_sandbox_artifact(run_id: str, filename: str):
+    """Download or view a dropped artifact from a dynamic sandbox or simulation run."""
+    if "/" in run_id or "\\" in run_id or ".." in run_id:
+        raise HTTPException(status_code=400, detail="Invalid run_id")
+    if "/" in filename or "\\" in filename or ".." in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    artifact_path = (config.DATA_DIR / "sandbox_artifacts" / run_id / filename).resolve()
+    base_dir = (config.DATA_DIR / "sandbox_artifacts").resolve()
+    if not str(artifact_path).startswith(str(base_dir)) or not artifact_path.is_file():
+        raise HTTPException(status_code=404, detail="Artifact not found")
+
+    return FileResponse(
+        path=str(artifact_path),
+        filename=filename.split("_", 1)[-1] if "_" in filename else filename,
+        media_type="application/octet-stream",
+    )

@@ -523,6 +523,28 @@ export interface SinkholeTrafficItem {
   action: string;
 }
 
+export interface TimelineEventItem {
+  timestamp: string;
+  elapsed_ms: number;
+  category: "process" | "file" | "network" | "memory" | "persistence" | "defense_evasion";
+  title: string;
+  details: string;
+  severity: "info" | "suspicious" | "malicious";
+}
+
+export interface DroppedArtifactItem {
+  name: string;
+  filename: string;
+  size_bytes: number;
+  sha256: string;
+  md5: string;
+  entropy: number;
+  is_high_entropy: boolean;
+  preview: string[];
+  artifact_id: string;
+  download_url: string;
+}
+
 export interface SampleDetonationResult {
   run_id: string;
   sample_id: string;
@@ -540,6 +562,39 @@ export interface SampleDetonationResult {
   detonation_delta?: DetonationDelta | null;
   syscalls?: SyscallTraceItem[];
   sinkhole_traffic?: SinkholeTrafficItem[];
+  timeline?: TimelineEventItem[];
+  dropped_artifacts?: DroppedArtifactItem[];
+}
+
+export interface SimulationStageResult {
+  run_id: string;
+  scenario_id: string;
+  stage_number: number;
+  total_stages: number;
+  stage_name: string;
+  command: string;
+  exit_code: number;
+  status: "success" | "failed" | "timeout";
+  elapsed_ms: number;
+  stdout: string;
+  stderr: string;
+  sandbox_dir?: string | null;
+  alerts: any[];
+  alerts_count: number;
+  events_count: number;
+  is_final_stage: boolean;
+  dropped_artifacts?: DroppedArtifactItem[];
+}
+
+export interface PlaybookScenario {
+  id: string;
+  name: string;
+  severity: string;
+  platform: string;
+  description: string;
+  techniques: string[];
+  stages_count: number;
+  stages?: Array<{ name: string; cmd: string }>;
 }
 
 export interface RuleBacktestResult {

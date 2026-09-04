@@ -21,7 +21,7 @@ import RulesPanel from "../components/RulesPanel/RulesPanel";
 import TimelineView from "../components/TimelineView/TimelineView";
 import Topology from "../components/Topology/Topology";
 import { RISK_COLORS, enumKindsFromDetails, intelAgeLabel, riskBand } from "../lib/constants";
-import { addInvestigationRef, bulkUpdateAlertStatus, getCampaigns, getRunDetail, getRunIocsCsv, listInvestigations, markFalsePositive, reEnrichRun, refreshIpIntel, updateAlertStatus } from "../lib/api";
+import { addInvestigationRef, bulkUpdateAlertStatus, getCampaigns, getRunDetail, getRunIocsCsv, getSandboxArtifactUrl, listInvestigations, listSandboxArtifacts, markFalsePositive, reEnrichRun, refreshIpIntel, updateAlertStatus } from "../lib/api";
 import type { AlertStatus, NetworkConnection, ProcessNode, Reputation, RunDetail } from "../types";
 
 /* ── Risk gauge — semicircular arc, colored by band ────────────────────── */
@@ -391,6 +391,11 @@ export default function RunDetailPage() {
     queryKey: ["investigations", "all"],
     queryFn: () => listInvestigations({ limit: 50 }),
     enabled: showAttachCase,
+  });
+  const { data: runArtifacts = [] } = useQuery({
+    queryKey: ["sandbox", "artifacts", runId],
+    queryFn: () => listSandboxArtifacts(runId),
+    enabled: Boolean(runId),
   });
   const filteredConnections =
     focusIp !== null
@@ -806,6 +811,28 @@ export default function RunDetailPage() {
       </div>
 
       <div className="mt-6 space-y-6">
+        {runArtifacts.length > 0 && (
+          <Panel kicker="Forensics · Sandbox" title={`Captured Sandbox Artifacts (${runArtifacts.length})`}>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 font-mono text-xs">
+              {runArtifacts.map((art) => (
+                <div key={art.filename} className="flex items-center justify-between rounded-xl border border-border-subtle bg-bg-surface p-3 hover:border-accent/50 transition">
+                  <div className="min-w-0 flex-1 mr-2">
+                    <span className="font-bold text-text-primary truncate block">{art.filename}</span>
+                    <span className="text-[10px] text-text-faint">{art.size_bytes} bytes</span>
+                  </div>
+                  <a
+                    href={getSandboxArtifactUrl(runId, art.filename)}
+                    download
+                    className="press shrink-0 inline-flex items-center gap-1 rounded-lg border border-accent/60 bg-accent/15 px-2.5 py-1 text-[11px] font-semibold text-accent hover:bg-accent/25"
+                  >
+                    <Icon name="download" size={11} />
+                    <span>Download</span>
+                  </a>
+                </div>
+              ))}
+            </div>
+          </Panel>
+        )}
         <NotesPanel runId={runId} />
         <RulesPanel runId={runId} />
       </div>

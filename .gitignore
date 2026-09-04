@@ -29,6 +29,7 @@ outpost-stix-*
 outpost-iocs-*
 *.jpeg
 *.jpg
+backend/data/sandbox_artifacts/
 
 # Internal build-context docs (spec/AI handoff — never published to GitHub)
 /AGENTS.md
