@@ -4,7 +4,8 @@ import { Link, useSearchParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { EVENT_ICON, platformIconName } from "../components/iconMeta";
 import { PageHeader } from "../components/ui";
-import { exportEventsCsv, getBehavioralExplanations, getEventCounts, getEvents, getHostXRaySnapshot, getLocalMonitorStatus, getNetworkMatrix, getProcessTree, saveBlob, startLocalMonitor, stopLocalMonitor } from "../lib/api";
+import { exportEventsCsv, getAgents, getBehavioralExplanations, getEventCounts, getEvents, getHostXRaySnapshot, getLocalMonitorStatus, getNetworkMatrix, getProcessTree, saveBlob, startLocalMonitor, stopLocalMonitor } from "../lib/api";
+import { copyToClipboard } from "../lib/clipboard";
 import { useEventStream } from "../lib/useEventStream";
 import { parsePids, resolveSavedFilters, type SavedFilters } from "./eventsHelpers";
 import { DataProvenanceBadge } from "../components/DataProvenanceBadge";
@@ -295,8 +296,10 @@ function EventRow({
   onInspectProcess?: (pid: number) => void;
   onInspectNetwork?: (ip: string) => void;
 }) {
+  const [copied, setCopied] = useState(false);
   const lvl = levelOf(e);
   const rail = e.run_severity === "malicious" ? "bg-risk-malicious" : e.run_severity === "suspicious" ? "bg-risk-suspicious" : "bg-border-strong";
+  const primaryIoc = e.dest_ip || e.file_path || e.command_line || (e.pid ? `PID ${e.pid}` : null);
   return (
     <li className="timeline-item">
       <div
@@ -370,6 +373,59 @@ function EventRow({
             {e.sample_name}
             <Icon name="external" size={10} className="opacity-60" />
           </Link>
+
+          {/* Quick Action Pivots */}
+          <div className="ml-auto flex items-center gap-1.5">
+            {primaryIoc && (
+              <button
+                type="button"
+                onClick={(evt) => {
+                  evt.preventDefault();
+                  evt.stopPropagation();
+                  void copyToClipboard(primaryIoc);
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 1500);
+                }}
+                className="press inline-flex items-center gap-1 rounded border border-border-subtle bg-bg-surface px-1.5 py-0.5 font-mono text-[9px] text-text-muted hover:border-accent/50 hover:text-accent transition-colors"
+                title={`Copy IOC (${primaryIoc}) to clipboard`}
+              >
+                <Icon name={copied ? "check" : "copy"} size={10} className={copied ? "text-risk-clean" : ""} />
+                <span>{copied ? "copied" : "copy"}</span>
+              </button>
+            )}
+
+            {e.pid && onInspectProcess && (
+              <button
+                type="button"
+                onClick={(evt) => {
+                  evt.preventDefault();
+                  evt.stopPropagation();
+                  onInspectProcess(e.pid as number);
+                }}
+                className="press inline-flex items-center gap-1 rounded border border-accent/40 bg-accent/10 px-1.5 py-0.5 font-mono text-[9px] text-accent hover:bg-accent/20 transition-colors"
+                title={`Inspect PID ${e.pid} in Process Tree`}
+              >
+                <Icon name="process" size={10} />
+                <span>proc</span>
+              </button>
+            )}
+
+            {e.dest_ip && onInspectNetwork && (
+              <button
+                type="button"
+                onClick={(evt) => {
+                  evt.preventDefault();
+                  evt.stopPropagation();
+                  onInspectNetwork(e.dest_ip as string);
+                }}
+                className="press inline-flex items-center gap-1 rounded border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 font-mono text-[9px] text-sky-400 hover:bg-sky-500/20 transition-colors"
+                title={`Inspect ${e.dest_ip} in Network Matrix`}
+              >
+                <Icon name="network" size={10} />
+                <span>net</span>
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Inline expansion — the full raw record, unfolded under the row */}
@@ -589,6 +645,9 @@ export default function EventsPage() {
       console.error("Failed to toggle local monitor:", err);
     }
   };
+
+  const { data: fleetData } = useQuery({ queryKey: ["agents"], queryFn: () => getAgents(), staleTime: 30_000 });
+  const fleetCount = fleetData?.agents?.length ?? 1;
 
   // Effective synthetic visibility: only show synthetic events when the user explicitly toggles it
   const includeSynthetic = showSynthetic;
@@ -836,16 +895,54 @@ export default function EventsPage() {
       .sort((a, b) => b.events[b.events.length - 1].timestamp.localeCompare(a.events[a.events.length - 1].timestamp));
   }, [events]);
 
+  // Tactical Quick-Pivot HUD derived data
+  const tacticalPivots = useMemo(() => {
+    const pids = new Map<number, { name: string | null; count: number }>();
+    const ips = new Map<string, number>();
+    let malCount = 0;
+    let suspCount = 0;
+    let cleanCount = 0;
+
+    for (const e of events) {
+      if (e.run_severity === "malicious") malCount++;
+      else if (e.run_severity === "suspicious") suspCount++;
+      else cleanCount++;
+
+      if (e.pid !== null && e.pid !== undefined) {
+        const cur = pids.get(e.pid) ?? { name: e.process_name ?? null, count: 0 };
+        cur.count++;
+        if (!cur.name && e.process_name) cur.name = e.process_name;
+        pids.set(e.pid, cur);
+      }
+
+      if (e.dest_ip) {
+        ips.set(e.dest_ip, (ips.get(e.dest_ip) ?? 0) + 1);
+      }
+    }
+
+    const topPids = [...pids.entries()]
+      .sort((a, b) => b[1].count - a[1].count)
+      .slice(0, 4)
+      .map(([pid, info]) => ({ pid, ...info }));
+
+    const topIps = [...ips.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 4)
+      .map(([ip, count]) => ({ ip, count }));
+
+    return { topPids, topIps, malCount, suspCount, cleanCount };
+  }, [events]);
+
   return (
     <div className="mx-auto max-w-[1400px] px-5 py-8 lg:px-8">
       <PageHeader
-        kicker="Workspace · host forensics & telemetry"
+        kicker="SOC Telemetry · Host Forensics & Fleet"
         title={
           <>
-            Host Forensics & Event Manager <span className="font-normal text-text-muted">— live system telemetry & process inspector</span>
+            Host Forensics & Event Manager <span className="font-normal text-text-muted">— Live Telemetry & Process Inspector</span>
           </>
         }
-        lede="Authoritative activity stream across hosts, sessions, and log channels (auditd, Sysmon, eBPF) — with real-time deep process causality, hardware sensor access inspection, and live telemetry feeds."
+        lede="Authoritative multi-channel activity stream across monitored fleet endpoints (auditd, Sysmon, eBPF) with live process causality inspection, socket state tracking, and rapid forensic pivots."
         actions={
           <div className="flex flex-wrap items-center gap-2">
             {/* Stream Local Host Telemetry Button */}
@@ -898,40 +995,79 @@ export default function EventsPage() {
         }
       />
 
+      {/* Real-time Collector & Posture Banner */}
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border-subtle bg-bg-surface/80 px-5 py-3.5 backdrop-blur-md transition-all duration-200">
+        <div className="flex items-center gap-3">
+          <span className="relative flex h-3 w-3">
+            <span className={`absolute inline-flex h-full w-full animate-ping rounded-full ${isLocalStreaming ? "bg-signal" : "bg-accent"} opacity-75`} />
+            <span className={`relative inline-flex h-3 w-3 rounded-full ${isLocalStreaming ? "bg-signal" : "bg-accent"}`} />
+          </span>
+          <div className="flex items-center gap-2 font-mono text-xs">
+            <span className="font-bold text-text-primary">Collector Engine:</span>
+            <span className={isLocalStreaming ? "font-bold text-signal" : "text-accent font-semibold"}>
+              {isLocalStreaming ? "Local In-Process Streaming Active" : "Endpoint Daemon Active"}
+            </span>
+          </div>
+          <span className="text-text-faint">·</span>
+          <span className="font-mono text-[11px] text-text-muted">
+            {countsQuery.data ? `${countsQuery.data.types.all ?? 0} events indexed across fleet` : "Syncing sensor feed…"}
+          </span>
+        </div>
+
+        <div className="flex items-center gap-3 font-mono text-[11px]">
+          <span className="text-text-muted">
+            {fleetCount} enrolled host{fleetCount === 1 ? "" : "s"}
+          </span>
+          <span className="text-text-faint">|</span>
+          <span className="text-text-muted">
+            {forensicsSnapshot?.process_count ?? 0} procs · {forensicsSnapshot?.socket_count ?? 0} sockets tracked
+          </span>
+        </div>
+      </div>
+
       {/* Main Workspace Tab Switcher */}
-      <div className="mb-6 flex rounded-xl border border-border-subtle bg-bg-surface p-1 font-mono text-xs shadow-sm">
+      <div className="mb-6 grid grid-cols-1 sm:grid-cols-3 gap-2 rounded-2xl border border-border-subtle bg-bg-surface/90 p-1.5 font-mono text-xs shadow-sm">
         <button
           onClick={() => setMainTab("stream")}
-          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2.5 font-medium transition ${
+          className={`flex items-center justify-center gap-2 rounded-xl py-2.5 px-3 font-medium transition-all duration-150 ${
             mainTab === "stream"
-              ? "bg-accent/15 font-bold text-accent shadow-sm"
-              : "text-text-muted hover:text-text-primary"
+              ? "bg-accent/15 font-bold text-accent border border-accent/40 shadow-sm"
+              : "text-text-muted hover:text-text-primary hover:bg-bg-elevated/40 border border-transparent"
           }`}
         >
-          <Icon name="list" size={13} />
-          <span>Live Telemetry &amp; Event Stream</span>
-        </button>
-        <button
-          onClick={() => setMainTab("fleet")}
-          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2.5 font-medium transition ${
-            mainTab === "fleet"
-              ? "bg-accent/15 font-bold text-accent shadow-sm"
-              : "text-text-muted hover:text-text-primary"
-          }`}
-        >
-          <Icon name="terminal" size={13} />
-          <span>Sensor Fleet &amp; Agent Roster</span>
+          <Icon name="list" size={14} />
+          <span>Live Telemetry &amp; Events</span>
+          <span className="rounded-full bg-bg-surface px-2 py-0.5 text-[10px] tabular-nums font-mono border border-border-subtle">
+            {countsQuery.data?.types.all ?? 0}
+          </span>
         </button>
         <button
           onClick={() => setMainTab("forensics")}
-          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2.5 font-medium transition ${
+          className={`flex items-center justify-center gap-2 rounded-xl py-2.5 px-3 font-medium transition-all duration-150 ${
             mainTab === "forensics"
-              ? "bg-accent/15 font-bold text-accent shadow-sm"
-              : "text-text-muted hover:text-text-primary"
+              ? "bg-accent/15 font-bold text-accent border border-accent/40 shadow-sm"
+              : "text-text-muted hover:text-text-primary hover:bg-bg-elevated/40 border border-transparent"
           }`}
         >
-          <Icon name="box" size={13} />
+          <Icon name="box" size={14} />
           <span>Deep System Forensics</span>
+          <span className="rounded-full bg-bg-surface px-2 py-0.5 text-[10px] tabular-nums font-mono border border-border-subtle">
+            {forensicsSnapshot?.process_count ?? 0}p / {forensicsSnapshot?.socket_count ?? 0}s
+          </span>
+        </button>
+        <button
+          onClick={() => setMainTab("fleet")}
+          className={`flex items-center justify-center gap-2 rounded-xl py-2.5 px-3 font-medium transition-all duration-150 ${
+            mainTab === "fleet"
+              ? "bg-accent/15 font-bold text-accent border border-accent/40 shadow-sm"
+              : "text-text-muted hover:text-text-primary hover:bg-bg-elevated/40 border border-transparent"
+          }`}
+        >
+          <Icon name="terminal" size={14} />
+          <span>Sensor Fleet Roster</span>
+          <span className="rounded-full bg-bg-surface px-2 py-0.5 text-[10px] tabular-nums font-mono border border-border-subtle">
+            {fleetCount} hosts
+          </span>
         </button>
       </div>
 
@@ -1663,6 +1799,115 @@ export default function EventsPage() {
               ))}
             </div>
           </div>
+
+          {/* Tactical Quick-Pivot HUD (DFIR & Process Execution Tracking) */}
+          {events.length > 0 && (
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border-subtle bg-bg-surface/80 px-4 py-2.5 backdrop-blur-md shadow-sm">
+              <div className="flex flex-wrap items-center gap-2 font-mono text-xs">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-text-faint flex items-center gap-1.5">
+                  <Icon name="target" size={12} className="text-accent" />
+                  Tactical Pivots:
+                </span>
+
+                {/* Top PIDs */}
+                {tacticalPivots.topPids.length > 0 && (
+                  <div className="flex items-center gap-1.5 border-r border-border-subtle/80 pr-2.5">
+                    <span className="text-[10px] text-text-faint">PIDs:</span>
+                    {tacticalPivots.topPids.slice(0, 3).map((p) => (
+                      <button
+                        key={p.pid}
+                        type="button"
+                        onClick={() => {
+                          setPidInput(String(p.pid));
+                          setSubmittedPids([p.pid]);
+                        }}
+                        className={`press inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] border transition-colors ${
+                          submittedPids.includes(p.pid)
+                            ? "border-accent bg-accent/15 text-accent font-semibold"
+                            : "border-border-subtle bg-bg-elevated/70 text-text-muted hover:border-accent/40 hover:text-accent"
+                        }`}
+                        title={`Filter feed to PID ${p.pid} (${p.name ?? "process"})`}
+                      >
+                        <Icon name="process" size={9} />
+                        <span>{p.name ? `${p.name} (${p.pid})` : `pid ${p.pid}`}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Top Dest IPs */}
+                {tacticalPivots.topIps.length > 0 && (
+                  <div className="flex items-center gap-1.5 border-r border-border-subtle/80 pr-2.5">
+                    <span className="text-[10px] text-text-faint">Dest IPs:</span>
+                    {tacticalPivots.topIps.slice(0, 3).map((ip) => (
+                      <button
+                        key={ip.ip}
+                        type="button"
+                        onClick={() => {
+                          setQ(ip.ip);
+                          setSubmittedQ(ip.ip);
+                        }}
+                        className={`press inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] border transition-colors ${
+                          submittedQ === ip.ip
+                            ? "border-sky-500 bg-sky-500/15 text-sky-400 font-semibold"
+                            : "border-border-subtle bg-bg-elevated/70 text-text-muted hover:border-accent/40 hover:text-accent"
+                        }`}
+                        title={`Filter feed to IP ${ip.ip}`}
+                      >
+                        <Icon name="network" size={9} />
+                        <span>{ip.ip}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Severity Breakdown */}
+                <div className="flex items-center gap-1.5 text-[10px]">
+                  {tacticalPivots.malCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setSeverity(severity === "malicious" ? "" : "malicious")}
+                      className={`rounded px-2 py-0.5 font-bold uppercase transition-colors border ${
+                        severity === "malicious"
+                          ? "border-risk-malicious bg-risk-malicious/25 text-risk-malicious"
+                          : "border-risk-malicious/40 bg-risk-malicious/10 text-risk-malicious hover:bg-risk-malicious/20"
+                      }`}
+                      title="Filter critical / malicious events"
+                    >
+                      {tacticalPivots.malCount} critical
+                    </button>
+                  )}
+                  {tacticalPivots.suspCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setSeverity(severity === "suspicious" ? "" : "suspicious")}
+                      className={`rounded px-2 py-0.5 font-bold uppercase transition-colors border ${
+                        severity === "suspicious"
+                          ? "border-risk-suspicious bg-risk-suspicious/25 text-risk-suspicious"
+                          : "border-risk-suspicious/40 bg-risk-suspicious/10 text-risk-suspicious hover:bg-risk-suspicious/20"
+                      }`}
+                      title="Filter suspicious events"
+                    >
+                      {tacticalPivots.suspCount} suspicious
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Density View Mode Toggle */}
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setView(view === "timeline" ? "process" : "timeline")}
+                  className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-surface px-2.5 py-1 font-mono text-[10px] text-text-muted hover:border-accent/40 hover:text-text-primary transition-colors"
+                  title="Toggle between minute-grouped chronological timeline and process-chain view"
+                >
+                  <Icon name={view === "timeline" ? "list" : "process"} size={11} className="text-accent" />
+                  <span>{view === "timeline" ? "Timeline Mode" : "Process Chain Mode"}</span>
+                </button>
+              </div>
+            </div>
+          )}
 
           <p className="mb-3 font-mono text-[11px] text-text-faint">
             {isLoading ? "Loading events…" : `${total} event${total === 1 ? "" : "s"} · showing ${offset + 1}–${Math.min(offset + PAGE, total)}`}
