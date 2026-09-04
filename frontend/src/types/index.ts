@@ -543,6 +543,7 @@ export interface DroppedArtifactItem {
   preview: string[];
   artifact_id: string;
   download_url: string;
+  config?: MalwareConfig;
 }
 
 export interface SampleDetonationResult {
@@ -1616,6 +1617,73 @@ export interface DetonationDelta {
     service_hint?: string;
   }>;
 }
+
+export interface TechniqueTestItem {
+  id: string;
+  technique_id: string;
+  technique_name: string;
+  tactic: string;
+  tactic_id: string;
+  supported_platforms: string[];
+  name: string;
+  description: string;
+  prereqs: Array<{ command: string; description: string }>;
+  attack_command: string;
+  cleanup_command: string;
+  expected_telemetry: string[];
+  severity: string;
+}
+
+export interface TechniqueRunResult {
+  run_id: string;
+  test_id: string;
+  technique_id: string;
+  technique_name: string;
+  tactic: string;
+  name: string;
+  status: "success" | "failed";
+  exit_code: number;
+  elapsed_ms: number;
+  prereqs_met: boolean;
+  prereq_output: string[];
+  cleanup_status: string;
+  stdout: string;
+  stderr: string;
+  alerts: Array<Record<string, any>>;
+  alerts_count: number;
+  events_count: number;
+  risk_score: number;
+}
+
+export interface ForensicProbeItem {
+  id: string;
+  name: string;
+  tactic: string;
+  technique: string;
+  description: string;
+}
+
+export interface ForensicProbeResult {
+  probe_id: string;
+  name: string;
+  tactic: string;
+  technique: string;
+  total_items: number;
+  anomalies_count: number;
+  findings: Array<Record<string, any>>;
+}
+
+export interface MalwareConfig {
+  threat_score: number;
+  verdict: "MALICIOUS" | "SUSPICIOUS" | "BENIGN";
+  entropy: number;
+  c2_ips: string[];
+  urls: string[];
+  crypto_wallets: string[];
+  ransom_indicators: string[];
+  behavioral_indicators: string[];
+}
+
 
 
 

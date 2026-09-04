@@ -20,6 +20,7 @@ import type { AlertStatus, InvestigationNarrativeResult, InvestigationRefType, I
 import DataProvenanceBadge from "../components/DataProvenanceBadge";
 import NetworkContextModal from "../components/NetworkContextModal";
 import ProcessContextModal from "../components/ProcessContextModal";
+import InvestigationEvidenceGraph from "../components/InvestigationEvidenceGraph";
 
 const REF_TYPES: InvestigationRefType[] = ["run", "host", "ioc", "artifact", "campaign"];
 const STATUSES: InvestigationStatus[] = ["created", "triage", "active", "contained", "resolved"];
@@ -360,6 +361,27 @@ export default function InvestigationDetailPage() {
           </div>
         </Panel>
       )}
+
+      {/* Incident Visual Evidence Graph */}
+      <Panel
+        kicker="Incident Response · Evidence Correlation Graph"
+        title="Interactive Incident Correlation & Attack Graph"
+        right={
+          <span className="font-mono text-[10px] text-text-faint">
+            Correlating Case, Hosts, Runs, Findings & Extracted IOCs
+          </span>
+        }
+        className="mb-6"
+      >
+        <InvestigationEvidenceGraph
+          investigation={inv}
+          onSelectNode={(type, id) => {
+            if (type === "ioc" && id.includes(".")) {
+              setInspectIp(id);
+            }
+          }}
+        />
+      </Panel>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[3fr_2fr]">
         {/* Findings */}

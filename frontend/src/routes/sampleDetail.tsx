@@ -596,6 +596,57 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
                             </div>
                           </div>
                         )}
+
+                        {art.config && (
+                          <div className="rounded-lg border border-accent/30 bg-accent/5 p-3 space-y-2">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-accent">
+                                Extracted Malware Configuration & Threat Indicators
+                              </span>
+                              <span
+                                className={`rounded px-1.5 py-0.5 text-[9px] font-bold uppercase ${
+                                  art.config.verdict === "MALICIOUS"
+                                    ? "bg-risk-malicious/20 text-risk-malicious border border-risk-malicious/40"
+                                    : art.config.verdict === "SUSPICIOUS"
+                                      ? "bg-amber-500/20 text-amber-400 border border-amber-500/40"
+                                      : "bg-risk-clean/20 text-risk-clean border border-risk-clean/40"
+                                }`}
+                              >
+                                {art.config.verdict} (Score: {art.config.threat_score}/100)
+                              </span>
+                            </div>
+
+                            {art.config.c2_ips && art.config.c2_ips.length > 0 && (
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <span className="text-[10px] text-text-faint">C2 Endpoints:</span>
+                                {art.config.c2_ips.map((ip: string) => (
+                                  <span key={ip} className="rounded bg-bg-surface border border-border-subtle px-1.5 py-0.5 text-[10px] font-mono text-cyan-400">
+                                    {ip}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+
+                            {art.config.crypto_wallets && art.config.crypto_wallets.length > 0 && (
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <span className="text-[10px] text-text-faint">Ransom Wallets:</span>
+                                {art.config.crypto_wallets.map((w: string) => (
+                                  <span key={w} className="rounded bg-bg-surface border border-border-subtle px-1.5 py-0.5 text-[10px] font-mono text-amber-400">
+                                    {w}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+
+                            {art.config.behavioral_indicators && art.config.behavioral_indicators.length > 0 && (
+                              <ul className="text-[10px] text-text-muted list-disc list-inside space-y-0.5">
+                                {art.config.behavioral_indicators.map((ind: string, iidx: number) => (
+                                  <li key={iidx}>{ind}</li>
+                                ))}
+                              </ul>
+                            )}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>

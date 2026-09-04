@@ -727,3 +727,34 @@ def get_forensics_dossier(pid: int) -> dict:
     return _get(f"/system/forensics/process/{pid}/full")
 
 
+def get_technique_tests(tactic: str | None = None, platform: str | None = None, q: str | None = None) -> list[dict]:
+    """Retrieve adversary technique unit tests from the catalog."""
+    from urllib.parse import quote
+    params = []
+    if tactic:
+        params.append(f"tactic={quote(tactic)}")
+    if platform:
+        params.append(f"platform={quote(platform)}")
+    if q:
+        params.append(f"q={quote(q)}")
+    qs = f"?{'&'.join(params)}" if params else ""
+    return _get(f"/sandbox/techniques{qs}")
+
+
+def run_technique_test(test_id: str, platform: str | None = None) -> dict:
+    """Execute an adversary technique unit test."""
+    return _post("/sandbox/techniques/run", {"test_id": test_id, "platform": platform})
+
+
+def get_forensic_probes(host_id: str = "local") -> list[dict]:
+    """List available live host forensic artifact hunting probes."""
+    from urllib.parse import quote
+    return _get(f"/system/forensics/probes?host_id={quote(host_id)}")
+
+
+def run_forensic_probe(probe_id: str, host_id: str = "local") -> dict:
+    """Execute an on-demand live host forensic hunt probe."""
+    from urllib.parse import quote
+    return _post(f"/system/forensics/probes/{quote(probe_id)}/run?host_id={quote(host_id)}", {})
+
+

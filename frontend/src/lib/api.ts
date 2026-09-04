@@ -1645,3 +1645,28 @@ export async function synthesizeInvestigation(investigationId: string): Promise<
   return post<InvestigationNarrativeResult>(`/investigations/${encodeURIComponent(investigationId)}/synthesize`, {});
 }
 
+export async function listTechniqueTests(tactic?: string, platform?: string, q?: string): Promise<import("../types").TechniqueTestItem[]> {
+  const qs = new URLSearchParams();
+  if (tactic) qs.set("tactic", tactic);
+  if (platform) qs.set("platform", platform);
+  if (q) qs.set("q", q);
+  return get<import("../types").TechniqueTestItem[]>(`/sandbox/techniques?${qs.toString()}`);
+}
+
+export async function runTechniqueTest(testId: string, runId?: string, platform?: string): Promise<import("../types").TechniqueRunResult> {
+  return post<import("../types").TechniqueRunResult>("/sandbox/techniques/run", {
+    test_id: testId,
+    run_id: runId,
+    platform,
+  });
+}
+
+export async function listForensicProbes(hostId = "local"): Promise<import("../types").ForensicProbeItem[]> {
+  return get<import("../types").ForensicProbeItem[]>(`/system/forensics/probes?host_id=${encodeURIComponent(hostId)}`);
+}
+
+export async function runForensicProbe(probeId: string, hostId = "local"): Promise<import("../types").ForensicProbeResult> {
+  return post<import("../types").ForensicProbeResult>(`/system/forensics/probes/${encodeURIComponent(probeId)}/run?host_id=${encodeURIComponent(hostId)}`, {});
+}
+
+

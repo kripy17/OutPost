@@ -165,3 +165,25 @@ def get_xray_full_target_dossier(pid: int) -> dict:
     return dossier
 
 
+@router.get("/system/forensics/probes", response_model=None)
+@router.get("/hosts/{host_id}/probes", response_model=None)
+def list_probes(host_id: str = "local") -> list[dict]:
+    """List available live host forensic artifact hunting probes."""
+    from ..services.forensic_probes import list_forensic_probes
+    return list_forensic_probes()
+
+
+@router.post("/system/forensics/probes/{probe_id}/run", response_model=None)
+@router.post("/hosts/{host_id}/probes/{probe_id}/run", response_model=None)
+def execute_probe(probe_id: str, host_id: str = "local") -> dict:
+    """Execute an on-demand forensic hunt probe on the endpoint."""
+    from ..services.forensic_probes import run_forensic_probe
+    try:
+        return run_forensic_probe(probe_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Forensic hunt failed: {e}")
+
+
+

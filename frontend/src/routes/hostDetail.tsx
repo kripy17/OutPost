@@ -13,10 +13,10 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Icon, type IconName } from "../components/Icon";
 import { PageHeader, Panel } from "../components/ui";
-import { getHostContainment, getHostTimeline, isolateHost } from "../lib/api";
+import { getHostContainment, getHostTimeline, isolateHost, listForensicProbes, runForensicProbe } from "../lib/api";
 import { useEventStream } from "../lib/useEventStream";
 import { toneFill, toneForReputation, toneForSeverity } from "../lib/fillPatterns";
-import type { EventType, HostTimelineEntry, TimelineKind } from "../types";
+import type { EventType, ForensicProbeItem, ForensicProbeResult, HostTimelineEntry, TimelineKind } from "../types";
 import ProcessContextModal from "../components/ProcessContextModal";
 import NetworkContextModal from "../components/NetworkContextModal";
 import { ProcessCausalityTree } from "../components/ProcessCausalityTree";
@@ -152,7 +152,27 @@ function EntryRow({
 export default function HostDetailPage() {
   const { hostId } = useParams<{ hostId: string }>();
   const queryClient = useQueryClient();
-  const [activeView, setActiveView] = useState<"timeline" | "tree" | "network" | "sensors">("timeline");
+  const [activeView, setActiveView] = useState<"timeline" | "tree" | "network" | "sensors" | "hunts">("timeline");
+  const [activeProbeResult, setActiveProbeResult] = useState<ForensicProbeResult | null>(null);
+  const [runningProbeId, setRunningProbeId] = useState<string | null>(null);
+
+  const { data: probes = [] } = useQuery<ForensicProbeItem[]>({
+    queryKey: ["host-probes", hostId],
+    queryFn: () => listForensicProbes(hostId || "local"),
+  });
+
+  const handleRunProbe = async (probeId: string) => {
+    setRunningProbeId(probeId);
+    try {
+      const res = await runForensicProbe(probeId, hostId || "local");
+      setActiveProbeResult(res);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setRunningProbeId(null);
+    }
+  };
+
   const [kind, setKind] = useState<TimelineKind | "">("");
   const [eventType, setEventType] = useState<EventType | "">("");
   const [q, setQ] = useState("");
@@ -363,7 +383,122 @@ export default function HostDetailPage() {
           <Icon name="sliders" size={13} />
           <span>Hardware & Sensors</span>
         </button>
+        <button
+          onClick={() => setActiveView("hunts")}
+          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-medium transition ${
+            activeView === "hunts"
+              ? "bg-accent/15 font-bold text-accent shadow-sm"
+              : "text-text-muted hover:text-text-primary"
+          }`}
+        >
+          <Icon name="search" size={13} />
+          <span>Forensic Hunts ({probes.length})</span>
+        </button>
       </div>
+
+      {activeView === "hunts" && (
+        <Panel
+          kicker="Live Host Forensics · Endpoint Artifact Hunts"
+          title="Endpoint Forensic Artifact Hunts"
+          right={
+            <span className="font-mono text-[10px] text-text-faint">
+              On-demand hunting queries across persistence, sockets, and memory
+            </span>
+          }
+          className="space-y-6"
+        >
+          {/* Active Probe Result */}
+          {activeProbeResult && (
+            <div className="rounded-xl border border-accent/40 bg-bg-surface p-4 font-mono text-xs space-y-3">
+              <div className="flex items-center justify-between border-b border-border-subtle pb-2">
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-text-primary">
+                    Hunt Results: {activeProbeResult.name}
+                  </span>
+                  <span className="rounded bg-accent/20 px-2 py-0.5 text-[10px] font-bold text-accent">
+                    {activeProbeResult.technique} · {activeProbeResult.tactic}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className={activeProbeResult.anomalies_count > 0 ? "text-rose-400 font-bold" : "text-emerald-400 font-bold"}>
+                    {activeProbeResult.anomalies_count} Suspicious / {activeProbeResult.total_items} Scanned
+                  </span>
+                  <button onClick={() => setActiveProbeResult(null)} className="hover:text-accent font-bold ml-2">
+                    Close ×
+                  </button>
+                </div>
+              </div>
+
+              {activeProbeResult.findings.length === 0 ? (
+                <p className="py-4 text-center text-text-muted">No entries discovered for this probe on host.</p>
+              ) : (
+                <div className="max-h-72 overflow-y-auto space-y-2">
+                  {activeProbeResult.findings.map((f, fidx) => (
+                    <div
+                      key={fidx}
+                      className={`p-2.5 rounded-lg border text-[11px] flex items-start justify-between gap-3 ${
+                        f.is_suspicious
+                          ? "border-rose-500/40 bg-rose-500/10 text-rose-300"
+                          : "border-border-subtle bg-bg-base/60 text-text-primary"
+                      }`}
+                    >
+                      <div className="space-y-0.5 truncate flex-1">
+                        <div className="font-bold truncate">{f.location || f.file || f.process_name || f.path || f.entry}</div>
+                        <div className="text-[10px] text-text-muted truncate">{f.details || f.command_line || f.preview || f.entry}</div>
+                      </div>
+                      <span className={`px-2 py-0.5 rounded text-[9px] uppercase font-bold shrink-0 ${
+                        f.severity === "malicious"
+                          ? "bg-rose-500/20 text-rose-400 border border-rose-500/40"
+                          : f.severity === "suspicious"
+                            ? "bg-amber-500/20 text-amber-400 border border-amber-500/40"
+                            : "bg-emerald-500/20 text-emerald-400"
+                      }`}>
+                        {f.severity || (f.is_suspicious ? "suspicious" : "clean")}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Probes Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {probes.map((probe) => {
+              const isRunning = runningProbeId === probe.id;
+              return (
+                <div
+                  key={probe.id}
+                  className="rounded-xl border border-border-subtle bg-bg-surface p-4 space-y-2.5 hover:border-accent/40 transition shadow-sm"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="rounded border border-accent/40 bg-accent/15 px-1.5 py-0.5 font-mono text-[9px] font-bold text-accent">
+                          {probe.technique}
+                        </span>
+                        <span className="text-[10px] font-mono text-text-faint">{probe.tactic}</span>
+                      </div>
+                      <h4 className="font-semibold text-text-primary text-xs mt-1">{probe.name}</h4>
+                    </div>
+
+                    <button
+                      onClick={() => handleRunProbe(probe.id)}
+                      disabled={runningProbeId !== null}
+                      className="btn btn-sm btn-primary font-mono text-xs shrink-0"
+                    >
+                      <Icon name={isRunning ? "refresh" : "search"} size={11} className={isRunning ? "animate-spin mr-1" : "mr-1"} />
+                      {isRunning ? "Hunting…" : "Run Hunt"}
+                    </button>
+                  </div>
+
+                  <p className="text-xs text-text-muted leading-relaxed">{probe.description}</p>
+                </div>
+              );
+            })}
+          </div>
+        </Panel>
+      )}
 
       {activeView === "tree" && (
         <ProcessCausalityTree

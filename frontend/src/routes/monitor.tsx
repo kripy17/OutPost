@@ -8,10 +8,18 @@ import {
   executeSimulationStage,
   getPlaybooks,
   getSandboxArtifactUrl,
+  listTechniqueTests,
   runLiveSimulation,
+  runTechniqueTest,
 } from "../lib/api";
 import { ProcessCausalityTree } from "../components/ProcessCausalityTree";
-import type { DroppedArtifactItem, PlaybookScenario, SimulationStageResult } from "../types";
+import type {
+  DroppedArtifactItem,
+  PlaybookScenario,
+  SimulationStageResult,
+  TechniqueRunResult,
+  TechniqueTestItem,
+} from "../types";
 
 export default function MonitorPage() {
   const navigate = useNavigate();
@@ -35,6 +43,16 @@ export default function MonitorPage() {
 
   // View mode tab for the cockpit
   const [simViewMode, setSimViewMode] = useState<"terminal" | "tree" | "alerts" | "artifacts" | "delta">("terminal");
+
+  // Top-level View Mode: "campaigns" vs "techniques"
+  const [activeTab, setActiveTab] = useState<"campaigns" | "techniques">("campaigns");
+
+  // Technique tests state
+  const [techniqueTactic, setTechniqueTactic] = useState<string>("all");
+  const [techniqueSearch, setTechniqueSearch] = useState<string>("");
+  const [runningTechniqueId, setRunningTechniqueId] = useState<string | null>(null);
+  const [techniqueResult, setTechniqueResult] = useState<TechniqueRunResult | null>(null);
+  const [expandedTechniqueId, setExpandedTechniqueId] = useState<string | null>(null);
 
   // Automated run result
   const [activeResult, setActiveResult] = useState<{
@@ -64,6 +82,27 @@ export default function MonitorPage() {
     queryKey: ["playbooks"],
     queryFn: getPlaybooks,
   });
+
+  const { data: techniques = [] } = useQuery<TechniqueTestItem[]>({
+    queryKey: ["techniques", techniqueTactic, techniqueSearch],
+    queryFn: () => listTechniqueTests(techniqueTactic === "all" ? undefined : techniqueTactic, undefined, techniqueSearch.trim() || undefined),
+  });
+
+  const handleRunTechnique = async (testId: string) => {
+    setRunningTechniqueId(testId);
+    setExecutionError(null);
+    try {
+      const res = await runTechniqueTest(testId);
+      setTechniqueResult(res);
+      void queryClient.invalidateQueries({ queryKey: ["runs"] });
+      void queryClient.invalidateQueries({ queryKey: ["alerts"] });
+      void queryClient.invalidateQueries({ queryKey: ["events"] });
+    } catch (e: any) {
+      setExecutionError(e.message || "Failed to execute technique test");
+    } finally {
+      setRunningTechniqueId(null);
+    }
+  };
 
   const filteredPlaybooks = (playbooks || []).filter((pb) => {
     if (platformFilter !== "all" && pb.platform !== platformFilter) return false;
@@ -231,6 +270,35 @@ export default function MonitorPage() {
           All adversary campaigns execute real sandboxed subprocesses in ephemeral temporary workspaces. Telemetry is ingested directly by OutPost's behavioral detection engine, producing authentic events, process lineages, Shannon entropy metrics, and SigmaHQ detection alerts in real time.
         </p>
       </div>
+
+      {/* Top-Level Mode Selector */}
+      <div className="flex items-center gap-2 border-b border-border-subtle pb-3 font-mono text-sm">
+        <button
+          onClick={() => setActiveTab("campaigns")}
+          className={`flex items-center gap-2 rounded-xl px-4 py-2 transition ${
+            activeTab === "campaigns"
+              ? "bg-accent/20 font-bold text-accent border border-accent/40 shadow-sm"
+              : "text-text-muted hover:text-text-primary hover:bg-white/5"
+          }`}
+        >
+          <Icon name="play" size={14} />
+          <span>Multi-Stage Campaigns ({filteredPlaybooks?.length ?? 0})</span>
+        </button>
+        <button
+          onClick={() => setActiveTab("techniques")}
+          className={`flex items-center gap-2 rounded-xl px-4 py-2 transition ${
+            activeTab === "techniques"
+              ? "bg-accent/20 font-bold text-accent border border-accent/40 shadow-sm"
+              : "text-text-muted hover:text-text-primary hover:bg-white/5"
+          }`}
+        >
+          <Icon name="target" size={14} />
+          <span>Technique Unit Tests ({techniques.length})</span>
+        </button>
+      </div>
+
+      {activeTab === "campaigns" && (
+        <>
 
       {executionError && (
         <div className="rounded-2xl border border-risk-malicious/50 bg-risk-malicious/10 p-4 font-mono text-xs text-risk-malicious flex items-start gap-3">
@@ -1060,6 +1128,191 @@ export default function MonitorPage() {
           </div>
         )}
       </div>
+      </>
+      )}
+
+      {/* ── ADVERSARY TECHNIQUE UNIT TESTS ───────────────────────────────── */}
+      {activeTab === "techniques" && (
+        <div className="space-y-6">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <h3 className="font-sans text-sm font-bold text-text-primary">
+                Adversary Technique Unit Tests ({techniques.length})
+              </h3>
+              <p className="text-xs text-text-muted">
+                Fine-grained, modular tests mapped to MITRE ATT&CK techniques with prerequisites verification, real telemetry generation, and automated cleanup contracts.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="relative">
+                <Icon name="search" size={14} className="absolute left-2.5 top-2.5 text-text-faint" />
+                <input
+                  type="text"
+                  placeholder="Search techniques (e.g. cron, bash, suid)..."
+                  value={techniqueSearch}
+                  onChange={(e) => setTechniqueSearch(e.target.value)}
+                  className="h-8 w-64 rounded-lg border border-border-subtle bg-bg-surface pl-8 pr-3 text-xs outline-none focus:border-accent/50 font-mono"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Tactic Filter Pills */}
+          <div className="flex flex-wrap items-center gap-1.5 font-mono text-xs">
+            {["all", "Execution", "Persistence", "Privilege Escalation", "Defense Evasion", "Credential Access", "Discovery", "Exfiltration"].map((t) => (
+              <button
+                key={t}
+                onClick={() => setTechniqueTactic(t)}
+                className={`rounded-lg px-3 py-1.5 transition ${
+                  techniqueTactic === t
+                    ? "bg-accent/20 font-bold text-accent border border-accent/40"
+                    : "bg-bg-surface border border-border-subtle text-text-muted hover:text-text-primary"
+                }`}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
+
+          {/* Active Technique Result Card */}
+          {techniqueResult && (
+            <div className="rounded-2xl border border-accent/50 bg-bg-surface p-5 font-mono text-xs space-y-4 shadow-xl">
+              <div className="flex items-center justify-between border-b border-border-subtle pb-3">
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                      techniqueResult.status === "success"
+                        ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40"
+                        : "bg-rose-500/20 text-rose-400 border border-rose-500/40"
+                    }`}
+                  >
+                    {techniqueResult.status} (exit {techniqueResult.exit_code})
+                  </span>
+                  <span className="font-bold text-text-primary">
+                    {techniqueResult.technique_id} · {techniqueResult.name}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 text-text-muted text-[11px]">
+                  <span>{techniqueResult.elapsed_ms}ms</span>
+                  <span>·</span>
+                  <button onClick={() => setTechniqueResult(null)} className="hover:text-accent font-bold">
+                    Close ×
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-[11px]">
+                <div className="bg-panel-muted/60 p-2.5 rounded-lg border border-border-subtle/50">
+                  <span className="text-text-muted block text-[10px] uppercase">Prerequisites</span>
+                  <span className={techniqueResult.prereqs_met ? "text-emerald-400 font-bold" : "text-rose-400 font-bold"}>
+                    {techniqueResult.prereqs_met ? "Verified OK" : "Failed / Missing"}
+                  </span>
+                </div>
+                <div className="bg-panel-muted/60 p-2.5 rounded-lg border border-border-subtle/50">
+                  <span className="text-text-muted block text-[10px] uppercase">Cleanup Contract</span>
+                  <span className="text-emerald-400 font-bold capitalize">
+                    {techniqueResult.cleanup_status}
+                  </span>
+                </div>
+                <div className="bg-panel-muted/60 p-2.5 rounded-lg border border-border-subtle/50">
+                  <span className="text-text-muted block text-[10px] uppercase">Telemetry Ingested</span>
+                  <span className="text-accent font-bold">
+                    {techniqueResult.events_count} events
+                  </span>
+                </div>
+                <div className="bg-panel-muted/60 p-2.5 rounded-lg border border-border-subtle/50">
+                  <span className="text-text-muted block text-[10px] uppercase">Triggered Alerts</span>
+                  <span className={techniqueResult.alerts_count > 0 ? "text-rose-400 font-bold" : "text-text-muted font-bold"}>
+                    {techniqueResult.alerts_count} alert(s) fired
+                  </span>
+                </div>
+              </div>
+
+              {/* Terminal output */}
+              <div className="space-y-1">
+                <span className="text-[10px] text-text-faint uppercase font-bold">
+                  Execution Output (stdout / stderr)
+                </span>
+                <pre className="max-h-52 overflow-y-auto rounded-lg border border-border-subtle bg-[#0a0c10] p-3 text-[11px] text-[#c9d1d9] leading-relaxed font-mono">
+                  {techniqueResult.stdout || "(no stdout)"}
+                  {techniqueResult.stderr ? `\n[STDERR]:\n${techniqueResult.stderr}` : ""}
+                </pre>
+              </div>
+            </div>
+          )}
+
+          {/* Technique Cards Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {techniques.map((tech) => {
+              const isRunning = runningTechniqueId === tech.id;
+              const isExpanded = expandedTechniqueId === tech.id;
+
+              return (
+                <div
+                  key={tech.id}
+                  className="rounded-xl border border-border-subtle bg-bg-surface p-5 space-y-3 transition hover:border-accent/40 shadow-sm"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="rounded border border-accent/40 bg-accent/15 px-2 py-0.5 font-mono text-[10px] font-bold text-accent">
+                          {tech.technique_id}
+                        </span>
+                        <span className="rounded border border-border-subtle bg-bg-inset px-2 py-0.5 font-mono text-[10px] text-text-muted">
+                          {tech.tactic}
+                        </span>
+                      </div>
+                      <h4 className="font-semibold text-text-primary text-xs leading-snug">{tech.name}</h4>
+                    </div>
+
+                    <button
+                      onClick={() => handleRunTechnique(tech.id)}
+                      disabled={runningTechniqueId !== null}
+                      className={`btn btn-sm shrink-0 font-mono text-xs ${
+                        isRunning ? "btn-primary animate-pulse" : "btn-primary"
+                      }`}
+                    >
+                      <Icon
+                        name={isRunning ? "refresh" : "play"}
+                        size={11}
+                        className={isRunning ? "animate-spin mr-1" : "mr-1"}
+                      />
+                      {isRunning ? "Running…" : "Run Technique"}
+                    </button>
+                  </div>
+
+                  <p className="text-xs text-text-muted leading-relaxed">{tech.description}</p>
+
+                  <div className="border-t border-border-subtle/50 pt-2 flex items-center justify-between text-[11px] font-mono text-text-faint">
+                    <span>Platforms: {tech.supported_platforms.join(", ")}</span>
+                    <button
+                      onClick={() => setExpandedTechniqueId(isExpanded ? null : tech.id)}
+                      className="hover:text-accent underline cursor-pointer"
+                    >
+                      {isExpanded ? "Hide Code ▲" : "View Code ▼"}
+                    </button>
+                  </div>
+
+                  {isExpanded && (
+                    <div className="mt-2 space-y-2 rounded-lg border border-border-subtle bg-[#0a0c10] p-3 text-[10px] font-mono">
+                      <div>
+                        <span className="text-accent uppercase font-bold block mb-0.5">Attack Command:</span>
+                        <pre className="text-[#c9d1d9] whitespace-pre-wrap break-all">{tech.attack_command}</pre>
+                      </div>
+                      {tech.cleanup_command && (
+                        <div>
+                          <span className="text-text-muted uppercase font-bold block mb-0.5">Cleanup Script:</span>
+                          <pre className="text-text-muted whitespace-pre-wrap break-all">{tech.cleanup_command}</pre>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
