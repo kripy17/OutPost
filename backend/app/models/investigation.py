@@ -389,6 +389,31 @@ def list_tasks(
     return [dict(r) for r in rows]
 
 
+def list_fleet_tasks(
+    conn: sqlite3.Connection,
+    status: str | None = None,
+    category: str | None = None,
+    limit: int = 50,
+) -> list[dict]:
+    query = """
+    SELECT t.*, i.title as investigation_title, i.severity as investigation_severity
+    FROM investigation_tasks t
+    LEFT JOIN investigations i ON i.id = t.investigation_id
+    WHERE 1=1
+    """
+    params: list = []
+    if status:
+        query += " AND t.status = ?"
+        params.append(status)
+    if category:
+        query += " AND t.category = ?"
+        params.append(category)
+    query += " ORDER BY CASE t.priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END, t.created_at DESC LIMIT ?"
+    params.append(limit)
+    rows = conn.execute(query, params).fetchall()
+    return [dict(r) for r in rows]
+
+
 def update_task(
     conn: sqlite3.Connection,
     task_id: int,
