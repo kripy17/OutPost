@@ -33,6 +33,7 @@ from ..core.schema import (
     InvestigationTaskDTO,
     InvestigationTaskIn,
     InvestigationTaskPatchIn,
+    ApplyPlaybookIn,
 )
 from ..models import audit
 from ..models import investigation as inv_store
@@ -111,6 +112,26 @@ def list_investigations(
     with db_session() as conn:
         total, rows = inv_store.list_investigations(conn, status=status, q=q, limit=limit, offset=offset)
     return {"total": total, "limit": limit, "offset": offset, "investigations": rows}
+
+
+# -- Incident Response Playbooks ----------------------------------------------
+
+
+@router.get("/investigations/playbooks", response_model=None)
+def list_incident_playbooks() -> list[dict]:
+    """List available standardized Incident Response Playbooks."""
+    from ..services.incident_playbooks import list_playbooks
+    return list_playbooks()
+
+
+@router.get("/investigations/playbooks/{playbook_id}", response_model=None)
+def get_incident_playbook(playbook_id: str) -> dict:
+    """Retrieve details, phased checklist, and hunting queries for an IR Playbook."""
+    from ..services.incident_playbooks import get_playbook
+    pb = get_playbook(playbook_id)
+    if not pb:
+        raise HTTPException(status_code=404, detail=f"Playbook '{playbook_id}' not found")
+    return pb
 
 
 @router.get("/investigations/{investigation_id}", response_model=InvestigationDetailDTO)
@@ -443,6 +464,35 @@ def get_investigation_remediation_script(
                 "Content-Disposition": f'attachment; filename="outpost-remediate-{investigation_id}.{ext}"'
             },
         )
+
+
+# -- Incident Response Playbooks ----------------------------------------------
+
+
+@router.post("/investigations/{investigation_id}/apply-playbook", response_model=None)
+def apply_incident_playbook(
+    investigation_id: str,
+    body: ApplyPlaybookIn,
+    request: Request,
+) -> dict:
+    """Instantiate a standardized Incident Response Playbook into the case."""
+    actor = auth.role_from_request(request)
+    from ..services.incident_playbooks import apply_playbook_to_investigation
+    with db_session() as conn:
+        _require_investigation(conn, investigation_id)
+        try:
+            res = apply_playbook_to_investigation(
+                conn, investigation_id, body.playbook_id, assignee=body.assignee
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        audit.log(
+            conn, actor, "investigation.playbook.apply",
+            target_type="investigation", target_id=investigation_id,
+            detail=f"applied playbook {body.playbook_id} ({res['tasks_created_count']} tasks)",
+        )
+    return res
+
 
 
 

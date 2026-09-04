@@ -257,6 +257,15 @@ def get_techniques(tactic: str | None = None, platform: str | None = None, q: st
     return list_technique_tests(tactic=tactic, platform=platform, q=q)
 
 
+@router.get("/sandbox/techniques/matrix", response_model=None)
+def get_technique_matrix_endpoint() -> dict:
+    """Continuous Detection Validation Scorecard & Matrix across all techniques."""
+    from ..services.technique_catalog import get_technique_validation_matrix
+    from ..core.db import db_session
+    with db_session() as conn:
+        return get_technique_validation_matrix(conn)
+
+
 @router.get("/sandbox/techniques/{test_id}", response_model=None)
 def get_technique_detail(test_id: str) -> dict:
     """Retrieve details and commands for a specific technique test."""
@@ -277,6 +286,54 @@ async def run_technique(body: TechniqueRunIn) -> dict:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Technique simulation failed: {e}")
+
+
+class ValidateMatrixIn(BaseModel):
+    tactic: str | None = None
+    platform: str | None = None
+
+
+@router.post("/sandbox/techniques/validate-matrix", response_model=None)
+async def validate_matrix_endpoint(body: ValidateMatrixIn | None = None) -> dict:
+    """Run batch continuous detection validation sweep across matching adversary techniques."""
+    from ..services.technique_catalog import list_technique_tests, get_technique_validation_matrix
+    from ..services.dynamic_sandbox import execute_technique_test
+    from ..core.db import db_session
+
+    tactic = body.tactic if body else None
+    plat = body.platform if body else None
+    techniques = list_technique_tests(tactic=tactic, platform=plat)
+
+    results = []
+    for t in techniques[:15]:
+        try:
+            res = await execute_technique_test(t["id"], platform_override=plat)
+            results.append({
+                "test_id": t["id"],
+                "technique_id": t["technique_id"],
+                "status": res["status"],
+                "detection_status": res["detection_status"],
+                "mttd_ms": res["mttd_ms"],
+                "matched_rules_count": len(res.get("matched_rules", [])),
+            })
+        except Exception as e:
+            results.append({
+                "test_id": t["id"],
+                "technique_id": t["technique_id"],
+                "status": "error",
+                "detection_status": "missed",
+                "error": str(e),
+            })
+
+    with db_session() as conn:
+        scorecard = get_technique_validation_matrix(conn)
+
+    return {
+        "sweep_count": len(results),
+        "results": results,
+        "scorecard": scorecard["summary"],
+    }
+
 
 
 @router.get("/sandbox/artifacts/{run_id}", response_model=None)

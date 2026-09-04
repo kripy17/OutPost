@@ -449,3 +449,86 @@ def get_technique_test(test_id: str) -> Dict[str, Any] | None:
         if t["id"] == t_id or t["technique_id"].lower() == t_id.lower():
             return t
     return None
+
+
+def get_technique_validation_matrix(conn) -> Dict[str, Any]:
+    """Retrieve continuous detection validation scorecard across the technique catalog."""
+    import json
+    rows = conn.execute(
+        """
+        SELECT v.*
+        FROM technique_validations v
+        INNER JOIN (
+            SELECT test_id, MAX(id) as max_id
+            FROM technique_validations
+            GROUP BY test_id
+        ) latest ON v.id = latest.max_id
+        """
+    ).fetchall()
+
+    latest_by_test = {dict(r)["test_id"]: dict(r) for r in rows}
+
+    matrix = []
+    detected_count = 0
+    telemetry_only_count = 0
+    missed_count = 0
+    total_mttd = 0
+    mttd_count = 0
+
+    for t in TECHNIQUE_TESTS:
+        tid = t["id"]
+        val = latest_by_test.get(tid)
+        if val:
+            det_status = val["detection_status"]
+            try:
+                rules = json.loads(val.get("matched_rules") or "[]")
+            except Exception:
+                rules = []
+            mttd = val.get("mttd_ms", 0)
+            if det_status == "detected":
+                detected_count += 1
+                if mttd > 0:
+                    total_mttd += mttd
+                    mttd_count += 1
+            elif det_status == "telemetry_only":
+                telemetry_only_count += 1
+            else:
+                missed_count += 1
+
+            matrix.append({
+                **t,
+                "detection_status": det_status,
+                "matched_rules": rules,
+                "last_validated_at": val.get("timestamp"),
+                "mttd_ms": mttd,
+                "last_run_id": val.get("run_id"),
+            })
+        else:
+            matrix.append({
+                **t,
+                "detection_status": "untested",
+                "matched_rules": [],
+                "last_validated_at": None,
+                "mttd_ms": None,
+                "last_run_id": None,
+            })
+
+    total_tests = len(TECHNIQUE_TESTS)
+    tested_count = detected_count + telemetry_only_count + missed_count
+    coverage_pct = round((detected_count / total_tests) * 100) if total_tests else 0
+    avg_mttd = round(total_mttd / mttd_count) if mttd_count else 0
+
+    return {
+        "summary": {
+            "total_techniques": total_tests,
+            "tested_count": tested_count,
+            "detected_count": detected_count,
+            "telemetry_only_count": telemetry_only_count,
+            "missed_count": missed_count,
+            "untested_count": total_tests - tested_count,
+            "detection_rate_pct": coverage_pct,
+            "avg_mttd_ms": avg_mttd,
+        },
+        "techniques": matrix,
+    }
+

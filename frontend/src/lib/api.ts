@@ -1769,4 +1769,38 @@ export async function runForensicProbe(probeId: string, hostId = "local"): Promi
   return post<import("../types").ForensicProbeResult>(`/system/forensics/probes/${encodeURIComponent(probeId)}/run?host_id=${encodeURIComponent(hostId)}`, {});
 }
 
+/** List standardized Incident Response Playbooks (GET /investigations/playbooks). */
+export async function listIncidentPlaybooks(): Promise<import("../types").IncidentPlaybookItem[]> {
+  return get<import("../types").IncidentPlaybookItem[]>("/investigations/playbooks");
+}
+
+/** Retrieve an Incident Response Playbook template (GET /investigations/playbooks/{id}). */
+export async function getIncidentPlaybook(playbookId: string): Promise<import("../types").IncidentPlaybookItem> {
+  return get<import("../types").IncidentPlaybookItem>(`/investigations/playbooks/${encodeURIComponent(playbookId)}`);
+}
+
+/** Apply an Incident Response Playbook to an investigation (POST /investigations/{id}/apply-playbook). */
+export async function applyIncidentPlaybook(
+  investigationId: string,
+  payload: { playbook_id: string; assignee?: string }
+): Promise<any> {
+  return post<any>(`/investigations/${encodeURIComponent(investigationId)}/apply-playbook`, payload);
+}
+
+/** Fleet-wide Compromise Assessment / Retro-Hunt for an IOC (GET /iocs/{id}/fleet-hunt). */
+export async function getIocFleetHunt(iocId: string): Promise<import("../types").IocFleetHuntResult> {
+  return get<import("../types").IocFleetHuntResult>(`/iocs/${encodeURIComponent(iocId)}/fleet-hunt`);
+}
+
+/** Continuous Detection Validation Scorecard & Matrix (GET /sandbox/techniques/matrix). */
+export async function getTechniqueValidationMatrix(): Promise<import("../types").TechniqueValidationScorecard> {
+  return get<import("../types").TechniqueValidationScorecard>("/sandbox/techniques/matrix");
+}
+
+/** Run batch continuous detection validation sweep (POST /sandbox/techniques/validate-matrix). */
+export async function validateTechniqueMatrix(payload?: { tactic?: string; platform?: string }): Promise<any> {
+  return post<any>("/sandbox/techniques/validate-matrix", payload || {});
+}
+
+
 

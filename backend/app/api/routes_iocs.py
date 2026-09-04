@@ -11,6 +11,7 @@ is untouched — that surface searches the RUN HISTORY; /iocs searches the new
 IOC entity.
 """
 
+import re
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from ..core import auth
@@ -92,3 +93,31 @@ def update_ioc_disposition(ioc_id: str, body: IocDispositionIn, request: Request
             + (f" · label {body.label.strip()}" if body.label and body.label.strip() else ""),
         )
     return IocDTO(**updated)
+
+
+@router.get("/iocs/{ioc_id}/fleet-hunt", response_model=None)
+def get_ioc_fleet_hunt(ioc_id: str) -> dict:
+    """Fleet-wide Compromise Assessment: Search all historical events,
+    telemetry, alerts, and cross-investigation links for this IOC across all hosts."""
+    with db_session() as conn:
+        row = ioc_store.get_ioc(conn, ioc_id)
+        if not row:
+            # Check by raw value
+            val_row = conn.execute("SELECT * FROM iocs WHERE value = ?", (ioc_id.lower().strip(),)).fetchone()
+            if val_row:
+                row = dict(val_row)
+                ioc_id = row["ioc_id"]
+            else:
+                # Inferred observation for ad-hoc indicators
+                cleaned = ioc_id.strip()
+                inferred_type = "other"
+                if re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", cleaned):
+                    inferred_type = "ip"
+                elif re.match(r"^[a-fA-F0-9]{32,64}$", cleaned):
+                    inferred_type = "hash"
+                elif "." in cleaned and "/" not in cleaned:
+                    inferred_type = "domain"
+                row = ioc_store.observe_ioc(conn, cleaned, inferred_type, source="hunt")
+                ioc_id = row["ioc_id"]
+        return ioc_store.hunt_ioc_across_fleet(conn, ioc_id)
+

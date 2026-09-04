@@ -258,3 +258,161 @@ def related_hosts(conn: sqlite3.Connection, ioc_id: str) -> list[str]:
         [r["run_id"] for r in runs],
     ).fetchall()
     return [r["host_id"] for r in rows]
+
+
+def hunt_ioc_across_fleet(conn: sqlite3.Connection, ioc_id: str) -> dict:
+    """Enterprise Retro-Hunt / Compromise Assessment for an IOC across the fleet.
+
+    Searches all historical events, telemetry, triggered alerts, and linked
+    investigations across all hosts to assess total enterprise exposure.
+    """
+    ioc = get_ioc(conn, ioc_id)
+    if not ioc:
+        raise ValueError(f"IOC '{ioc_id}' not found")
+
+    val = ioc["value"]
+    ioc_type = ioc["type"]
+    like_val = f"%{val}%"
+
+    sightings: list[dict] = []
+    host_ids: set[str] = set()
+    run_ids: set[str] = set()
+
+    # 1. Search events
+    if ioc_type in ("ip", "domain"):
+        ev_rows = conn.execute(
+            """
+            SELECT e.id, e.run_id, e.platform, e.event_type, e.timestamp, e.process_name,
+                   e.command_line, e.dest_ip, e.dest_port, e.host_id
+            FROM events e
+            WHERE e.dest_ip = ? OR e.command_line LIKE ?
+            ORDER BY e.timestamp DESC LIMIT 100
+            """,
+            (val, like_val),
+        ).fetchall()
+    elif ioc_type == "hash":
+        ev_rows = conn.execute(
+            """
+            SELECT e.id, e.run_id, e.platform, e.event_type, e.timestamp, e.process_name,
+                   e.command_line, e.file_path, e.host_id
+            FROM events e
+            WHERE e.command_line LIKE ? OR e.file_path LIKE ?
+            ORDER BY e.timestamp DESC LIMIT 100
+            """,
+            (like_val, like_val),
+        ).fetchall()
+    else:
+        ev_rows = conn.execute(
+            """
+            SELECT e.id, e.run_id, e.platform, e.event_type, e.timestamp, e.process_name,
+                   e.command_line, e.file_path, e.dest_ip, e.host_id
+            FROM events e
+            WHERE e.command_line LIKE ? OR e.file_path LIKE ? OR e.process_name LIKE ?
+            ORDER BY e.timestamp DESC LIMIT 100
+            """,
+            (like_val, like_val, like_val),
+        ).fetchall()
+
+    for r in ev_rows:
+        d = dict(r)
+        h = d.get("host_id") or "unknown"
+        host_ids.add(h)
+        run_ids.add(d["run_id"])
+        sightings.append({
+            "source": "event",
+            "id": d["id"],
+            "run_id": d["run_id"],
+            "host_id": h,
+            "timestamp": d["timestamp"],
+            "event_type": d.get("event_type", "event"),
+            "process_name": d.get("process_name") or "",
+            "summary": d.get("command_line") or d.get("file_path") or f"{d.get('dest_ip')}:{d.get('dest_port', '')}",
+            "severity": "info",
+        })
+
+    # 2. Search alerts / findings
+    alert_rows = conn.execute(
+        """
+        SELECT a.id, a.run_id, a.rule_id, a.rule_name, a.severity, a.triggered_at,
+               a.details, a.related_ip, r.platform
+        FROM alerts a
+        LEFT JOIN runs r ON r.run_id = a.run_id
+        WHERE a.related_ip = ? OR a.details LIKE ?
+        ORDER BY a.triggered_at DESC LIMIT 50
+        """,
+        (val, like_val),
+    ).fetchall()
+
+    malicious_count = 0
+    suspicious_count = 0
+    for r in alert_rows:
+        d = dict(r)
+        run_ids.add(d["run_id"])
+        sev = d.get("severity", "suspicious")
+        if sev == "malicious":
+            malicious_count += 1
+        else:
+            suspicious_count += 1
+        sightings.append({
+            "source": "alert",
+            "id": d["id"],
+            "run_id": d["run_id"],
+            "host_id": "detection",
+            "timestamp": d["triggered_at"],
+            "event_type": "finding",
+            "process_name": d.get("rule_name", ""),
+            "summary": f"[{d.get('rule_id')}] {d.get('details', '')}",
+            "severity": sev,
+        })
+
+    # 3. Cross-Investigation Linkages
+    inv_rows = conn.execute(
+        """
+        SELECT DISTINCT inv.id, inv.title, inv.status, inv.created_at
+        FROM investigations inv
+        JOIN investigation_refs r ON inv.id = r.investigation_id
+        WHERE r.ref_type = 'ioc' AND r.ref_id = ?
+        UNION
+        SELECT DISTINCT inv.id, inv.title, inv.status, inv.created_at
+        FROM investigations inv
+        JOIN alerts a ON inv.id = a.investigation_id
+        WHERE a.related_ip = ? OR a.details LIKE ?
+        ORDER BY created_at DESC
+        """,
+        (ioc_id, val, like_val),
+    ).fetchall()
+    associated_investigations = [dict(r) for r in inv_rows]
+
+    # Sort sightings chronologically desc
+    sightings.sort(key=lambda s: s.get("timestamp") or "", reverse=True)
+
+    earliest = min((s["timestamp"] for s in sightings if s.get("timestamp")), default=ioc.get("first_seen"))
+    latest = max((s["timestamp"] for s in sightings if s.get("timestamp")), default=ioc.get("last_seen"))
+
+    threat_verdict = (
+        "confirmed_threat" if malicious_count > 0
+        else "suspicious" if suspicious_count > 0
+        else "observed_clean" if len(sightings) > 0
+        else "no_historical_sightings"
+    )
+
+    return {
+        "ioc_id": ioc_id,
+        "value": val,
+        "type": ioc_type,
+        "label": ioc.get("label"),
+        "disposition": ioc.get("disposition"),
+        "total_sightings": len(sightings),
+        "distinct_hosts_count": len(host_ids),
+        "distinct_hosts": sorted(host_ids),
+        "distinct_runs_count": len(run_ids),
+        "distinct_runs": sorted(run_ids),
+        "earliest_sighting": earliest,
+        "latest_sighting": latest,
+        "threat_verdict": threat_verdict,
+        "malicious_findings_count": malicious_count,
+        "suspicious_findings_count": suspicious_count,
+        "associated_investigations": associated_investigations,
+        "sightings": sightings[:50],
+    }
+
