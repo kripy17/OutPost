@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
@@ -6,10 +6,40 @@ import { Deferred } from "../components/Deferred/Deferred";
 import { Icon } from "../components/Icon";
 import { platformIconName } from "../components/iconMeta";
 import { PageHeader, Panel } from "../components/ui";
-import { ageBucket, collapseFindings, intelFreshness, intelKeyHealth, openSince, overviewRunParams, sortFindingsRiskFirst } from "./overviewHelpers";
+import {
+  ageBucket,
+  collapseFindings,
+  intelFreshness,
+  intelKeyHealth,
+  openSince,
+  overviewRunParams,
+  sortFindingsRiskFirst,
+} from "./overviewHelpers";
 import { copyToClipboard } from "../lib/clipboard";
 import { SEVERITY_BG } from "../lib/constants";
-import { BASE_URL, bulkUpdateAlertStatus, getAgents, getCampaigns, getHealth, getHostXRaySnapshot, getIntelFreshness, getIntelKeys, getMeta, getPlatform, getProcessSummary, getRecentAlerts, getRuleMeta, getRuns, getXRayTargetCatalog, listInvestigations, resetStore, runLiveSimulation } from "../lib/api";
+import {
+  BASE_URL,
+  bulkUpdateAlertStatus,
+  getAgents,
+  getCampaigns,
+  getHealth,
+  getHostXRaySnapshot,
+  getIntelFreshness,
+  getIntelKeys,
+  getMeta,
+  getPlatform,
+  getProcessSummary,
+  getRecentAlerts,
+  getRuleMeta,
+  getRuns,
+  getTechniqueValidationMatrix,
+  getXRayTargetCatalog,
+  listAllInvestigationTasks,
+  listInvestigations,
+  patchInvestigationTask,
+  resetStore,
+  runLiveSimulation,
+} from "../lib/api";
 import { useEventStream } from "../lib/useEventStream";
 
 // Compact relative time for the host panel's auth-context tooltips (the
@@ -21,7 +51,7 @@ function _rel(iso: string): string {
   if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
   return `${Math.floor(s / 86400)}d ago`;
 }
-import type { ProcessSummary, RunSummary, Severity } from "../types";
+import type { ProcessSummary, RunSummary, Severity, TechniqueValidationScorecard } from "../types";
 
 /* ──────────────────────────────────────────────────────────────────────── */
 // Threat posture — the console header. Three visual primitives instead of a
@@ -42,73 +72,166 @@ function PostureHeader({
   totalAlerts: number;
 }) {
   const { data: fleet } = useQuery({ queryKey: ["agents"], queryFn: () => getAgents(), staleTime: 15_000 });
-  const { data: invData } = useQuery({ queryKey: ["investigations", "count"], queryFn: () => listInvestigations({ limit: 100 }), staleTime: 30_000 });
-  
+  const { data: invData } = useQuery({
+    queryKey: ["investigations", "count"],
+    queryFn: () => listInvestigations({ limit: 100 }),
+    staleTime: 30_000,
+  });
+  const { data: matrixScorecard } = useQuery<TechniqueValidationScorecard>({
+    queryKey: ["technique-validation-matrix"],
+    queryFn: getTechniqueValidationMatrix,
+    staleTime: 30_000,
+  });
+  const { data: fleetTasks = [] } = useQuery({
+    queryKey: ["fleet-tasks"],
+    queryFn: () => listAllInvestigationTasks({ limit: 100 }),
+    staleTime: 15_000,
+  });
+
   const onlineAgents = (fleet?.agents ?? []).filter((a) => a.online).length;
   const malicious = runs.filter((r) => r.highest_severity === "malicious").length;
   const suspicious = runs.filter((r) => r.highest_severity === "suspicious").length;
-  const clean = runs.length - malicious - suspicious;
   const openCases = (invData?.investigations ?? []).filter((i) => i.status !== "closed" && i.status !== "resolved").length;
 
+  const totalTasks = fleetTasks.length;
+  const completedTasks = fleetTasks.filter((t) => t.status === "completed").length;
+  const taskCompletionPct = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 100;
+
+  // Global Threat Posture Condition
+  const threatCondition =
+    malicious > 0 || (invData?.investigations ?? []).some((i) => i.severity === "malicious" && i.status !== "closed")
+      ? { level: "ELEVATED", tone: "text-rose-400", bg: "bg-rose-500/10", border: "border-rose-500/30", dot: "bg-rose-500" }
+      : suspicious > 0 || openCases > 0
+        ? { level: "GUARDED", tone: "text-amber-400", bg: "bg-amber-500/10", border: "border-amber-500/30", dot: "bg-amber-500" }
+        : { level: "NOMINAL", tone: "text-emerald-400", bg: "bg-emerald-500/10", border: "border-emerald-500/30", dot: "bg-emerald-500" };
+
   return (
-    <section className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3" aria-label="Operational telemetry summary">
-      {/* Telemetry Health */}
-      <div className="flex flex-col justify-between rounded-2xl border border-border-subtle bg-bg-surface/80 p-5 backdrop-blur-md transition-all duration-200 hover:border-accent/40">
-        <div className="flex items-center justify-between">
-          <span className="font-mono text-[11px] uppercase tracking-wider text-text-faint">Host Telemetry</span>
-          <span className="flex items-center gap-1.5 font-mono text-[10px] text-risk-clean">
-            <span className="h-1.5 w-1.5 rounded-full bg-risk-clean animate-pulse" />
-            ingestion active
+    <section className="mb-6 space-y-4" aria-label="Operational telemetry summary">
+      {/* Global Posture Condition Strip */}
+      <div className={`flex flex-wrap items-center justify-between gap-3 rounded-2xl border ${threatCondition.border} ${threatCondition.bg} px-5 py-3.5 backdrop-blur-md transition-all duration-200`}>
+        <div className="flex items-center gap-3">
+          <span className="relative flex h-3 w-3">
+            <span className={`absolute inline-flex h-full w-full animate-ping rounded-full ${threatCondition.dot} opacity-75`} />
+            <span className={`relative inline-flex h-3 w-3 rounded-full ${threatCondition.dot}`} />
           </span>
-        </div>
-        <div className="my-3 flex items-baseline gap-3">
-          <span className="font-mono text-3xl font-bold tracking-tight text-text-primary">{runs.length}</span>
-          <span className="text-xs text-text-muted">monitored sessions</span>
-        </div>
-        <div className="flex flex-wrap items-center gap-3 border-t border-border-subtle/60 pt-3 font-mono text-[11px] text-text-muted">
-          <span>{fleet?.agents?.length ?? 1} host{fleet?.agents?.length === 1 ? "" : "s"} enrolled</span>
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-xs font-bold uppercase tracking-wider text-text-muted">
+              Fleet Threat Posture:
+            </span>
+            <span className={`font-mono text-xs font-black uppercase tracking-widest ${threatCondition.tone}`}>
+              {threatCondition.level}
+            </span>
+          </div>
           <span className="text-text-faint">·</span>
-          <span className="text-risk-clean">{onlineAgents || (runs.length > 0 ? 1 : 0)} online</span>
-        </div>
-      </div>
-
-      {/* Detections & Findings */}
-      <div className="flex flex-col justify-between rounded-2xl border border-border-subtle bg-bg-surface/80 p-5 backdrop-blur-md transition-all duration-200 hover:border-risk-suspicious/40">
-        <div className="flex items-center justify-between">
-          <span className="font-mono text-[11px] uppercase tracking-wider text-text-faint">Detection Queue</span>
-          <Link to="/findings" className="font-mono text-[10px] text-accent hover:underline">
-            triage queue →
-          </Link>
-        </div>
-        <div className="my-3 flex items-baseline gap-3">
-          <span className="font-mono text-3xl font-bold tracking-tight text-text-primary">{totalAlerts}</span>
-          <span className="text-xs text-text-muted">active alerts</span>
-        </div>
-        <div className="flex items-center gap-2 border-t border-border-subtle/60 pt-3 font-mono text-[11px]">
-          <span className="inline-flex items-center gap-1 rounded bg-risk-malicious/15 px-2 py-0.5 font-semibold text-risk-malicious">
-            {malicious} critical/malicious
+          <span className="font-mono text-[11px] text-text-muted">
+            {malicious > 0 ? `${malicious} high-severity threat runs require immediate review` : "Endpoint sensors operating within safe behavioral parameters"}
           </span>
-          <span className="inline-flex items-center gap-1 rounded bg-risk-suspicious/15 px-2 py-0.5 font-semibold text-risk-suspicious">
-            {suspicious} suspicious
+        </div>
+
+        <div className="flex items-center gap-3 font-mono text-[11px]">
+          <span className="flex items-center gap-1.5 text-signal font-semibold">
+            <span className="h-2 w-2 rounded-full bg-signal animate-pulse" />
+            Telemetry Stream Live
+          </span>
+          <span className="text-text-faint">|</span>
+          <span className="text-text-muted">
+            {fleet?.agents?.length ?? 1} host{(fleet?.agents?.length ?? 1) === 1 ? "" : "s"} tracked
           </span>
         </div>
       </div>
 
-      {/* Investigations & Campaigns */}
-      <div className="flex flex-col justify-between rounded-2xl border border-border-subtle bg-bg-surface/80 p-5 backdrop-blur-md transition-all duration-200 hover:border-accent/40 sm:col-span-2 lg:col-span-1">
-        <div className="flex items-center justify-between">
-          <span className="font-mono text-[11px] uppercase tracking-wider text-text-faint">Investigations</span>
-          <Link to="/investigations" className="font-mono text-[10px] text-accent hover:underline">
-            case files →
-          </Link>
+      {/* 4 Strategic KPI Command Tiles */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {/* Tile 1: Fleet Sensor Health */}
+        <div className="flex flex-col justify-between rounded-2xl border border-border-subtle bg-bg-surface/80 p-5 backdrop-blur-md transition-all duration-200 hover:border-accent/40">
+          <div className="flex items-center justify-between">
+            <span className="font-mono text-[11px] uppercase tracking-wider text-text-faint">Fleet Telemetry</span>
+            <span className="flex items-center gap-1.5 font-mono text-[10px] text-risk-clean font-semibold">
+              <span className="h-1.5 w-1.5 rounded-full bg-risk-clean animate-pulse" />
+              sensors active
+            </span>
+          </div>
+          <div className="my-3 flex items-baseline gap-3">
+            <span className="font-mono text-3xl font-bold tracking-tight text-text-primary">{runs.length}</span>
+            <span className="text-xs text-text-muted">monitored sessions</span>
+          </div>
+          <div className="flex flex-wrap items-center justify-between border-t border-border-subtle/60 pt-3 font-mono text-[11px] text-text-muted">
+            <span>{fleet?.agents?.length ?? 1} host{(fleet?.agents?.length ?? 1) === 1 ? "" : "s"} enrolled</span>
+            <span className="text-risk-clean font-semibold">{onlineAgents || (runs.length > 0 ? 1 : 0)} online</span>
+          </div>
         </div>
-        <div className="my-3 flex items-baseline gap-3">
-          <span className="font-mono text-3xl font-bold tracking-tight text-text-primary">{openCases || campaigns}</span>
-          <span className="text-xs text-text-muted">active case dossiers</span>
+
+        {/* Tile 2: Detection Queue */}
+        <div className="flex flex-col justify-between rounded-2xl border border-border-subtle bg-bg-surface/80 p-5 backdrop-blur-md transition-all duration-200 hover:border-risk-suspicious/40">
+          <div className="flex items-center justify-between">
+            <span className="font-mono text-[11px] uppercase tracking-wider text-text-faint">Detection Queue</span>
+            <Link to="/findings" className="font-mono text-[10px] text-accent hover:underline flex items-center gap-0.5">
+              <span>triage queue</span>
+              <Icon name="arrowRight" size={10} />
+            </Link>
+          </div>
+          <div className="my-3 flex items-baseline gap-3">
+            <span className="font-mono text-3xl font-bold tracking-tight text-text-primary">{totalAlerts}</span>
+            <span className="text-xs text-text-muted">active findings</span>
+          </div>
+          <div className="flex items-center gap-2 border-t border-border-subtle/60 pt-3 font-mono text-[10px]">
+            <span className="inline-flex items-center gap-1 rounded bg-risk-malicious/15 px-2 py-0.5 font-bold text-risk-malicious">
+              {malicious} critical
+            </span>
+            <span className="inline-flex items-center gap-1 rounded bg-risk-suspicious/15 px-2 py-0.5 font-bold text-risk-suspicious">
+              {suspicious} suspicious
+            </span>
+          </div>
         </div>
-        <div className="flex items-center justify-between border-t border-border-subtle/60 pt-3 font-mono text-[11px] text-text-muted">
-          <span>{clean} clean baseline runs</span>
-          <span className="text-text-faint">SLA tracked</span>
+
+        {/* Tile 3: Incident Response Cases */}
+        <div className="flex flex-col justify-between rounded-2xl border border-border-subtle bg-bg-surface/80 p-5 backdrop-blur-md transition-all duration-200 hover:border-accent/40">
+          <div className="flex items-center justify-between">
+            <span className="font-mono text-[11px] uppercase tracking-wider text-text-faint">Incident Command</span>
+            <Link to="/investigations" className="font-mono text-[10px] text-accent hover:underline flex items-center gap-0.5">
+              <span>case dossiers</span>
+              <Icon name="arrowRight" size={10} />
+            </Link>
+          </div>
+          <div className="my-3 flex items-baseline gap-3">
+            <span className="font-mono text-3xl font-bold tracking-tight text-text-primary">{openCases || campaigns}</span>
+            <span className="text-xs text-text-muted">active dossiers</span>
+          </div>
+          <div className="border-t border-border-subtle/60 pt-3">
+            <div className="flex items-center justify-between font-mono text-[10px] text-text-muted mb-1.5">
+              <span>Containment Tasks</span>
+              <span className="font-bold text-text-primary">{taskCompletionPct}%</span>
+            </div>
+            <div className="h-1.5 w-full bg-border-subtle rounded-full overflow-hidden">
+              <div
+                className="h-full bg-accent transition-all duration-300"
+                style={{ width: `${Math.max(6, taskCompletionPct)}%` }}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Tile 4: Detection Efficacy & Canaries */}
+        <div className="flex flex-col justify-between rounded-2xl border border-border-subtle bg-bg-surface/80 p-5 backdrop-blur-md transition-all duration-200 hover:border-emerald-500/40">
+          <div className="flex items-center justify-between">
+            <span className="font-mono text-[11px] uppercase tracking-wider text-text-faint">Detection Efficacy</span>
+            <Link to="/coverage" className="font-mono text-[10px] text-accent hover:underline flex items-center gap-0.5">
+              <span>ATT&CK matrix</span>
+              <Icon name="arrowRight" size={10} />
+            </Link>
+          </div>
+          <div className="my-3 flex items-baseline gap-3">
+            <span className="font-mono text-3xl font-bold tracking-tight text-emerald-400">
+              {matrixScorecard?.summary.detection_rate_pct ?? 0}%
+            </span>
+            <span className="text-xs text-text-muted">rules validated</span>
+          </div>
+          <div className="flex items-center justify-between border-t border-border-subtle/60 pt-3 font-mono text-[11px] text-text-muted">
+            <span>{matrixScorecard?.summary.tested_count ?? 0} canaries tested</span>
+            <span className="text-text-primary font-semibold">
+              {matrixScorecard?.summary.avg_mttd_ms ? `${matrixScorecard.summary.avg_mttd_ms}ms MTTD` : "—"}
+            </span>
+          </div>
         </div>
       </div>
     </section>
@@ -175,46 +298,73 @@ function FindingsFeed() {
     return () => clearTimeout(t);
   }, [alerts]);
 
+  const [searchFilter, setSearchFilter] = useState("");
+
   const groups = useMemo(() => {
     const collapsed = collapseFindings(alerts);
-    const filtered = sevFilter === "all" ? collapsed : collapsed.filter((g) => g.first.severity === sevFilter);
+    let filtered = sevFilter === "all" ? collapsed : collapsed.filter((g) => g.first.severity === sevFilter);
+    if (searchFilter.trim()) {
+      const q = searchFilter.toLowerCase().trim();
+      filtered = filtered.filter(
+        (g) =>
+          g.sample_name.toLowerCase().includes(q) ||
+          g.rule_id.toLowerCase().includes(q) ||
+          (g.first.rule_name && g.first.rule_name.toLowerCase().includes(q)) ||
+          (g.first.details && g.first.details.toLowerCase().includes(q)),
+      );
+    }
     return sortFindingsRiskFirst(filtered, byRule);
-  }, [alerts, sevFilter, byRule]);
+  }, [alerts, sevFilter, searchFilter, byRule]);
 
   const now = Date.now();
 
   return (
     <Panel
-      kicker="Live feed"
-      title="Findings"
+      kicker="Live Detection Stream"
+      title="Prioritized SOC Findings"
       right={
         <div className="flex items-center gap-3">
-          <div className="flex overflow-hidden rounded-md border border-border-subtle font-mono text-[10px]">
-            {(["all", "malicious", "suspicious"] as const).map((s) => (
-              <button
-                key={s}
-                onClick={() => setSevFilter(s)}
-                className={`px-2 py-1 transition-colors ${
-                  sevFilter === s
-                    ? s === "malicious"
-                      ? "bg-risk-malicious/20 text-risk-malicious"
-                      : s === "suspicious"
-                        ? "bg-risk-suspicious/20 text-risk-suspicious"
-                        : "bg-accent/15 text-accent"
-                    : "text-text-faint hover:text-text-muted"
-                }`}
-              >
-                {s === "all" ? "all" : s.slice(0, 3)}
-              </button>
-            ))}
-          </div>
-          <span className="inline-flex items-center gap-1.5 font-mono text-[10px] text-signal">
+          <span className="inline-flex items-center gap-1.5 font-mono text-[10px] text-signal font-semibold">
             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-signal" aria-hidden />
             live · SSE
           </span>
         </div>
       }
     >
+      {/* Search & Severity Filter Bar */}
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2.5 border-b border-border-subtle/80 pb-3">
+        <div className="flex overflow-hidden rounded-lg border border-border-subtle font-mono text-[10px]">
+          {(["all", "malicious", "suspicious"] as const).map((s) => (
+            <button
+              key={s}
+              onClick={() => setSevFilter(s)}
+              className={`px-3 py-1 font-semibold transition-colors ${
+                sevFilter === s
+                  ? s === "malicious"
+                    ? "bg-risk-malicious/20 text-risk-malicious"
+                    : s === "suspicious"
+                      ? "bg-risk-suspicious/20 text-risk-suspicious"
+                      : "bg-accent/20 text-accent font-bold"
+                  : "text-text-faint hover:text-text-muted hover:bg-bg-elevated"
+              }`}
+            >
+              {s === "all" ? "All Severities" : s.toUpperCase()}
+            </button>
+          ))}
+        </div>
+
+        <div className="relative min-w-[190px]">
+          <Icon name="search" size={11} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-text-faint" />
+          <input
+            type="text"
+            placeholder="Filter by rule, sample, details..."
+            value={searchFilter}
+            onChange={(e) => setSearchFilter(e.target.value)}
+            className="w-full rounded-lg border border-border-subtle bg-bg-surface py-1 pl-7 pr-2 font-mono text-[11px] text-text-primary placeholder:text-text-faint focus:border-accent/50 focus:outline-none"
+          />
+        </div>
+      </div>
+
       {isLoading && <SkeletonList rows={4} />}
       {isError && (
         <p className="rounded-md border border-risk-malicious/40 px-3 py-2 text-xs text-risk-malicious">
@@ -222,8 +372,11 @@ function FindingsFeed() {
         </p>
       )}
       {!isLoading && !isError && groups.length === 0 && (
-        <div className="py-8 text-center font-mono text-sm text-text-muted">
-          <p className="font-semibold text-text-primary">Monitoring active — 0 findings detected</p>
+        <div className="py-10 text-center font-mono text-sm text-text-muted">
+          <span className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-400 mb-2">
+            <Icon name="shield" size={18} />
+          </span>
+          <p className="font-semibold text-text-primary">Monitoring Active — 0 Findings Detected</p>
           <p className="mt-1 text-xs text-text-faint">No security heuristics or IOC alerts have triggered across ingested host telemetry.</p>
         </div>
       )}
@@ -423,81 +576,268 @@ function SkeletonList({ rows }: { rows: number }) {
 }
 
 function ActiveInvestigationsPanel() {
-  const { data, isLoading, isError } = useQuery({
+  const queryClient = useQueryClient();
+  const [activeTab, setActiveTab] = useState<"cases" | "tasks">("cases");
+
+  const {
+    data: invData,
+    isLoading: isCasesLoading,
+    isError: isCasesError,
+  } = useQuery({
     queryKey: ["investigations", "active"],
-    queryFn: () => listInvestigations({ limit: 4 }),
+    queryFn: () => listInvestigations({ limit: 6 }),
   });
 
-  const investigations = data?.investigations ?? [];
+  const {
+    data: tasks = [],
+    isLoading: isTasksLoading,
+    isError: isTasksError,
+  } = useQuery({
+    queryKey: ["fleet-tasks"],
+    queryFn: () => listAllInvestigationTasks({ limit: 12 }),
+  });
 
-  if (isLoading) return <p className="text-sm text-text-muted">Loading cases…</p>;
-  if (isError) return <p className="text-xs text-risk-malicious">Couldn't load investigations.</p>;
+  const toggleTaskMutation = useMutation({
+    mutationFn: async ({
+      investigationId,
+      taskId,
+      nextStatus,
+    }: {
+      investigationId: string;
+      taskId: number;
+      nextStatus: "completed" | "todo";
+    }) => {
+      return patchInvestigationTask(investigationId, taskId, { status: nextStatus });
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["fleet-tasks"] });
+      void queryClient.invalidateQueries({ queryKey: ["investigations"] });
+    },
+  });
+
+  const investigations = invData?.investigations ?? [];
+  const openCases = investigations.filter((i) => i.status !== "closed" && i.status !== "resolved");
+  const pendingTasks = tasks.filter((t) => t.status !== "completed");
 
   return (
     <Panel
-      kicker="Case workspace"
-      title="Active investigations"
+      kicker="Incident Command Deck"
+      title="Cases & Containment"
       right={
-        <Link to="/investigations" className="press inline-flex items-center gap-1 font-mono text-[10px] text-accent hover:underline">
-          all cases <Icon name="arrowRight" size={11} />
+        <Link
+          to="/investigations"
+          className="press inline-flex items-center gap-1 font-mono text-[10px] text-accent hover:underline"
+        >
+          case workspace <Icon name="arrowRight" size={11} />
         </Link>
       }
     >
-      {investigations.length === 0 ? (
-        <div className="py-6 text-center">
-          <p className="font-mono text-xs text-text-muted">No open investigation cases.</p>
-          <p className="mt-1 text-[11px] text-text-faint">
-            Create an investigation from the findings queue or investigate suspicious telemetry.
-          </p>
-          <Link
-            to="/investigations"
-            className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-elevated px-3 py-1.5 font-mono text-xs text-text-muted hover:border-accent/40 hover:text-accent"
-          >
-            <Icon name="plus" size={12} />
-            New investigation
-          </Link>
-        </div>
-      ) : (
-        <div className="space-y-2">
-          {investigations.map((inv) => (
-            <Link
-              key={inv.id}
-              to={`/investigations/${inv.id}`}
-              className="group block rounded-xl border border-border-subtle/70 bg-bg-elevated/40 p-3 transition-colors hover:border-accent/50 hover:bg-bg-elevated"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <span className="truncate font-sans text-xs font-semibold text-text-primary group-hover:text-accent">
-                  {inv.title}
-                </span>
-                <span
-                  className={`shrink-0 rounded border px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wide ${
-                    inv.status === "active" || inv.status === "triage"
-                      ? "border-risk-suspicious/40 text-risk-suspicious"
-                      : inv.status === "created"
-                        ? "border-accent/40 text-accent"
-                        : "border-border-subtle text-text-faint"
-                  }`}
+      {/* Tab Switcher */}
+      <div className="mb-3 flex items-center gap-2 border-b border-border-subtle pb-2.5">
+        <button
+          type="button"
+          onClick={() => setActiveTab("cases")}
+          className={`press inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 font-mono text-xs transition-colors ${
+            activeTab === "cases"
+              ? "bg-accent/15 text-accent font-semibold border border-accent/40"
+              : "text-text-muted hover:text-text-primary hover:bg-bg-elevated border border-transparent"
+          }`}
+        >
+          <Icon name="box" size={12} />
+          <span>Active Cases</span>
+          <span className="rounded-full bg-bg-surface px-1.5 py-px text-[10px] font-mono">
+            {openCases.length}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab("tasks")}
+          className={`press inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 font-mono text-xs transition-colors ${
+            activeTab === "tasks"
+              ? "bg-accent/15 text-accent font-semibold border border-accent/40"
+              : "text-text-muted hover:text-text-primary hover:bg-bg-elevated border border-transparent"
+          }`}
+        >
+          <Icon name="check" size={12} />
+          <span>Containment Tasks</span>
+          <span className="rounded-full bg-bg-surface px-1.5 py-px text-[10px] font-mono">
+            {pendingTasks.length}
+          </span>
+        </button>
+      </div>
+
+      {/* Tab 1: Cases View */}
+      {activeTab === "cases" && (
+        <>
+          {isCasesLoading ? (
+            <SkeletonList rows={3} />
+          ) : isCasesError ? (
+            <p className="text-xs text-risk-malicious">Couldn't load investigations.</p>
+          ) : investigations.length === 0 ? (
+            <div className="py-6 text-center">
+              <p className="font-mono text-xs text-text-muted">No open investigation cases.</p>
+              <p className="mt-1 text-[11px] text-text-faint">
+                Create an investigation from the findings queue or investigate suspicious telemetry.
+              </p>
+              <Link
+                to="/investigations"
+                className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-elevated px-3 py-1.5 font-mono text-xs text-text-muted hover:border-accent/40 hover:text-accent"
+              >
+                <Icon name="plus" size={12} />
+                New investigation
+              </Link>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {investigations.map((inv) => (
+                <Link
+                  key={inv.id}
+                  to={`/investigations/${inv.id}`}
+                  className="group block rounded-xl border border-border-subtle/70 bg-bg-elevated/40 p-3 transition-colors hover:border-accent/50 hover:bg-bg-elevated"
                 >
-                  {inv.status}
-                </span>
-              </div>
-              <div className="mt-1.5 flex flex-wrap items-center gap-2 font-mono text-[10px] text-text-faint">
-                <span>{inv.id}</span>
-                <span>·</span>
-                <span>updated {inv.updated_at ? _rel(inv.updated_at) : "recently"}</span>
-                {inv.tags && inv.tags.length > 0 && (
-                  <div className="flex gap-1">
-                    {inv.tags.slice(0, 2).map((t) => (
-                      <span key={t} className="rounded bg-bg-surface px-1 text-[9px] text-text-muted">
-                        #{t}
-                      </span>
-                    ))}
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate font-sans text-xs font-semibold text-text-primary group-hover:text-accent">
+                      {inv.title}
+                    </span>
+                    <span
+                      className={`shrink-0 rounded border px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wide ${
+                        inv.status === "active" || inv.status === "triage"
+                          ? "border-risk-suspicious/40 text-risk-suspicious bg-risk-suspicious/10"
+                          : inv.status === "created"
+                            ? "border-accent/40 text-accent bg-accent/10"
+                            : "border-border-subtle text-text-faint"
+                      }`}
+                    >
+                      {inv.status}
+                    </span>
                   </div>
-                )}
-              </div>
-            </Link>
-          ))}
-        </div>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-2 font-mono text-[10px] text-text-faint">
+                    <span>{inv.id}</span>
+                    <span>·</span>
+                    <span>updated {inv.updated_at ? _rel(inv.updated_at) : "recently"}</span>
+                    {inv.severity && (
+                      <span
+                        className={`rounded px-1.5 py-0.5 text-[9px] font-bold uppercase ${
+                          inv.severity === "malicious"
+                            ? "bg-risk-malicious/15 text-risk-malicious"
+                            : "bg-risk-suspicious/15 text-risk-suspicious"
+                        }`}
+                      >
+                        {inv.severity}
+                      </span>
+                    )}
+                    {inv.tags && inv.tags.length > 0 && (
+                      <div className="flex gap-1 ml-auto">
+                        {inv.tags.slice(0, 2).map((t) => (
+                          <span key={t} className="rounded bg-bg-surface px-1 text-[9px] text-text-muted">
+                            #{t}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </Link>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Tab 2: Tasks View */}
+      {activeTab === "tasks" && (
+        <>
+          {isTasksLoading ? (
+            <SkeletonList rows={3} />
+          ) : isTasksError ? (
+            <p className="text-xs text-risk-malicious">Couldn't load containment tasks.</p>
+          ) : tasks.length === 0 ? (
+            <div className="py-6 text-center">
+              <p className="font-mono text-xs text-text-muted">No containment tasks registered.</p>
+              <p className="mt-1 text-[11px] text-text-faint">
+                Add mitigation and containment steps to active investigations to dispatch response tasks.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {tasks.map((task) => {
+                const isCompleted = task.status === "completed";
+                const priorityCls =
+                  task.priority === "critical"
+                    ? "border-risk-malicious/40 bg-risk-malicious/10 text-risk-malicious"
+                    : task.priority === "high"
+                      ? "border-risk-suspicious/40 bg-risk-suspicious/10 text-risk-suspicious"
+                      : task.priority === "medium"
+                        ? "border-accent/40 bg-accent/10 text-accent"
+                        : "border-border-subtle text-text-faint";
+
+                return (
+                  <div
+                    key={task.id}
+                    className={`flex items-start gap-2.5 rounded-xl border p-2.5 transition-all ${
+                      isCompleted
+                        ? "border-border-subtle/40 bg-bg-elevated/20 opacity-60"
+                        : "border-border-subtle/80 bg-bg-elevated/40 hover:border-accent/40"
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() =>
+                        toggleTaskMutation.mutate({
+                          investigationId: task.investigation_id,
+                          taskId: task.id,
+                          nextStatus: isCompleted ? "todo" : "completed",
+                        })
+                      }
+                      className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors ${
+                        isCompleted
+                          ? "border-risk-clean bg-risk-clean/20 text-risk-clean"
+                          : "border-border-subtle hover:border-accent text-transparent hover:text-accent/50"
+                      }`}
+                      title={isCompleted ? "Mark task as incomplete" : "Mark task as completed"}
+                      aria-label={isCompleted ? "Mark task as incomplete" : "Mark task as completed"}
+                    >
+                      <Icon name="check" size={10} />
+                    </button>
+
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`truncate font-sans text-xs ${
+                            isCompleted ? "line-through text-text-muted" : "font-medium text-text-primary"
+                          }`}
+                        >
+                          {task.title}
+                        </span>
+                      </div>
+
+                      <div className="mt-1 flex flex-wrap items-center gap-1.5 font-mono text-[10px] text-text-faint">
+                        <span className={`rounded border px-1 py-px uppercase font-semibold text-[9px] ${priorityCls}`}>
+                          {task.priority}
+                        </span>
+                        <span className="rounded bg-bg-surface px-1 py-px text-text-muted text-[9px]">
+                          {task.category}
+                        </span>
+                        {task.investigation_title && (
+                          <Link
+                            to={`/investigations/${task.investigation_id}`}
+                            className="truncate text-accent hover:underline max-w-[160px]"
+                            title={`Case: ${task.investigation_title}`}
+                          >
+                            ↳ {task.investigation_title}
+                          </Link>
+                        )}
+                        {task.assignee && (
+                          <span className="text-text-muted">@{task.assignee}</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
       )}
     </Panel>
   );
@@ -1359,13 +1699,13 @@ export default function OverviewPage() {
   return (
     <div className="mx-auto max-w-[1400px] px-5 py-8 lg:px-8 space-y-6">
       <PageHeader
-        kicker="Workspace · overview"
+        kicker="SOC Workspace · Command Deck"
         title={
           <>
-            OutPost <span className="font-normal text-text-muted">— behavioral monitor</span>
+            OutPost <span className="font-normal text-text-muted">— Unified Defense & Operations</span>
           </>
         }
-        lede="Unified behavioral security telemetry, live fleet pulse, and prioritized SOC detection queue across monitored endpoints."
+        lede="Unified behavioral security telemetry, live fleet threat posture, MITRE ATT&CK kill-chain progression, and automated containment task dispatch."
         actions={
           <div className="flex items-center gap-2">
             <Link
