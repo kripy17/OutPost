@@ -8,6 +8,8 @@ and evaluates OutPost behavioral detection rules against real activity.
 
 import asyncio
 import datetime
+import json
+import logging
 import os
 import platform
 import re
@@ -18,6 +20,8 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from ..core import config
 from ..core.db import db_session
@@ -1535,6 +1539,46 @@ async def execute_technique_test(
         else 100
     )
 
+    # 7. Continuous Detection Efficacy Determination & Persistence
+    matched_rules = [
+        {"rule_id": a["rule_id"], "rule_name": a["rule_name"], "severity": a["severity"]}
+        for a in alerts
+    ]
+    if len(alerts) > 0:
+        detection_status = "detected"
+    elif len(events) > 0:
+        detection_status = "telemetry_only"
+    else:
+        detection_status = "missed"
+
+    validation_ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    try:
+        with db_session() as conn:
+            conn.execute(
+                """
+                INSERT INTO technique_validations (
+                    test_id, technique_id, technique_name, tactic, run_id, status,
+                    detection_status, matched_rules, events_count, alerts_count, mttd_ms, timestamp
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    tech["id"],
+                    tech["technique_id"],
+                    tech["technique_name"],
+                    tech["tactic"],
+                    run_id,
+                    "success" if exit_code == 0 else "failed",
+                    detection_status,
+                    json.dumps(matched_rules),
+                    len(events),
+                    len(alerts),
+                    elapsed_ms,
+                    validation_ts,
+                ),
+            )
+    except Exception as e:
+        logger.warning(f"Failed to persist technique validation record: {e}")
+
     return {
         "run_id": run_id,
         "test_id": tech["id"],
@@ -1545,6 +1589,9 @@ async def execute_technique_test(
         "status": "success" if exit_code == 0 else "failed",
         "exit_code": exit_code,
         "elapsed_ms": elapsed_ms,
+        "mttd_ms": elapsed_ms,
+        "detection_status": detection_status,
+        "matched_rules": matched_rules,
         "prereqs_met": prereqs_met,
         "prereq_output": prereq_output,
         "cleanup_status": cleanup_status,

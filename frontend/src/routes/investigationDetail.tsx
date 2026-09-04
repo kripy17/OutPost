@@ -25,6 +25,8 @@ import ProcessContextModal from "../components/ProcessContextModal";
 import InvestigationEvidenceGraph from "../components/InvestigationEvidenceGraph";
 import { InvestigationTasksManager } from "../components/InvestigationTasksManager";
 import { InvestigationTimelineCard } from "../components/InvestigationTimelineCard";
+import { IncidentPlaybookModal } from "../components/IncidentPlaybookModal";
+import { IocFleetHuntModal } from "../components/IocFleetHuntModal";
 
 const REF_TYPES: InvestigationRefType[] = ["run", "host", "ioc", "artifact", "campaign"];
 const STATUSES: InvestigationStatus[] = ["created", "triage", "active", "contained", "resolved"];
@@ -53,6 +55,8 @@ export default function InvestigationDetailPage() {
   const [synthesizing, setSynthesizing] = useState(false);
   const [completedRemediations, setCompletedRemediations] = useState<Record<string, boolean>>({});
   const [workspaceTab, setWorkspaceTab] = useState<"all" | "graph" | "tasks" | "timeline">("all");
+  const [showPlaybookModal, setShowPlaybookModal] = useState(false);
+  const [huntIocId, setHuntIocId] = useState<string | null>(null);
 
   const handleDownloadRemediationScript = (shell: "bash" | "powershell" = "bash") => {
     const url = getRemediationScriptUrl(investigationId, shell);
@@ -183,6 +187,14 @@ export default function InvestigationDetailPage() {
             >
               <Icon name={synthesizing ? "refresh" : "terminal"} size={13} className={`mr-1.5 inline ${synthesizing ? "animate-spin" : ""}`} />
               {synthesizing ? "Synthesizing…" : "Synthesize Narrative"}
+            </button>
+            <button
+              className="btn btn-secondary flex items-center gap-1.5 border-accent/40 bg-accent/10 text-accent hover:bg-accent/20 transition"
+              onClick={() => setShowPlaybookModal(true)}
+              title="Apply Incident Response Playbook"
+            >
+              <Icon name="shield" size={13} />
+              <span>Apply IR Playbook</span>
             </button>
             <div className="inline-flex rounded-lg border border-border-subtle bg-bg-surface overflow-hidden">
               <button
@@ -527,6 +539,16 @@ export default function InvestigationDetailPage() {
                     ) : (
                       <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-text-primary">{r.ref_id}</span>
                     )}
+                    {r.ref_type === "ioc" && (
+                      <button
+                        onClick={() => setHuntIocId(r.ref_id)}
+                        className="press inline-flex items-center gap-1 rounded border border-signal/40 bg-signal/10 px-1.5 py-0.5 font-mono text-[10px] text-signal hover:bg-signal/20 transition"
+                        title={`Fleet-wide retro-hunt across all hosts for ${r.ref_id}`}
+                      >
+                        <Icon name="search" size={10} />
+                        Fleet Hunt
+                      </button>
+                    )}
                     {isIp && (
                       <button
                         onClick={() => setInspectIp(r.ref_id)}
@@ -594,6 +616,18 @@ export default function InvestigationDetailPage() {
       )}
       {inspectPid !== null && (
         <ProcessContextModal pid={inspectPid} onClose={() => setInspectPid(null)} />
+      )}
+      {showPlaybookModal && (
+        <IncidentPlaybookModal
+          investigationId={investigationId}
+          onClose={() => setShowPlaybookModal(false)}
+        />
+      )}
+      {huntIocId !== null && (
+        <IocFleetHuntModal
+          iocId={huntIocId}
+          onClose={() => setHuntIocId(null)}
+        />
       )}
     </div>
   );

@@ -107,6 +107,23 @@ CREATE TABLE IF NOT EXISTS investigation_tasks (
     updated_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS technique_validations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    test_id TEXT NOT NULL,
+    technique_id TEXT NOT NULL,
+    technique_name TEXT NOT NULL,
+    tactic TEXT NOT NULL,
+    run_id TEXT NOT NULL REFERENCES runs(run_id),
+    status TEXT NOT NULL CHECK(status IN ('success', 'failed')),
+    detection_status TEXT NOT NULL CHECK(detection_status IN ('detected', 'telemetry_only', 'missed')),
+    matched_rules TEXT NOT NULL DEFAULT '[]',
+    events_count INTEGER NOT NULL DEFAULT 0,
+    alerts_count INTEGER NOT NULL DEFAULT 0,
+    mttd_ms INTEGER NOT NULL DEFAULT 0,
+    timestamp TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_technique_validations_test ON technique_validations(test_id, timestamp DESC);
+
 CREATE TABLE IF NOT EXISTS alerts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     run_id TEXT NOT NULL REFERENCES runs(run_id),

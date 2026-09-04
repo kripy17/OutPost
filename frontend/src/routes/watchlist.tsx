@@ -6,6 +6,7 @@ import { PageHeader } from "../components/ui";
 import { watchlistAdd, watchlistExport, watchlistImport, watchlistList, watchlistRemove } from "../lib/api";
 import { parseImport, typeOf } from "./watchlistHelpers";
 import NetworkContextModal from "../components/NetworkContextModal";
+import { IocFleetHuntModal } from "../components/IocFleetHuntModal";
 
 function download(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob);
@@ -23,6 +24,7 @@ export default function WatchlistPage() {
   const [error, setError] = useState<string | null>(null);
   const [importMsg, setImportMsg] = useState<string | null>(null);
   const [inspectIp, setInspectIp] = useState<string | null>(null);
+  const [huntIocId, setHuntIocId] = useState<string | null>(null);
   const [filterType, setFilterType] = useState<"all" | "ip" | "domain" | "hash">("all");
   const [filterSearch, setFilterSearch] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
@@ -220,6 +222,14 @@ export default function WatchlistPage() {
                       Context
                     </button>
                   )}
+                  <button
+                    onClick={() => setHuntIocId(e.value)}
+                    className="press inline-flex items-center gap-1 rounded border border-signal/40 bg-signal/10 px-2 py-0.5 font-mono text-[10px] text-signal hover:bg-signal/20 transition"
+                    title={`Fleet-wide compromise assessment & telemetry hunt for ${e.value}`}
+                  >
+                    <Icon name="search" size={10} />
+                    Fleet Hunt
+                  </button>
                   <Link
                     to={`/search?q=${encodeURIComponent(e.value)}`}
                     className="press inline-flex items-center gap-1 rounded border border-border-subtle bg-bg-elevated/60 px-2 py-0.5 font-mono text-[10px] text-text-muted hover:border-accent/40 hover:text-accent"
@@ -247,6 +257,9 @@ export default function WatchlistPage() {
 
       {inspectIp !== null && (
         <NetworkContextModal ip={inspectIp} onClose={() => setInspectIp(null)} />
+      )}
+      {huntIocId !== null && (
+        <IocFleetHuntModal iocId={huntIocId} onClose={() => setHuntIocId(null)} />
       )}
     </div>
   );

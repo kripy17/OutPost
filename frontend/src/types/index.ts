@@ -1131,6 +1131,80 @@ export interface InvestigationListResponse {
   investigations: Investigation[];
 }
 
+export interface IncidentPlaybookItem {
+  id: string;
+  name: string;
+  severity: "low" | "medium" | "high" | "critical";
+  tactic: string;
+  description: string;
+  mitre_attack: string[];
+  recommended_probes: string[];
+  hunt_queries: string[];
+  tasks: Array<{
+    title: string;
+    category: TaskCategory;
+    priority: TaskPriority;
+    description?: string;
+  }>;
+}
+
+export interface IocFleetHuntResult {
+  ioc_id: string;
+  value: string;
+  type: string;
+  label?: string | null;
+  disposition: string;
+  total_sightings: number;
+  distinct_hosts_count: number;
+  distinct_hosts: string[];
+  distinct_runs_count: number;
+  distinct_runs: string[];
+  earliest_sighting?: string;
+  latest_sighting?: string;
+  threat_verdict: "confirmed_threat" | "suspicious" | "observed_clean" | "no_historical_sightings";
+  malicious_findings_count: number;
+  suspicious_findings_count: number;
+  associated_investigations: Array<{
+    id: string;
+    title: string;
+    status: string;
+    created_at: string;
+  }>;
+  sightings: Array<{
+    source: "event" | "alert";
+    id: number;
+    run_id: string;
+    host_id: string;
+    timestamp: string;
+    event_type: string;
+    process_name: string;
+    summary: string;
+    severity: string;
+  }>;
+}
+
+export interface TechniqueValidationScorecard {
+  summary: {
+    total_techniques: number;
+    tested_count: number;
+    detected_count: number;
+    telemetry_only_count: number;
+    missed_count: number;
+    untested_count: number;
+    detection_rate_pct: number;
+    avg_mttd_ms: number;
+  };
+  techniques: Array<
+    TechniqueTestItem & {
+      detection_status: "detected" | "telemetry_only" | "missed" | "untested";
+      matched_rules: Array<{ rule_id: string; rule_name: string; severity: string }>;
+      last_validated_at?: string | null;
+      mttd_ms?: number | null;
+      last_run_id?: string | null;
+    }
+  >;
+}
+
 // -- Host behavioral baseline (anomaly layer) ---------------------------------
 
 export interface BaselineObservation {

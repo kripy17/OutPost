@@ -12,10 +12,17 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import ExportButton from "../components/ExportButton/ExportButton";
 import { Icon } from "../components/Icon";
-import { getNavigatorLayer, getRuleMeta, listTechniqueTests, runTechniqueTest } from "../lib/api";
+import {
+  getNavigatorLayer,
+  getRuleMeta,
+  listTechniqueTests,
+  runTechniqueTest,
+  getTechniqueValidationMatrix,
+  validateTechniqueMatrix,
+} from "../lib/api";
 import { PageHeader, Panel } from "../components/ui";
 import { buildCoverage, severityTone, TACTICS, TACTIC_BLURB } from "./coverageHelpers";
-import type { RuleMeta, TechniqueRunResult, TechniqueTestItem } from "../types";
+import type { RuleMeta, TechniqueRunResult, TechniqueTestItem, TechniqueValidationScorecard } from "../types";
 
 // The coverage matrix as an official MITRE Navigator layer — downloads the
 // same JSON the Navigator's "Upload a layer" dialog accepts.
@@ -120,12 +127,14 @@ function SimulationTacticColumn({
   techniques,
   searchQuery = "",
   runningTestId = null,
+  validationMap,
   onRunTest,
 }: {
   tactic: string;
   techniques: TechniqueTestItem[];
   searchQuery?: string;
   runningTestId?: string | null;
+  validationMap?: Map<string, any>;
   onRunTest: (testId: string) => void;
 }) {
   const isGap = techniques.length === 0;
@@ -167,41 +176,78 @@ function SimulationTacticColumn({
       ) : filtered.length === 0 && q ? (
         <p className="py-4 text-center font-mono text-[11px] text-text-faint">No canaries match query</p>
       ) : (
-        <ul className="space-y-2">
-          {filtered.map((t) => (
-            <li key={t.id} className="rounded-lg border border-border-subtle bg-bg-elevated/40 p-2.5 transition hover:border-accent/40">
-              <div className="flex items-baseline justify-between gap-2">
-                <span className="font-mono text-xs font-bold text-accent">{t.technique_id}</span>
-                <div className="flex items-center gap-1">
-                  {(t.supported_platforms || []).map((p) => (
-                    <span key={p} className="rounded bg-bg-base px-1 py-0.2 font-mono text-[9px] uppercase text-text-faint">
-                      {p === "darwin" ? "macOS" : p}
-                    </span>
-                  ))}
+        <ul className="space-y-2.5">
+          {filtered.map((t) => {
+            const val = validationMap?.get(t.id);
+            const detStatus = val?.detection_status ?? "untested";
+            return (
+              <li key={t.id} className="rounded-lg border border-border-subtle bg-bg-elevated/40 p-2.5 transition hover:border-accent/40">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="font-mono text-xs font-bold text-accent">{t.technique_id}</span>
+                  <div className="flex items-center gap-1">
+                    {(t.supported_platforms || []).map((p) => (
+                      <span key={p} className="rounded bg-bg-base px-1 py-0.2 font-mono text-[9px] uppercase text-text-faint">
+                        {p === "darwin" ? "macOS" : p}
+                      </span>
+                    ))}
+                  </div>
                 </div>
-              </div>
 
-              <div className="mt-1 text-xs font-semibold text-text-primary leading-snug">{t.name}</div>
-              <p className="mt-1 text-[11px] text-text-muted line-clamp-2 leading-relaxed">{t.description}</p>
+                <div className="mt-1 text-xs font-semibold text-text-primary leading-snug">{t.name}</div>
 
-              <div className="mt-2 flex items-center justify-between border-t border-border-subtle/50 pt-2">
-                <span className="font-mono text-[9px] text-emerald-400">✓ Cleanup contract</span>
-                <button
-                  type="button"
-                  disabled={runningTestId === t.id}
-                  onClick={() => onRunTest(t.id)}
-                  className="press inline-flex items-center gap-1 rounded bg-accent/15 px-2 py-0.5 font-mono text-[10px] font-semibold text-accent hover:bg-accent/25 disabled:opacity-50"
-                >
-                  {runningTestId === t.id ? (
-                    <Icon name="refresh" size={10} className="animate-spin" />
+                {/* Validation Status Badge */}
+                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                  {detStatus === "detected" ? (
+                    <span className="inline-flex items-center gap-1 rounded bg-emerald-500/15 border border-emerald-500/30 px-1.5 py-0.5 font-mono text-[9px] font-bold text-emerald-400">
+                      <Icon name="check" size={9} />
+                      DETECTED {val?.mttd_ms ? `· ${val.mttd_ms}ms` : ""}
+                    </span>
+                  ) : detStatus === "telemetry_only" ? (
+                    <span className="inline-flex items-center gap-1 rounded bg-amber-500/15 border border-amber-500/30 px-1.5 py-0.5 font-mono text-[9px] font-bold text-amber-400">
+                      <Icon name="alert" size={9} />
+                      TELEMETRY ONLY
+                    </span>
+                  ) : detStatus === "missed" ? (
+                    <span className="inline-flex items-center gap-1 rounded bg-rose-500/15 border border-rose-500/30 px-1.5 py-0.5 font-mono text-[9px] font-bold text-rose-400">
+                      <Icon name="x" size={9} />
+                      MISSED
+                    </span>
                   ) : (
-                    <Icon name="terminal" size={10} />
+                    <span className="inline-flex items-center gap-1 rounded bg-bg-surface border border-border-subtle px-1.5 py-0.5 font-mono text-[9px] text-text-faint">
+                      UNTESTED
+                    </span>
                   )}
-                  <span>{runningTestId === t.id ? "Running..." : "Run Canary"}</span>
-                </button>
-              </div>
-            </li>
-          ))}
+                  {val?.matched_rules && val.matched_rules.length > 0 && (
+                    <span
+                      className="truncate font-mono text-[9px] text-accent/80 max-w-[130px]"
+                      title={val.matched_rules.map((r: any) => `${r.rule_id} (${r.rule_name})`).join(", ")}
+                    >
+                      {val.matched_rules[0].rule_id}
+                    </span>
+                  )}
+                </div>
+
+                <p className="mt-1.5 text-[11px] text-text-muted line-clamp-2 leading-relaxed">{t.description}</p>
+
+                <div className="mt-2 flex items-center justify-between border-t border-border-subtle/50 pt-2">
+                  <span className="font-mono text-[9px] text-emerald-400">✓ Cleanup contract</span>
+                  <button
+                    type="button"
+                    disabled={runningTestId === t.id}
+                    onClick={() => onRunTest(t.id)}
+                    className="press inline-flex items-center gap-1 rounded bg-accent/15 px-2 py-0.5 font-mono text-[10px] font-semibold text-accent hover:bg-accent/25 disabled:opacity-50"
+                  >
+                    {runningTestId === t.id ? (
+                      <Icon name="refresh" size={10} className="animate-spin" />
+                    ) : (
+                      <Icon name="terminal" size={10} />
+                    )}
+                    <span>{runningTestId === t.id ? "Running..." : "Run Canary"}</span>
+                  </button>
+                </div>
+              </li>
+            );
+          })}
         </ul>
       )}
     </Panel>
@@ -214,6 +260,7 @@ export default function CoveragePage() {
   const [simPlatform, setSimPlatform] = useState<string>("all");
   const [runningTestId, setRunningTestId] = useState<string | null>(null);
   const [activeTestResult, setActiveTestResult] = useState<TechniqueRunResult | null>(null);
+  const [isSweeping, setIsSweeping] = useState(false);
 
   const { data = [], isLoading, isError } = useQuery({
     queryKey: ["rules-meta"],
@@ -226,6 +273,35 @@ export default function CoveragePage() {
     queryFn: () => listTechniqueTests(undefined, simPlatform === "all" ? undefined : simPlatform),
     staleTime: 30_000,
   });
+
+  const {
+    data: matrixScorecard,
+    refetch: refetchMatrix,
+    isFetching: isFetchingMatrix,
+  } = useQuery<TechniqueValidationScorecard>({
+    queryKey: ["technique-validation-matrix"],
+    queryFn: getTechniqueValidationMatrix,
+    staleTime: 10_000,
+  });
+
+  const validationMap = new Map<string, any>();
+  if (matrixScorecard?.techniques) {
+    for (const item of matrixScorecard.techniques) {
+      validationMap.set(item.id, item);
+    }
+  }
+
+  const handleRunMatrixSweep = async () => {
+    setIsSweeping(true);
+    try {
+      await validateTechniqueMatrix();
+      await refetchMatrix();
+    } catch (e: any) {
+      console.error(e);
+    } finally {
+      setIsSweeping(false);
+    }
+  };
 
   // "Gaps only" focus mode
   const [gapsOnly, setGapsOnly] = useState(() => localStorage.getItem("outpost-coverage-gaps") === "1");
@@ -256,6 +332,7 @@ export default function CoveragePage() {
     try {
       const res = await runTechniqueTest(testId);
       setActiveTestResult(res);
+      void refetchMatrix();
     } catch (e: any) {
       console.error(e);
     } finally {
@@ -429,6 +506,90 @@ export default function CoveragePage() {
           </div>
 
           {/* Matrix Grid */}
+          {coverageMode === "simulations" && (
+            <Panel className="mt-6 border-accent/30 bg-bg-surface/90">
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <Icon name="shield" size={16} className="text-accent" />
+                    <h3 className="font-bold text-text-primary text-sm">
+                      Continuous Detection Validation &amp; Efficacy Scorecard
+                    </h3>
+                  </div>
+                  <p className="mt-1 text-xs text-text-muted">
+                    Automated canary executions validate whether detection rules trigger against synthetic behavioral telemetry.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    disabled={isSweeping || isFetchingMatrix}
+                    onClick={handleRunMatrixSweep}
+                    className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/40 bg-accent/15 px-3 py-1.5 font-mono text-xs font-semibold text-accent hover:bg-accent/25 transition disabled:opacity-50"
+                    title="Execute automated validation sweep across all adversary technique canaries"
+                  >
+                    <Icon name="refresh" size={13} className={isSweeping ? "animate-spin text-accent" : ""} />
+                    <span>{isSweeping ? "Sweeping Matrix Techniques..." : "Run Validation Sweep"}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Metric Tiles */}
+              <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-5 border-t border-border-subtle pt-4 font-mono">
+                <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-3">
+                  <span className="text-[10px] uppercase text-emerald-400 font-bold tracking-wider">Detection Efficacy</span>
+                  <div className="mt-1 text-2xl font-black text-emerald-400">
+                    {matrixScorecard?.summary.detection_rate_pct ?? 0}%
+                  </div>
+                  <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-emerald-500/20">
+                    <div
+                      className="h-full bg-emerald-400 transition-all duration-500"
+                      style={{ width: `${matrixScorecard?.summary.detection_rate_pct ?? 0}%` }}
+                    />
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-border-subtle bg-bg-elevated/40 p-3">
+                  <span className="text-[10px] uppercase text-text-faint tracking-wider">Tested Canaries</span>
+                  <div className="mt-1 text-2xl font-bold text-text-primary">
+                    {matrixScorecard?.summary.tested_count ?? 0}
+                    <span className="text-xs text-text-faint font-normal ml-1">
+                      / {matrixScorecard?.summary.total_techniques ?? simTechniques.length}
+                    </span>
+                  </div>
+                  <span className="text-[10px] text-text-muted mt-1 block">
+                    {matrixScorecard?.summary.untested_count ?? 0} untested
+                  </span>
+                </div>
+
+                <div className="rounded-xl border border-emerald-500/20 bg-bg-elevated/40 p-3">
+                  <span className="text-[10px] uppercase text-emerald-400 tracking-wider">Detected Rules</span>
+                  <div className="mt-1 text-2xl font-bold text-emerald-400">
+                    {matrixScorecard?.summary.detected_count ?? 0}
+                  </div>
+                  <span className="text-[10px] text-text-muted mt-1 block">Rules fired as expected</span>
+                </div>
+
+                <div className="rounded-xl border border-amber-500/20 bg-bg-elevated/40 p-3">
+                  <span className="text-[10px] uppercase text-amber-400 tracking-wider">Telemetry Gaps</span>
+                  <div className="mt-1 text-2xl font-bold text-amber-400">
+                    {matrixScorecard?.summary.telemetry_only_count ?? 0}
+                  </div>
+                  <span className="text-[10px] text-text-muted mt-1 block">Telemetry seen, no alert</span>
+                </div>
+
+                <div className="rounded-xl border border-border-subtle bg-bg-elevated/40 p-3">
+                  <span className="text-[10px] uppercase text-text-faint tracking-wider">Average MTTD</span>
+                  <div className="mt-1 text-2xl font-bold text-text-primary">
+                    {matrixScorecard?.summary.avg_mttd_ms ? `${matrixScorecard.summary.avg_mttd_ms}ms` : "—"}
+                  </div>
+                  <span className="text-[10px] text-text-muted mt-1 block">Mean time to detect</span>
+                </div>
+              </div>
+            </Panel>
+          )}
+
           {coverageMode === "rules" ? (
             gapsOnly && gaps.length === 0 ? (
               <div className="mt-6 rounded-2xl border border-dashed border-border-strong bg-bg-surface/40 p-10 text-center">
@@ -467,6 +628,7 @@ export default function CoveragePage() {
                   techniques={simByTactic.get(tactic) ?? []}
                   searchQuery={searchQuery}
                   runningTestId={runningTestId}
+                  validationMap={validationMap}
                   onRunTest={handleRunTest}
                 />
               ))}

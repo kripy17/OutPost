@@ -525,6 +525,11 @@ class InvestigationCloseIn(BaseModel):
     conclusion: str = Field(min_length=1, max_length=4000)
 
 
+class ApplyPlaybookIn(BaseModel):
+    playbook_id: str
+    assignee: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # P0.5 — global search: the grouped GET /search envelope. One endpoint, every
 # analyst-facing resource group; qualifiers parsed from the query string.
