@@ -1564,6 +1564,8 @@ export async function runLiveSimulation(scenarioId: string): Promise<{
   alerts: any[];
   risk_score: number;
   process_tree: any[];
+  dropped_artifacts?: import("../types").DroppedArtifactItem[];
+  created_files?: Array<{ name: string; path?: string; size_bytes?: number }>;
 }> {
   return post<any>("/sandbox/simulate/live", { playbook_id: scenarioId });
 }

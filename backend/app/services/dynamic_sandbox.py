@@ -202,6 +202,10 @@ async def execute_bytes_sandbox(
                 "--ro-bind-try", "/etc/resolv.conf", "/etc/resolv.conf",
                 "--ro-bind-try", "/etc/ssl", "/etc/ssl",
                 "--ro-bind-try", "/etc/ca-certificates", "/etc/ca-certificates",
+            ]
+            if sys.prefix and not sys.prefix.startswith(("/usr", "/lib", "/bin", "/sbin")):
+                bwrap_prefix.extend(["--ro-bind-try", sys.prefix, sys.prefix])
+            bwrap_prefix.extend([
                 "--dir", "/tmp",
                 "--bind", str(sandbox_dir), str(sandbox_dir),
                 "--proc", "/proc",
@@ -211,7 +215,7 @@ async def execute_bytes_sandbox(
                 "--unshare-ipc",
                 "--unshare-uts",
                 "--die-with-parent",
-            ]
+            ])
             exec_cmd = bwrap_prefix + exec_cmd
 
         child_env = {
@@ -861,6 +865,7 @@ async def execute_simulation_scenario_live(scenario_id: str) -> dict[str, Any]:
                 })
 
         # Scan for created files
+        created_files = []
         for p in sandbox_dir.glob("**/*"):
             if p.is_file():
                 fe = {
@@ -875,6 +880,16 @@ async def execute_simulation_scenario_live(scenario_id: str) -> dict[str, Any]:
                 events.append(fe)
                 with db_session() as conn:
                     fe["id"] = event_store.insert_event(conn, fe)
+                try:
+                    rel = str(p.relative_to(sandbox_dir))
+                    sz = p.stat().st_size
+                    created_files.append({
+                        "name": rel,
+                        "path": str(p),
+                        "size_bytes": sz,
+                    })
+                except Exception:
+                    pass
 
         # Add network event if scenario involves network
         if "c2" in scenario_id or "beacon" in scenario_id:
@@ -979,6 +994,7 @@ async def execute_simulation_scenario_live(scenario_id: str) -> dict[str, Any]:
         "process_tree": tree,
         "detonation_delta": detonation_delta,
         "dropped_artifacts": dropped_artifacts,
+        "created_files": created_files,
     }
 
 
@@ -1086,6 +1102,7 @@ async def execute_simulation_scenario_stage(
                 current_facts[fk.strip()] = fv.strip()
 
     # Scan created files in workspace
+    created_files = []
     for p in ws.glob("**/*"):
         if p.is_file():
             fe = {
@@ -1100,6 +1117,16 @@ async def execute_simulation_scenario_stage(
             events.append(fe)
             with db_session() as conn:
                 fe["id"] = event_store.insert_event(conn, fe)
+            try:
+                rel = str(p.relative_to(ws))
+                sz = p.stat().st_size
+                created_files.append({
+                    "name": rel,
+                    "path": str(p),
+                    "size_bytes": sz,
+                })
+            except Exception:
+                pass
 
     # Evaluate detection rules
     alerts: list[dict[str, Any]] = []
@@ -1137,6 +1164,7 @@ async def execute_simulation_scenario_stage(
         "events_count": len(events),
         "is_final_stage": is_final,
         "dropped_artifacts": dropped_artifacts,
+        "created_files": created_files,
         "facts": current_facts,
     }
 
