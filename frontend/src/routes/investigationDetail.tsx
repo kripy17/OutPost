@@ -13,6 +13,7 @@ import {
   reopenInvestigation,
   setAlertInvestigation,
   synthesizeInvestigation,
+  getInvestigationExportUrl,
 } from "../lib/api";
 import { useEventStream } from "../lib/useEventStream";
 import { toneFill, toneForSeverity } from "../lib/fillPatterns";
@@ -143,39 +144,15 @@ export default function InvestigationDetailPage() {
 
   const sev = inv.severity;
 
-  const handleExportIncidentReport = () => {
+  const handleExportIncidentReport = (format: "markdown" | "json" = "markdown") => {
     if (!inv) return;
-    const lines = [
-      `# OutPost Incident Response Report: ${inv.title}`,
-      `**Investigation ID:** \`${inv.id}\``,
-      `**Status:** ${inv.status.toUpperCase()}`,
-      `**Created At:** ${inv.created_at}`,
-      `**Updated At:** ${inv.updated_at}`,
-      `**Tags:** ${inv.tags?.join(", ") || "none"}`,
-      "",
-      "## 1. Executive Summary",
-      inv.conclusion ? inv.conclusion : "Incident investigation in progress.",
-      "",
-      "## 2. Attached Evidence & Findings",
-      ...(inv.findings || []).map(
-        (f: any) => `- **[${f.severity?.toUpperCase()}]** \`${f.rule_id}\`: ${f.rule_name} (${f.details})`
-      ),
-      "",
-      "## 3. Investigation Evidence References",
-      ...(inv.refs || []).map((r: any) => `- **${r.ref_type.toUpperCase()}**: \`${r.ref_id}\``),
-      "",
-      "## 4. Analyst Notes Log",
-      ...(inv.notes || []).map((n: any) => `### [${n.created_at}] by ${n.author || "Analyst"}\n${n.note}\n`),
-    ];
-    const blob = new Blob([lines.join("\n")], { type: "text/markdown" });
-    const url = URL.createObjectURL(blob);
+    const downloadUrl = getInvestigationExportUrl(inv.id, format);
     const a = document.createElement("a");
-    a.href = url;
-    a.download = `incident-report-${inv.id}.md`;
+    a.href = downloadUrl;
+    a.download = `outpost-incident-brief-${inv.id}.${format === "markdown" ? "md" : "json"}`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    URL.revokeObjectURL(url);
   };
 
   return (
@@ -198,10 +175,24 @@ export default function InvestigationDetailPage() {
               <Icon name={synthesizing ? "refresh" : "terminal"} size={13} className={`mr-1.5 inline ${synthesizing ? "animate-spin" : ""}`} />
               {synthesizing ? "Synthesizing…" : "Synthesize Narrative"}
             </button>
-            <button className="btn" onClick={handleExportIncidentReport}>
-              <Icon name="download" size={13} className="mr-1.5 inline" />
-              Export Report
-            </button>
+            <div className="inline-flex rounded-lg border border-border-subtle bg-bg-surface overflow-hidden">
+              <button
+                className="px-3 py-1.5 text-xs font-semibold text-text hover:bg-bg-elevated transition flex items-center gap-1.5"
+                onClick={() => handleExportIncidentReport("markdown")}
+                title="Download Incident Response Brief (.md)"
+              >
+                <Icon name="download" size={12} className="text-accent" />
+                <span>Export Brief (.md)</span>
+              </button>
+              <div className="w-[1px] bg-border-subtle" />
+              <button
+                className="px-2.5 py-1.5 text-xs font-semibold text-text-muted hover:text-text hover:bg-bg-elevated transition"
+                onClick={() => handleExportIncidentReport("json")}
+                title="Download Structured Case Dossier (.json)"
+              >
+                JSON
+              </button>
+            </div>
             {inv.status !== "closed" ? (
               <button className="btn" onClick={() => setShowClose((v) => !v)}>
                 Close case

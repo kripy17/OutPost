@@ -1043,6 +1043,19 @@ export async function reopenInvestigation(investigationId: string): Promise<Inve
   return post<Investigation>(`/investigations/${encodeURIComponent(investigationId)}/reopen`, {});
 }
 
+/** Export investigation case brief URL and loader (GET /investigations/{id}/export). */
+export function getInvestigationExportUrl(investigationId: string, format: "markdown" | "json" = "markdown"): string {
+  return `${BASE_URL}/investigations/${encodeURIComponent(investigationId)}/export?format=${format}`;
+}
+
+export async function exportInvestigationMarkdown(investigationId: string): Promise<string> {
+  const resp = await fetch(getInvestigationExportUrl(investigationId, "markdown"), {
+    headers: { Authorization: `Bearer ${getAuthToken() ?? ""}` },
+  });
+  if (!resp.ok) throw new Error(`Export failed (${resp.status})`);
+  return resp.text();
+}
+
 /** Start in-process local host live monitor (POST /agents/local/start). */
 export async function startLocalMonitor(payload?: { run_id?: string; interval?: number }): Promise<any> {
   return post<any>("/agents/local/start", payload || {});

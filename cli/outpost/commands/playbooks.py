@@ -148,6 +148,10 @@ def run_technique(
     status = res.get("status", "failed")
     status_color = "green" if status == "success" else "red"
     prereqs_color = "green" if res.get("prereqs_met") else "yellow"
+    t_cov = res.get("telemetry_coverage_pct", 100)
+    t_ver = res.get("telemetry_verified", True)
+    t_color = "green" if t_ver else "yellow"
+    t_matched = ", ".join(res.get("matched_telemetry", [])) or "none"
 
     console.print(
         Panel(
@@ -158,7 +162,8 @@ def run_technique(
             f"[dim]Prerequisites:[/dim] [{prereqs_color}]{'OK' if res.get('prereqs_met') else 'Failed'}[/{prereqs_color}]  ·  "
             f"[dim]Cleanup:[/dim] [green]{res.get('cleanup_status')}[/green]  ·  "
             f"[dim]Events:[/dim] [bold]{res.get('events_count')}[/bold]  ·  "
-            f"[dim]Alerts:[/dim] [bold #C4453B]{res.get('alerts_count')}[/bold #C4453B]",
+            f"[dim]Alerts:[/dim] [bold #C4453B]{res.get('alerts_count')}[/bold #C4453B]\n"
+            f"[dim]Telemetry Contract:[/dim] [bold {t_color}]{'VERIFIED' if t_ver else 'PARTIAL'} ({t_cov}%)[/bold {t_color}] [dim]({t_matched})[/dim]",
             title=f"[bold {status_color}]Adversary Technique Test Result[/bold {status_color}]",
             border_style="#3FA796",
         )

@@ -295,6 +295,24 @@ RULE_META: dict[str, RuleMeta] = {
         "weight": 18,
         "severity": "malicious",
     },
+    "anonymous-rwx-memory": {
+        "technique": "T1055.001",
+        "tactic": "Defense Evasion",
+        "weight": 20,
+        "severity": "malicious",
+    },
+    "fileless-unlinked-binary": {
+        "technique": "T1027",
+        "tactic": "Defense Evasion",
+        "weight": 20,
+        "severity": "malicious",
+    },
+    "gtfobins-suid-execution": {
+        "technique": "T1548.001",
+        "tactic": "Privilege Escalation",
+        "weight": 18,
+        "severity": "malicious",
+    },
 }
 
 
@@ -356,6 +374,9 @@ RULE_NAMES: dict[str, str] = {
     "macos-launchagent-persistence": "macOS LaunchAgent/LaunchDaemon persistence",
     "macos-dylib-hijack": "macOS dynamic linker injection (DYLD)",
     "macos-gatekeeper-bypass": "macOS Gatekeeper quarantine bypass",
+    "anonymous-rwx-memory": "Unbacked RWX memory allocation (fileless shellcode staging)",
+    "fileless-unlinked-binary": "Fileless execution from unlinked binary inode",
+    "gtfobins-suid-execution": "Privilege escalation via SUID / breakout utility",
 }
 
 
@@ -445,5 +466,20 @@ RULE_REMEDIATION: dict[str, list[str]] = {
         "Re-enable Gatekeeper system policy assessments using 'spctl --master-enable'",
         "Check recently downloaded files for missing com.apple.quarantine xattr",
         "Quarantine unauthorized third-party binaries",
+    ],
+    "anonymous-rwx-memory": [
+        "Extract in-memory carved payload using OutPost dynamic forensics and run YARA scanning",
+        "Terminate injecting parent process and inspect thread start addresses",
+        "Enable hardware-enforced Data Execution Prevention (DEP / NX) system-wide",
+    ],
+    "fileless-unlinked-binary": [
+        "Inspect open file descriptors in /proc/[pid]/fd to capture in-memory unlinked binary",
+        "Immediately kill the unlinked process tree before memory space is unmapped",
+        "Review initial execution vector (cron, shell script, or web shell)",
+    ],
+    "gtfobins-suid-execution": [
+        "Audit all setuid and setgid binaries on the endpoint using 'find / -perm -4000'",
+        "Remove unnecessary setuid bits from administrative utilities (find, vim, awk, nano)",
+        "Restrict sudoers permissions to explicit commands with NOEXEC / NOPASSWD limits",
     ],
 }

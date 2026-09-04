@@ -48,6 +48,9 @@ def test_playbooks_test_technique_cli(monkeypatch):
             "alerts_count": 0,
             "stdout": "SIM_PASS",
             "stderr": "",
+            "telemetry_verified": True,
+            "telemetry_coverage_pct": 100,
+            "matched_telemetry": ["process_create", "file_create"],
         },
     )
     res = runner.invoke(app, ["test", "T1059.004-bash-pipe"])
@@ -56,3 +59,5 @@ def test_playbooks_test_technique_cli(monkeypatch):
     assert "T1059.004" in res.stdout
     assert "SUCCESS" in res.stdout
     assert "SIM_PASS" in res.stdout
+    assert "Telemetry Contract" in res.stdout
+    assert "VERIFIED" in res.stdout

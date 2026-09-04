@@ -22,6 +22,7 @@ from typing import Any
 from ..core import config
 from ..core.db import db_session
 from ..models import event as event_store
+from . import yara as yara_service
 
 
 def calculate_entropy(data: bytes) -> float:
@@ -207,6 +208,8 @@ async def poll_sandbox_process_tree(
                                                 carved = mf.read(carve_size)
                                                 if carved and any(b != 0 for b in carved[:256]):
                                                     c_ent = calculate_entropy(carved)
+                                                    yara_hits = yara_service.scan_sample(carved)
+                                                    yara_desc = f" | YARA: {', '.join(h['name'] for h in yara_hits)}" if yara_hits else ""
                                                     c_name = f"memdump_pid_{p}_{hex(start_addr)}.bin"
                                                     art_dir = config.DATA_DIR / "sandbox_artifacts" / run_id
                                                     art_dir.mkdir(parents=True, exist_ok=True)
@@ -216,8 +219,8 @@ async def poll_sandbox_process_tree(
                                                         "elapsed_ms": elapsed_ms,
                                                         "category": "memory",
                                                         "title": f"In-Memory Carved Payload ({c_name})",
-                                                        "details": f"Extracted {len(carved)} bytes from PID {p} memory space. Shannon Entropy: {c_ent}/8.0",
-                                                        "severity": "malicious",
+                                                        "details": f"Extracted {len(carved)} bytes from PID {p} memory space. Shannon Entropy: {c_ent}/8.0{yara_desc}",
+                                                        "severity": "malicious" if (yara_hits or c_ent > 6.8) else "suspicious",
                                                     })
                                     except Exception:
                                         pass
@@ -339,6 +342,7 @@ def extract_dropped_artifacts(
                         break
 
                 parsed_config = extract_malware_config(raw, " ".join(text_preview))
+                yara_hits = yara_service.scan_sample(raw)
 
                 artifacts.append({
                     "name": str(rel),
@@ -350,11 +354,49 @@ def extract_dropped_artifacts(
                     "is_high_entropy": ent > 7.0,
                     "preview": text_preview,
                     "config": parsed_config,
+                    "yara_hits": yara_hits,
                     "artifact_id": f"{run_id}_{sha256[:12]}",
                     "download_url": f"/api/sandbox/artifacts/{run_id}/{artifact_filename}",
                 })
             except Exception:
                 pass
+    except Exception:
+        pass
+
+    # Also harvest any in-memory carved buffers from execution
+    try:
+        if artifacts_dir.exists():
+            for mem_file in artifacts_dir.glob("memdump_*.bin"):
+                try:
+                    m_raw = mem_file.read_bytes()
+                    m_sha256 = hashlib.sha256(m_raw).hexdigest()
+                    m_md5 = hashlib.md5(m_raw).hexdigest()
+                    m_ent = calculate_entropy(m_raw)
+                    m_yara = yara_service.scan_sample(m_raw)
+                    m_preview = []
+                    for s in re.findall(r"[\x20-\x7e]{4,}", m_raw.decode("latin1", errors="ignore")):
+                        clean = s.strip()
+                        if clean and clean not in m_preview:
+                            m_preview.append(clean)
+                        if len(m_preview) >= 8:
+                            break
+                    m_config = extract_malware_config(m_raw, " ".join(m_preview))
+                    artifacts.append({
+                        "name": f"[In-Memory Carved] {mem_file.name}",
+                        "filename": mem_file.name,
+                        "size_bytes": len(m_raw),
+                        "sha256": m_sha256,
+                        "md5": m_md5,
+                        "entropy": m_ent,
+                        "is_high_entropy": m_ent > 7.0,
+                        "preview": m_preview,
+                        "config": m_config,
+                        "yara_hits": m_yara,
+                        "artifact_id": f"{run_id}_{m_sha256[:12]}",
+                        "download_url": f"/api/sandbox/artifacts/{run_id}/{mem_file.name}",
+                    })
+                except Exception:
+                    pass
     except Exception:
         pass
 

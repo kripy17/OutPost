@@ -1506,6 +1506,35 @@ async def execute_technique_test(
     elapsed_ms = int((time.monotonic() - start_mono) * 1000)
     risk_score = risk.compute_risk_score([a["rule_id"] for a in alerts]) if alerts else 0
 
+    # 6. Telemetry Contract Verification
+    expected_telemetry = tech.get("expected_telemetry", [])
+    observed_event_types = {e.get("event_type") for e in events if e.get("event_type")}
+
+    matched_telemetry = []
+    missing_telemetry = []
+    for exp in expected_telemetry:
+        if exp == "process_create" and "process_create" in observed_event_types:
+            matched_telemetry.append(exp)
+        elif exp in ("file_create", "file_modify", "file_write") and (
+            observed_event_types & {"file_create", "file_modify", "file_write"}
+        ):
+            matched_telemetry.append(exp)
+        elif exp in ("network_connection", "network_connect") and (
+            observed_event_types & {"network_connection", "network_connect"}
+        ):
+            matched_telemetry.append(exp)
+        elif exp in observed_event_types:
+            matched_telemetry.append(exp)
+        else:
+            missing_telemetry.append(exp)
+
+    telemetry_verified = (len(missing_telemetry) == 0) if expected_telemetry else True
+    telemetry_coverage_pct = (
+        int((len(matched_telemetry) / len(expected_telemetry)) * 100)
+        if expected_telemetry
+        else 100
+    )
+
     return {
         "run_id": run_id,
         "test_id": tech["id"],
@@ -1525,7 +1554,13 @@ async def execute_technique_test(
         "alerts_count": len(alerts),
         "events_count": len(events),
         "risk_score": risk_score,
+        "expected_telemetry": expected_telemetry,
+        "telemetry_verified": telemetry_verified,
+        "matched_telemetry": matched_telemetry,
+        "missing_telemetry": missing_telemetry,
+        "telemetry_coverage_pct": telemetry_coverage_pct,
     }
+
 
 
 

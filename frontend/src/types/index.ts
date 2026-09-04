@@ -544,6 +544,7 @@ export interface DroppedArtifactItem {
   artifact_id: string;
   download_url: string;
   config?: MalwareConfig;
+  yara_hits?: Array<{ name: string; family: string; description: string }>;
 }
 
 export interface SampleDetonationResult {
@@ -1653,6 +1654,11 @@ export interface TechniqueRunResult {
   alerts_count: number;
   events_count: number;
   risk_score: number;
+  expected_telemetry?: string[];
+  telemetry_verified?: boolean;
+  matched_telemetry?: string[];
+  missing_telemetry?: string[];
+  telemetry_coverage_pct?: number;
 }
 
 export interface ForensicProbeItem {

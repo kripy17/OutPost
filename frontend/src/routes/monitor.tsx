@@ -916,6 +916,24 @@ export default function MonitorPage() {
                           </div>
                         </div>
                       )}
+
+                      {art.yara_hits && art.yara_hits.length > 0 && (
+                        <div className="rounded-lg border border-purple-500/30 bg-purple-500/5 p-2.5 space-y-1.5">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-purple-400 block">
+                            Matched YARA Signatures ({art.yara_hits.length})
+                          </span>
+                          <div className="flex flex-wrap gap-1.5">
+                            {art.yara_hits.map((hit, hidx) => (
+                              <span
+                                key={hidx}
+                                className="rounded border border-purple-500/40 bg-purple-950/40 px-2 py-0.5 text-[10px] font-mono text-purple-200"
+                              >
+                                {hit.name} ({hit.family})
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -1201,7 +1219,7 @@ export default function MonitorPage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-[11px]">
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-3 text-[11px]">
                 <div className="bg-panel-muted/60 p-2.5 rounded-lg border border-border-subtle/50">
                   <span className="text-text-muted block text-[10px] uppercase">Prerequisites</span>
                   <span className={techniqueResult.prereqs_met ? "text-emerald-400 font-bold" : "text-rose-400 font-bold"}>
@@ -1212,6 +1230,12 @@ export default function MonitorPage() {
                   <span className="text-text-muted block text-[10px] uppercase">Cleanup Contract</span>
                   <span className="text-emerald-400 font-bold capitalize">
                     {techniqueResult.cleanup_status}
+                  </span>
+                </div>
+                <div className="bg-panel-muted/60 p-2.5 rounded-lg border border-border-subtle/50">
+                  <span className="text-text-muted block text-[10px] uppercase">Telemetry Contract</span>
+                  <span className={techniqueResult.telemetry_verified ? "text-emerald-400 font-bold" : "text-amber-400 font-bold"}>
+                    {techniqueResult.telemetry_verified ? "Contract Verified" : "Partial Coverage"} ({techniqueResult.telemetry_coverage_pct ?? 100}%)
                   </span>
                 </div>
                 <div className="bg-panel-muted/60 p-2.5 rounded-lg border border-border-subtle/50">
@@ -1227,6 +1251,22 @@ export default function MonitorPage() {
                   </span>
                 </div>
               </div>
+
+              {techniqueResult.matched_telemetry && techniqueResult.matched_telemetry.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-mono">
+                  <span className="text-text-faint">Verified Sensor Events:</span>
+                  {techniqueResult.matched_telemetry.map((t, idx) => (
+                    <span key={idx} className="rounded bg-emerald-950/40 border border-emerald-500/40 px-1.5 py-0.5 text-emerald-300 font-bold">
+                      ✓ {t}
+                    </span>
+                  ))}
+                  {(techniqueResult.missing_telemetry || []).map((t, idx) => (
+                    <span key={idx} className="rounded bg-amber-950/40 border border-amber-500/40 px-1.5 py-0.5 text-amber-300">
+                      ✗ {t}
+                    </span>
+                  ))}
+                </div>
+              )}
 
               {/* Terminal output */}
               <div className="space-y-1">
