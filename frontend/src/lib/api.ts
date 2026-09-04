@@ -1081,6 +1081,20 @@ export async function listInvestigationTasks(
   return get<InvestigationTask[]>(`/investigations/${encodeURIComponent(investigationId)}/tasks${s ? `?${s}` : ""}`);
 }
 
+/** List tasks across all investigations (GET /investigations/tasks). */
+export async function listAllInvestigationTasks(
+  params: { status?: string; category?: string; limit?: number } = {},
+): Promise<Array<InvestigationTask & { investigation_title?: string; investigation_severity?: string }>> {
+  const qs = new URLSearchParams();
+  if (params.status) qs.set("status", params.status);
+  if (params.category) qs.set("category", params.category);
+  if (params.limit) qs.set("limit", String(params.limit));
+  const s = qs.toString();
+  return get<Array<InvestigationTask & { investigation_title?: string; investigation_severity?: string }>>(
+    `/investigations/tasks${s ? `?${s}` : ""}`,
+  );
+}
+
 /** Create an incident response task (POST /investigations/{id}/tasks). */
 export async function createInvestigationTask(
   investigationId: string,

@@ -100,3 +100,10 @@ def test_api_playbooks_endpoints(client):
     tasks_res = client.get(f"/investigations/{inv_id}/tasks")
     assert tasks_res.status_code == 200
     assert len(tasks_res.json()) == apply_data["tasks_created_count"]
+
+    # Verify global fleet tasks endpoint
+    fleet_tasks_res = client.get("/investigations/tasks")
+    assert fleet_tasks_res.status_code == 200
+    fleet_tasks = fleet_tasks_res.json()
+    assert isinstance(fleet_tasks, list)
+    assert any(t["investigation_id"] == inv_id for t in fleet_tasks)

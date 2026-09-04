@@ -134,6 +134,17 @@ def get_incident_playbook(playbook_id: str) -> dict:
     return pb
 
 
+@router.get("/investigations/tasks", response_model=None)
+def list_all_investigation_tasks(
+    status: str | None = Query(None, description="todo | in_progress | completed"),
+    category: str | None = Query(None),
+    limit: int = 50,
+) -> list[dict]:
+    """List tasks across all investigations (e.g. for SOC dashboard containment overview)."""
+    with db_session() as conn:
+        return inv_store.list_fleet_tasks(conn, status=status, category=category, limit=limit)
+
+
 @router.get("/investigations/{investigation_id}", response_model=InvestigationDetailDTO)
 def get_investigation(investigation_id: str) -> InvestigationDetailDTO:
     with db_session() as conn:
