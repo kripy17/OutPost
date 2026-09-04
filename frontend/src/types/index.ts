@@ -586,6 +586,7 @@ export interface SimulationStageResult {
   events_count: number;
   is_final_stage: boolean;
   dropped_artifacts?: DroppedArtifactItem[];
+  created_files?: Array<{ name: string; path: string; size_bytes: number }>;
 }
 
 export interface PlaybookScenario {
