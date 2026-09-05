@@ -547,6 +547,59 @@ export interface DroppedArtifactItem {
   yara_hits?: Array<{ name: string; family: string; description: string }>;
 }
 
+export interface ForecastAction {
+  id: string;
+  category: string;
+  title: string;
+  severity: "critical" | "high" | "medium" | "low";
+  description: string;
+  confidence: "high" | "medium" | "low";
+  indicators?: string[];
+}
+
+export interface PredictedEndpoint {
+  endpoint: string;
+  type: string;
+  protocol: string;
+  port?: number;
+  confidence: string;
+}
+
+export interface PredictedMitreTechnique {
+  id: string;
+  name: string;
+  tactic: string;
+  confidence?: string;
+}
+
+export interface BehavioralForecast {
+  sample_id?: string;
+  sample_name: string;
+  platform?: string;
+  predicted_threat_level: "malicious" | "suspicious" | "clean" | string;
+  confidence_score: number;
+  static_risk_score?: number;
+  entropy?: number;
+  is_packed?: boolean;
+  summary: string;
+  anticipated_actions: ForecastAction[];
+  predicted_endpoints: PredictedEndpoint[];
+  predicted_mitre_techniques: PredictedMitreTechnique[];
+  predicted_file_drops: Array<{ path: string; reason: string }>;
+  explanations?: string[];
+}
+
+export interface ForecastReconciliation {
+  accuracy_score: number;
+  confirmed_count: number;
+  dormant_count: number;
+  discovered_count: number;
+  confirmed_predictions: Array<{ action_id?: string; title: string; status: string; evidence: string }>;
+  dormant_predictions: Array<{ action_id?: string; title: string; status: string; reason: string }>;
+  discovered_runtime_actions: Array<{ title: string; type: string; evidence: string }>;
+  evasion_detected: boolean;
+}
+
 export interface SampleDetonationResult {
   run_id: string;
   sample_id: string;
@@ -567,6 +620,8 @@ export interface SampleDetonationResult {
   timeline?: TimelineEventItem[];
   dropped_artifacts?: DroppedArtifactItem[];
   isolation_driver?: string;
+  forecast?: BehavioralForecast;
+  reconciliation?: ForecastReconciliation;
 }
 
 export interface SimulationStageResult {
@@ -1884,6 +1939,88 @@ export interface MalwareConfig {
   crypto_wallets: string[];
   ransom_indicators: string[];
   behavioral_indicators: string[];
+}
+
+export interface HostPulseMetrics {
+  timestamp: string;
+  platform: string;
+  hostname: string;
+  os_release: string;
+  architecture: string;
+  cpu_percent: number;
+  cpu_cores: number;
+  per_cpu_percent?: number[];
+  memory_used_mb: number;
+  memory_total_mb: number;
+  memory_free_mb?: number;
+  memory_percent: number;
+  swap_used_mb?: number;
+  swap_total_mb?: number;
+  swap_percent?: number;
+  disk_used_gb?: number;
+  disk_total_gb?: number;
+  disk_free_gb?: number;
+  disk_percent?: number;
+  net_kb_in_sec?: number;
+  net_kb_out_sec?: number;
+  process_count: number;
+  connection_count: number;
+  load_avg?: number[];
+  load_1m?: number;
+  load_5m?: number;
+  load_15m?: number;
+  uptime_seconds?: number;
+}
+
+export interface XRayProcessItem {
+  pid: number;
+  ppid: number;
+  name: string;
+  cmdline: string | string[];
+  exe: string;
+  user?: string;
+  username?: string;
+  status: string;
+  cpu_percent: number;
+  memory_mb?: number;
+  memory_rss_bytes?: number;
+  memory_percent?: number;
+  threads?: number;
+  num_threads?: number;
+  started_at?: string;
+  create_time?: number;
+  package_status?: string;
+  package_label?: string;
+  package_origin?: string;
+  is_unmanaged?: boolean;
+  socket_count?: number;
+  cwd?: string;
+}
+
+export interface XRaySocketItem {
+  pid: number | null;
+  process_name: string;
+  protocol?: string;
+  family?: string;
+  type?: string;
+  local_ip?: string;
+  local_port?: number;
+  laddr?: string;
+  remote_ip?: string | null;
+  remote_port?: number | null;
+  raddr?: string | null;
+  status: string;
+  direction?: string;
+  fd?: number;
+}
+
+export interface HostXRaySnapshotData {
+  success?: boolean;
+  metrics: HostPulseMetrics;
+  processes: XRayProcessItem[];
+  sockets: XRaySocketItem[];
+  process_count: number;
+  socket_count: number;
 }
 
 

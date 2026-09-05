@@ -4,10 +4,10 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { platformIconName } from "../components/iconMeta";
 import { Chip, PageHeader, Panel } from "../components/ui";
-import { deleteSample, detonateDynamic, detonateSample, downloadSample, getRuns, getSample, getSampleStatic, getSandboxArtifactUrl, getSandboxProviders, getSandboxTask, getSimilarSamples, sandboxDetonate, watchlistAdd } from "../lib/api";
+import { deleteSample, detonateDynamic, detonateSample, downloadSample, getRuns, getSample, getSampleForecast, getSampleStatic, getSandboxArtifactUrl, getSandboxProviders, getSandboxTask, getSimilarSamples, sandboxDetonate, watchlistAdd } from "../lib/api";
 import { ProcessCausalityTree } from "../components/ProcessCausalityTree";
 import { NetworkProtocolInspector } from "../components/NetworkProtocolInspector";
-import type { Platform, RunSummary, SampleDetonationResult, SampleStatic, SandboxTask } from "../types";
+import type { BehavioralForecast, ForecastReconciliation, Platform, RunSummary, SampleDetonationResult, SampleStatic, SandboxTask } from "../types";
 import { filterStrings, formatBytes, getVirusTotalFileUrl, getVirusTotalIocUrl, iocTotal } from "./samplesHelpers";
 
 /* ── Static analysis (strings / IOCs / PE / ELF) ─────────────────────────── */
@@ -402,6 +402,417 @@ function CategorizedStringsPanel({ categorized, rawStrings }: { categorized?: Sa
   );
 }
 
+function PreExecutionForecastView({
+  sample,
+  forecast,
+  isLoading,
+  isError,
+  detonating,
+  executionTimer,
+  onProceed,
+}: {
+  sample: { sample_id: string; original_name: string; detected_platform: string };
+  forecast?: BehavioralForecast;
+  isLoading: boolean;
+  isError: boolean;
+  detonating: boolean;
+  executionTimer: number;
+  onProceed: () => void;
+}) {
+  const [isExpanded, setIsExpanded] = useState(true);
+
+  const threatLevel = (forecast?.predicted_threat_level || "unknown").toUpperCase();
+  const threatTone =
+    threatLevel === "MALICIOUS"
+      ? "text-rose-400 bg-rose-500/20 border-rose-500/40"
+      : threatLevel === "SUSPICIOUS"
+        ? "text-amber-400 bg-amber-500/20 border-amber-500/40"
+        : threatLevel === "CLEAN"
+          ? "text-emerald-400 bg-emerald-500/20 border-emerald-500/40"
+          : "text-text-muted bg-bg-surface border-border-subtle";
+
+  return (
+    <div className="overflow-hidden rounded-2xl border border-amber-500/40 bg-bg-surface/95 shadow-xl backdrop-blur">
+      {/* Top Banner Header */}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border-subtle bg-bg-base/80 px-5 py-3.5 text-xs">
+        <div className="flex items-center gap-3">
+          <span className="flex h-8 w-8 items-center justify-center rounded-xl border border-amber-500/40 bg-amber-500/15 text-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.25)]">
+            <Icon name="eye" size={15} />
+          </span>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-text-primary text-sm">
+                Layer 1: Pre-Execution Threat Forecast
+              </span>
+              <span className="rounded bg-amber-500/20 px-2 py-0.5 text-[10px] font-bold text-amber-300 uppercase">
+                Zero-Execution Heuristics
+              </span>
+            </div>
+            <p className="text-[11px] text-text-muted">
+              Pre-detonation behavioral forecast for {sample.original_name} ({sample.detected_platform}) · Predicts anticipated actions, C2 endpoints &amp; MITRE techniques before execution
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          {forecast && (
+            <div className="flex items-center gap-2">
+              <span className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs font-bold uppercase ${threatTone}`}>
+                <Icon name="shield" size={12} />
+                <span>{threatLevel}</span>
+              </span>
+              <span className="rounded-lg border border-border-subtle bg-bg-surface px-2.5 py-1 text-xs text-text-muted">
+                Confidence: <strong className="text-text-primary">{forecast.confidence_score}%</strong>
+              </span>
+              {forecast.static_risk_score !== undefined && (
+                <span className="rounded-lg border border-border-subtle bg-bg-surface px-2.5 py-1 text-xs text-text-muted">
+                  Static Score: <strong className="text-text-primary">{forecast.static_risk_score}/100</strong>
+                </span>
+              )}
+            </div>
+          )}
+
+          <button
+            onClick={() => setIsExpanded(!isExpanded)}
+            className="press inline-flex items-center gap-1 rounded-lg border border-border-subtle bg-bg-surface px-2.5 py-1 text-xs text-text-muted hover:text-text-primary"
+            title={isExpanded ? "Collapse forecast" : "Expand forecast"}
+          >
+            <Icon name={isExpanded ? "chevronDown" : "chevronRight"} size={12} />
+            <span>{isExpanded ? "Collapse" : "Expand"}</span>
+          </button>
+        </div>
+      </div>
+
+      {isExpanded && (
+        <div className="p-5 space-y-4">
+          {isLoading ? (
+            <div className="py-8 text-center text-text-muted space-y-2">
+              <Icon name="refresh" size={20} className="mx-auto animate-spin text-accent" />
+              <p className="text-xs">Analyzing raw sample heuristics &amp; synthesizing behavioral forecast...</p>
+            </div>
+          ) : isError ? (
+            <div className="rounded-xl border border-border-subtle bg-bg-base/60 p-4 text-xs text-text-muted flex items-center justify-between">
+              <span>Zero-execution forecast is unavailable for this sample bytes. You can still proceed directly to Layer 2 live sandbox detonation.</span>
+            </div>
+          ) : forecast ? (
+            <>
+              {/* Summary callout */}
+              <div className="rounded-xl border border-amber-500/25 bg-amber-500/5 p-4 text-xs space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 font-bold text-amber-300">
+                    <Icon name="notes" size={13} />
+                    <span>Behavioral Forecast Summary</span>
+                  </div>
+                  {forecast.entropy !== undefined && (
+                    <span className="text-[10px] text-text-faint">
+                      Entropy: <strong>{forecast.entropy.toFixed(2)}</strong> / 8.0
+                      {forecast.is_packed ? " · (High Entropy / Packed)" : " · (Plaintext / Unpacked)"}
+                    </span>
+                  )}
+                </div>
+                <p className="text-text-primary text-xs leading-relaxed">
+                  {forecast.summary}
+                </p>
+                {forecast.explanations && forecast.explanations.length > 0 && (
+                  <div className="pt-1 flex flex-wrap gap-2 text-[10px] text-text-muted">
+                    {forecast.explanations.map((exp, eidx) => (
+                      <span key={eidx} className="rounded bg-bg-surface px-2 py-0.5 border border-border-subtle/60">
+                        {exp}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* 4 Forecast Decks */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                {/* Deck 1: Anticipated Actions */}
+                <div className="rounded-xl border border-border-subtle bg-bg-base/70 p-3.5 space-y-2.5">
+                  <div className="flex items-center justify-between border-b border-border-subtle pb-2">
+                    <span className="font-bold text-text-primary flex items-center gap-1.5">
+                      <Icon name="alert" size={13} className="text-rose-400" />
+                      <span>Anticipated Behaviors ({forecast.anticipated_actions?.length || 0})</span>
+                    </span>
+                    <span className="text-[10px] text-text-faint uppercase">Heuristic Flags</span>
+                  </div>
+                  {(!forecast.anticipated_actions || forecast.anticipated_actions.length === 0) ? (
+                    <p className="text-text-muted text-[11px] py-2">No malicious capability signatures anticipated.</p>
+                  ) : (
+                    <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                      {forecast.anticipated_actions.map((act) => {
+                        const sevTone =
+                          act.severity === "critical" || act.severity === "high"
+                            ? "bg-rose-500/20 text-rose-400 border-rose-500/40"
+                            : act.severity === "medium"
+                              ? "bg-amber-500/20 text-amber-400 border-amber-500/40"
+                              : "bg-cyan-500/20 text-cyan-400 border-cyan-500/40";
+                        return (
+                          <div key={act.id} className="rounded-lg border border-border-subtle bg-bg-surface/80 p-2.5 space-y-1">
+                            <div className="flex items-center justify-between gap-1.5">
+                              <span className="font-bold text-text-primary text-[11px]">{act.title}</span>
+                              <span className={`rounded px-1.5 py-0.2 text-[9px] font-bold uppercase border ${sevTone}`}>
+                                {act.severity}
+                              </span>
+                            </div>
+                            <p className="text-[10px] text-text-muted leading-tight">{act.description}</p>
+                            {act.indicators && act.indicators.length > 0 && (
+                              <div className="flex flex-wrap gap-1 pt-0.5">
+                                {act.indicators.map((ind, iidx) => (
+                                  <span key={iidx} className="rounded bg-bg-base px-1.5 py-0.2 text-[9px] font-mono text-accent">
+                                    {ind}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Deck 2: Predicted C2 & Network Endpoints */}
+                <div className="rounded-xl border border-border-subtle bg-bg-base/70 p-3.5 space-y-2.5">
+                  <div className="flex items-center justify-between border-b border-border-subtle pb-2">
+                    <span className="font-bold text-text-primary flex items-center gap-1.5">
+                      <Icon name="network" size={13} className="text-accent" />
+                      <span>Predicted C2 &amp; Egress ({forecast.predicted_endpoints?.length || 0})</span>
+                    </span>
+                    <span className="text-[10px] text-text-faint uppercase">Network Targets</span>
+                  </div>
+                  {(!forecast.predicted_endpoints || forecast.predicted_endpoints.length === 0) ? (
+                    <p className="text-text-muted text-[11px] py-2">No hardcoded outbound C2 endpoints detected.</p>
+                  ) : (
+                    <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                      {forecast.predicted_endpoints.map((ep, eidx) => (
+                        <div key={eidx} className="flex items-center justify-between rounded-lg border border-border-subtle bg-bg-surface/80 px-2.5 py-2 text-[11px]">
+                          <div className="flex items-center gap-2 truncate">
+                            <span className="text-accent font-bold truncate">{ep.endpoint}</span>
+                            <span className="text-[10px] text-text-faint">{ep.protocol}{ep.port ? `:${ep.port}` : ""}</span>
+                          </div>
+                          <span className="rounded bg-bg-base px-1.5 py-0.5 text-[9px] font-bold text-text-muted uppercase shrink-0">
+                            {ep.confidence} conf
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Deck 3: Predicted MITRE ATT&CK Techniques */}
+                <div className="rounded-xl border border-border-subtle bg-bg-base/70 p-3.5 space-y-2.5">
+                  <div className="flex items-center justify-between border-b border-border-subtle pb-2">
+                    <span className="font-bold text-text-primary flex items-center gap-1.5">
+                      <Icon name="shield" size={13} className="text-purple-400" />
+                      <span>Anticipated MITRE ATT&amp;CK ({forecast.predicted_mitre_techniques?.length || 0})</span>
+                    </span>
+                    <span className="text-[10px] text-text-faint uppercase">Tactics &amp; IDs</span>
+                  </div>
+                  {(!forecast.predicted_mitre_techniques || forecast.predicted_mitre_techniques.length === 0) ? (
+                    <p className="text-text-muted text-[11px] py-2">No MITRE ATT&amp;CK techniques mapped.</p>
+                  ) : (
+                    <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                      {forecast.predicted_mitre_techniques.map((m) => (
+                        <div key={m.id} className="flex items-center justify-between rounded-lg border border-border-subtle bg-bg-surface/80 px-2.5 py-2 text-[11px]">
+                          <div className="flex items-center gap-2 truncate">
+                            <span className="rounded bg-purple-500/20 px-1.5 py-0.2 font-mono text-[10px] font-bold text-purple-300 shrink-0">
+                              {m.id}
+                            </span>
+                            <span className="text-text-primary font-medium truncate">{m.name}</span>
+                          </div>
+                          <span className="text-[10px] text-text-faint shrink-0">{m.tactic}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Deck 4: Anticipated File Drops */}
+                <div className="rounded-xl border border-border-subtle bg-bg-base/70 p-3.5 space-y-2.5">
+                  <div className="flex items-center justify-between border-b border-border-subtle pb-2">
+                    <span className="font-bold text-text-primary flex items-center gap-1.5">
+                      <Icon name="file" size={13} className="text-cyan-400" />
+                      <span>Anticipated File Drops ({forecast.predicted_file_drops?.length || 0})</span>
+                    </span>
+                    <span className="text-[10px] text-text-faint uppercase">Disk Operations</span>
+                  </div>
+                  {(!forecast.predicted_file_drops || forecast.predicted_file_drops.length === 0) ? (
+                    <p className="text-text-muted text-[11px] py-2">No suspicious file drop paths detected.</p>
+                  ) : (
+                    <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                      {forecast.predicted_file_drops.map((f, fidx) => (
+                        <div key={fidx} className="flex items-center justify-between rounded-lg border border-border-subtle bg-bg-surface/80 px-2.5 py-2 text-[11px]">
+                          <span className="font-mono text-cyan-300 truncate">{f.path}</span>
+                          <span className="text-[10px] text-text-faint shrink-0">{f.reason}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Layer 1 Action Prompt / Transition to Layer 2 */}
+              <div className="mt-4 pt-3 border-t border-border-subtle flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2 text-[11px] text-emerald-400">
+                  <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+                  <span>Layer 1 Complete: Sample evaluated safely without host execution.</span>
+                </div>
+                <button
+                  onClick={onProceed}
+                  disabled={detonating}
+                  className="press inline-flex items-center gap-2 rounded-xl border border-accent/80 bg-accent/25 px-5 py-2.5 text-xs font-bold text-accent transition hover:bg-accent/35 hover:shadow-[var(--glow-accent)] disabled:opacity-50"
+                >
+                  <Icon name={detonating ? "refresh" : "play"} size={13} className={detonating ? "animate-spin" : ""} />
+                  <span>
+                    {detonating
+                      ? `Executing in Sandbox (${executionTimer}s)...`
+                      : "Proceed to Layer 2: Live Dynamic Sandbox Detonation"}
+                  </span>
+                </button>
+              </div>
+            </>
+          ) : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ForecastVerificationMatrixView({
+  reconciliation,
+}: {
+  reconciliation: ForecastReconciliation;
+}) {
+  const accuracy = reconciliation.accuracy_score ?? 0;
+  const accuracyTone =
+    accuracy >= 75
+      ? "text-emerald-400 bg-emerald-500/20 border-emerald-500/40"
+      : accuracy >= 40
+        ? "text-amber-400 bg-amber-500/20 border-amber-500/40"
+        : "text-rose-400 bg-rose-500/20 border-rose-500/40";
+
+  return (
+    <div className="overflow-hidden rounded-2xl border border-border-subtle bg-bg-surface/95 shadow-xl backdrop-blur font-mono space-y-4">
+      {/* Verification Matrix Header */}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border-subtle bg-bg-base/80 px-5 py-3.5 text-xs">
+        <div className="flex items-center gap-3">
+          <span className="flex h-8 w-8 items-center justify-center rounded-xl border border-accent/40 bg-accent/15 text-accent shadow-[var(--glow-accent)]">
+            <Icon name="compare" size={15} />
+          </span>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-text-primary text-sm">
+                Forecast Verification Matrix
+              </span>
+              <span className="rounded bg-accent/15 px-2 py-0.5 text-[10px] font-bold text-accent uppercase">
+                Predicted vs. Observed Telemetry
+              </span>
+            </div>
+            <p className="text-[11px] text-text-muted">
+              Reconciles Layer 1 static forecast predictions against Layer 2 live sandbox execution events
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1 text-xs font-bold ${accuracyTone}`}>
+            <span>Accuracy: {accuracy}%</span>
+          </span>
+          <span className="rounded-lg border border-border-subtle bg-bg-surface px-2.5 py-1 text-xs text-emerald-400">
+            {reconciliation.confirmed_count} Confirmed
+          </span>
+          <span className="rounded-lg border border-border-subtle bg-bg-surface px-2.5 py-1 text-xs text-amber-400">
+            {reconciliation.dormant_count} Dormant
+          </span>
+          <span className="rounded-lg border border-border-subtle bg-bg-surface px-2.5 py-1 text-xs text-cyan-400">
+            {reconciliation.discovered_count} Discovered
+          </span>
+        </div>
+      </div>
+
+      <div className="p-5 space-y-4">
+        {/* Anti-Analysis Evasion Alert */}
+        {reconciliation.evasion_detected && (
+          <div className="rounded-xl border border-rose-500/50 bg-rose-500/10 p-4 text-xs space-y-1 text-rose-300">
+            <div className="flex items-center gap-2 font-bold text-rose-400 text-sm">
+              <Icon name="alert" size={15} />
+              <span>ANTI-ANALYSIS WARNING: Potential Sandbox Evasion Detected!</span>
+            </div>
+            <p className="text-[11px] text-text-primary">
+              Process exited with nominal code 0 and suppressed behaviors despite malicious static forecast. The binary may employ environment checks (e.g. debugger presence, uptime heuristics, or hypervisor detection) to withhold malicious payloads.
+            </p>
+          </div>
+        )}
+
+        {/* Verification Matrix Table */}
+        <div className="overflow-x-auto rounded-xl border border-border-subtle">
+          <table className="w-full text-left text-xs font-mono">
+            <thead className="border-b border-border-subtle bg-bg-base/60 text-text-faint uppercase text-[10px]">
+              <tr>
+                <th className="px-4 py-2.5">Category</th>
+                <th className="px-4 py-2.5">Behavior / Finding</th>
+                <th className="px-4 py-2.5 text-center">Status</th>
+                <th className="px-4 py-2.5">Observed Runtime Evidence</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border-subtle/50">
+              {(reconciliation.confirmed_predictions || []).map((c, cidx) => (
+                <tr key={`conf-${cidx}`} className="hover:bg-bg-elevated/20 transition">
+                  <td className="px-4 py-2.5 text-text-muted text-[11px]">Prediction</td>
+                  <td className="px-4 py-2.5 font-bold text-text-primary text-[11px]">{c.title}</td>
+                  <td className="px-4 py-2.5 text-center">
+                    <span className="inline-flex items-center gap-1 rounded bg-emerald-500/20 border border-emerald-500/40 px-2 py-0.5 text-[10px] font-bold text-emerald-300 uppercase">
+                      <Icon name="check" size={10} />
+                      <span>Confirmed</span>
+                    </span>
+                  </td>
+                  <td className="px-4 py-2.5 text-emerald-400 text-[11px]">{c.evidence}</td>
+                </tr>
+              ))}
+
+              {(reconciliation.dormant_predictions || []).map((d, didx) => (
+                <tr key={`dorm-${didx}`} className="hover:bg-bg-elevated/20 transition">
+                  <td className="px-4 py-2.5 text-text-muted text-[11px]">Prediction</td>
+                  <td className="px-4 py-2.5 font-bold text-text-muted text-[11px]">{d.title}</td>
+                  <td className="px-4 py-2.5 text-center">
+                    <span className="inline-flex items-center gap-1 rounded bg-amber-500/20 border border-amber-500/40 px-2 py-0.5 text-[10px] font-bold text-amber-300 uppercase">
+                      <span>Dormant</span>
+                    </span>
+                  </td>
+                  <td className="px-4 py-2.5 text-text-faint text-[11px]">{d.reason}</td>
+                </tr>
+              ))}
+
+              {(reconciliation.discovered_runtime_actions || []).map((disc, discidx) => (
+                <tr key={`disc-${discidx}`} className="hover:bg-bg-elevated/20 transition">
+                  <td className="px-4 py-2.5 text-text-muted text-[11px]">Runtime</td>
+                  <td className="px-4 py-2.5 font-bold text-cyan-300 text-[11px]">{disc.title}</td>
+                  <td className="px-4 py-2.5 text-center">
+                    <span className="inline-flex items-center gap-1 rounded bg-cyan-500/20 border border-cyan-500/40 px-2 py-0.5 text-[10px] font-bold text-cyan-300 uppercase">
+                      <span>Discovered</span>
+                    </span>
+                  </td>
+                  <td className="px-4 py-2.5 text-cyan-400 text-[11px]">{disc.evidence}</td>
+                </tr>
+              ))}
+
+              {reconciliation.confirmed_count === 0 &&
+                reconciliation.dormant_count === 0 &&
+                reconciliation.discovered_count === 0 && (
+                  <tr>
+                    <td colSpan={4} className="px-4 py-6 text-center text-text-muted">
+                      No reconciliation points recorded for this run.
+                    </td>
+                  </tr>
+                )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; original_name: string; detected_platform: string } }) {
   const queryClient = useQueryClient();
   const [detonating, setDetonating] = useState(false);
@@ -414,6 +825,19 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
   const [executionTimer, setExecutionTimer] = useState<number>(0);
   const timerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const terminalEndRef = useRef<HTMLDivElement>(null);
+
+  const {
+    data: forecastData,
+    isLoading: forecastLoading,
+    isError: forecastError,
+  } = useQuery({
+    queryKey: ["sample", "forecast", sample.sample_id],
+    queryFn: () => getSampleForecast(sample.sample_id),
+    retry: false,
+  });
+
+  const effectiveForecast = result?.forecast || forecastData;
+  const effectiveReconciliation = result?.reconciliation;
 
   const handleDetonateLive = async () => {
     setDetonating(true);
@@ -471,8 +895,19 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
   const displayAlerts = result?.alerts || [];
 
   return (
-    <div className="space-y-4 font-mono">
-      {/* Cockpit Shell */}
+    <div className="space-y-6 font-mono">
+      {/* ── LAYER 1: Pre-Execution Behavioral Threat Forecast ────────── */}
+      <PreExecutionForecastView
+        sample={sample}
+        forecast={effectiveForecast}
+        isLoading={forecastLoading && !result?.forecast}
+        isError={forecastError && !result?.forecast}
+        detonating={detonating}
+        executionTimer={executionTimer}
+        onProceed={() => void handleDetonateLive()}
+      />
+
+      {/* ── LAYER 2: Live Dynamic Sandbox Cage Flight Recorder ────────── */}
       <div className="overflow-hidden rounded-2xl border border-border-subtle bg-bg-surface/90 shadow-xl backdrop-blur">
         {/* Cockpit Status Header Strip */}
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border-subtle bg-bg-base/80 px-5 py-3.5 text-xs">
@@ -488,7 +923,7 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
                 </span>
               </div>
               <p className="text-[11px] text-text-muted">
-                Live sandbox cage execution · Files, processes, network egress &amp; detection rules tracked in real time
+                Layer 2 Live sandbox cage execution · Files, processes, network egress &amp; detection rules tracked in real time
               </p>
             </div>
           </div>
@@ -1027,6 +1462,11 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
           </div>
         </div>
       </div>
+
+      {/* ── VERIFICATION MATRIX: Predicted vs. Observed Telemetry ────────── */}
+      {effectiveReconciliation && (
+        <ForecastVerificationMatrixView reconciliation={effectiveReconciliation} />
+      )}
     </div>
   );
 }
@@ -1704,11 +2144,11 @@ export default function SampleDetailPage() {
                 Mode 2: Dynamic Sandbox
               </span>
               <span className="rounded bg-accent/20 px-1.5 py-0.2 text-[9px] font-bold text-accent uppercase">
-                Live Cockpit
+                Double-Layer
               </span>
             </div>
             <p className="text-[11px] text-text-muted">
-              Isolated cage execution with real-time flight recorder of files, processes &amp; sockets.
+              Layer 1 zero-execution behavioral forecast followed by Layer 2 live sandbox execution &amp; verification matrix.
             </p>
           </button>
 

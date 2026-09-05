@@ -12,6 +12,8 @@ import os
 import platform
 import re
 import signal
+import subprocess
+import time
 from typing import Any
 
 from ..core import auth
@@ -20,10 +22,14 @@ from ..models import audit
 
 try:
     import psutil
+    # Prime cpu_percent so subsequent calls yield instant non-zero values
+    psutil.cpu_percent(interval=None)
 except ImportError:
     psutil = None
 
-import subprocess
+_last_net_io_time: float | None = None
+_last_net_io_bytes_sent: int = 0
+_last_net_io_bytes_recv: int = 0
 
 _CAPABILITIES = [
     "CHOWN", "DAC_OVERRIDE", "DAC_READ_SEARCH", "FOWNER", "FSETID",
@@ -523,23 +529,100 @@ def extract_security_posture(pid: int) -> dict[str, Any]:
 
 
 def get_current_system_metrics() -> dict[str, Any]:
-    """Capture host resource pulse."""
+    """Capture host resource pulse across Linux, macOS, and Windows."""
+    global _last_net_io_time, _last_net_io_bytes_sent, _last_net_io_bytes_recv
+
     cpu_pct = 0.0
+    per_cpu_percent: list[float] = []
+    cpu_cores = os.cpu_count() or 1
     mem_used_mb = 0.0
     mem_total_mb = 0.0
+    mem_free_mb = 0.0
     mem_pct = 0.0
+    swap_used_mb = 0.0
+    swap_total_mb = 0.0
+    swap_pct = 0.0
+    disk_used_gb = 0.0
+    disk_total_gb = 0.0
+    disk_free_gb = 0.0
+    disk_pct = 0.0
+    net_kb_in_sec = 0.0
+    net_kb_out_sec = 0.0
     proc_count = 0
     conn_count = 0
+    uptime_sec = 0
+    load_avg = [0.0, 0.0, 0.0]
+
+    if hasattr(os, "getloadavg"):
+        try:
+            load_avg = [round(x, 2) for x in os.getloadavg()]
+        except Exception:
+            pass
 
     if psutil:
         try:
-            cpu_pct = psutil.cpu_percent(interval=None)
+            cpu_pct = round(psutil.cpu_percent(interval=None), 1)
+            # If zero from initialization, do a quick micro-sample
+            if cpu_pct == 0.0:
+                cpu_pct = round(psutil.cpu_percent(interval=0.04), 1)
+
+            per_cpu_raw = psutil.cpu_percent(interval=None, percpu=True)
+            per_cpu_percent = [round(c, 1) for c in per_cpu_raw] if per_cpu_raw else [cpu_pct]
+            cpu_cores = psutil.cpu_count(logical=True) or cpu_cores
+
+            # Memory
             mem = psutil.virtual_memory()
             mem_used_mb = round(mem.used / (1024 * 1024), 1)
             mem_total_mb = round(mem.total / (1024 * 1024), 1)
-            mem_pct = mem.percent
+            mem_free_mb = round(mem.available / (1024 * 1024), 1)
+            mem_pct = round(mem.percent, 1)
+
+            # Swap
+            try:
+                swap = psutil.swap_memory()
+                swap_used_mb = round(swap.used / (1024 * 1024), 1)
+                swap_total_mb = round(swap.total / (1024 * 1024), 1)
+                swap_pct = round(swap.percent, 1)
+            except Exception:
+                pass
+
+            # Disk Usage
+            try:
+                disk_path = "C:\\" if platform.system().lower() == "windows" else "/"
+                disk = psutil.disk_usage(disk_path)
+                disk_used_gb = round(disk.used / (1024 ** 3), 1)
+                disk_total_gb = round(disk.total / (1024 ** 3), 1)
+                disk_free_gb = round(disk.free / (1024 ** 3), 1)
+                disk_pct = round(disk.percent, 1)
+            except Exception:
+                pass
+
+            # Network I/O Throughput
+            try:
+                net_io = psutil.net_io_counters()
+                now = time.time()
+                if _last_net_io_time is not None and now > _last_net_io_time:
+                    dt = max(now - _last_net_io_time, 0.001)
+                    net_kb_in_sec = round(max(0, (net_io.bytes_recv - _last_net_io_bytes_recv) / 1024.0) / dt, 1)
+                    net_kb_out_sec = round(max(0, (net_io.bytes_sent - _last_net_io_bytes_sent) / 1024.0) / dt, 1)
+                _last_net_io_time = now
+                _last_net_io_bytes_sent = net_io.bytes_sent
+                _last_net_io_bytes_recv = net_io.bytes_recv
+            except Exception:
+                pass
+
             proc_count = len(psutil.pids())
-            conn_count = len(psutil.net_connections(kind="inet"))
+
+            try:
+                conn_count = len(psutil.net_connections(kind="inet"))
+            except Exception:
+                # If unprivileged on Linux, estimate from live sockets
+                conn_count = len(get_live_sockets())
+
+            try:
+                uptime_sec = int(time.time() - psutil.boot_time())
+            except Exception:
+                pass
         except Exception:
             pass
     elif platform.system().lower() == "linux" and os.path.exists("/proc"):
@@ -561,19 +644,44 @@ def get_current_system_metrics() -> dict[str, Any]:
                     used = max(0, total - available)
                     mem_used_mb = round(used / (1024 * 1024), 1)
                     mem_total_mb = round(total / (1024 * 1024), 1)
+                    mem_free_mb = round(available / (1024 * 1024), 1)
                     mem_pct = round((used / total) * 100, 1) if total > 0 else 0.0
+
+            if os.path.exists("/proc/uptime"):
+                with open("/proc/uptime", "r", encoding="utf-8") as f:
+                    uptime_sec = int(float(f.read().split()[0]))
         except Exception:
             pass
 
     return {
         "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "platform": platform.system().lower(),
+        "hostname": platform.node() or "localhost",
+        "os_release": platform.release() or "",
+        "architecture": platform.machine() or "",
         "cpu_percent": cpu_pct,
+        "cpu_cores": cpu_cores,
+        "per_cpu_percent": per_cpu_percent,
         "memory_used_mb": mem_used_mb,
         "memory_total_mb": mem_total_mb,
+        "memory_free_mb": mem_free_mb,
         "memory_percent": mem_pct,
+        "swap_used_mb": swap_used_mb,
+        "swap_total_mb": swap_total_mb,
+        "swap_percent": swap_pct,
+        "disk_used_gb": disk_used_gb,
+        "disk_total_gb": disk_total_gb,
+        "disk_free_gb": disk_free_gb,
+        "disk_percent": disk_pct,
+        "net_kb_in_sec": net_kb_in_sec,
+        "net_kb_out_sec": net_kb_out_sec,
         "process_count": proc_count,
         "connection_count": conn_count,
+        "load_avg": load_avg,
+        "load_1m": load_avg[0] if len(load_avg) > 0 else 0.0,
+        "load_5m": load_avg[1] if len(load_avg) > 1 else 0.0,
+        "load_15m": load_avg[2] if len(load_avg) > 2 else 0.0,
+        "uptime_seconds": uptime_sec,
     }
 
 
@@ -719,6 +827,33 @@ def get_live_sockets() -> list[dict[str, Any]]:
                 })
         except Exception:
             pass
+
+        # Fallback for unprivileged users where psutil.net_connections() raises AccessDenied
+        if not sockets:
+            try:
+                for p in psutil.process_iter(["pid", "name"]):
+                    try:
+                        p_conns = p.net_connections(kind="inet") if hasattr(p, "net_connections") else p.connections(kind="inet")
+                        for c in p_conns:
+                            local_ip = c.laddr.ip if c.laddr else "0.0.0.0"
+                            local_port = c.laddr.port if c.laddr else 0
+                            remote_ip = c.raddr.ip if c.raddr else None
+                            remote_port = c.raddr.port if c.raddr else None
+                            proto = "tcp" if c.type == 1 else "udp"
+                            sockets.append({
+                                "pid": p.info["pid"],
+                                "process_name": p.info.get("name") or "",
+                                "protocol": proto,
+                                "local_ip": local_ip,
+                                "local_port": local_port,
+                                "remote_ip": remote_ip,
+                                "remote_port": remote_port,
+                                "status": c.status or "ESTABLISHED",
+                            })
+                    except Exception:
+                        continue
+            except Exception:
+                pass
 
     return sockets
 
@@ -908,7 +1043,8 @@ def get_process_xray_detail(pid: int) -> dict[str, Any] | None:
 
             # Sockets
             try:
-                for conn in p.connections(kind="inet"):
+                p_conns = p.net_connections(kind="inet") if hasattr(p, "net_connections") else p.connections(kind="inet")
+                for conn in p_conns:
                     proc_info["sockets"].append({
                         "protocol": "tcp" if conn.type == 1 else "udp",
                         "local_ip": conn.laddr.ip if conn.laddr else "0.0.0.0",
@@ -1822,8 +1958,13 @@ def get_target_catalog() -> dict[str, Any]:
         "microphone": 0,
     }
 
-    # Identify open desktop/interactive apps
-    for p in processes[:60]:
+    # Identify open desktop/interactive apps across live processes
+    app_keywords = (
+        "chrome", "brave", "firefox", "antigravity", "code", "terminal", "discord",
+        "slack", "cursor", "spotify", "python", "node", "uvicorn", "vite", "zsh",
+        "bash", "tmux", "systemd", "docker", "tailscale", "ssh"
+    )
+    for p in processes[:300]:
         dev = get_process_device_access(p["pid"])
         if dev["gpu"]["in_use"]:
             quick_inspect["gpu"] += 1
@@ -1842,10 +1983,12 @@ def get_target_catalog() -> dict[str, Any]:
         if dev["camera"]["in_use"] or dev["video_capture"]["in_use"]:
             quick_inspect["camera"] += 1
 
-        # Check if GUI or major user app
+        # Check if GUI, developer, or interactive app
         exe = p.get("exe") or ""
         name = p.get("name") or ""
-        if any(keyword in exe.lower() or keyword in name.lower() for keyword in ("chrome", "brave", "firefox", "antigravity", "code", "terminal", "discord", "slack", "cursor", "spotify", "python", "vite")):
+        cmdline = p.get("cmdline") or ""
+        text_match = f"{exe} {name} {cmdline}".lower()
+        if any(keyword in text_match for keyword in app_keywords):
             open_apps.append({
                 "id": str(p["pid"]),
                 "pid": p["pid"],
@@ -1859,9 +2002,9 @@ def get_target_catalog() -> dict[str, Any]:
     return {
         "total_targets_count": len(processes),
         "quick_inspect": quick_inspect,
-        "open_apps": open_apps,
+        "open_apps": open_apps[:60],
         "active_devices": active_devices[:30],
-        "processes": processes[:100],
+        "processes": processes[:250],
         "ports": net_matrix.get("public_listeners", []) + net_matrix.get("loopback_listeners", []),
     }
 

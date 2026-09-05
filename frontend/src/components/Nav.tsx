@@ -118,7 +118,7 @@ const GROUPS: { label: string; links: NavItem[] }[] = [
     label: "Live Operations",
     links: [
       { to: "/", label: "Overview", iconName: "grid", end: true },
-      { to: "/events", label: "Host Forensics & Fleet", iconName: "box" },
+      { to: "/events", label: "Host X-Ray & Monitor", iconName: "box" },
       { to: "/findings", label: "Incident Findings", iconName: "alert" },
     ],
   },

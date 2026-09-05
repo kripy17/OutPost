@@ -45,6 +45,7 @@ import type {
   SamplesResponse,
   SampleStatic,
   SampleDetonationResult,
+  BehavioralForecast,
   RuleBacktestResult,
   InvestigationNarrativeResult,
   SandboxDetonateIn,
@@ -93,6 +94,7 @@ import type {
   NetworkAnalysisResult,
   PlaybookScenario,
   SimulationStageResult,
+  HostXRaySnapshotData,
 } from "../types";
 
 export const BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
@@ -673,6 +675,10 @@ export async function getSample(sampleId: string): Promise<SampleRow> {
 
 export async function getSampleStatic(sampleId: string): Promise<SampleStatic> {
   return get<SampleStatic>(`/samples/${sampleId}/static`);
+}
+
+export async function getSampleForecast(sampleId: string): Promise<BehavioralForecast> {
+  return get<BehavioralForecast>(`/samples/${encodeURIComponent(sampleId)}/forecast`);
 }
 
 export async function detonateSample(sampleId: string, timeout = 15, isolationDriver = "auto"): Promise<SampleDetonationResult> {
@@ -1268,47 +1274,8 @@ export async function importSigmaRule(sigmaYaml: string, enabled: boolean = true
 }
 
 /** Get full live host X-Ray snapshot (metrics, active processes, open sockets). */
-export async function getHostXRaySnapshot(): Promise<{
-  metrics: {
-    cpu_percent: number;
-    memory_used_mb: number;
-    memory_total_mb: number;
-    memory_percent: number;
-    process_count: number;
-    connection_count: number;
-    platform: string;
-    timestamp: string;
-  };
-  processes: Array<{
-    pid: number;
-    ppid: number;
-    name: string;
-    cmdline: string;
-    exe: string;
-    user: string;
-    status: string;
-    cpu_percent: number;
-    memory_mb: number;
-    threads: number;
-    started_at: string;
-    create_time?: number;
-    package_status?: string;
-    package_label?: string;
-  }>;
-  sockets: Array<{
-    pid: number | null;
-    process_name: string;
-    protocol: string;
-    local_ip: string;
-    local_port: number;
-    remote_ip: string | null;
-    remote_port: number | null;
-    status: string;
-  }>;
-  process_count: number;
-  socket_count: number;
-}> {
-  return get<any>("/system/xray/snapshot");
+export async function getHostXRaySnapshot(): Promise<HostXRaySnapshotData> {
+  return get<HostXRaySnapshotData>("/system/xray/snapshot");
 }
 
 /** Deep inspection of a single process PID (lineage, sockets, files, environment, security posture). */

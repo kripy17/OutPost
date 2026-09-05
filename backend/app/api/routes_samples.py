@@ -539,13 +539,45 @@ def delete_all_samples_endpoint() -> dict:
     return {"status": "ok", "deleted": count}
 
 
+@router.get("/samples/{sample_id}/forecast", response_model=None)
+def get_sample_forecast_endpoint(sample_id: str) -> dict:
+    """Pre-Execution Behavioral Forecast (Layer 1 Zero-Execution Analysis).
+
+    Statically predicts anticipated binary actions, C2 endpoints, MITRE ATT&CK
+    techniques, file modifications, and threat profile before running the sample.
+    """
+    with db_session() as conn:
+        row = samples_store.get_sample(conn, sample_id)
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Unknown sample_id: {sample_id}")
+
+    body = _load_bytes(sample_id)
+    if body is None:
+        raise HTTPException(status_code=400, detail="Sample binary payload is not stored or unavailable.")
+
+    from ..services import behavioral_forecaster
+    forecast = behavioral_forecaster.generate_behavioral_forecast(
+        raw_bytes=body,
+        sample_name=row["original_name"],
+    )
+    forecast["sample_id"] = sample_id
+    forecast["platform"] = row.get("detected_platform") or "linux"
+    return forecast
+
+
 @router.post("/samples/{sample_id}/detonate", response_model=None)
 async def detonate_sample_endpoint(
     sample_id: str,
     timeout: int = Query(15, ge=2, le=60),
     isolation_driver: str = Query("auto", max_length=32),
 ):
-    """Dynamically execute and detonate an uploaded malware sample in an isolated sandbox."""
+    """Dynamically execute and detonate an uploaded malware sample in an isolated sandbox.
+
+    Performs two-layer analysis:
+      Layer 1: Pre-execution static behavioral forecast
+      Layer 2: Dynamic sandbox detonation & telemetry capture
+      Verification: Forecast vs runtime reconciliation matrix
+    """
     with db_session() as conn:
         row = samples_store.get_sample(conn, sample_id)
     if not row:
@@ -555,7 +587,15 @@ async def detonate_sample_endpoint(
     if body is None:
         raise HTTPException(status_code=400, detail="Sample binary payload is not stored or unavailable for detonation.")
 
-    from ..services import dynamic_sandbox
+    from ..services import behavioral_forecaster, dynamic_sandbox
+
+    # Layer 1: Zero-execution behavioral forecast
+    forecast = behavioral_forecaster.generate_behavioral_forecast(
+        raw_bytes=body,
+        sample_name=row["original_name"],
+    )
+
+    # Layer 2: Live isolated sandbox detonation
     result = await dynamic_sandbox.execute_sample_detonation(
         sample_id=sample_id,
         raw_bytes=body,
@@ -564,6 +604,13 @@ async def detonate_sample_endpoint(
         timeout_seconds=timeout,
         isolation_driver=isolation_driver,
     )
+
+    # Reconcile predicted vs observed runtime telemetry
+    reconciliation = behavioral_forecaster.reconcile_forecast_vs_runtime(forecast, result)
+
+    result["forecast"] = forecast
+    result["reconciliation"] = reconciliation
     return result
+
 
 
