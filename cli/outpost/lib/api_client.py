@@ -654,6 +654,11 @@ def get_sample_static(sample_id: str) -> dict:
     return _get(f"/samples/{quote(sample_id)}/static")
 
 
+def get_sample_forecast(sample_id: str) -> dict:
+    """Retrieve pre-execution behavioral forecast (Layer 1 zero-execution analysis)."""
+    return _get(f"/samples/{quote(sample_id)}/forecast")
+
+
 def detonate_sample(sample_id: str, timeout: int = 15) -> dict:
     """Trigger isolated dynamic sandbox execution of a sample binary/script."""
     return _post(f"/samples/{quote(sample_id)}/detonate?timeout={timeout}", {})

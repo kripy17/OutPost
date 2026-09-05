@@ -6,6 +6,7 @@ page. `--q` filters by name/hash/family substring.
 """
 
 import typer
+from rich.panel import Panel
 from rich.table import Table
 
 from ..lib import api_client
@@ -104,15 +105,137 @@ def _show_static(sample_id: str) -> None:
     console.print(f"\n[dim]Extracted printable strings: {len(strings)} (use webapp for full search explorer)[/dim]")
 
 
-def _detonate_dynamic(sample_id: str, timeout: int = 15) -> None:
-    console.print(f"[bold cyan]Detonating sample {sample_id} in isolated dynamic sandbox...[/bold cyan]")
+def _show_forecast(sample_id: str) -> dict:
+    """Display Layer 1 Pre-Execution Behavioral Forecast (Zero-Execution Analysis)."""
+    try:
+        data = api_client.get_sample_forecast(sample_id)
+    except Exception:
+        # Fallback to synthesizing forecast from static analysis if available
+        try:
+            st = api_client.get_sample_static(sample_id)
+            if st and st.get("available"):
+                data = {
+                    "sample_name": sample_id,
+                    "platform": "unknown",
+                    "predicted_threat_level": st.get("static_severity", "suspicious"),
+                    "confidence_score": min(95, max(40, st.get("static_risk_score", 50))),
+                    "static_risk_score": st.get("static_risk_score", 50),
+                    "summary": f"Static triage detected {len(st.get('risk_factors', []))} risk factor(s) and {len(st.get('capabilities', []))} capability signature(s).",
+                    "anticipated_actions": [
+                        {
+                            "id": f"act_{i}",
+                            "category": "capability",
+                            "title": c.get("category", "Behavior"),
+                            "severity": "high",
+                            "description": f"Static match: {', '.join(c.get('matched', []))}",
+                            "confidence": c.get("confidence", "medium"),
+                            "indicators": c.get("matched", []),
+                        }
+                        for i, c in enumerate(st.get("capabilities", []))
+                    ],
+                    "predicted_endpoints": [
+                        {"endpoint": ip, "type": "ipv4", "protocol": "TCP", "port": 80, "confidence": "medium"}
+                        for ip in (st.get("iocs", {}).get("ips") or [])
+                    ],
+                    "predicted_mitre_techniques": [],
+                    "predicted_file_drops": [],
+                }
+            else:
+                data = {
+                    "sample_name": sample_id,
+                    "platform": "unknown",
+                    "predicted_threat_level": "unknown",
+                    "confidence_score": 0,
+                    "static_risk_score": 0,
+                    "summary": "Pre-execution forecast unavailable for this sample.",
+                    "anticipated_actions": [],
+                    "predicted_endpoints": [],
+                    "predicted_mitre_techniques": [],
+                    "predicted_file_drops": [],
+                }
+        except Exception as exc2:
+            console.print(f"[bold yellow]Notice: Pre-execution forecast unavailable ({exc2})[/bold yellow]")
+            return {}
+
+    t_level = data.get("predicted_threat_level", "clean").upper()
+    t_color = "bold red" if t_level == "MALICIOUS" else "bold yellow" if t_level == "SUSPICIOUS" else "bold green"
+    conf = data.get("confidence_score", 0)
+
+    console.print(Panel(
+        f"[bold white]Target Sample:[/bold white] [cyan]{sample_id}[/cyan] ({data.get('sample_name', 'binary')}) · [dim]{data.get('platform', 'linux')}[/dim]\n"
+        f"[bold white]Estimated Threat Posture:[/bold white] [{t_color}]{t_level}[/{t_color}] [dim](Confidence: {conf}% · Static Score: {data.get('static_risk_score', 0)}/100)[/dim]\n\n"
+        f"[italic white]{data.get('summary', '')}[/italic white]",
+        title="[bold yellow]Layer 1: Pre-Execution Behavioral Threat Forecast (Zero-Execution)[/bold yellow]",
+        border_style="yellow",
+    ))
+
+    # Anticipated actions
+    actions = data.get("anticipated_actions") or []
+    if actions:
+        console.print("[bold yellow]Anticipated Malicious Behaviors:[/bold yellow]")
+        for act in actions:
+            sev = act.get("severity", "medium").upper()
+            s_color = "red" if sev in ("CRITICAL", "HIGH") else "yellow"
+            console.print(f"  • [{s_color}][{sev}][/{s_color}] [bold white]{act.get('title')}[/bold white]: {act.get('description')}")
+            indicators = act.get("indicators") or []
+            if indicators:
+                console.print(f"    [dim]Indicators: {', '.join(indicators)}[/dim]")
+
+    # Predicted Endpoints
+    endpoints = data.get("predicted_endpoints") or []
+    if endpoints:
+        console.print("\n[bold cyan]Predicted C2 & Network Endpoints:[/bold cyan]")
+        for ep in endpoints:
+            console.print(f"  • [cyan]{ep.get('endpoint')}[/cyan] [dim]({ep.get('type')}, port {ep.get('port')}, {ep.get('confidence')} confidence)[/dim]")
+
+    # Predicted MITRE Techniques
+    mitre = data.get("predicted_mitre_techniques") or []
+    if mitre:
+        console.print("\n[bold magenta]Anticipated MITRE ATT&CK Techniques:[/bold magenta]")
+        for m in mitre:
+            console.print(f"  • [bold white]{m.get('id')}[/bold white]: [magenta]{m.get('name')}[/magenta] [dim]({m.get('tactic')})[/dim]")
+
+    # Predicted File Operations
+    drops = data.get("predicted_file_drops") or []
+    if drops:
+        console.print("\n[bold blue]Anticipated File Drops / Ephemeral Paths:[/bold blue]")
+        for f in drops:
+            console.print(f"  • [blue]{f.get('path')}[/blue] [dim]({f.get('reason')})[/dim]")
+
+    return data
+
+
+def _detonate_dynamic(sample_id: str, timeout: int = 15, yes: bool = False) -> None:
+    # ── Layer 1: Zero-Execution Pre-Detonation Threat Forecast ──────────
+    console.print(f"[bold cyan]Detonating sample {sample_id} in isolated dynamic sandbox (Double-Layer Analysis)...[/bold cyan]\n")
+    _show_forecast(sample_id)
+
+    # ── Confirmation before Layer 2 Execution ───────────────────────────
+    if not yes:
+        console.print()
+        try:
+            proceed = typer.confirm(
+                "Proceed with Layer 2: Live Dynamic Sandbox Detonation?",
+                default=True,
+            )
+        except Exception:
+            proceed = True
+
+        if not proceed:
+            console.print("[yellow]Detonation cancelled by user. Zero-execution forecast retained.[/yellow]")
+            return
+
+    # ── Layer 2: Live Dynamic Sandbox Detonation ────────────────────────
+    console.print(f"\n[bold green]═══ Layer 2: Live Dynamic Sandbox Execution ═══[/bold green]")
+    console.print(f"[dim]Executing in isolated sandbox with process tracing (timeout: {timeout}s)...[/dim]")
     try:
         data = api_client.detonate_sample(sample_id, timeout=timeout)
     except Exception as exc:
         console.print(f"[bold red]Detonation failed: {exc}[/bold red]")
         raise typer.Exit(1)
 
-    console.print(f"[bold green]✔ Detonation Completed (Run ID: {data.get('run_id')})[/bold green]")
+    console.print(f"\n[bold green]✔ Execution Completed (Run ID: {data.get('run_id')})[/bold green]")
+    console.print(f"  [dim]Isolation Driver:[/dim] {data.get('isolation_driver', 'standard')}")
     console.print(f"  [dim]Exit Code:[/dim] {data.get('exit_code')}")
     console.print(f"  [dim]Events Ingested:[/dim] {data.get('events_count', 0)}")
     console.print(f"  [dim]Alerts Triggered:[/dim] {data.get('alerts_count', 0)}")
@@ -123,19 +246,68 @@ def _detonate_dynamic(sample_id: str, timeout: int = 15) -> None:
         console.print("\n[bold white]Sandbox Execution Console Output:[/bold white]")
         console.print(terminal)
 
+    # ── Forecast vs Observed Verification Matrix ────────────────────────
+    recon = data.get("reconciliation")
+    if recon:
+        acc = recon.get("accuracy_score", 0)
+        acc_color = "bold green" if acc >= 75 else "bold yellow" if acc >= 40 else "bold red"
+
+        table = Table(
+            title=f"Forecast Verification Matrix (Predicted vs. Observed Telemetry) · [{acc_color}]Accuracy: {acc}%[/{acc_color}]",
+            border_style="dim",
+        )
+        table.add_column("Type", style="dim")
+        table.add_column("Behavior / Finding")
+        table.add_column("Status", justify="center")
+        table.add_column("Observed Evidence")
+
+        for c in recon.get("confirmed_predictions", []):
+            table.add_row(
+                "Prediction",
+                c.get("title", ""),
+                "[bold green]✔ CONFIRMED[/bold green]",
+                c.get("evidence", ""),
+            )
+
+        for d in recon.get("dormant_predictions", []):
+            table.add_row(
+                "Prediction",
+                d.get("title", ""),
+                "[bold yellow]⏸ DORMANT[/bold yellow]",
+                f"[dim]{d.get('reason', 'Did not fire')}[/dim]",
+            )
+
+        for disc in recon.get("discovered_runtime_actions", []):
+            table.add_row(
+                "Discovered",
+                disc.get("title", ""),
+                "[bold cyan]+ RUNTIME[/bold cyan]",
+                disc.get("evidence", ""),
+            )
+
+        console.print()
+        console.print(table)
+
+        if recon.get("evasion_detected"):
+            console.print("\n[bold red]⚠ ANTI-ANALYSIS WARNING: Potential sandbox evasion detected![/bold red]")
+            console.print("[red]Process exited with nominal code 0 and suppressed behavior despite malicious static forecast.[/red]")
+
 
 def samples(
     q: str = typer.Option("", "--q", "-q", help="Filter by name / hash / family"),
     similar: str = typer.Option("", "--similar", "-s", help="Query binary-similar samples in the vault for a given sample ID"),
     static_id: str = typer.Option("", "--static", help="Inspect full static analysis dossier for a sample ID"),
-    detonate_id: str = typer.Option("", "--detonate", "-d", help="Detonate sample in isolated dynamic sandbox"),
+    forecast_id: str = typer.Option("", "--forecast", "-f", help="Inspect pre-execution behavioral forecast (Layer 1 zero-execution)"),
+    detonate_id: str = typer.Option("", "--detonate", "-d", help="Detonate sample in isolated dynamic sandbox (Double-layer flow)"),
     timeout: int = typer.Option(15, "--timeout", help="Detonation execution timeout in seconds"),
     threshold: int = typer.Option(20, "--threshold", "-t", help="Similarity percentage threshold (0-100)"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt for Layer 2 dynamic execution"),
 ) -> None:
     show_banner(primary=False)
 
     sim = similar if isinstance(similar, str) else ""
     stat = static_id if isinstance(static_id, str) else ""
+    fore = forecast_id if isinstance(forecast_id, str) else ""
     det = detonate_id if isinstance(detonate_id, str) else ""
     query = q if isinstance(q, str) else ""
     thresh = threshold if isinstance(threshold, int) else 20
@@ -149,8 +321,12 @@ def samples(
         _show_static(stat)
         return
 
+    if fore:
+        _show_forecast(fore)
+        return
+
     if det:
-        _detonate_dynamic(det, timeout=tout)
+        _detonate_dynamic(det, timeout=tout, yes=yes)
         return
 
     data = api_client.list_samples(query.strip())
@@ -180,3 +356,4 @@ def samples(
             str(s.get("runs_count") or 0),
         )
     console.print(table)
+
