@@ -38,14 +38,22 @@ def investigations_list(
     try:
         data = api_client.list_investigations(status=status, q=q, limit=limit, offset=offset)
     except api_client.APIError as exc:
-        console.print(f"[bold #C4453B]Investigations failed: {exc}[/bold #C4453B]")
-        raise typer.Exit(1)
+        if "Backend unreachable" in str(exc):
+            from ..lib import offline_store
+            data = offline_store.get_offline_investigations(status=status, q=q, limit=limit, offset=offset)
+            if data is not None:
+                console.print("[dim yellow]Notice: Backend offline — showing investigations directly from local SQLite database (offline mode)[/dim yellow]\n")
+        else:
+            data = None
+        if data is None:
+            console.print(f"[bold #C4453B]Investigations failed: {exc}[/bold #C4453B]")
+            raise typer.Exit(1)
 
     rows = data.get("investigations") or []
     if not rows:
         console.print("[dim]No investigations match — the case queue is empty.[/dim]")
         return
-    table = Table(title=f"{data['total']} investigation(s)", border_style="dim")
+    table = Table(title=f"{data.get('total', len(rows))} investigation(s)", border_style="dim")
     table.add_column("ID")
     table.add_column("Status")
     table.add_column("Severity")
@@ -78,8 +86,14 @@ def investigations_show(
     try:
         inv = api_client.get_investigation(investigation_id)
     except api_client.APIError as exc:
-        console.print(f"[bold #C4453B]Investigation failed: {exc}[/bold #C4453B]")
-        raise typer.Exit(1)
+        if "Backend unreachable" in str(exc):
+            from ..lib import offline_store
+            inv = offline_store.get_offline_investigation(investigation_id)
+        else:
+            inv = None
+        if not inv:
+            console.print(f"[bold #C4453B]Investigation failed: {exc}[/bold #C4453B]")
+            raise typer.Exit(1)
 
     sev = inv.get("severity")
     sev_cell = f"[{_SEV_STYLE[sev]}]{sev}[/]" if sev and sev in _SEV_STYLE else (sev or "none (no findings attached)")
@@ -155,9 +169,16 @@ def investigations_create(
     try:
         inv = api_client.create_investigation(title, tag_list)
     except api_client.APIError as exc:
+        if "Backend unreachable" in str(exc):
+            from ..lib import offline_store
+            inv = offline_store.create_offline_investigation(title)
+            if inv:
+                console.print(f"[#3FA796]Created investigation {inv['id']} — {inv['title']} [dim](offline SQLite)[/dim][/#3FA796]")
+                return
         console.print(f"[bold #C4453B]Create failed: {exc}[/bold #C4453B]")
         raise typer.Exit(1)
     console.print(f"[#3FA796]Created investigation {inv['id']} — {inv['title']}[/#3FA796]")
+
 
 
 @app.command("patch")
@@ -270,6 +291,12 @@ def investigations_note(
     try:
         saved = api_client.add_investigation_note(investigation_id, note)
     except api_client.APIError as exc:
+        if "Backend unreachable" in str(exc):
+            from ..lib import offline_store
+            saved = offline_store.add_offline_investigation_note(investigation_id, note)
+            if saved:
+                console.print(f"[#3FA796]Note added to {investigation_id} [dim](offline SQLite)[/dim][/#3FA796]")
+                return
         console.print(f"[bold #C4453B]Add note failed: {exc}[/bold #C4453B]")
         raise typer.Exit(1)
     console.print(f"[#3FA796]Note #{saved['id']} added to {investigation_id}[/#3FA796]")
@@ -290,6 +317,12 @@ def investigations_close(
     try:
         inv = api_client.close_investigation(investigation_id, conclusion)
     except api_client.APIError as exc:
+        if "Backend unreachable" in str(exc):
+            from ..lib import offline_store
+            inv = offline_store.update_offline_investigation_status(investigation_id, "closed")
+            if inv:
+                console.print(f"[#3FA796]Closed {inv['id']} [dim](offline SQLite)[/dim][/#3FA796]")
+                return
         console.print(f"[bold #C4453B]Close failed: {exc}[/bold #C4453B]")
         raise typer.Exit(1)
     console.print(f"[#3FA796]Closed {inv['id']} — {inv['title']}[/#3FA796]")
@@ -305,9 +338,16 @@ def investigations_reopen(
     try:
         inv = api_client.reopen_investigation(investigation_id)
     except api_client.APIError as exc:
+        if "Backend unreachable" in str(exc):
+            from ..lib import offline_store
+            inv = offline_store.update_offline_investigation_status(investigation_id, "active")
+            if inv:
+                console.print(f"[#3FA796]Reopened {inv['id']} — status ACTIVE [dim](offline SQLite)[/dim][/#3FA796]")
+                return
         console.print(f"[bold #C4453B]Reopen failed: {exc}[/bold #C4453B]")
         raise typer.Exit(1)
     console.print(f"[#3FA796]Reopened {inv['id']} — status {inv.get('status', '-').upper()}[/#3FA796]")
+
 
 
 @app.command("synthesize")
@@ -356,4 +396,130 @@ def investigations_synthesize(
         console.print("\n[bold green]Prescribed Remediation Checklist:[/bold green]")
         for item in checklist:
             console.print(f"  [ ] {item}")
+
+
+@app.command("playbooks")
+def investigations_playbooks() -> None:
+    """List available Incident Response Playbooks for active cases."""
+    show_banner(primary=False)
+    try:
+        playbooks = api_client.list_investigation_playbooks()
+    except api_client.APIError as exc:
+        console.print(f"[bold #C4453B]Failed to list playbooks: {exc}[/bold #C4453B]")
+        raise typer.Exit(1)
+
+    table = Table(title=f"Incident Response Playbooks ({len(playbooks)})", border_style="dim")
+    table.add_column("Playbook ID", style="bold cyan")
+    table.add_column("Playbook Name", style="bold")
+    table.add_column("Severity", style="bold")
+    table.add_column("Tactic", style="magenta")
+    table.add_column("Tasks", justify="right")
+    table.add_column("Recommended Probes", style="dim")
+
+    for pb in playbooks:
+        sev = pb.get("severity", "medium")
+        sev_color = "red" if sev == "critical" else ("yellow" if sev == "high" else "cyan")
+        table.add_row(
+            pb["id"],
+            pb["name"],
+            f"[{sev_color}]{sev.upper()}[/{sev_color}]",
+            pb.get("tactic", "-"),
+            str(len(pb.get("tasks", []))),
+            ", ".join(pb.get("recommended_probes", [])),
+        )
+    console.print(table)
+    console.print("\n[dim]Execute automated SOAR playbook with:[/dim] [bold cyan]outpost investigations execute-playbook <inv_id> <playbook_id> [--contain][/bold cyan]")
+
+
+@app.command("execute-playbook")
+def investigations_execute_playbook(
+    investigation_id: str = typer.Argument(..., help="Target investigation ID"),
+    playbook_id: str = typer.Argument(..., help="Playbook ID to execute (e.g. ransomware_containment)"),
+    contain: bool = typer.Option(False, "--contain", "-c", help="Automatically network-isolate target host"),
+    no_probes: bool = typer.Option(False, "--no-probes", help="Skip running forensic hunt probes"),
+    host: str = typer.Option("local", "--host", "-h", help="Target host identifier"),
+) -> None:
+    """Execute automated incident response playbook containment and triage actions."""
+    from rich.panel import Panel
+    show_banner(primary=False)
+    console.print(f"[#D9A441]Executing SOAR Playbook '[bold]{playbook_id}[/bold]' on investigation '[bold]{investigation_id}[/bold]'...[/#D9A441]")
+
+    try:
+        res = api_client.execute_investigation_playbook(
+            investigation_id=investigation_id,
+            playbook_id=playbook_id,
+            auto_contain=contain,
+            run_probes=not no_probes,
+            target_host=host,
+        )
+    except api_client.APIError as exc:
+        console.print(f"[bold #C4453B]Playbook execution failed: {exc}[/bold #C4453B]")
+        raise typer.Exit(1)
+
+    contained = res.get("contained", False)
+    anomalies = res.get("total_anomalies_detected", 0)
+
+    console.print(
+        Panel(
+            f"[bold]{res.get('playbook_name')}[/bold]\n"
+            f"[dim]Investigation:[/dim] [cyan]{investigation_id}[/cyan]  ·  "
+            f"[dim]Target Host:[/dim] [white]{host}[/white]\n"
+            f"[dim]Containment Status:[/dim] [{'bold red]NETWORK ISOLATED (QUARANTINED)' if contained else 'dim green]Uncontained (No isolation requested)'}[/]\n"
+            f"[dim]Tasks Instantiated:[/dim] [bold]{res.get('tasks_instantiated', 0)}[/bold]  ·  "
+            f"[dim]Probes Executed:[/dim] [bold]{res.get('probes_executed_count', 0)}[/bold]  ·  "
+            f"[dim]Anomalies Flagged:[/dim] [{'bold red' if anomalies > 0 else 'green'}]{anomalies}[/]",
+            title="[bold green]✓ SOAR Playbook Execution Complete[/bold green]",
+            border_style="red" if contained else "green",
+        )
+    )
+
+    actions = res.get("actions_taken", [])
+    if actions:
+        console.print("\n[bold yellow]Actions Executed & Audited:[/bold yellow]")
+        for a in actions:
+            console.print(f"  • {a}")
+
+
+@app.command("export")
+def investigations_export(
+    investigation_id: str = typer.Argument(..., help="Investigation ID to export"),
+    format: str = typer.Option("markdown", "--format", "-f", help="Export format: markdown | json"),
+    output: str | None = typer.Option(None, "--output", "-o", help="Optional output file path to write the export to"),
+) -> None:
+    """Export an investigation case dossier as structured Markdown brief or JSON (GET /investigations/{id}/export)."""
+    show_banner(primary=False)
+    fmt = format.lower().strip()
+    if fmt not in ("markdown", "json"):
+        console.print("[bold #C4453B]--format must be 'markdown' or 'json'[/bold #C4453B]")
+        raise typer.Exit(1)
+
+    try:
+        content_bytes = api_client.export_investigation(investigation_id, format=fmt)
+    except api_client.APIError as exc:
+        console.print(f"[bold #C4453B]Investigation export failed: {exc}[/bold #C4453B]")
+        raise typer.Exit(1)
+
+    text = content_bytes.decode("utf-8", errors="replace")
+
+    if output:
+        try:
+            with open(output, "w", encoding="utf-8") as f:
+                f.write(text)
+            console.print(f"[bold green]✓ Investigation dossier saved to {output}[/bold green]")
+        except OSError as err:
+            console.print(f"[bold #C4453B]Failed to write file {output}: {err}[/bold #C4453B]")
+            raise typer.Exit(1)
+    else:
+        if fmt == "json":
+            import json
+            from rich.syntax import Syntax
+            try:
+                parsed = json.loads(text)
+                pretty_json = json.dumps(parsed, indent=2)
+                console.print(Syntax(pretty_json, "json", theme="monokai", word_wrap=True))
+            except Exception:
+                console.print(text)
+        else:
+            from rich.markdown import Markdown
+            console.print(Markdown(text))
 

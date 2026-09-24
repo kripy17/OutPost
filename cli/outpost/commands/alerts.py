@@ -6,6 +6,7 @@ later runs — mirroring the webapp's per-tab memory — until wiped via
 `outpost settings clear-prefs`.
 """
 
+import time
 import typer
 from rich.table import Table
 
@@ -26,6 +27,7 @@ def alerts(
     q: str = typer.Option("", "--q", help="free-text across sample / rule / details"),
     limit: int = typer.Option(25, "--limit", "-l", min=1, max=200, help="rows per page"),
     offset: int = typer.Option(0, "--offset", help="page offset"),
+    follow: bool = typer.Option(False, "--follow", "-f", help="Live tail newly arriving alerts in real time"),
 ) -> None:
     show_banner(primary=False)
 
@@ -76,34 +78,55 @@ def alerts(
     if not rows:
         scope = f" {provenance}" if provenance else ""
         console.print(f"[dim]No {status}{scope} findings — the queue is clear.[/dim]")
-        return
+    else:
+        title = f"{data['total']} {status} finding(s)"
+        if provenance:
+            title += f" · provenance={provenance}"
+            if saved_note:
+                title += " (saved)"
+        title += f" — open {data['open']} · acked {data['acknowledged']} · resolved {data['resolved']}"
 
-    title = f"{data['total']} {status} finding(s)"
-    if provenance:
-        title += f" · provenance={provenance}"
-        if saved_note:
-            title += " (saved)"
-    title += f" — open {data['open']} · acked {data['acknowledged']} · resolved {data['resolved']}"
+        table = Table(title=title, border_style="dim")
+        table.add_column("ID")
+        table.add_column("Severity")
+        table.add_column("Rule")
+        table.add_column("Sample")
+        table.add_column("Status")
+        table.add_column("Detail")
+        for a in rows:
+            sev = a.get("severity") or "suspicious"
+            style = _SEV_STYLE.get(sev, "")
+            table.add_row(
+                str(a["id"]),
+                f"[{style}]{sev}[/]" if style else sev,
+                a.get("rule_id") or "-",
+                a.get("sample_name") or "-",
+                (a.get("status") or "-").upper(),
+                (a.get("details") or "-")[:80],
+            )
+        console.print(table)
 
-    table = Table(title=title, border_style="dim")
-    table.add_column("ID")
-    table.add_column("Severity")
-    table.add_column("Rule")
-    table.add_column("Sample")
-    table.add_column("Status")
-    table.add_column("Detail")
-    for a in rows:
-        sev = a.get("severity") or "suspicious"
-        style = _SEV_STYLE.get(sev, "")
-        table.add_row(
-            str(a["id"]),
-            f"[{style}]{sev}[/]" if style else sev,
-            a.get("rule_id") or "-",
-            a.get("sample_name") or "-",
-            (a.get("status") or "-").upper(),
-            (a.get("details") or "-")[:80],
-        )
-    console.print(table)
+    if follow:
+        console.print("\n[bold #5E948A]⚡ Live alert follower active (polling every 2s, press Ctrl+C to stop)...[/bold #5E948A]")
+        seen_ids = {a["id"] for a in rows}
+        try:
+            while True:
+                time.sleep(2.0)
+                try:
+                    poll_data = api_client.get_alert_queue(status=status, provenance=provenance, q=q.strip(), limit=50, offset=0)
+                    new_alerts = [a for a in (poll_data.get("alerts") or []) if a["id"] not in seen_ids]
+                    for a in reversed(new_alerts):
+                        seen_ids.add(a["id"])
+                        sev = a.get("severity") or "suspicious"
+                        style = _SEV_STYLE.get(sev, "bold")
+                        rule = a.get("rule_id") or "-"
+                        sample = a.get("sample_name") or "-"
+                        det = (a.get("details") or "-")[:80]
+                        console.print(f"[{style}][{sev.upper()}][/] [cyan]#{a['id']}[/] [bold]{rule}[/] on [yellow]{sample}[/] - {det}")
+                except Exception:
+                    pass
+        except KeyboardInterrupt:
+            console.print("\n[dim]Live alert stream terminated by operator.[/dim]")
 
 
 def triage(
@@ -136,5 +159,12 @@ def triage(
             result = api_client.bulk_update_alert_status(alert_ids, status, comment)
             console.print(f"[#3FA796]{result.get('updated', len(alert_ids))} alert(s) → {status}[/#3FA796]")
     except api_client.APIError as exc:
+        if "Backend unreachable" in str(exc):
+            from ..lib import offline_store
+            res = offline_store.triage_offline_alerts(alert_ids, status, comment)
+            if res and res.get("updated", 0) > 0:
+                console.print(f"[#3FA796]{res.get('updated')} alert(s) → {status} [dim](offline SQLite)[/dim][/#3FA796]")
+                return
         console.print(f"[bold #C4453B]Triage failed: {exc}[/bold #C4453B]")
         raise typer.Exit(1)
+

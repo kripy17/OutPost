@@ -293,25 +293,95 @@ def _detonate_dynamic(sample_id: str, timeout: int = 15, yes: bool = False) -> N
             console.print("[red]Process exited with nominal code 0 and suppressed behavior despite malicious static forecast.[/red]")
 
 
+def _upload_sample(file_path: str) -> None:
+    from pathlib import Path
+    import hashlib
+    import math
+
+    path = Path(file_path)
+    if not path.is_file():
+        console.print(f"[bold #C4453B]Error: File not found: {file_path}[/bold #C4453B]")
+        raise typer.Exit(1)
+
+    try:
+        content = path.read_bytes()
+    except Exception as e:
+        console.print(f"[bold #C4453B]Error reading file {file_path}: {e}[/bold #C4453B]")
+        raise typer.Exit(1)
+
+    if not content:
+        console.print("[bold #C4453B]Error: Cannot upload empty file.[/bold #C4453B]")
+        raise typer.Exit(1)
+
+    if len(content) > 50 * 1024 * 1024:
+        console.print("[bold #C4453B]Error: File exceeds 50MB vault limit.[/bold #C4453B]")
+        raise typer.Exit(1)
+
+    sha256 = hashlib.sha256(content).hexdigest()
+    entropy = 0.0
+    if len(content) > 0:
+        counts = {}
+        for b in content:
+            counts[b] = counts.get(b, 0) + 1
+        for count in counts.values():
+            p = count / len(content)
+            entropy -= p * math.log2(p)
+
+    console.print(f"[#D9A441]Ingesting binary '[bold]{path.name}[/bold]' ({len(content)} bytes, entropy: {entropy:.2f}/8.0)...[/#D9A441]")
+
+    try:
+        res = api_client.upload_sample(content, name=path.name)
+    except api_client.APIError as exc:
+        console.print(f"[bold #C4453B]Upload failed: {exc}[/bold #C4453B]")
+        raise typer.Exit(1)
+
+    sample_id = res.get("sample_id", "")
+    plat = res.get("detected_platform", "unknown")
+    family = res.get("family", "Unknown")
+    yara_hits = res.get("yara_rules", [])
+
+    console.print(
+        Panel(
+            f"[bold]Sample ID:[/bold] [cyan]{sample_id}[/cyan]\n"
+            f"[dim]File Name:[/dim] [white]{path.name}[/white]\n"
+            f"[dim]Platform:[/dim] [magenta]{plat.upper()}[/magenta]  ·  "
+            f"[dim]Family:[/dim] [bold yellow]{family}[/bold yellow]\n"
+            f"[dim]SHA-256:[/dim] [dim white]{sha256}[/dim white]\n"
+            f"[dim]YARA Signature Hits:[/dim] [{'bold red' if yara_hits else 'green'}]{len(yara_hits)} match(es)[/]\n"
+            f"[dim]Next Actions:[/dim]\n"
+            f"  • Pre-execution Forecast:  [bold cyan]outpost samples --forecast {sample_id}[/bold cyan]\n"
+            f"  • Isolated Detonation:     [bold cyan]outpost samples --detonate {sample_id}[/bold cyan]",
+            title="[bold green]✓ Sample Vault Ingestion Successful[/bold green]",
+            border_style="green",
+        )
+    )
+
+
 def samples(
     q: str = typer.Option("", "--q", "-q", help="Filter by name / hash / family"),
     similar: str = typer.Option("", "--similar", "-s", help="Query binary-similar samples in the vault for a given sample ID"),
     static_id: str = typer.Option("", "--static", help="Inspect full static analysis dossier for a sample ID"),
     forecast_id: str = typer.Option("", "--forecast", "-f", help="Inspect pre-execution behavioral forecast (Layer 1 zero-execution)"),
     detonate_id: str = typer.Option("", "--detonate", "-d", help="Detonate sample in isolated dynamic sandbox (Double-layer flow)"),
+    upload_path: str = typer.Option("", "--upload", "-u", help="Upload a local binary or script to the vault"),
     timeout: int = typer.Option(15, "--timeout", help="Detonation execution timeout in seconds"),
     threshold: int = typer.Option(20, "--threshold", "-t", help="Similarity percentage threshold (0-100)"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt for Layer 2 dynamic execution"),
 ) -> None:
     show_banner(primary=False)
 
+    upl = upload_path if isinstance(upload_path, str) else ""
     sim = similar if isinstance(similar, str) else ""
     stat = static_id if isinstance(static_id, str) else ""
     fore = forecast_id if isinstance(forecast_id, str) else ""
     det = detonate_id if isinstance(detonate_id, str) else ""
-    query = q if isinstance(q, str) else ""
+    query = q if isinstance(query if 'query' in locals() else q, str) else ""
     thresh = threshold if isinstance(threshold, int) else 20
     tout = timeout if isinstance(timeout, int) else 15
+
+    if upl:
+        _upload_sample(upl)
+        return
 
     if sim:
         _show_similar(sim, thresh)
@@ -329,14 +399,27 @@ def samples(
         _detonate_dynamic(det, timeout=tout, yes=yes)
         return
 
-    data = api_client.list_samples(query.strip())
-    rows = data.get("samples", [])
+    try:
+        data = api_client.list_samples(q.strip() if isinstance(q, str) else "")
+        rows = data.get("samples", [])
+        total_count = data.get("total", len(rows))
+    except api_client.APIError as exc:
+        from ..lib import offline_store
+        offline_samples = offline_store.get_offline_samples()
+        if offline_samples is not None:
+            console.print("[dim yellow]Notice: Backend offline — showing samples directly from local SQLite database (offline mode)[/dim yellow]\n")
+            rows = offline_samples
+            total_count = len(rows)
+            data = {"total": total_count, "samples": rows}
+        else:
+            console.print(f"[bold #C4453B]{exc}[/bold #C4453B]")
+            raise typer.Exit(1)
 
     if not rows:
-        console.print("[dim]No samples in the vault yet — upload one from the webapp Monitor page.[/dim]")
+        console.print("[dim]No samples in the vault yet — upload one with: [/dim][bold cyan]outpost samples --upload <path>[/bold cyan][dim] or from the web console.[/dim]")
         return
 
-    table = Table(title=f"Sample Vault ({data['total']})", border_style="dim")
+    table = Table(title=f"Sample Vault ({total_count})", border_style="dim")
     table.add_column("Name")
     table.add_column("Platform")
     table.add_column("Family")

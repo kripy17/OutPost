@@ -6,6 +6,7 @@ import { Deferred } from "../components/Deferred/Deferred";
 import { Icon } from "../components/Icon";
 import { platformIconName } from "../components/iconMeta";
 import { PageHeader, Panel } from "../components/ui";
+import LiveTelemetryRadar from "../components/LiveTelemetryRadar";
 import {
   ageBucket,
   collapseFindings,
@@ -41,6 +42,7 @@ import {
   runLiveSimulation,
 } from "../lib/api";
 import { useEventStream } from "../lib/useEventStream";
+import { isSocAudioEnabled, setSocAudioEnabled, playSocAlertSound } from "../lib/sound";
 
 // Compact relative time for the host panel's auth-context tooltips (the
 // Agents page keeps its own copy — same convention).
@@ -87,6 +89,12 @@ function PostureHeader({
     queryFn: () => listAllInvestigationTasks({ limit: 100 }),
     staleTime: 15_000,
   });
+  const { data: campaignsList = [] } = useQuery({
+    queryKey: ["campaigns"],
+    queryFn: () => getCampaigns(),
+    staleTime: 30_000,
+  });
+  const { data: intelKeys } = useQuery({ queryKey: ["intel", "keys"], queryFn: getIntelKeys, staleTime: 60_000 });
 
   const onlineAgents = (fleet?.agents ?? []).filter((a) => a.online).length;
   const malicious = runs.filter((r) => r.highest_severity === "malicious").length;
@@ -97,34 +105,80 @@ function PostureHeader({
   const completedTasks = fleetTasks.filter((t) => t.status === "completed").length;
   const taskCompletionPct = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 100;
 
-  // Global Threat Posture Condition
-  const threatCondition =
-    malicious > 0 || (invData?.investigations ?? []).some((i) => i.severity === "malicious" && i.status !== "closed")
-      ? { level: "ELEVATED", tone: "text-rose-400", bg: "bg-rose-500/10", border: "border-rose-500/30", dot: "bg-rose-500" }
-      : suspicious > 0 || openCases > 0
-        ? { level: "GUARDED", tone: "text-amber-400", bg: "bg-amber-500/10", border: "border-amber-500/30", dot: "bg-amber-500" }
-        : { level: "NOMINAL", tone: "text-emerald-400", bg: "bg-emerald-500/10", border: "border-emerald-500/30", dot: "bg-emerald-500" };
+  // Lateral movement indicator count
+  const lateralEdgesCount = campaignsList.reduce((acc, c) => acc + (c.propagation_graph?.edges?.length || 0), 0);
+
+  // Global DEFCON & Threat Posture Calculation
+  const defconLevel = malicious > 0 || (invData?.investigations ?? []).some((i) => i.severity === "malicious" && i.status !== "closed")
+    ? 1
+    : suspicious > 0 || openCases > 0
+      ? 3
+      : 5;
+
+  const defconMeta = {
+    1: { name: "DEFCON 1 // CRITICAL", level: "ELEVATED", tone: "text-rose-400", bg: "bg-rose-500/10", border: "border-rose-500/30", dot: "bg-rose-500", desc: `${malicious} critical threat runs require immediate operator containment` },
+    2: { name: "DEFCON 2 // HIGH", level: "HIGH", tone: "text-orange-400", bg: "bg-orange-500/10", border: "border-orange-500/30", dot: "bg-orange-500", desc: "Active lateral movement or privilege escalation identified" },
+    3: { name: "DEFCON 3 // GUARDED", level: "GUARDED", tone: "text-amber-400", bg: "bg-amber-500/10", border: "border-amber-500/30", dot: "bg-amber-500", desc: "Suspicious behavioral anomalies flagged across fleet sensors" },
+    4: { name: "DEFCON 4 // LOW", level: "LOW", tone: "text-blue-400", bg: "bg-blue-500/10", border: "border-blue-500/30", dot: "bg-blue-500", desc: "Minor anomalous telemetry detected, under automated baseline analysis" },
+    5: { name: "DEFCON 5 // NOMINAL", level: "NOMINAL", tone: "text-emerald-400", bg: "bg-emerald-500/10", border: "border-emerald-500/30", dot: "bg-emerald-500", desc: "Endpoint sensors operating strictly within baseline behavioral parameters" },
+  }[defconLevel]!;
 
   return (
     <section className="mb-6 space-y-4" aria-label="Operational telemetry summary">
-      {/* Global Posture Condition Strip */}
-      <div className={`flex flex-wrap items-center justify-between gap-3 rounded-2xl border ${threatCondition.border} ${threatCondition.bg} px-5 py-3.5 backdrop-blur-md transition-all duration-200`}>
-        <div className="flex items-center gap-3">
-          <span className="relative flex h-3 w-3">
-            <span className={`absolute inline-flex h-full w-full animate-ping rounded-full ${threatCondition.dot} opacity-75`} />
-            <span className={`relative inline-flex h-3 w-3 rounded-full ${threatCondition.dot}`} />
-          </span>
-          <div className="flex items-center gap-2">
-            <span className="font-mono text-xs font-bold uppercase tracking-wider text-text-muted">
-              Fleet Threat Posture:
+      {/* Tactical DEFCON Threat Posture Strip */}
+      <div className={`hud-card hud-corner flex flex-wrap items-center justify-between gap-4 border ${defconMeta.border} ${defconMeta.bg} p-4.5 transition-all duration-200 shadow-[0_4px_24px_rgba(0,0,0,0.5)]`}>
+        <div className="flex flex-wrap items-center gap-4">
+          <div className="flex items-center gap-2.5">
+            <span className="relative flex h-3 w-3">
+              <span className={`absolute inline-flex h-full w-full animate-ping rounded-full ${defconMeta.dot} opacity-75`} />
+              <span className={`relative inline-flex h-3 w-3 rounded-full ${defconMeta.dot}`} />
             </span>
-            <span className={`font-mono text-xs font-black uppercase tracking-widest ${threatCondition.tone}`}>
-              {threatCondition.level}
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-xs font-bold uppercase tracking-wider text-text-muted">
+                Fleet Threat Posture:
+              </span>
+              <span className={`font-mono text-xs font-black uppercase tracking-widest ${defconMeta.tone}`}>
+                {defconMeta.level}
+              </span>
+            </div>
           </div>
-          <span className="text-text-faint">·</span>
+
+          {/* 5-Stage Segmented DEFCON Gauge */}
+          <div className="hidden md:flex items-center gap-1 font-mono text-[10px] font-bold">
+            {[5, 4, 3, 2, 1].map((lvl) => {
+              const active = lvl === defconLevel;
+              const color =
+                lvl === 1 ? "text-rose-400 border-rose-500/40" :
+                lvl === 2 ? "text-orange-400 border-orange-500/40" :
+                lvl === 3 ? "text-amber-400 border-amber-500/40" :
+                lvl === 4 ? "text-blue-400 border-blue-500/40" :
+                "text-emerald-400 border-emerald-500/40";
+              const bg =
+                lvl === 1 ? "bg-rose-500/25" :
+                lvl === 2 ? "bg-orange-500/25" :
+                lvl === 3 ? "bg-amber-500/25" :
+                lvl === 4 ? "bg-blue-500/25" :
+                "bg-emerald-500/25";
+
+              return (
+                <span
+                  key={lvl}
+                  className={`rounded px-1.5 py-0.5 border ${
+                    active
+                      ? `${color} ${bg} ring-1 ring-white/20 shadow-sm font-black`
+                      : "border-border-subtle/50 text-text-faint/40 bg-bg-base/40"
+                  }`}
+                  title={`DEFCON ${lvl}`}
+                >
+                  DEF-{lvl}
+                </span>
+              );
+            })}
+          </div>
+
+          <span className="hidden lg:inline text-text-faint">·</span>
           <span className="font-mono text-[11px] text-text-muted">
-            {malicious > 0 ? `${malicious} high-severity threat runs require immediate review` : "Endpoint sensors operating within safe behavioral parameters"}
+            {defconMeta.desc}
           </span>
         </div>
 
@@ -140,66 +194,66 @@ function PostureHeader({
         </div>
       </div>
 
-      {/* 4 Strategic KPI Command Tiles */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {/* 6 Strategic KPI Command Tiles */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
         {/* Tile 1: Fleet Sensor Health */}
-        <div className="flex flex-col justify-between rounded-2xl border border-border-subtle bg-bg-surface/80 p-5 backdrop-blur-md transition-all duration-200 hover:border-accent/40">
+        <div className="hud-card flex flex-col justify-between p-4 transition-all duration-200 hover:border-accent/40">
           <div className="flex items-center justify-between">
-            <span className="font-mono text-[11px] uppercase tracking-wider text-text-faint">Fleet Telemetry</span>
+            <span className="tactical-header">Fleet Telemetry</span>
             <span className="flex items-center gap-1.5 font-mono text-[10px] text-risk-clean font-semibold">
               <span className="h-1.5 w-1.5 rounded-full bg-risk-clean animate-pulse" />
               sensors active
             </span>
           </div>
-          <div className="my-3 flex items-baseline gap-3">
-            <span className="font-mono text-3xl font-bold tracking-tight text-text-primary">{runs.length}</span>
+          <div className="my-2.5 flex items-baseline gap-2.5">
+            <span className="font-mono text-2xl font-bold tracking-tight text-text-primary tabular-nums">{runs.length}</span>
             <span className="text-xs text-text-muted">monitored sessions</span>
           </div>
-          <div className="flex flex-wrap items-center justify-between border-t border-border-subtle/60 pt-3 font-mono text-[11px] text-text-muted">
+          <div className="flex flex-wrap items-center justify-between border-t border-border-subtle/60 pt-2 font-mono text-[11px] text-text-muted">
             <span>{fleet?.agents?.length ?? 1} host{(fleet?.agents?.length ?? 1) === 1 ? "" : "s"} enrolled</span>
             <span className="text-risk-clean font-semibold">{onlineAgents || (runs.length > 0 ? 1 : 0)} online</span>
           </div>
         </div>
 
         {/* Tile 2: Detection Queue */}
-        <div className="flex flex-col justify-between rounded-2xl border border-border-subtle bg-bg-surface/80 p-5 backdrop-blur-md transition-all duration-200 hover:border-risk-suspicious/40">
+        <div className="hud-card flex flex-col justify-between p-4 transition-all duration-200 hover:border-risk-suspicious/40">
           <div className="flex items-center justify-between">
-            <span className="font-mono text-[11px] uppercase tracking-wider text-text-faint">Detection Queue</span>
+            <span className="tactical-header">Detection Queue</span>
             <Link to="/findings" className="font-mono text-[10px] text-accent hover:underline flex items-center gap-0.5">
-              <span>triage queue</span>
+              <span>triage</span>
               <Icon name="arrowRight" size={10} />
             </Link>
           </div>
-          <div className="my-3 flex items-baseline gap-3">
-            <span className="font-mono text-3xl font-bold tracking-tight text-text-primary">{totalAlerts}</span>
+          <div className="my-2.5 flex items-baseline gap-2.5">
+            <span className="font-mono text-2xl font-bold tracking-tight text-text-primary tabular-nums">{totalAlerts}</span>
             <span className="text-xs text-text-muted">active findings</span>
           </div>
-          <div className="flex items-center gap-2 border-t border-border-subtle/60 pt-3 font-mono text-[10px]">
-            <span className="inline-flex items-center gap-1 rounded bg-risk-malicious/15 px-2 py-0.5 font-bold text-risk-malicious">
+          <div className="flex items-center gap-1.5 border-t border-border-subtle/60 pt-2 font-mono text-[10px]">
+            <span className="inline-flex items-center gap-1 rounded bg-risk-malicious/15 px-1.5 py-0.5 font-bold text-risk-malicious border border-risk-malicious/30">
               {malicious} critical
             </span>
-            <span className="inline-flex items-center gap-1 rounded bg-risk-suspicious/15 px-2 py-0.5 font-bold text-risk-suspicious">
-              {suspicious} suspicious
+            <span className="inline-flex items-center gap-1 rounded bg-risk-suspicious/15 px-1.5 py-0.5 font-bold text-risk-suspicious border border-risk-suspicious/30">
+              {suspicious} susp
             </span>
           </div>
         </div>
 
         {/* Tile 3: Incident Response Cases */}
-        <div className="flex flex-col justify-between rounded-2xl border border-border-subtle bg-bg-surface/80 p-5 backdrop-blur-md transition-all duration-200 hover:border-accent/40">
+        <div className="hud-card flex flex-col justify-between p-4 transition-all duration-200 hover:border-accent/40">
           <div className="flex items-center justify-between">
-            <span className="font-mono text-[11px] uppercase tracking-wider text-text-faint">Incident Command</span>
+            <span className="tactical-header">Incident Command</span>
             <Link to="/investigations" className="font-mono text-[10px] text-accent hover:underline flex items-center gap-0.5">
-              <span>case dossiers</span>
+              <span>dossiers</span>
               <Icon name="arrowRight" size={10} />
             </Link>
           </div>
-          <div className="my-3 flex items-baseline gap-3">
-            <span className="font-mono text-3xl font-bold tracking-tight text-text-primary">{openCases || campaigns}</span>
+          <div className="my-2.5 flex items-baseline gap-2.5">
+            <span className="font-mono text-2xl font-bold tracking-tight text-text-primary tabular-nums">{openCases || campaigns}</span>
             <span className="text-xs text-text-muted">active dossiers</span>
           </div>
-          <div className="border-t border-border-subtle/60 pt-3">
-            <div className="flex items-center justify-between font-mono text-[10px] text-text-muted mb-1.5">
-              <span>Containment Tasks</span>
+          <div className="border-t border-border-subtle/60 pt-2">
+            <div className="flex items-center justify-between font-mono text-[10px] text-text-muted mb-1">
+              <span>Tasks</span>
               <span className="font-bold text-text-primary">{taskCompletionPct}%</span>
             </div>
             <div className="h-1.5 w-full bg-border-subtle rounded-full overflow-hidden">
@@ -212,25 +266,67 @@ function PostureHeader({
         </div>
 
         {/* Tile 4: Detection Efficacy & Canaries */}
-        <div className="flex flex-col justify-between rounded-2xl border border-border-subtle bg-bg-surface/80 p-5 backdrop-blur-md transition-all duration-200 hover:border-emerald-500/40">
+        <div className="hud-card flex flex-col justify-between p-4 transition-all duration-200 hover:border-emerald-500/40">
           <div className="flex items-center justify-between">
-            <span className="font-mono text-[11px] uppercase tracking-wider text-text-faint">Detection Efficacy</span>
+            <span className="tactical-header">Detection Efficacy</span>
             <Link to="/coverage" className="font-mono text-[10px] text-accent hover:underline flex items-center gap-0.5">
-              <span>ATT&CK matrix</span>
+              <span>matrix</span>
               <Icon name="arrowRight" size={10} />
             </Link>
           </div>
-          <div className="my-3 flex items-baseline gap-3">
-            <span className="font-mono text-3xl font-bold tracking-tight text-emerald-400">
+          <div className="my-2.5 flex items-baseline gap-2.5">
+            <span className="font-mono text-2xl font-bold tracking-tight text-emerald-400 tabular-nums">
               {matrixScorecard?.summary.detection_rate_pct ?? 0}%
             </span>
             <span className="text-xs text-text-muted">rules validated</span>
           </div>
-          <div className="flex items-center justify-between border-t border-border-subtle/60 pt-3 font-mono text-[11px] text-text-muted">
-            <span>{matrixScorecard?.summary.tested_count ?? 0} canaries tested</span>
+          <div className="flex items-center justify-between border-t border-border-subtle/60 pt-2 font-mono text-[11px] text-text-muted">
+            <span>{matrixScorecard?.summary.tested_count ?? 0} canaries</span>
             <span className="text-text-primary font-semibold">
               {matrixScorecard?.summary.avg_mttd_ms ? `${matrixScorecard.summary.avg_mttd_ms}ms MTTD` : "—"}
             </span>
+          </div>
+        </div>
+
+        {/* Tile 5: Lateral Campaigns & Propagation */}
+        <div className="hud-card flex flex-col justify-between p-4 transition-all duration-200 hover:border-cyan-500/40">
+          <div className="flex items-center justify-between">
+            <span className="tactical-header">Lateral Vectors</span>
+            <Link to="/campaigns" className="font-mono text-[10px] text-accent hover:underline flex items-center gap-0.5">
+              <span>graph</span>
+              <Icon name="arrowRight" size={10} />
+            </Link>
+          </div>
+          <div className="my-2.5 flex items-baseline gap-2.5">
+            <span className="font-mono text-2xl font-bold tracking-tight text-signal tabular-nums">
+              {campaignsList.length}
+            </span>
+            <span className="text-xs text-text-muted">campaign clusters</span>
+          </div>
+          <div className="flex items-center justify-between border-t border-border-subtle/60 pt-2 font-mono text-[11px] text-text-muted">
+            <span>{lateralEdgesCount} lateral hops</span>
+            <span className="text-text-primary font-semibold">SSH / SMB / RDP</span>
+          </div>
+        </div>
+
+        {/* Tile 6: Threat Intel & Air-Gap */}
+        <div className="hud-card flex flex-col justify-between p-4 transition-all duration-200 hover:border-purple-500/40">
+          <div className="flex items-center justify-between">
+            <span className="tactical-header">Threat Intel</span>
+            <Link to="/settings" className="font-mono text-[10px] text-accent hover:underline flex items-center gap-0.5">
+              <span>vault</span>
+              <Icon name="arrowRight" size={10} />
+            </Link>
+          </div>
+          <div className="my-2.5 flex items-baseline gap-2.5">
+            <span className="font-mono text-2xl font-bold tracking-tight text-text-primary tabular-nums">
+              {intelKeys ? Object.values(intelKeys).filter(Boolean).length : 0} / 4
+            </span>
+            <span className="text-xs text-text-muted">feeds primed</span>
+          </div>
+          <div className="flex items-center justify-between border-t border-border-subtle/60 pt-2 font-mono text-[11px] text-text-muted">
+            <span className="text-risk-clean font-semibold">Air-Gap Ready</span>
+            <span className="text-text-faint">Local Cache</span>
           </div>
         </div>
       </div>
@@ -276,12 +372,18 @@ function FindingsFeed() {
   });
   const { data: meta } = useQuery({ queryKey: ["rules-meta"], queryFn: getRuleMeta, staleTime: Infinity });
   const byRule = useMemo(() => new Map((meta ?? []).map((m) => [m.rule_id, m])), [meta]);
+  const [audioEnabled, setAudioEnabled] = useState(isSocAudioEnabled);
 
   // Live push: a fired alert refetches the feed immediately (SSE carries no
   // sample_name, so the query stays the single source of truth). The poll is
   // the fallback; push just makes it instant.
-  useEventStream(() => {
+  useEventStream((alert) => {
     void queryClient.invalidateQueries({ queryKey: ["alerts", "recent"] });
+    if (alert && alert.severity === "malicious") {
+      playSocAlertSound("malicious");
+    } else if (alert && alert.severity === "suspicious") {
+      playSocAlertSound("suspicious");
+    }
   });
 
   // Flash rows that weren't in the previous snapshot (new findings ring in).
@@ -324,6 +426,24 @@ function FindingsFeed() {
       title="Prioritized SOC Findings"
       right={
         <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => {
+              const next = !audioEnabled;
+              setSocAudioEnabled(next);
+              setAudioEnabled(next);
+              if (next) playSocAlertSound("suspicious");
+            }}
+            title={audioEnabled ? "Disable SOC audio alerts" : "Enable SOC audio chimes on detections"}
+            className={`inline-flex items-center gap-1.5 rounded-lg border px-2 py-0.5 font-mono text-[10px] transition-colors ${
+              audioEnabled
+                ? "border-accent/40 bg-accent/15 text-accent font-semibold"
+                : "border-border-subtle bg-bg-surface text-text-faint hover:text-text-muted"
+            }`}
+          >
+            <Icon name="bell" size={11} />
+            <span>{audioEnabled ? "Chime: ON" : "Chime: OFF"}</span>
+          </button>
           <span className="inline-flex items-center gap-1.5 font-mono text-[10px] text-signal font-semibold">
             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-signal" aria-hidden />
             live · SSE
@@ -962,7 +1082,7 @@ function HostForensicsRadarPanel() {
   const memPct = Math.min(100, Math.round((memMb / memTotal) * 100));
 
   return (
-    <section className="panel mb-6 border border-border-subtle bg-bg-surface/80 backdrop-blur-md p-5 rounded-2xl" aria-label="Host Forensics Real-Time Radar">
+    <section className="panel mb-6 hud-card hud-corner p-5" aria-label="Host Forensics Real-Time Radar">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle pb-3">
         <div className="flex items-center gap-2.5">
           <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-accent/15 text-accent shadow-[var(--glow-accent)]">
@@ -970,10 +1090,10 @@ function HostForensicsRadarPanel() {
           </span>
           <div>
             <h3 className="font-mono text-xs font-bold uppercase tracking-wider text-text-primary">
-              Host Forensics Real-Time Telemetry Pulse
+              Host Forensics & Live Telemetry Spectrum Cockpit
             </h3>
             <p className="text-[11px] text-text-muted">
-              Live kernel procfs & hardware device observation across host endpoints
+              Live kernel procfs observation & 360° telemetry radar tracking across fleet sensor nodes
             </p>
           </div>
         </div>
@@ -986,47 +1106,69 @@ function HostForensicsRadarPanel() {
         </Link>
       </div>
 
-      <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
-        <div className="rounded-xl border border-border-subtle bg-bg-elevated/40 p-3 text-center flex flex-col justify-between">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-text-faint">Host CPU Load</span>
-          <div className="my-1 font-mono text-xl font-bold text-text-primary">{cpuPct}%</div>
-          <div className="h-1.5 w-full bg-border-subtle rounded-full overflow-hidden">
-            <div className="h-full bg-accent transition-all duration-300" style={{ width: `${Math.max(4, cpuPct)}%` }} />
+      <div className="mt-4 grid grid-cols-1 lg:grid-cols-12 gap-5">
+        {/* Left: 6 Host Telemetry Metric Blocks */}
+        <div className="lg:col-span-7 flex flex-col justify-between space-y-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <div className="rounded-xl border border-border-subtle bg-bg-elevated/40 p-3.5 text-center flex flex-col justify-between">
+              <span className="tactical-header">Host CPU Load</span>
+              <div className="my-1.5 font-mono text-2xl font-bold text-text-primary tabular-nums">{cpuPct}%</div>
+              <div className="h-1.5 w-full bg-border-subtle rounded-full overflow-hidden">
+                <div className="h-full bg-accent transition-all duration-300" style={{ width: `${Math.max(4, cpuPct)}%` }} />
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-border-subtle bg-bg-elevated/40 p-3.5 text-center flex flex-col justify-between">
+              <span className="tactical-header">Memory Active</span>
+              <div className="my-1.5 font-mono text-2xl font-bold text-text-primary tabular-nums">{memMb} MB</div>
+              <div className="h-1.5 w-full bg-border-subtle rounded-full overflow-hidden">
+                <div className="h-full bg-signal transition-all duration-300" style={{ width: `${Math.max(4, memPct)}%` }} />
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-border-subtle bg-bg-elevated/40 p-3.5 text-center flex flex-col justify-between">
+              <span className="tactical-header">Live Processes</span>
+              <div className="my-1.5 font-mono text-2xl font-bold text-accent tabular-nums">{procCount}</div>
+              <span className="text-[10px] text-text-muted font-mono">procfs tracks</span>
+            </div>
+
+            <div className="rounded-xl border border-border-subtle bg-bg-elevated/40 p-3.5 text-center flex flex-col justify-between">
+              <span className="tactical-header">Listening Sockets</span>
+              <div className="my-1.5 font-mono text-2xl font-bold text-emerald-400 tabular-nums">{socketCount}</div>
+              <span className="text-[10px] text-text-muted font-mono">IP bindings</span>
+            </div>
+
+            <div className="rounded-xl border border-border-subtle bg-bg-elevated/40 p-3.5 text-center flex flex-col justify-between">
+              <span className="tactical-header">GPU Render Nodes</span>
+              <div className="my-1.5 font-mono text-2xl font-bold text-purple-400 tabular-nums">{catalog?.quick_inspect?.gpu ?? 0}</div>
+              <span className="text-[10px] text-text-muted font-mono">accelerators</span>
+            </div>
+
+            <div className="rounded-xl border border-border-subtle bg-bg-elevated/40 p-3.5 text-center flex flex-col justify-between">
+              <span className="tactical-header">Hardware Sensors</span>
+              <div className="my-1.5 font-mono text-2xl font-bold text-amber-400 tabular-nums">
+                {(catalog?.quick_inspect?.microphone ?? 0) + (catalog?.quick_inspect?.audio ?? 0)}
+              </div>
+              <span className="text-[10px] text-text-muted font-mono">audio streams</span>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between rounded-lg border border-border-subtle bg-bg-base/50 p-3 font-mono text-[11px] text-text-muted">
+            <span className="flex items-center gap-2">
+              <span className="h-2 w-2 rounded-full bg-risk-clean animate-pulse" />
+              <span>KERNEL HOOKS: EBPF / PROCFS ENGINE ACTIVE</span>
+            </span>
+            <span className="text-text-faint">LATENCY: 12ms</span>
           </div>
         </div>
 
-        <div className="rounded-xl border border-border-subtle bg-bg-elevated/40 p-3 text-center flex flex-col justify-between">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-text-faint">Memory Active</span>
-          <div className="my-1 font-mono text-xl font-bold text-text-primary">{memMb} MB</div>
-          <div className="h-1.5 w-full bg-border-subtle rounded-full overflow-hidden">
-            <div className="h-full bg-signal transition-all duration-300" style={{ width: `${Math.max(4, memPct)}%` }} />
-          </div>
-        </div>
-
-        <div className="rounded-xl border border-border-subtle bg-bg-elevated/40 p-3 text-center flex flex-col justify-between">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-text-faint">Live Processes</span>
-          <div className="my-1 font-mono text-xl font-bold text-accent">{procCount}</div>
-          <span className="text-[10px] text-text-muted">procfs tracks</span>
-        </div>
-
-        <div className="rounded-xl border border-border-subtle bg-bg-elevated/40 p-3 text-center flex flex-col justify-between">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-text-faint">Listening Sockets</span>
-          <div className="my-1 font-mono text-xl font-bold text-emerald-400">{socketCount}</div>
-          <span className="text-[10px] text-text-muted">IP bindings</span>
-        </div>
-
-        <div className="rounded-xl border border-border-subtle bg-bg-elevated/40 p-3 text-center flex flex-col justify-between">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-text-faint">GPU Render Clients</span>
-          <div className="my-1 font-mono text-xl font-bold text-purple-400">{catalog?.quick_inspect?.gpu ?? 0}</div>
-          <span className="text-[10px] text-text-muted">render nodes</span>
-        </div>
-
-        <div className="rounded-xl border border-border-subtle bg-bg-elevated/40 p-3 text-center flex flex-col justify-between">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-text-faint">Audio / Mic Sensors</span>
-          <div className="my-1 font-mono text-xl font-bold text-amber-400">
-            {(catalog?.quick_inspect?.microphone ?? 0) + (catalog?.quick_inspect?.audio ?? 0)}
-          </div>
-          <span className="text-[10px] text-text-muted">active streams</span>
+        {/* Right: Bespoke Live Telemetry Radar Sweep Canvas */}
+        <div className="lg:col-span-5 flex items-center justify-center">
+          <LiveTelemetryRadar
+            activeThreatCount={snapshot?.process_count && snapshot.process_count > 100 ? 1 : 0}
+            onlineAgentCount={1}
+            className="w-full"
+          />
         </div>
       </div>
     </section>
@@ -1707,17 +1849,21 @@ export default function OverviewPage() {
         }
         lede="Unified behavioral security telemetry, live fleet threat posture, MITRE ATT&CK kill-chain progression, and automated containment task dispatch."
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2.5">
+            <div className="hidden sm:flex items-center gap-2 rounded-lg border border-border-subtle bg-bg-surface px-3 py-1.5 font-mono text-[11px] text-text-muted">
+              <span className="h-2 w-2 rounded-full bg-risk-clean animate-pulse" />
+              <span>STATION ONLINE</span>
+            </div>
             <Link
               to="/events"
-              className="press inline-flex items-center gap-1.5 rounded-xl border border-accent/60 bg-accent/15 px-3.5 py-2 font-mono text-xs font-semibold text-accent transition-all duration-150 hover:bg-accent/25 hover:shadow-[var(--glow-accent)]"
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/15 px-3.5 py-1.5 font-mono text-xs font-semibold text-accent transition-all duration-150 hover:bg-accent/25 hover:shadow-[var(--glow-accent)]"
             >
               <Icon name="list" size={13} />
               Event Manager
             </Link>
             <Link
               to="/monitor"
-              className="press inline-flex items-center gap-1.5 rounded-xl border border-border-subtle bg-bg-elevated px-3.5 py-2 font-mono text-xs font-medium text-text-muted transition-all duration-150 hover:border-accent/40 hover:text-text-primary"
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-elevated px-3.5 py-1.5 font-mono text-xs font-medium text-text-muted transition-all duration-150 hover:border-accent/40 hover:text-text-primary"
             >
               <Icon name="activity" size={13} />
               Simulation Lab

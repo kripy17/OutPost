@@ -390,8 +390,8 @@ if [ "$MODE" = "--recover" ]; then
 else
   TITLE="chore: refresh badges (tests $SUM, rules $RULES, tactics $COV, commands $CMDS)$SIZE_NOTE"
 fi
-git config user.name "${GIT_AUTHOR_NAME:-github-actions[bot]}"
-git config user.email "${GIT_AUTHOR_EMAIL:-41898282+github-actions[bot]@users.noreply.github.com}"
+git config user.name "${GIT_AUTHOR_NAME:-Krish Patel}"
+git config user.email "${GIT_AUTHOR_EMAIL:-krish.codekp@gmail.com}"
 
 # main is branch-protected: the three required status checks must pass on
 # anything that lands there, so a locally-created bot commit can never push

@@ -22,7 +22,17 @@ def export(
         raise typer.Exit(2)
 
     if format == "json":
-        report = api_client.export_run(run_id)
+        try:
+            report = api_client.export_run(run_id)
+        except api_client.APIError as exc:
+            if "Backend unreachable" in str(exc):
+                from ..lib import offline_store
+                report = offline_store.get_offline_run_detail(run_id)
+            else:
+                report = None
+            if not report:
+                console.print(f"[bold #C4453B]Export failed: {exc}[/bold #C4453B]")
+                raise typer.Exit(1)
         dest = output or Path(f"outpost-report-{run_id[:12]}.json")
         dest.write_text(json.dumps(report, indent=2))
         console.print(f"[#3FA796]Exported JSON report → {dest}[/#3FA796]")
@@ -30,7 +40,17 @@ def export(
         _export_pdf(run_id, output)
     elif format == "stix":
         # Roadmap 3.3: STIX 2.1 bundle — interoperable with MISP/Cortex/OpenCTI.
-        bundle = api_client.export_stix(run_id)
+        try:
+            bundle = api_client.export_stix(run_id)
+        except api_client.APIError as exc:
+            if "Backend unreachable" in str(exc):
+                from ..lib import offline_store
+                bundle = offline_store.get_offline_run_stix(run_id)
+            else:
+                bundle = None
+            if not bundle:
+                console.print(f"[bold #C4453B]Export failed: {exc}[/bold #C4453B]")
+                raise typer.Exit(1)
         dest = output or Path(f"outpost-stix-{run_id[:12]}.json")
         dest.write_text(json.dumps(bundle, indent=2))
         console.print(f"[#3FA796]Exported STIX 2.1 bundle → {dest}[/#3FA796]")

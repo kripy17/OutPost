@@ -8,7 +8,7 @@ campaigns, with free text plus qualifiers (`type:` `status:` `severity:`
 Deliberately NOT a search engine: every group is a plain SQLite LIKE query
 over its existing table (the same literal-matching convention as `/ioc/search`
 and the IOC list), with the qualified filters applied where the group has the
-column. The datastore is a single-file SQLite DB — an FTS/Elastic-style index
+column. The datastore is a single-file SQLite DB — an FTS-style full-text index
 was explicitly ruled out by the P0 spec unless the repository already used
 one, and it does not.
 

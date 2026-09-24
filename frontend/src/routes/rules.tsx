@@ -870,7 +870,7 @@ function FactoryResetPanel() {
       <div className="flex flex-wrap items-center gap-3 rounded-lg border border-risk-malicious/30 bg-bg-surface p-4">
         <p className="min-w-0 flex-1 text-xs leading-relaxed text-text-muted">
           Clear every tuning override, suppression, and pattern-table edit (enumeration + anti-forensics + FP
-          threshold) back to the engine&apos;s stock behavior — one atomic call, audited. Export a rule pack first if
+          threshold) back to the engine&apos;s stock behavior — a single consolidated transaction, audited. Export a rule pack first if
           you might want the current surface back.
         </p>
         <button
@@ -1330,6 +1330,9 @@ export default function RulesPage() {
   const { data, isLoading, isError } = useQuery({ queryKey: ["tuning"], queryFn: getTuning });
   const { data: fp } = useQuery({ queryKey: ["rule-fp"], queryFn: getRuleFp });
   const [activeTab, setActiveTab] = useState<"rules" | "coverage">("rules");
+  const [subDeck, setSubDeck] = useState<"knobs" | "sigma" | "yara" | "patterns" | "packs">("knobs");
+  const [knobFilter, setKnobFilter] = useState("");
+  const [showOverriddenOnly, setShowOverriddenOnly] = useState(false);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [fpDraft, setFpDraft] = useState<string>("");
   const [backtestingRule, setBacktestingRule] = useState<{ id: string; name: string } | null>(null);
@@ -1418,160 +1421,259 @@ export default function RulesPage() {
           {isLoading && <p className="mt-6 text-sm text-text-muted">Loading tunables…</p>}
           {isError && <p className="mt-6 text-sm text-risk-malicious">Couldn't load tunables — is the backend running?</p>}
 
-          <RulePackPanel />
-
-          <SigmaTranspilePanel />
-
-          <FactoryResetPanel />
-
-          <YaraLab />
-
-          <EnumPatternsEditor />
-
-          <LogPatternsEditor />
-
-      {/* FP feedback surface — noise threshold + per-rule counters */}
-      {fp && (
-        <div className="mt-8">
-          <div className="mb-3 flex flex-wrap items-center gap-3">
-            <div>
-              <p className="kicker">False-positive feedback · tunable</p>
-              <h2 className="mt-1 text-base font-semibold text-text-primary">Noise threshold</h2>
-            </div>
-            <div className="flex items-center gap-2">
-              <input
-                type="number"
-                min={1}
-                value={fpDraft !== "" ? fpDraft : String(fp.threshold)}
-                onChange={(e) => setFpDraft(e.target.value)}
-                className="w-20 rounded border border-border-subtle bg-bg-base px-2 py-1.5 font-mono text-sm text-text-primary focus:border-accent/60 focus:outline-none"
-                aria-label="FP suggestion threshold"
-              />
-              <button
-                onClick={() => {
-                  const n = Math.max(1, Math.floor(Number(fpDraft) || fp.threshold));
-                  saveFpThreshold.mutate(n);
-                }}
-                disabled={saveFpThreshold.isPending}
-                className="press rounded border border-accent/60 px-3 py-1.5 font-mono text-xs text-accent transition-colors duration-150 hover:bg-accent/10 disabled:opacity-50"
-              >
-                Set
-              </button>
-              {fp.threshold !== fp.default_threshold && (
-                <button
-                  onClick={() => resetFp.mutate()}
-                  className="press rounded border border-border-subtle px-3 py-1.5 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-risk-malicious/50 hover:text-risk-malicious"
-                >
-                  Reset
-                </button>
-              )}
-            </div>
-            <p className="w-full text-xs leading-relaxed text-text-muted">
-              A rule whose false-positive count reaches this value gets a one-click threshold-raise suggestion on its knob
-              below (raised by marking alerts as false positives on run detail). Currently{" "}
-              {noisyCount === 0 ? (
-                "no rule is over it."
-              ) : (
-                <span className="text-risk-suspicious">{noisyCount} rule{noisyCount === 1 ? " is" : "s are"} over it.</span>
-              )}
-            </p>
+          {/* Sub-deck navigation switcher */}
+          <div className="mt-4 mb-6 flex flex-wrap gap-2 border-b border-border-subtle pb-3 font-mono text-xs">
+            <button
+              onClick={() => setSubDeck("knobs")}
+              className={`press flex items-center gap-1.5 rounded-lg px-3 py-1.5 border transition ${
+                subDeck === "knobs"
+                  ? "border-accent/50 bg-accent/15 text-accent font-bold shadow-xs"
+                  : "border-border-subtle bg-bg-surface text-text-muted hover:text-text-primary"
+              }`}
+            >
+              <Icon name="sliders" size={13} />
+              <span>Detection Knobs &amp; Tuning</span>
+            </button>
+            <button
+              onClick={() => setSubDeck("sigma")}
+              className={`press flex items-center gap-1.5 rounded-lg px-3 py-1.5 border transition ${
+                subDeck === "sigma"
+                  ? "border-accent/50 bg-accent/15 text-accent font-bold shadow-xs"
+                  : "border-border-subtle bg-bg-surface text-text-muted hover:text-text-primary"
+              }`}
+            >
+              <Icon name="terminal" size={13} />
+              <span>Sigma Detection Studio</span>
+            </button>
+            <button
+              onClick={() => setSubDeck("yara")}
+              className={`press flex items-center gap-1.5 rounded-lg px-3 py-1.5 border transition ${
+                subDeck === "yara"
+                  ? "border-accent/50 bg-accent/15 text-accent font-bold shadow-xs"
+                  : "border-border-subtle bg-bg-surface text-text-muted hover:text-text-primary"
+              }`}
+            >
+              <Icon name="zap" size={13} />
+              <span>YARA Threat Hunting Lab</span>
+            </button>
+            <button
+              onClick={() => setSubDeck("patterns")}
+              className={`press flex items-center gap-1.5 rounded-lg px-3 py-1.5 border transition ${
+                subDeck === "patterns"
+                  ? "border-accent/50 bg-accent/15 text-accent font-bold shadow-xs"
+                  : "border-border-subtle bg-bg-surface text-text-muted hover:text-text-primary"
+              }`}
+            >
+              <Icon name="list" size={13} />
+              <span>Recon &amp; Telemetry Patterns</span>
+            </button>
+            <button
+              onClick={() => setSubDeck("packs")}
+              className={`press flex items-center gap-1.5 rounded-lg px-3 py-1.5 border transition ${
+                subDeck === "packs"
+                  ? "border-accent/50 bg-accent/15 text-accent font-bold shadow-xs"
+                  : "border-border-subtle bg-bg-surface text-text-muted hover:text-text-primary"
+              }`}
+            >
+              <Icon name="box" size={13} />
+              <span>Rule Packs &amp; Backup</span>
+            </button>
           </div>
-        </div>
-      )}
 
-      {data && (
-        <div className="mt-6 space-y-3">
-          {data.knobs.map((knob: TuningKnob) => {
-            const fpRow = fpFor(knob.rule_id);
-            return (
-              <Panel key={knob.param} title={KNOB_LABELS[knob.param] ?? knob.param}>
-                <div className="flex flex-wrap items-center gap-3">
-                  <code className="rounded border border-border-subtle bg-bg-elevated/50 px-2 py-1 font-mono text-[11px] text-accent">
-                    {knob.param}
-                  </code>
-                  <span className="font-mono text-[10px] text-text-faint">
-                    default {knob.default} · type {knob.type} · rule {knob.rule_id}
-                  </span>
-                  {fpRow && fpRow.count > 0 && (
-                    <span
-                      className={`rounded-full border px-2 py-0.5 font-mono text-[10px] tabular-nums ${
-                        fpRow.over_threshold
-                          ? "border-risk-suspicious/60 bg-risk-suspicious/10 text-risk-suspicious"
-                          : "border-border-subtle text-text-muted"
-                      }`}
-                      title={`${fpRow.count} false positive(s) — last ${fpRow.last_fp_at}`}
-                    >
-                      {fpRow.count} FP
-                      {fpRow.fired_count > 0 && (
-                        <span className="opacity-80">
-                          {" "}· {Math.round((fpRow.count / fpRow.fired_count) * 100)}% rate
-                        </span>
+          {subDeck === "sigma" && <SigmaTranspilePanel />}
+
+          {subDeck === "yara" && <YaraLab />}
+
+          {subDeck === "patterns" && (
+            <div className="space-y-6">
+              <EnumPatternsEditor />
+              <LogPatternsEditor />
+            </div>
+          )}
+
+          {subDeck === "packs" && (
+            <div className="space-y-6">
+              <RulePackPanel />
+              <FactoryResetPanel />
+            </div>
+          )}
+
+          {subDeck === "knobs" && (
+            <>
+              {/* FP feedback surface — noise threshold + per-rule counters */}
+              {fp && (
+                <div className="mb-4">
+                  <div className="mb-3 flex flex-wrap items-center gap-3">
+                    <div>
+                      <p className="kicker">False-positive feedback · tunable</p>
+                      <h2 className="mt-1 text-base font-semibold text-text-primary">Noise threshold</h2>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        min={1}
+                        value={fpDraft !== "" ? fpDraft : String(fp.threshold)}
+                        onChange={(e) => setFpDraft(e.target.value)}
+                        className="w-20 rounded border border-border-subtle bg-bg-base px-2 py-1.5 font-mono text-sm text-text-primary focus:border-accent/60 focus:outline-none"
+                        aria-label="FP suggestion threshold"
+                      />
+                      <button
+                        onClick={() => {
+                          const n = Math.max(1, Math.floor(Number(fpDraft) || fp.threshold));
+                          saveFpThreshold.mutate(n);
+                        }}
+                        disabled={saveFpThreshold.isPending}
+                        className="press rounded border border-accent/60 px-3 py-1.5 font-mono text-xs text-accent transition-colors duration-150 hover:bg-accent/10 disabled:opacity-50"
+                      >
+                        Set
+                      </button>
+                      {fp.threshold !== fp.default_threshold && (
+                        <button
+                          onClick={() => resetFp.mutate()}
+                          className="press rounded border border-border-subtle px-3 py-1.5 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-risk-malicious/50 hover:text-risk-malicious"
+                        >
+                          Reset
+                        </button>
                       )}
-                    </span>
-                  )}
-                  {fpRow && fpRow.history && fpRow.history.length > 0 && (
-                    <FpSparkline history={fpRow.history} />
-                  )}
-                  <span
-                    className={`ml-auto rounded-full border px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide ${
-                      knob.tuned
-                        ? "border-accent/50 text-accent"
-                        : "border-border-subtle text-text-faint"
-                    }`}
-                  >
-                    {knob.tuned ? "tuned" : "default"}
-                  </span>
+                    </div>
+                    <p className="w-full text-xs leading-relaxed text-text-muted">
+                      A rule whose false-positive count reaches this value gets a one-click threshold-raise suggestion on its knob
+                      below (raised by marking alerts as false positives on run detail). Currently{" "}
+                      {noisyCount === 0 ? (
+                        "no rule is over it."
+                      ) : (
+                        <span className="text-risk-suspicious">{noisyCount} rule{noisyCount === 1 ? " is" : "s are"} over it.</span>
+                      )}
+                    </p>
+                  </div>
                 </div>
-                <div className="mt-3 flex flex-wrap items-center gap-2">
+              )}
+
+              {/* Knobs Search & Filter Bar */}
+              <div className="mt-4 mb-3 flex flex-wrap items-center justify-between gap-3">
+                <div className="relative min-w-64 flex-1">
+                  <Icon name="search" size={12} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-faint" />
                   <input
                     type="text"
-                    inputMode="numeric"
-                    value={drafts[knob.param] ?? String(knob.current)}
-                    onChange={(e) => setDrafts((d) => ({ ...d, [knob.param]: e.target.value }))}
-                    className="w-24 rounded border border-border-subtle bg-bg-base px-2 py-1.5 font-mono text-sm text-text-primary focus:border-accent/60 focus:outline-none"
-                    aria-label={`${knob.param} value`}
+                    value={knobFilter}
+                    onChange={(e) => setKnobFilter(e.target.value)}
+                    placeholder="Search knobs by name, parameter, or rule ID..."
+                    className="w-full rounded-xl border border-border-subtle bg-bg-surface py-2 pl-9 pr-3 font-mono text-xs text-text-primary placeholder:text-text-faint focus:border-accent/60 focus:outline-none"
                   />
-                  <button
-                    onClick={() => save.mutate({ param: knob.param, value: drafts[knob.param] ?? "" })}
-                    disabled={save.isPending}
-                    className="press rounded border border-accent/60 px-3 py-1.5 font-mono text-xs text-accent transition-colors duration-150 hover:bg-accent/10 disabled:opacity-50"
-                  >
-                    Apply
-                  </button>
-                  <button
-                    onClick={() => setBacktestingRule({ id: knob.rule_id, name: knob.param })}
-                    className="press rounded border border-border-subtle px-3 py-1.5 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
-                    title="Evaluate detection heuristic against historical events"
-                  >
-                    Backtest
-                  </button>
-                  {knob.tuned && (
-                    <button
-                      onClick={() => reset.mutate(knob.param)}
-                      className="press rounded border border-border-subtle px-3 py-1.5 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-risk-malicious/50 hover:text-risk-malicious"
-                    >
-                      Reset
-                    </button>
-                  )}
                 </div>
-                {fpRow?.over_threshold && fpRow.suggestion && (
-                  <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-risk-suspicious/40 bg-risk-suspicious/10 px-3 py-2">
-                    <Icon name="alert" size={12} className="text-risk-suspicious" />
-                    <span className="text-xs text-text-muted">{fpRow.suggestion.detail}</span>
-                    <button
-                      onClick={() => applySuggestion(fpRow.suggestion)}
-                      disabled={save.isPending}
-                      className="press ml-auto rounded border border-risk-suspicious/60 px-2.5 py-1 font-mono text-[11px] text-risk-suspicious transition-colors duration-150 hover:bg-risk-suspicious/15 disabled:opacity-50"
-                    >
-                      Apply suggested
-                    </button>
-                  </div>
-                )}
-              </Panel>
-            );
-          })}
-        </div>
-      )}
+                <button
+                  type="button"
+                  onClick={() => setShowOverriddenOnly(!showOverriddenOnly)}
+                  className={`press inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 font-mono text-xs transition ${
+                    showOverriddenOnly
+                      ? "border-accent/50 bg-accent/15 font-bold text-accent"
+                      : "border-border-subtle bg-bg-surface text-text-muted hover:text-text-primary"
+                  }`}
+                >
+                  <Icon name="filter" size={12} />
+                  <span>{showOverriddenOnly ? "Tuned Overrides Only" : "All Knobs"}</span>
+                </button>
+              </div>
+
+              {data && (
+                <div className="mt-4 space-y-3">
+                  {data.knobs
+                    .filter((knob: TuningKnob) => {
+                      if (showOverriddenOnly && !knob.tuned) return false;
+                      if (!knobFilter.trim()) return true;
+                      const q = knobFilter.toLowerCase().trim();
+                      return (
+                        knob.param.toLowerCase().includes(q) ||
+                        knob.rule_id.toLowerCase().includes(q) ||
+                        (KNOB_LABELS[knob.param] || "").toLowerCase().includes(q)
+                      );
+                    })
+                    .map((knob: TuningKnob) => {
+                      const fpRow = fpFor(knob.rule_id);
+                      return (
+                        <Panel key={knob.param} title={KNOB_LABELS[knob.param] ?? knob.param}>
+                          <div className="flex flex-wrap items-center gap-3">
+                            <code className="rounded border border-border-subtle bg-bg-elevated/50 px-2 py-1 font-mono text-[11px] text-accent">
+                              {knob.param}
+                            </code>
+                            <span className="font-mono text-[10px] text-text-faint">
+                              default {knob.default} · type {knob.type} · rule {knob.rule_id}
+                            </span>
+                            {fpRow && fpRow.count > 0 && (
+                              <span
+                                className={`rounded-full border px-2 py-0.5 font-mono text-[10px] tabular-nums ${
+                                  fpRow.over_threshold
+                                    ? "border-risk-suspicious/60 bg-risk-suspicious/10 text-risk-suspicious"
+                                    : "border-border-subtle text-text-muted"
+                                }`}
+                                title={`${fpRow.count} false positive(s) — last ${fpRow.last_fp_at}`}
+                              >
+                                {fpRow.count} FP
+                                {fpRow.fired_count > 0 && (
+                                  <span className="opacity-80">
+                                    {" "}· {Math.round((fpRow.count / fpRow.fired_count) * 100)}% rate
+                                  </span>
+                                )}
+                              </span>
+                            )}
+                            {fpRow && fpRow.history && fpRow.history.length > 0 && (
+                              <FpSparkline history={fpRow.history} />
+                            )}
+                            <span
+                              className={`ml-auto rounded-full border px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide ${
+                                knob.tuned
+                                  ? "border-accent/50 text-accent"
+                                  : "border-border-subtle text-text-faint"
+                              }`}
+                            >
+                              {knob.tuned ? "tuned" : "default"}
+                            </span>
+                          </div>
+                          <div className="mt-3 flex flex-wrap items-center gap-2">
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              value={drafts[knob.param] ?? String(knob.current)}
+                              onChange={(e) => setDrafts((d) => ({ ...d, [knob.param]: e.target.value }))}
+                              className="w-36 rounded border border-border-subtle bg-bg-base px-2.5 py-1.5 font-mono text-sm text-text-primary focus:border-accent/60 focus:outline-none"
+                              aria-label={knob.param}
+                            />
+                            <button
+                              onClick={() => save.mutate({ param: knob.param, value: drafts[knob.param] ?? String(knob.current) })}
+                              disabled={save.isPending}
+                              className="press rounded border border-accent/60 px-3 py-1.5 font-mono text-xs text-accent transition-colors duration-150 hover:bg-accent/10 disabled:opacity-50"
+                            >
+                              Save
+                            </button>
+                            {knob.tuned && (
+                              <button
+                                onClick={() => reset.mutate(knob.param)}
+                                className="press rounded border border-border-subtle px-3 py-1.5 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-risk-malicious/50 hover:text-risk-malicious"
+                              >
+                                Reset
+                              </button>
+                            )}
+                          </div>
+                          {fpRow?.over_threshold && fpRow.suggestion && (
+                            <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-risk-suspicious/40 bg-risk-suspicious/10 px-3 py-2">
+                              <Icon name="alert" size={12} className="text-risk-suspicious" />
+                              <span className="text-xs text-text-muted">{fpRow.suggestion.detail}</span>
+                              <button
+                                onClick={() => applySuggestion(fpRow.suggestion)}
+                                disabled={save.isPending}
+                                className="press ml-auto rounded border border-risk-suspicious/60 px-2.5 py-1 font-mono text-[11px] text-risk-suspicious transition-colors duration-150 hover:bg-risk-suspicious/15 disabled:opacity-50"
+                              >
+                                Apply suggested
+                              </button>
+                            </div>
+                          )}
+                        </Panel>
+                      );
+                    })}
+                </div>
+              )}
+            </>
+          )}
         </>
       )}
 

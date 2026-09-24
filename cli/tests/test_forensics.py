@@ -264,3 +264,34 @@ def test_forensics_hunt_cli(monkeypatch):
     assert "canary_val" in res.stdout
 
 
+def test_forensics_scan_memory_cli(monkeypatch):
+    monkeypatch.setattr(
+        api_client,
+        "scan_live_memory_yara",
+        lambda limit=50: {
+            "total_scanned_processes": 15,
+            "scanned_pids": [100, 200],
+            "threat_count": 1,
+            "threats": [
+                {
+                    "pid": 6666,
+                    "process_name": "implant.elf",
+                    "exe_path": "/tmp/.hidden/implant.elf",
+                    "matches": [{"rule_name": "c2_beacon_pattern"}],
+                    "severity": "malicious",
+                }
+            ],
+            "clean": False,
+        },
+    )
+    res = runner.invoke(app, ["scan-memory", "--limit", "20"])
+    assert res.exit_code == 0
+    assert "Live Process Memory YARA Inspection" in res.stdout
+    assert "Processes Scanned: 15" in res.stdout
+    assert "MALICIOUS PROCESS DETECTED" in res.stdout
+    assert "implant.elf" in res.stdout
+    assert "6666" in res.stdout
+    assert "c2_beacon_pattern" in res.stdout
+
+
+

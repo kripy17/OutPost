@@ -27,6 +27,7 @@ import { toneFill, toneForReputation, toneForSeverity } from "../lib/fillPattern
 import type { EventType, ForensicProbeItem, ForensicProbeResult, HostTimelineEntry, TimelineKind } from "../types";
 import ProcessContextModal from "../components/ProcessContextModal";
 import NetworkContextModal from "../components/NetworkContextModal";
+import { LiveTriageModal } from "../components/LiveTriageModal";
 import { ProcessCausalityTree } from "../components/ProcessCausalityTree";
 import { ProcessNetworkMatrix } from "../components/ProcessNetworkMatrix";
 import { relativeTime } from "./agentsHelpers";
@@ -222,6 +223,7 @@ export default function HostDetailPage() {
   const [entries, setEntries] = useState<HostTimelineEntry[]>([]);
   const [inspectPid, setInspectPid] = useState<number | null>(null);
   const [inspectIp, setInspectIp] = useState<string | null>(null);
+  const [showTriageModal, setShowTriageModal] = useState(false);
   const LIMIT = 50;
 
   // Live-ish: a fleet heartbeat push for this host (or any run update)
@@ -331,6 +333,14 @@ export default function HostDetailPage() {
             >
               <Icon name="alert" size={12} />
               {toggleIsolation.isPending ? "Updating…" : isIsolated ? "Lift Quarantine" : "Quarantine Host"}
+            </button>
+            <button
+              onClick={() => setShowTriageModal(true)}
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-3 py-1.5 font-mono text-[11px] font-semibold text-cyan-400 hover:bg-cyan-500/20 shadow-xs"
+              title="Acquire live endpoint forensic triage pack for this host"
+            >
+              <Icon name="zap" size={12} className="text-cyan-400" />
+              <span>⚡ Live Triage Pack</span>
             </button>
             <Link
               to={`/events?q=${encodeURIComponent(hostId ?? "")}`}
@@ -854,6 +864,12 @@ export default function HostDetailPage() {
       )}
       {inspectIp !== null && (
         <NetworkContextModal ip={inspectIp} onClose={() => setInspectIp(null)} />
+      )}
+      {showTriageModal && (
+        <LiveTriageModal
+          hostId={hostId || "local"}
+          onClose={() => setShowTriageModal(false)}
+        />
       )}
     </div>
   );

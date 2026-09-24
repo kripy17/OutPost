@@ -169,7 +169,7 @@ def build_campaigns(conn, include_synthetic: bool = False) -> list[dict]:
         ).fetchall()
         chain_links = killchain.correlate_chain([dict(a) for a in member_alerts])
 
-        # Multi-host attack propagation DAG
+        # Multi-host attack propagation DAG with lateral movement protocol classification
         host_rows = conn.execute(
             f"""
             SELECT DISTINCT host_id, MIN(timestamp) as first_seen, COUNT(*) as event_count
@@ -181,15 +181,57 @@ def build_campaigns(conn, include_synthetic: bool = False) -> list[dict]:
             run_ids,
         ).fetchall()
         graph_nodes = [{"id": r["host_id"] or "local", "type": "host", "first_seen": r["first_seen"], "events": r["event_count"]} for r in host_rows]
+
+        # Scan for lateral protocol indicators across member runs
+        lat_port_rows = conn.execute(
+            f"""
+            SELECT DISTINCT dest_port, protocol
+            FROM events
+            WHERE run_id IN ({placeholders})
+              AND event_type = 'network_connection'
+              AND dest_port IN (22, 135, 139, 445, 3389, 5985, 5986)
+            ORDER BY dest_port ASC
+            """,
+            run_ids,
+        ).fetchall()
+        port_proto_map = {
+            22: "SSH",
+            135: "RPC",
+            139: "NetBIOS",
+            445: "SMB",
+            3389: "RDP",
+            5985: "WinRM-HTTP",
+            5986: "WinRM-HTTPS",
+        }
+        detected_lateral = [
+            (port_proto_map.get(r["dest_port"], f"Port {r['dest_port']}"), r["dest_port"])
+            for r in lat_port_rows
+            if r["dest_port"] in port_proto_map
+        ]
+
         graph_edges = []
         for i in range(len(graph_nodes) - 1):
+            if i < len(detected_lateral):
+                proto_name, port_num = detected_lateral[i]
+                edge_label = f"Lateral {proto_name} (:{port_num})"
+                edge_proto = proto_name
+            elif detected_lateral:
+                proto_name, port_num = detected_lateral[0]
+                edge_label = f"Lateral {proto_name} (:{port_num})"
+                edge_proto = proto_name
+            else:
+                edge_label = "shared infrastructure"
+                edge_proto = "TCP"
+
             graph_edges.append({
                 "source": graph_nodes[i]["id"],
                 "target": graph_nodes[i+1]["id"],
                 "type": "lateral_traversal",
-                "label": "shared infrastructure",
+                "label": edge_label,
+                "protocol": edge_proto,
             })
         propagation_graph = {"nodes": graph_nodes, "edges": graph_edges}
+
 
         campaigns.append(
             {

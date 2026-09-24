@@ -39,7 +39,6 @@ router = APIRouter(tags=["analysis"])
 _BACKENDS = ("static", "watched-host", "external-provider", "isolated-outpost")
 _UNEXECUTED = {
     "watched-host": "watched-host has no executor yet — OutPost cannot claim jobs on a designated analysis host (planned phase)",
-    "isolated-outpost": "isolated-outpost is a reserved backend — OutPost has no isolated execution environment yet",
 }
 _JOB_STATUSES = ("queued", "running", "completed", "failed", "canceled")
 _NONTERMINAL = ("queued", "running")
@@ -55,6 +54,54 @@ def _load_bytes(sample_id: str) -> bytes | None:
         return path.read_bytes()
     except OSError:
         return None
+
+
+async def _finish_isolated_job(run_id: str, sample_id: str, sample_name: str, sample_bytes: bytes, platform: str, timeout: int = 15) -> None:
+    """Finalizer for native isolated-outpost dynamic sandbox executions."""
+    from ..services import dynamic_sandbox
+    with db_session() as conn:
+        job = jobs_store.get_job(conn, run_id)
+        if not job or job["status"] == jobs_store.CANCELED:
+            return
+        jobs_store.set_status(conn, run_id, jobs_store.RUNNING, progress=25)
+        conn.commit()
+
+    try:
+        res = await dynamic_sandbox.execute_sample_detonation(
+            sample_id=sample_id,
+            raw_bytes=sample_bytes,
+            sample_name=sample_name,
+            platform_hint=platform,
+            timeout_seconds=timeout,
+        )
+    except Exception as err:
+        with db_session() as conn:
+            job = jobs_store.get_job(conn, run_id)
+            if job and job["status"] != jobs_store.CANCELED:
+                jobs_store.set_status(conn, run_id, jobs_store.FAILED, error=str(err), result={"error": str(err)})
+                conn.commit()
+        return
+
+    with db_session() as conn:
+        job = jobs_store.get_job(conn, run_id)
+        if not job or job["status"] == jobs_store.CANCELED:
+            return
+        jobs_store.set_status(
+            conn,
+            run_id,
+            jobs_store.COMPLETED,
+            progress=100,
+            result={
+                "verdict": res.get("verdict", "unknown"),
+                "risk_score": res.get("risk_score", 0),
+                "events": res.get("events_count", 0),
+                "alerts": res.get("alerts_count", 0),
+                "isolation_driver": res.get("isolation_driver", "tempdir"),
+                "exit_code": res.get("exit_code", 0),
+                "actionable_iocs": res.get("actionable_iocs", {}),
+            },
+        )
+        conn.commit()
 
 
 async def _finish_external_job(run_id: str, task_id: str, provider: str, sample_bytes: bytes) -> None:
@@ -144,6 +191,63 @@ async def create_analysis_job(body: AnalysisJobCreateIn, request: Request) -> An
     if body.backend not in _BACKENDS:
         raise HTTPException(status_code=422, detail=f"backend must be one of: {', '.join(_BACKENDS)}")
 
+    if body.backend == "isolated-outpost":
+        if not body.sample_id:
+            raise HTTPException(
+                status_code=501,
+                detail="isolated-outpost is a reserved backend — OutPost has no isolated execution environment yet",
+            )
+        with db_session() as conn:
+            sample = samples_store.get_sample(conn, body.sample_id)
+            if not sample:
+                raise HTTPException(status_code=404, detail=f"Unknown sample_id: {body.sample_id}")
+            sample_bytes = _load_bytes(body.sample_id)
+            if sample_bytes is None:
+                raise HTTPException(status_code=404, detail=f"Sample bytes not stored on disk: {body.sample_id}")
+
+            sample_name = sample["original_name"]
+            platform = body.platform or sample.get("detected_platform") or "linux"
+            run_id = uuid.uuid4().hex[:12]
+            run_store.create_run(
+                conn,
+                run_id=run_id,
+                sample_name=sample_name,
+                platform=platform,
+                session_type="analysis",
+                source="sandbox:isolated-outpost",
+            )
+            now = jobs_store._now()
+            job = jobs_store.create_job(
+                conn,
+                run_id,
+                "isolated-outpost",
+                status=jobs_store.QUEUED,
+                started_at=now,
+                timeout_seconds=body.timeout_seconds or 15,
+                progress=0,
+            )
+            audit.log(
+                conn,
+                auth.role_from_request(request),
+                "analysis.create",
+                target_type="analysis",
+                target_id=run_id,
+                detail=f"backend {body.backend} · {sample_name} ({platform})",
+            )
+            conn.commit()
+            asyncio.create_task(_finish_isolated_job(
+                run_id, body.sample_id, sample_name, sample_bytes, platform, body.timeout_seconds or 15
+            ))
+            events_stream.publish_run_update(
+                run_id,
+                0,
+                completed=False,
+                job_id=run_id,
+                job_status=job["status"],
+                progress=0,
+            )
+            return AnalysisJobDTO(**_dto(conn, job))
+
     if body.backend == "external-provider":
         if not body.sample_id:
             raise HTTPException(status_code=422, detail="sample_id is required for external-provider analysis")
@@ -157,7 +261,7 @@ async def create_analysis_job(body: AnalysisJobCreateIn, request: Request) -> An
 
             want_provider = (body.provider or "").strip()
             if want_provider:
-                if want_provider not in ("demo", "triage", "anyrun", "joe", "hybrid-analysis", "cuckoo", "filescan"):
+                if want_provider not in ("demo", "triage", "anyrun", "joe", "hybrid-analysis", "filescan"):
                     raise HTTPException(status_code=422, detail=f"Unknown sandbox provider: {want_provider}")
                 if want_provider != "demo" and not sandbox_service.is_configured(want_provider):
                     key_name = f"{want_provider.upper().replace('-', '_')}_API_KEY"

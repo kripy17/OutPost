@@ -33,11 +33,17 @@ def add(
     try:
         entry = api_client.notes_add(run_id, note)
     except api_client.APIError as exc:
-        console.print(f"[bold #C4453B]Failed: {exc}[/bold #C4453B]")
-        raise typer.Exit(1)
+        if "Backend unreachable" in str(exc):
+            from ..lib import offline_store
+            entry = offline_store.add_offline_note(run_id, note)
+        else:
+            entry = None
+        if not entry:
+            console.print(f"[bold #C4453B]Failed: {exc}[/bold #C4453B]")
+            raise typer.Exit(1)
     console.print(
         f"[#3FA796]Note added to {entry['run_id']} at "
-        f"{entry['created_at'][:19].replace('T', ' ')} UTC[/#3FA796]"
+        f"{(entry.get('created_at') or '')[:19].replace('T', ' ')} UTC[/#3FA796]"
     )
 
 
@@ -47,8 +53,12 @@ def list_notes(run_id: str = typer.Argument(..., help="Run whose notes to show")
     try:
         notes = api_client.notes_list(run_id)
     except api_client.APIError as exc:
-        console.print(f"[bold #C4453B]Failed: {exc}[/bold #C4453B]")
-        raise typer.Exit(1)
+        if "Backend unreachable" in str(exc):
+            from ..lib import offline_store
+            notes = offline_store.get_offline_notes(run_id) or []
+        else:
+            console.print(f"[bold #C4453B]Failed: {exc}[/bold #C4453B]")
+            raise typer.Exit(1)
     if not notes:
         console.print(f"[dim]No notes for {run_id}.[/dim]")
         return
@@ -56,5 +66,5 @@ def list_notes(run_id: str = typer.Argument(..., help="Run whose notes to show")
     table.add_column("When")
     table.add_column("Note")
     for n in notes:
-        table.add_row(n["created_at"][:19].replace("T", " "), n["note"])
+        table.add_row((n.get("created_at") or "")[:19].replace("T", " "), n["note"])
     console.print(table)

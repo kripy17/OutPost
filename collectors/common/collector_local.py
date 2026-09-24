@@ -7,6 +7,7 @@ and streams events directly to the OutPost backend.
 
 import argparse
 import datetime
+import hashlib
 import os
 import platform
 import socket
@@ -87,6 +88,134 @@ def get_active_connections() -> list[dict[str, Any]]:
     return conns
 
 
+DEFAULT_LINUX_FIM = [
+    "/etc/passwd",
+    "/etc/shadow",
+    "/etc/sudoers",
+    "/etc/crontab",
+    "/etc/hosts",
+    "/etc/ssh/sshd_config",
+]
+
+DEFAULT_WINDOWS_FIM = [
+    r"C:\Windows\System32\drivers\etc\hosts",
+]
+
+
+class FileIntegrityMonitor:
+    """Real-time File Integrity Monitor (FIM) for critical system and security files."""
+
+    def __init__(self, watch_paths: list[str] | None = None):
+        if watch_paths:
+            self.watch_paths = [Path(p) for p in watch_paths]
+        else:
+            plat = platform.system().lower()
+            if plat == "windows":
+                candidates = DEFAULT_WINDOWS_FIM
+            else:
+                candidates = DEFAULT_LINUX_FIM
+            self.watch_paths = [Path(p) for p in candidates]
+            # Also watch user's authorized_keys if present
+            auth_keys = Path.home() / ".ssh" / "authorized_keys"
+            if auth_keys.exists() and auth_keys not in self.watch_paths:
+                self.watch_paths.append(auth_keys)
+
+        self.state: dict[Path, dict[str, Any]] = {}
+        self._initialize_baseline()
+
+    def _hash_file(self, path: Path) -> str:
+        try:
+            h = hashlib.sha256()
+            with open(path, "rb") as f:
+                while chunk := f.read(65536):
+                    h.update(chunk)
+            return h.hexdigest()
+        except Exception:
+            return ""
+
+    def _initialize_baseline(self) -> None:
+        for p in self.watch_paths:
+            if p.is_file():
+                try:
+                    stat = p.stat()
+                    sha = self._hash_file(p)
+                    self.state[p] = {
+                        "exists": True,
+                        "mtime": stat.st_mtime,
+                        "size": stat.st_size,
+                        "sha256": sha,
+                    }
+                except Exception:
+                    self.state[p] = {"exists": False, "mtime": 0, "size": 0, "sha256": ""}
+            else:
+                self.state[p] = {"exists": False, "mtime": 0, "size": 0, "sha256": ""}
+
+    def poll_changes(self) -> list[dict[str, Any]]:
+        """Poll monitored paths and return file_modify, file_create, and file_delete events."""
+        events = []
+        for p in self.watch_paths:
+            prev = self.state.get(p, {"exists": False, "mtime": 0, "size": 0, "sha256": ""})
+            exists_now = p.is_file()
+
+            if not prev["exists"] and exists_now:
+                try:
+                    stat = p.stat()
+                    sha = self._hash_file(p)
+                    self.state[p] = {
+                        "exists": True,
+                        "mtime": stat.st_mtime,
+                        "size": stat.st_size,
+                        "sha256": sha,
+                    }
+                    events.append({
+                        "event_type": "file_create",
+                        "file_path": str(p),
+                        "file_name": p.name,
+                        "file_size": stat.st_size,
+                        "hash_sha256": sha,
+                        "details": f"Critical security file created: {p}",
+                    })
+                except Exception:
+                    pass
+
+            elif prev["exists"] and not exists_now:
+                self.state[p] = {"exists": False, "mtime": 0, "size": 0, "sha256": ""}
+                events.append({
+                    "event_type": "file_delete",
+                    "file_path": str(p),
+                    "file_name": p.name,
+                    "file_size": 0,
+                    "hash_sha256": prev.get("sha256", ""),
+                    "details": f"Critical security file deleted: {p}",
+                })
+
+            elif prev["exists"] and exists_now:
+                try:
+                    stat = p.stat()
+                    if stat.st_mtime != prev["mtime"] or stat.st_size != prev["size"]:
+                        sha = self._hash_file(p)
+                        if sha != prev["sha256"]:
+                            self.state[p] = {
+                                "exists": True,
+                                "mtime": stat.st_mtime,
+                                "size": stat.st_size,
+                                "sha256": sha,
+                            }
+                            events.append({
+                                "event_type": "file_modify",
+                                "file_path": str(p),
+                                "file_name": p.name,
+                                "file_size": stat.st_size,
+                                "hash_sha256": sha,
+                                "prev_sha256": prev.get("sha256", ""),
+                                "details": f"Critical security file modified: {p}",
+                            })
+                except Exception:
+                    pass
+
+        return events
+
+
 def main():
     parser = argparse.ArgumentParser(description="OutPost Universal Live Collector Agent")
     parser.add_argument("--backend", default=os.environ.get("OUTPOST_API_URL", "http://localhost:8001"), help="Backend URL")
@@ -94,13 +223,18 @@ def main():
     parser.add_argument("--run-id", default=None, help="Explicit run ID to ship events to")
     parser.add_argument("--interval", type=float, default=2.0, help="Polling interval in seconds")
     parser.add_argument("--timeout", type=int, default=0, help="Stop after N seconds (0 = run indefinitely)")
+    parser.add_argument("--fim-paths", default=None, help="Comma-separated file paths to monitor for integrity changes")
     args = parser.parse_args()
 
     run_id = args.run_id or resolve_live_run_id(args.backend, platform.system().lower())
     shipper = Shipper(backend_url=args.backend, run_id=run_id, host_id=args.host_id)
 
+    fim_watch = [p.strip() for p in args.fim_paths.split(",")] if args.fim_paths else None
+    fim = FileIntegrityMonitor(watch_paths=fim_watch)
+
     print(f"[*] OutPost Live Agent started on {args.host_id} ({platform.system()})")
     print(f"[*] Backend: {args.backend} | Target Run: {run_id}")
+    print(f"[*] File Integrity Monitoring (FIM): {len(fim.watch_paths)} critical paths registered")
 
     known_pids = {p["pid"] for p in get_process_snapshot()}
     known_conns: set[tuple[str, int, str, int]] = set()
@@ -159,6 +293,17 @@ def main():
                             "host_id": args.host_id,
                             "source": "live_host",
                         })
+
+            # Check File Integrity Monitoring (FIM)
+            fim_events = fim.poll_changes()
+            for fe in fim_events:
+                shipper.add({
+                    **fe,
+                    "timestamp": now_iso,
+                    "run_id": run_id,
+                    "host_id": args.host_id,
+                    "source": "live_host_fim",
+                })
 
             shipper.flush()
 

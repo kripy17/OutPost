@@ -11,6 +11,9 @@ Provides targeted on-demand forensic inspection queries against live endpoints:
 import os
 import re
 import socket
+import sys
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -298,4 +301,81 @@ def run_forensic_probe(probe_id: str) -> Dict[str, Any]:
         "total_items": len(findings),
         "anomalies_count": len(anomalies),
         "findings": findings,
+    }
+
+
+def collect_host_triage_pack(include_yara: bool = True, host_id: str = "local") -> Dict[str, Any]:
+    """Collect a comprehensive live endpoint forensic triage pack.
+
+    Compiles:
+    - Host metrics and kernel state
+    - All registered targeted forensic hunt probes
+    - Active process listing and execution causality
+    - Open sockets and network listening endpoints
+    - Memory-resident YARA signature sweep (optional)
+    """
+    from . import host_forensics
+
+    ts_now = datetime.now(timezone.utc)
+    triage_id = f"triage_{ts_now.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+
+    # 1. Host Metrics & Pulse
+    try:
+        metrics = host_forensics.get_current_system_metrics()
+    except Exception:
+        metrics = {"error": "metrics_unavailable"}
+
+    # 2. Live Process and Network Snapshot
+    try:
+        processes = host_forensics.get_live_processes()
+    except Exception:
+        processes = []
+
+    try:
+        sockets = host_forensics.get_live_sockets()
+    except Exception:
+        sockets = []
+
+    # 3. Execute all registered forensic hunt probes
+    probe_results: Dict[str, Any] = {}
+    total_anomalies = 0
+    for p_id in PROBE_REGISTRY:
+        try:
+            res = run_forensic_probe(p_id)
+            probe_results[p_id] = res
+            total_anomalies += res.get("anomalies_count", 0)
+        except Exception as e:
+            probe_results[p_id] = {"error": str(e), "anomalies_count": 0, "findings": []}
+
+    # 4. Volatile memory / executable binary YARA inspection
+    yara_results: Dict[str, Any] = {"scanned": False, "threat_count": 0, "threats": []}
+    if include_yara:
+        try:
+            yara_results = host_forensics.scan_live_memory_yara(limit_pids=50)
+            yara_results["scanned"] = True
+        except Exception as e:
+            yara_results = {"scanned": False, "error": str(e), "threat_count": 0, "threats": []}
+
+    threat_count = yara_results.get("threat_count", 0)
+    severity = "critical" if (threat_count > 0 or total_anomalies >= 3) else ("suspicious" if total_anomalies > 0 else "clean")
+
+    return {
+        "triage_id": triage_id,
+        "collected_at": ts_now.isoformat(),
+        "host_id": host_id,
+        "hostname": socket.gethostname(),
+        "platform": sys.platform,
+        "metrics": metrics,
+        "summary": {
+            "severity": severity,
+            "total_processes": len(processes),
+            "total_sockets": len(sockets),
+            "total_probes_executed": len(PROBE_REGISTRY),
+            "probe_anomalies_count": total_anomalies,
+            "yara_threats_count": threat_count,
+        },
+        "probe_results": probe_results,
+        "active_processes": processes[:100],
+        "active_sockets": sockets[:100],
+        "memory_yara": yara_results,
     }

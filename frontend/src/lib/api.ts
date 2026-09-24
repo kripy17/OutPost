@@ -1533,6 +1533,21 @@ export async function runLiveSimulation(scenarioId: string): Promise<{
   process_tree: any[];
   dropped_artifacts?: import("../types").DroppedArtifactItem[];
   created_files?: Array<{ name: string; path?: string; size_bytes?: number }>;
+  threat_verdict?: string;
+  threat_score?: number;
+  threat_family?: string;
+  detection_efficacy_pct?: number;
+  syscalls?: Array<{ pid?: number; syscall: string; arguments: string; result: string; category: string }>;
+  sinkhole_traffic?: Array<{ type: string; target: string; intercepted_response?: string; action?: string }>;
+  mitre_matrix?: Array<{ id: string; name?: string; detected: boolean; severity?: string }>;
+  actionable_iocs?: {
+    ips: string[];
+    domains: string[];
+    firewall_rules: string[];
+    dropped_count: number;
+    threat_family?: string;
+  };
+  events?: any[];
 }> {
   return post<any>("/sandbox/simulate/live", { playbook_id: scenarioId });
 }
@@ -1783,6 +1798,23 @@ export async function getTechniqueValidationMatrix(): Promise<import("../types")
 /** Run batch continuous detection validation sweep (POST /sandbox/techniques/validate-matrix). */
 export async function validateTechniqueMatrix(payload?: { tactic?: string; platform?: string }): Promise<any> {
   return post<any>("/sandbox/techniques/validate-matrix", payload || {});
+}
+
+/** Execute automated SOAR Incident Response Playbook on an investigation (POST /investigations/{id}/playbooks/{playbook_id}/execute). */
+export async function executeIncidentPlaybook(
+  investigationId: string,
+  playbookId: string,
+  payload?: { auto_contain?: boolean; run_probes?: boolean; target_host?: string }
+): Promise<any> {
+  return post<any>(
+    `/investigations/${encodeURIComponent(investigationId)}/playbooks/${encodeURIComponent(playbookId)}/execute`,
+    payload || {}
+  );
+}
+
+/** Acquire Live Host Forensic Triage Pack (POST /system/forensics/triage). */
+export async function acquireHostTriagePack(includeYara: boolean = true): Promise<any> {
+  return post<any>(`/system/forensics/triage?include_yara=${includeYara ? "true" : "false"}`, {});
 }
 
 

@@ -184,8 +184,62 @@ class Shipper:
                 timeout=5,
             )
             resp.raise_for_status()
+            try:
+                data = resp.json() if hasattr(resp, "json") and callable(resp.json) else {}
+                isolated = bool(data.get("isolated", False))
+                try:
+                    from . import containment
+                except ImportError:
+                    import containment
+                containment.apply_containment_state(isolated, self.backend_url)
+
+                pending_actions = data.get("pending_actions") or []
+                if pending_actions:
+                    self._execute_pending_actions(pending_actions)
+            except Exception as e_cont:
+                log.warning("Containment evaluation error: %s", e_cont)
         except Exception as exc:
             log.warning("Heartbeat failed: %s", exc)
+
+    def _execute_pending_actions(self, actions: list[dict]) -> None:
+        """Execute queued remediation actions (e.g. process termination) and acknowledge completion."""
+        import signal
+        executed_ids = []
+        for act in actions:
+            action_type = act.get("action")
+            action_id = act.get("action_id")
+            if action_type == "kill_process":
+                pid = act.get("pid")
+                proc_name = act.get("process_name", "")
+                if pid:
+                    try:
+                        pid_int = int(pid)
+                        if pid_int > 1 and pid_int != os.getpid():
+                            try:
+                                os.kill(pid_int, signal.SIGTERM)
+                            except AttributeError:
+                                import subprocess
+                                subprocess.run(["taskkill", "/F", "/PID", str(pid_int)], capture_output=True, timeout=5)
+                            log.info("Terminated process PID %d (%s) as instructed by OutPost controller", pid_int, proc_name)
+                    except (ProcessLookupError, OSError) as err:
+                        log.debug("Process PID %s could not be terminated: %s", pid, err)
+                    except Exception as err:
+                        log.warning("Failed executing kill_process on PID %s: %s", pid, err)
+            if action_id:
+                executed_ids.append(action_id)
+
+        if executed_ids:
+            try:
+                ack_resp = requests.post(
+                    f"{self.backend_url}/agents/{quote(self.host_id, safe='')}/actions/ack",
+                    json={"action_ids": executed_ids},
+                    headers=_auth_headers(),
+                    timeout=5,
+                )
+                ack_resp.raise_for_status()
+            except Exception as ack_err:
+                log.warning("Failed to acknowledge agent actions %s: %s", executed_ids, ack_err)
+
 
     def ship_snapshot(self, platform: str | None = None) -> dict | None:
         """POST the live system snapshot (processes + listening ports) for this

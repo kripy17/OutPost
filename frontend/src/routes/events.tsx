@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
+import { LiveTriageModal } from "../components/LiveTriageModal";
 import {
   controlProcessXRay,
   getBehavioralExplanations,
@@ -14,6 +15,8 @@ import {
 } from "../lib/api";
 import type { HostPulseMetrics, XRayProcessItem, XRaySocketItem } from "../types";
 import { parsePids } from "./eventsHelpers";
+import { useEventStream } from "../lib/useEventStream";
+import { playSocAlertSound } from "../lib/sound";
 
 function formatUptime(seconds?: number): string {
   if (!seconds || seconds <= 0) return "Just started";
@@ -46,7 +49,20 @@ export default function EventsPage() {
 
   // Live polling controls
   const [isLive, setIsLive] = useState(true);
+  const [bufferedCount, setBufferedCount] = useState(0);
   const [pollInterval, setPollInterval] = useState<number>(2000);
+  const [showTriageModal, setShowTriageModal] = useState(false);
+
+  useEventStream((alert) => {
+    if (alert && alert.severity === "malicious") {
+      playSocAlertSound("malicious");
+    } else if (alert && alert.severity === "suspicious") {
+      playSocAlertSound("suspicious");
+    }
+    if (!isLive) {
+      setBufferedCount((c) => c + 1);
+    }
+  });
   const [searchFilter, setSearchFilter] = useState(queryParam || (initialPids.length > 0 ? String(initialPids[0]) : ""));
   const [selectedQuickFilter, setSelectedQuickFilter] = useState<"all" | "high_cpu" | "high_mem" | "unmanaged" | "net">("all");
 
@@ -290,7 +306,10 @@ export default function EventsPage() {
 
           {/* Polling Toggle */}
           <button
-            onClick={() => setIsLive(!isLive)}
+            onClick={() => {
+              if (!isLive) setBufferedCount(0);
+              setIsLive(!isLive);
+            }}
             className={`press flex items-center gap-1.5 rounded-xl border px-3 py-1.5 font-mono text-xs font-semibold transition ${
               isLive
                 ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20"
@@ -299,7 +318,7 @@ export default function EventsPage() {
             title={isLive ? "Pause real-time updates" : "Resume live telemetry polling"}
           >
             <span className={`h-2 w-2 rounded-full ${isLive ? "bg-emerald-400 animate-pulse" : "bg-amber-400"}`} />
-            <span>{isLive ? "Live" : "Paused"}</span>
+            <span>{isLive ? "Live" : bufferedCount > 0 ? `Paused (${bufferedCount} new)` : "Paused"}</span>
           </button>
 
           {/* Polling Interval Selector */}
@@ -323,6 +342,16 @@ export default function EventsPage() {
           >
             <Icon name="refresh" size={13} className={isSnapshotFetching ? "animate-spin text-accent" : ""} />
             <span className="hidden sm:inline">Refresh</span>
+          </button>
+
+          {/* Live Forensic Triage Pack */}
+          <button
+            onClick={() => setShowTriageModal(true)}
+            className="press flex items-center gap-1.5 rounded-xl border border-cyan-500/40 bg-cyan-500/10 px-3 py-1.5 font-mono text-xs font-bold text-cyan-400 hover:bg-cyan-500/20 transition shadow-xs"
+            title="Acquire live endpoint forensic triage pack"
+          >
+            <Icon name="zap" size={14} className="text-cyan-400" />
+            <span>⚡ Live Triage Pack</span>
           </button>
         </div>
       </header>
@@ -1132,6 +1161,13 @@ export default function EventsPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {showTriageModal && (
+        <LiveTriageModal
+          onClose={() => setShowTriageModal(false)}
+          hostId={snapshot?.metrics?.hostname || "local"}
+        />
       )}
     </div>
   );

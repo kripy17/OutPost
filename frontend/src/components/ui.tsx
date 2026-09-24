@@ -47,6 +47,7 @@ export function Panel({
   bodyClassName = "",
   pad = true,
   id,
+  tactical = false,
 }: {
   title?: ReactNode;
   kicker?: string;
@@ -56,9 +57,10 @@ export function Panel({
   bodyClassName?: string;
   pad?: boolean;
   id?: string;
+  tactical?: boolean;
 }) {
   return (
-    <section id={id} className={`panel ${className}`}>
+    <section id={id} className={`panel ${tactical ? "hud-card hud-corner" : ""} ${className}`}>
       {(title || kicker || right) && (
         <header className="panel-header">
           <div className="min-w-0">
@@ -299,3 +301,53 @@ export function ProgressBar({
   );
 }
 
+/** Tactical Defense Condition Indicator (DEFCON / THREATCON) */
+export function DefconBadge({
+  level,
+  className = "",
+}: {
+  level: "DEFCON-1" | "DEFCON-2" | "DEFCON-3" | "DEFCON-4" | "DEFCON-5" | "NOMINAL" | "GUARDED" | "ELEVATED";
+  className?: string;
+}) {
+  const isSevere = level === "DEFCON-1" || level === "ELEVATED";
+  const isGuarded = level === "DEFCON-2" || level === "DEFCON-3" || level === "GUARDED";
+
+  const toneClass = isSevere
+    ? "border-risk-malicious/40 bg-risk-malicious/10 text-risk-malicious"
+    : isGuarded
+      ? "border-risk-suspicious/40 bg-risk-suspicious/10 text-risk-suspicious"
+      : "border-risk-clean/40 bg-risk-clean/10 text-risk-clean";
+
+  const dotClass = isSevere
+    ? "bg-risk-malicious animate-ping"
+    : isGuarded
+      ? "bg-risk-suspicious"
+      : "bg-risk-clean";
+
+  return (
+    <div
+      className={`inline-flex items-center gap-2 rounded border px-2.5 py-1 font-mono text-[10px] font-bold tracking-widest uppercase ${toneClass} ${className}`}
+    >
+      <span className="relative flex h-2 w-2">
+        <span className={`absolute inline-flex h-full w-full rounded-full opacity-75 ${dotClass}`} />
+        <span className={`relative inline-flex h-2 w-2 rounded-full ${isSevere ? "bg-risk-malicious" : isGuarded ? "bg-risk-suspicious" : "bg-risk-clean"}`} />
+      </span>
+      <span>{level}</span>
+    </div>
+  );
+}
+
+/** Tactical Frame with laser corner accents */
+export function TacticalFrame({
+  children,
+  className = "",
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={`hud-card hud-corner p-4 ${className}`}>
+      {children}
+    </div>
+  );
+}

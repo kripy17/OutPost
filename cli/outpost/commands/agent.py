@@ -588,6 +588,81 @@ def unisolate(
         raise typer.Exit(1)
 
 
+@app.command("kill-process")
+def kill_process(
+    host_id: str = typer.Argument(..., help="Host ID of target agent"),
+    pid: int = typer.Option(None, "--pid", "-p", help="Process ID to terminate"),
+    process_name: str = typer.Option("", "--process-name", "-n", help="Process name (e.g. malware.exe)"),
+):
+    """Queue a remote process termination action on an agent host."""
+    from ..lib import api_client
+
+    if not pid and not process_name:
+        console.print("[bold #C4453B]Either --pid or --process-name must be provided.[/bold #C4453B]")
+        raise typer.Exit(1)
+
+    try:
+        res = api_client.kill_host_process(host_id, pid=pid, process_name=process_name)
+        action = res.get("action", {})
+        console.print(
+            f"[bold #3FA796]Queued process kill on host '{host_id}'[/bold #3FA796] — "
+            f"PID: {action.get('pid') or '-'} · Name: {action.get('process_name') or '-'} "
+            f"(Action ID: {action.get('action_id', '-')})"
+        )
+    except Exception as exc:
+        console.print(f"[bold #C4453B]Failed to queue process kill: {exc}[/bold #C4453B]")
+        raise typer.Exit(1)
+
+
+@app.command("containment")
+def containment_status(
+    host_id: str = typer.Argument(..., help="Host ID to inspect"),
+):
+    """View active network isolation status and pending remediation actions for a host."""
+    from rich.panel import Panel
+    from rich.table import Table
+    from ..lib import api_client
+
+    try:
+        data = api_client.get_host_containment(host_id)
+    except Exception as exc:
+        console.print(f"[bold #C4453B]Failed to fetch containment status: {exc}[/bold #C4453B]")
+        raise typer.Exit(1)
+
+    iso = data.get("isolated", False)
+    iso_badge = "[bold red]ISOLATED (QUARANTINED)[/bold red]" if iso else "[bold green]NORMAL (ONLINE)[/bold green]"
+    console.print(Panel(
+        f"Host: [bold]{host_id}[/bold]\n"
+        f"Status: {iso_badge}\n"
+        f"Isolated At: {data.get('isolated_at') or 'N/A'}\n"
+        f"Isolated By: {data.get('isolated_by') or 'N/A'}\n"
+        f"Reason: {data.get('reason') or 'N/A'}",
+        title="[bold white]Endpoint Containment Status[/bold white]",
+        border_style="red" if iso else "green",
+    ))
+
+    pending = data.get("pending_actions", [])
+    if pending:
+        table = Table(title=f"Pending Remediation Actions ({len(pending)})", border_style="dim")
+        table.add_column("Action", style="bold yellow")
+        table.add_column("PID", style="cyan")
+        table.add_column("Process Name")
+        table.add_column("Requested By", style="dim")
+        table.add_column("Queued At", style="dim")
+        for p in pending:
+            table.add_row(
+                p.get("action", "-"),
+                str(p.get("pid") or "-"),
+                p.get("process_name") or "-",
+                p.get("requested_by") or "-",
+                (p.get("requested_at") or "")[:19].replace("T", " "),
+            )
+        console.print(table)
+    else:
+        console.print("[dim]No pending remediation actions queued for this host.[/dim]")
+
+
+
 @app.command("setup")
 def setup(
     platform_name: str = typer.Option(None, "--platform", "-p", help="windows | linux | macos"),

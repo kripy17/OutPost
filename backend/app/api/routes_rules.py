@@ -398,7 +398,7 @@ def reset_log_patterns() -> None:
 
 @router.delete("/rules/reset", response_model=None)
 def factory_reset_rules(request: Request) -> dict:
-    """Factory reset of the whole operational rule surface — one atomic call.
+    """Factory reset of the whole operational rule surface — a single consolidated transaction.
 
     Clears every tuning override (rule_tuning), every suppression
     (rule_suppressions), and the operator-edited pattern tables + FP

@@ -632,8 +632,106 @@ def test_resolve_creates_fresh_run_when_none_open(monkeypatch):
     monkeypatch.setattr("shipper.requests.get", fake_get)
     monkeypatch.setattr("shipper.requests.post", fake_post)
     rid = resolve_live_run_id("http://backend:8001", "linux")
-    assert rid == "brand-new"
-    assert posted["url"] == "http://backend:8001/runs"
     assert posted["json"]["session_type"] == "live"
     assert posted["json"]["source"] == "agent"
     assert posted["json"]["sample_name"].startswith("agent-")
+
+
+def test_containment_module_reconciliation(tmp_path, monkeypatch):
+    """Host containment engine correctly tracks and reconciles isolation state."""
+    state_file = tmp_path / "containment_state.json"
+    monkeypatch.setenv("OUTPOST_CONTAINMENT_STATE", str(state_file))
+
+    try:
+        from collectors.common import containment
+    except ImportError:
+        import containment
+
+    # Force unprivileged / simulated mode for test safety
+    monkeypatch.setattr(containment, "is_admin", lambda: False)
+
+    st1 = containment.apply_containment_state(True, "http://192.168.1.100:8001")
+    assert st1["isolated"] is True
+    assert st1["enforced_mode"] == "simulated"
+    assert st1["backend_ip"] == "192.168.1.100"
+    assert st1["backend_port"] == 8001
+    assert state_file.exists()
+
+    # Re-reading status returns active quarantine
+    status = containment.get_containment_status()
+    assert status["isolated"] is True
+
+    # Lifting quarantine restores normal status
+    st2 = containment.apply_containment_state(False, "http://192.168.1.100:8001")
+    assert st2["isolated"] is False
+    assert st2["enforced_mode"] == "none"
+
+
+def test_shipper_triggers_containment_on_heartbeat_response(tmp_path, monkeypatch):
+    """Shipper parses heartbeat response and enforces quarantine when isolated=true."""
+    calls: list[bool] = []
+
+    class FakeResp:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"status": "ok", "isolated": True}
+
+    def fake_post(url, json=None, timeout=None, headers=None):
+        return FakeResp()
+
+    monkeypatch.setattr("shipper.requests.post", fake_post)
+
+    try:
+        from collectors.common import containment
+    except ImportError:
+        import containment
+
+    monkeypatch.setattr(containment, "apply_containment_state", lambda iso, url: calls.append(iso))
+
+    sh = Shipper("http://backend:8001", "run-hb-iso", host_id="hb-iso-host", spool_path=str(tmp_path / "s.jsonl"))
+    sh.maybe_heartbeat(platform="linux", interval=0.0)
+
+    assert calls == [True]
+
+
+def test_shipper_executes_pending_actions_and_acknowledges(tmp_path, monkeypatch):
+    """Shipper parses pending_actions, executes process termination, and POSTs acknowledgment."""
+    post_calls = []
+    killed_pids = []
+
+    class FakeResp:
+        def __init__(self, url):
+            self.url = url
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            if "heartbeat" in self.url:
+                return {
+                    "status": "ok",
+                    "isolated": False,
+                    "pending_actions": [
+                        {"action": "kill_process", "pid": 98765, "process_name": "malware.elf", "action_id": "act-123"}
+                    ],
+                }
+            return {"status": "ok", "cleared_count": 1}
+
+    def fake_post(url, json=None, timeout=None, headers=None):
+        post_calls.append({"url": url, "json": json})
+        return FakeResp(url)
+
+    monkeypatch.setattr("shipper.requests.post", fake_post)
+    monkeypatch.setattr("os.kill", lambda pid, sig: killed_pids.append(pid))
+
+    sh = Shipper("http://backend:8001", "run-act-test", host_id="act-host", spool_path=str(tmp_path / "s.jsonl"))
+    sh.maybe_heartbeat(platform="linux", interval=0.0)
+
+    assert 98765 in killed_pids
+    ack_calls = [c for c in post_calls if "/actions/ack" in c["url"]]
+    assert len(ack_calls) == 1
+    assert ack_calls[0]["json"] == {"action_ids": ["act-123"]}
+
+

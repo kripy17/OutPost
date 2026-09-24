@@ -11,6 +11,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   useEffect,
+  useMemo,
   useState,
   type FocusEvent,
   type MouseEvent,
@@ -18,7 +19,7 @@ import {
 import { NavLink } from "react-router-dom";
 import CommandPalette from "./CommandPalette";
 import { ThemePalettePopover } from "./ThemePalettePopover";
-import { getHealth, getMeta, getPlatform, getRecentAlerts, getRuns } from "../lib/api";
+import { getAgents, getAlertQueue, getHealth, getMeta, getPlatform, getRecentAlerts, getRuns, listInvestigations } from "../lib/api";
 import { useEventStream } from "../lib/useEventStream";
 import { Icon, IconMenu, type IconName } from "./Icon";
 import { platformIconName } from "./iconMeta";
@@ -106,43 +107,83 @@ function Mark() {
 
 /* ── Nav model ─────────────────────────────────────────────────────────── */
 
-interface NavItem {
+export interface NavItem {
   to: string;
   label: string;
   iconName: IconName;
   end?: boolean;
+  badge?: number | string | null;
+  badgeTone?: "malicious" | "accent" | "clean";
 }
 
-const GROUPS: { label: string; links: NavItem[] }[] = [
-  {
-    label: "Live Operations",
-    links: [
-      { to: "/", label: "Overview", iconName: "grid", end: true },
-      { to: "/events", label: "Host X-Ray & Monitor", iconName: "box" },
-      { to: "/findings", label: "Incident Findings", iconName: "alert" },
-    ],
-  },
-  {
-    label: "Sandbox & Lab",
-    links: [
-      { to: "/samples", label: "Sample Vault & Detonations", iconName: "box" },
-      { to: "/monitor", label: "Simulation Lab", iconName: "activity" },
-    ],
-  },
-  {
-    label: "Detection & Intel",
-    links: [
-      { to: "/rules", label: "Detection Engineering", iconName: "shield" },
-      { to: "/campaigns", label: "Threat Intelligence", iconName: "flag" },
-    ],
-  },
-  {
-    label: "Administration",
-    links: [
-      { to: "/settings", label: "Settings & Audit", iconName: "sliders" },
-    ],
-  },
-];
+export function getNavigationGroups(
+  openAlerts = 0,
+  activeCases = 0,
+  onlineAgents = 0,
+): { label: string; links: NavItem[] }[] {
+  return [
+    {
+      label: "Live Operations",
+      links: [
+        { to: "/", label: "Overview", iconName: "grid", end: true },
+        { to: "/events", label: "Host X-Ray & Pulse", iconName: "activity" },
+        {
+          to: "/findings",
+          label: "Incident Findings",
+          iconName: "alert",
+          badge: openAlerts > 0 ? openAlerts : null,
+          badgeTone: "malicious",
+        },
+        {
+          to: "/investigations",
+          label: "Incident Cases",
+          iconName: "shield",
+          badge: activeCases > 0 ? activeCases : null,
+          badgeTone: "accent",
+        },
+      ],
+    },
+    {
+      label: "Endpoint Fleet",
+      links: [
+        {
+          to: "/agents",
+          label: "Sensor Agents",
+          iconName: "terminal",
+          badge: onlineAgents > 0 ? `${onlineAgents} on` : null,
+          badgeTone: "clean",
+        },
+        { to: "/footprint", label: "Digital Footprint", iconName: "globe" },
+        { to: "/watchlist", label: "Threat Watchlist", iconName: "star" },
+      ],
+    },
+    {
+      label: "Malware & Lab",
+      links: [
+        { to: "/samples", label: "Sample Vault", iconName: "box" },
+        { to: "/monitor", label: "Simulation Lab", iconName: "play" },
+        { to: "/history", label: "Detonation Runs", iconName: "clock" },
+      ],
+    },
+    {
+      label: "Detection & Intel",
+      links: [
+        { to: "/rules", label: "Detection Rules", iconName: "sliders" },
+        { to: "/coverage", label: "ATT&CK Coverage", iconName: "target" },
+        { to: "/campaigns", label: "Threat Campaigns", iconName: "flag" },
+      ],
+    },
+    {
+      label: "Administration",
+      links: [
+        { to: "/audit", label: "Security Audit", iconName: "list" },
+        { to: "/settings", label: "Settings & Air-Gap", iconName: "sliders" },
+      ],
+    },
+  ];
+}
+
+export const GROUPS = getNavigationGroups(0, 0, 0);
 
 /* ── Status cluster — docked in the rail footer ────────────────────────── */
 
@@ -312,7 +353,15 @@ function CommandButton({
 
 /* ── Mobile header ─────────────────────────────────────────────────────── */
 
-function MobileMenu({ open, onClose }: { open: boolean; onClose: () => void }) {
+function MobileMenu({
+  open,
+  onClose,
+  groups,
+}: {
+  open: boolean;
+  onClose: () => void;
+  groups: { label: string; links: NavItem[] }[];
+}) {
   const customTitle = useCustomTitle();
   if (!open) return null;
   return (
@@ -328,7 +377,7 @@ function MobileMenu({ open, onClose }: { open: boolean; onClose: () => void }) {
           </button>
         </div>
         <nav className="space-y-5" aria-label="Mobile">
-          {GROUPS.map((g) => (
+          {groups.map((g) => (
             <div key={g.label}>
               <p className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-text-faint">{g.label}</p>
               <div className="space-y-0.5">
@@ -345,7 +394,20 @@ function MobileMenu({ open, onClose }: { open: boolean; onClose: () => void }) {
                     }
                   >
                     <Icon name={l.iconName} size={16} />
-                    {l.label}
+                    <span>{l.label}</span>
+                    {l.badge !== undefined && l.badge !== null && (
+                      <span
+                        className={`ml-auto rounded-full px-1.5 py-0.5 font-mono text-[10px] font-semibold leading-none ${
+                          l.badgeTone === "malicious"
+                            ? "bg-risk-malicious/15 text-risk-malicious border border-risk-malicious/30"
+                            : l.badgeTone === "clean"
+                              ? "bg-risk-clean/15 text-risk-clean border border-risk-clean/30"
+                              : "bg-accent/15 text-accent border border-accent/30"
+                        }`}
+                      >
+                        {l.badge}
+                      </span>
+                    )}
                   </NavLink>
                 ))}
               </div>
@@ -434,17 +496,52 @@ export default function Nav() {
 
   const customTitle = useCustomTitle();
 
+  const alertQueue = useQuery({
+    queryKey: ["alert-queue", "nav"],
+    queryFn: () => getAlertQueue({ status: "open", limit: 1 }),
+    refetchInterval: 15_000,
+  });
+  const openAlerts = alertQueue.data?.open ?? alertQueue.data?.total ?? 0;
+
+  const investigations = useQuery({
+    queryKey: ["investigations", "nav"],
+    queryFn: () => listInvestigations(),
+    refetchInterval: 20_000,
+  });
+  const activeCases = investigations.data?.investigations
+    ? investigations.data.investigations.filter((inv) => inv.status !== "closed").length
+    : (investigations.data?.total ?? 0);
+
+  const fleet = useQuery({
+    queryKey: ["fleet-agents", "nav"],
+    queryFn: () => getAgents(),
+    refetchInterval: 30_000,
+  });
+  const onlineAgents = fleet.data?.online ?? fleet.data?.agents?.filter((a) => Boolean(a.online)).length ?? 0;
+
+  const groups = useMemo(
+    () => getNavigationGroups(openAlerts, activeCases, onlineAgents),
+    [openAlerts, activeCases, onlineAgents],
+  );
+
   return (
     <>
       {/* Desktop — left rail (collapsible to an icon-only activity bar) */}
       <aside
-        className={`fixed inset-y-0 left-0 z-30 hidden w-[var(--rail-w)] flex-col border-r border-border-subtle bg-bg-surface/70 backdrop-blur-md transition-[width] duration-200 ease-out lg:flex ${
+        className={`fixed inset-y-0 left-0 z-30 hidden w-[var(--rail-w)] flex-col border-r border-border-subtle bg-bg-surface/85 backdrop-blur-xl transition-[width] duration-200 ease-out print:hidden lg:flex shadow-[4px_0_24px_rgba(0,0,0,0.35)] ${
           railCollapsed ? "items-center" : ""
         }`}
       >
-        <div className={`flex w-full items-center gap-2.5 pb-2 ${railCollapsed ? "flex-col gap-1.5 px-0 pb-0 pt-4" : "px-4 pt-5"}`}>
-          <Mark />
-          {!railCollapsed && <span className="text-[15px] font-bold tracking-tight text-text-primary">{customTitle}</span>}
+        <div className={`flex w-full items-center gap-2.5 pb-2.5 ${railCollapsed ? "flex-col gap-1.5 px-0 pb-0 pt-4" : "px-4 pt-5"}`}>
+          <div className="flex items-center gap-2.5">
+            <Mark />
+            {!railCollapsed && (
+              <div className="flex flex-col">
+                <span className="text-[14px] font-bold tracking-tight text-text-primary">{customTitle}</span>
+                <span className="font-mono text-[9px] font-semibold tracking-wider text-accent/80 uppercase">EDR // CONSOLE v7.4</span>
+              </div>
+            )}
+          </div>
           <button
             onClick={toggleRail}
             aria-label={railCollapsed ? "Expand rail" : "Collapse rail"}
@@ -460,51 +557,96 @@ export default function Nav() {
 
         <nav
           className={`mt-2 flex-1 overflow-y-auto pb-4 ${
-            railCollapsed ? "w-full space-y-1 px-2" : "space-y-5 px-3"
+            railCollapsed ? "w-full space-y-1 px-2" : "space-y-4 px-3"
           }`}
           aria-label="Primary"
         >
-          {GROUPS.map((group, i) => (
+          {groups.map((group, i) => (
             <div key={group.label} className={railCollapsed && i > 0 ? "border-t border-border-subtle/70 pt-1.5" : ""}>
               {!railCollapsed && (
-                <p className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-text-faint">{group.label}</p>
+                <p className="flex items-center gap-1.5 px-2 pb-1.5 font-mono text-[10px] font-bold uppercase tracking-wider text-text-faint">
+                  <span className="text-accent/60 font-medium">{`[0${i + 1}]`}</span>
+                  <span>{group.label}</span>
+                </p>
               )}
               <div className="space-y-0.5">
-                {group.links.map((link) => (
-                  <NavLink
-                    key={link.to}
-                    to={link.to}
-                    end={link.end}
-                    aria-label={railCollapsed ? link.label : undefined}
-                    {...(railCollapsed ? makeTip(link.label) : {})}
-                    className={({ isActive }) =>
-                      `relative flex items-center gap-2.5 rounded-lg transition-colors duration-150 ${railCollapsed ? "justify-center px-0 py-2" : "px-2 py-1.5 text-[13px]"} ${
-                        isActive
-                          ? "bg-accent/15 font-semibold text-accent"
-                          : "font-medium text-text-muted hover:bg-bg-elevated hover:text-text-primary"
-                      }`
-                    }
-                  >
-                    {({ isActive }) => (
-                      <>
-                        {/* Collapsed: a violet indicator bar marks the active page. */}
-                        {railCollapsed && isActive && (
-                          <span className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-full bg-accent" aria-hidden />
-                        )}
-                        <span className="flex h-6 w-6 shrink-0 items-center justify-center">
-                          <Icon name={link.iconName} size={railCollapsed ? 18 : 16} />
-                        </span>
-                        {!railCollapsed && link.label}
-                      </>
-                    )}
-                  </NavLink>
-                ))}
+                {group.links.map((link) => {
+                  const tipText = link.badge !== undefined && link.badge !== null ? `${link.label} (${link.badge})` : link.label;
+                  return (
+                    <NavLink
+                      key={link.to}
+                      to={link.to}
+                      end={link.end}
+                      aria-label={railCollapsed ? tipText : undefined}
+                      {...(railCollapsed ? makeTip(tipText) : {})}
+                      className={({ isActive }) =>
+                        `relative flex items-center gap-2.5 rounded-lg transition-all duration-150 ${railCollapsed ? "justify-center px-0 py-2" : "px-2.5 py-1.5 text-[13px]"} ${
+                          isActive
+                            ? "bg-accent/15 font-semibold text-text-primary border-l-2 border-accent shadow-[inset_2px_0_8px_rgba(99,102,241,0.25)]"
+                            : "font-medium text-text-muted hover:bg-bg-elevated hover:text-text-primary border-l-2 border-transparent"
+                        }`
+                      }
+                    >
+                      {({ isActive }) => (
+                        <>
+                          {/* Collapsed: an accent indicator bar marks the active page. */}
+                          {railCollapsed && isActive && (
+                            <span className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-full bg-accent shadow-[0_0_8px_var(--accent)]" aria-hidden />
+                          )}
+                          <span className="relative flex h-6 w-6 shrink-0 items-center justify-center">
+                            <Icon name={link.iconName} size={railCollapsed ? 18 : 16} />
+                            {railCollapsed && link.badge !== undefined && link.badge !== null && (
+                              <span
+                                className={`absolute -top-1 -right-1 h-2 w-2 rounded-full ring-2 ring-bg-surface ${
+                                  link.badgeTone === "malicious"
+                                    ? "bg-risk-malicious shadow-[0_0_6px_var(--risk-malicious)]"
+                                    : link.badgeTone === "clean"
+                                      ? "bg-risk-clean shadow-[0_0_6px_var(--risk-clean)]"
+                                      : "bg-accent shadow-[0_0_6px_var(--accent)]"
+                                }`}
+                                aria-hidden
+                              />
+                            )}
+                          </span>
+                          {!railCollapsed && (
+                            <>
+                              <span className="truncate">{link.label}</span>
+                              {link.badge !== undefined && link.badge !== null && (
+                                <span
+                                  className={`ml-auto rounded-full px-1.5 py-0.5 font-mono text-[10px] font-bold leading-none ${
+                                    link.badgeTone === "malicious"
+                                      ? "bg-risk-malicious/15 text-risk-malicious border border-risk-malicious/30 shadow-[0_0_6px_rgba(239,68,68,0.2)]"
+                                      : link.badgeTone === "clean"
+                                        ? "bg-risk-clean/15 text-risk-clean border border-risk-clean/30 shadow-[0_0_6px_rgba(16,185,129,0.2)]"
+                                        : "bg-accent/15 text-accent border border-accent/30 shadow-[0_0_6px_rgba(99,102,241,0.2)]"
+                                  }`}
+                                >
+                                  {link.badge}
+                                </span>
+                              )}
+                            </>
+                          )}
+                        </>
+                      )}
+                    </NavLink>
+                  );
+                })}
               </div>
             </div>
           ))}
         </nav>
 
         <footer className={`w-full border-t border-border-subtle py-3 ${railCollapsed ? "flex flex-col items-center gap-2 px-2" : "space-y-2 px-3"}`}>
+          {/* Tactical Operator Station Tag */}
+          {!railCollapsed && (
+            <div className="flex items-center justify-between px-1 py-0.5 font-mono text-[10px] text-text-faint">
+              <span className="flex items-center gap-1.5">
+                <span className="h-1.5 w-1.5 rounded-full bg-risk-clean animate-pulse" />
+                <span>OP: SOC-L3</span>
+              </span>
+              <span className="text-text-muted/60">STATION 04</span>
+            </div>
+          )}
           <CommandButton onClick={openPalette} collapsed={railCollapsed} makeTip={railCollapsed ? makeTip : undefined} />
           <HostOsChip collapsed={railCollapsed} makeTip={railCollapsed ? makeTip : undefined} />
           <div className={`flex items-center gap-2 rounded-lg border border-border-subtle ${railCollapsed ? "flex-col bg-bg-elevated/30 p-1.5" : "bg-bg-elevated/30 px-2.5 py-2"}`}>
@@ -536,7 +678,7 @@ export default function Nav() {
         </div>
       </header>
 
-      <MobileMenu open={mobileOpen} onClose={() => setMobileOpen(false)} />
+      <MobileMenu open={mobileOpen} onClose={() => setMobileOpen(false)} groups={groups} />
       {paletteOpen && <CommandPalette onClose={() => setPaletteOpen(false)} />}
 
       {/* Positioned rail tooltip — lives at the root so nothing clips it. */}

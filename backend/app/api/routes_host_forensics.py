@@ -7,7 +7,8 @@ Provides API routes for:
 - GET  /system/xray/search          — Search live system processes, ports, files, users
 """
 
-from fastapi import APIRouter, HTTPException, Query, Request
+import json
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 
 from ..core import auth
@@ -199,6 +200,36 @@ def execute_probe(probe_id: str, host_id: str = "local") -> dict:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Forensic hunt failed: {e}")
+
+
+@router.post("/system/forensics/triage", response_model=None)
+@router.post("/hosts/{host_id}/triage", response_model=None)
+def acquire_host_triage_pack(
+    host_id: str = "local",
+    include_yara: bool = Query(True, description="Include live process memory YARA sweep"),
+) -> dict:
+    """Acquire a comprehensive live endpoint forensic triage pack."""
+    from ..services.forensic_probes import collect_host_triage_pack
+    try:
+        return collect_host_triage_pack(include_yara=include_yara, host_id=host_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Triage pack acquisition failed: {e}")
+
+
+@router.get("/system/forensics/triage/export", response_model=None)
+def export_host_triage_pack(
+    include_yara: bool = Query(True, description="Include live process memory YARA sweep"),
+) -> Response:
+    """Acquire and download a live endpoint forensic triage pack as a JSON artifact."""
+    from ..services.forensic_probes import collect_host_triage_pack
+    pack = collect_host_triage_pack(include_yara=include_yara, host_id="local")
+    payload = json.dumps(pack, indent=2, default=str)
+    filename = f"{pack.get('triage_id', 'outpost_triage')}.json"
+    return Response(
+        content=payload,
+        media_type="application/json",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
 
 
 

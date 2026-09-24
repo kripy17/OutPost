@@ -17,6 +17,7 @@ alerts.investigation_id link) — see routes_alerts. Every mutation is audited.
 """
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from pydantic import BaseModel
 
 from ..core import auth
 from ..core.db import db_session
@@ -501,6 +502,48 @@ def apply_incident_playbook(
             conn, actor, "investigation.playbook.apply",
             target_type="investigation", target_id=investigation_id,
             detail=f"applied playbook {body.playbook_id} ({res['tasks_created_count']} tasks)",
+        )
+    return res
+
+
+class ExecutePlaybookIn(BaseModel):
+    auto_contain: bool = False
+    run_probes: bool = True
+    target_host: str = "local"
+
+
+@router.post("/investigations/{investigation_id}/playbooks/{playbook_id}/execute", response_model=None)
+def execute_incident_playbook(
+    investigation_id: str,
+    playbook_id: str,
+    body: ExecutePlaybookIn = ExecutePlaybookIn(),
+    request: Request = None,
+) -> dict:
+    """Execute automated incident response containment & triage SOAR workflow."""
+    actor = auth.role_from_request(request) if request else "analyst"
+    actor = actor or "analyst"
+    from ..services.incident_playbooks import execute_playbook_automated
+    with db_session() as conn:
+        _require_investigation(conn, investigation_id)
+        try:
+            res = execute_playbook_automated(
+                conn,
+                investigation_id=investigation_id,
+                playbook_id=playbook_id,
+                auto_contain=body.auto_contain,
+                run_probes=body.run_probes,
+                target_host=body.target_host,
+                actor=actor,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Playbook execution failed: {e}")
+
+        audit.log(
+            conn, actor, "investigation.playbook.execute",
+            target_type="investigation", target_id=investigation_id,
+            detail=f"executed SOAR playbook {playbook_id} (contain={body.auto_contain}, probes={body.run_probes})",
         )
     return res
 

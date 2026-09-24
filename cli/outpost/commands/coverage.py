@@ -41,8 +41,14 @@ def coverage(
     try:
         rules = api_client.get_rules_meta()
     except api_client.APIError as exc:
-        console.print(f"[bold #C4453B]Coverage failed: {exc}[/bold #C4453B]")
-        raise typer.Exit(1)
+        if "Backend unreachable" in str(exc):
+            from ..lib import offline_store
+            rules = offline_store.get_offline_rules()
+        else:
+            rules = None
+        if not rules:
+            console.print(f"[bold #C4453B]Coverage failed: {exc}[/bold #C4453B]")
+            raise typer.Exit(1)
 
     if not rules:
         console.print("[dim]No rules registered.[/dim]")
@@ -82,8 +88,14 @@ def _export_navigator(output: Path | None) -> None:
     try:
         layer = api_client.get_navigator_layer()
     except api_client.APIError as exc:
-        console.print(f"[bold #C4453B]Navigator export failed: {exc}[/bold #C4453B]")
-        raise typer.Exit(1)
+        if "Backend unreachable" in str(exc):
+            from ..lib import offline_store
+            layer = offline_store.get_offline_navigator_layer()
+        else:
+            layer = None
+        if not layer:
+            console.print(f"[bold #C4453B]Navigator export failed: {exc}[/bold #C4453B]")
+            raise typer.Exit(1)
 
     dest = output or Path("outpost-navigator-layer.json")
     dest.write_text(json.dumps(layer, indent=2))

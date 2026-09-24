@@ -44,8 +44,14 @@ def add_entry(
     try:
         entry = api_client.add_run_allowlist(run_id, kind, value, note)
     except api_client.APIError as exc:
-        console.print(f"[bold #C4453B]Allowlist failed: {exc}[/bold #C4453B]")
-        raise typer.Exit(1)
+        if "Backend unreachable" in str(exc):
+            from ..lib import offline_store
+            entry = offline_store.add_offline_allowlist(run_id, kind, value, note)
+        else:
+            entry = None
+        if not entry:
+            console.print(f"[bold #C4453B]Allowlist failed: {exc}[/bold #C4453B]")
+            raise typer.Exit(1)
     line = f"[#3FA796]Allowlisted {entry['kind']} {entry['value']} for run {run_id}[/#3FA796]"
     if entry.get("acked"):
         line += f" — {entry['acked']} matching alert(s) auto-acknowledged"
@@ -59,8 +65,12 @@ def list_entries(run_id: str = typer.Argument(..., help="run id to inspect")) ->
     try:
         entries = api_client.get_run_allowlist(run_id)
     except api_client.APIError as exc:
-        console.print(f"[bold #C4453B]Allowlist failed: {exc}[/bold #C4453B]")
-        raise typer.Exit(1)
+        if "Backend unreachable" in str(exc):
+            from ..lib import offline_store
+            entries = offline_store.get_offline_allowlist(run_id) or []
+        else:
+            console.print(f"[bold #C4453B]Allowlist failed: {exc}[/bold #C4453B]")
+            raise typer.Exit(1)
     if not entries:
         console.print(f"[dim]No allowlisted IOCs for run {run_id}.[/dim]")
         return
@@ -84,6 +94,12 @@ def remove_entry(
     try:
         api_client.remove_run_allowlist(run_id, entry_id)
     except api_client.APIError as exc:
-        console.print(f"[bold #C4453B]Allowlist failed: {exc}[/bold #C4453B]")
-        raise typer.Exit(1)
+        if "Backend unreachable" in str(exc):
+            from ..lib import offline_store
+            if not offline_store.remove_offline_allowlist(run_id, entry_id):
+                console.print(f"[bold #C4453B]Allowlist failed: {exc}[/bold #C4453B]")
+                raise typer.Exit(1)
+        else:
+            console.print(f"[bold #C4453B]Allowlist failed: {exc}[/bold #C4453B]")
+            raise typer.Exit(1)
     console.print(f"[#3FA796]Removed allowlist entry {entry_id} from run {run_id}[/#3FA796]")

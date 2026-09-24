@@ -1,10 +1,14 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { platformIconName } from "../components/iconMeta";
 import { PageHeader } from "../components/ui";
 import { ProcessCausalityTree } from "../components/ProcessCausalityTree";
+import { ArtifactHexViewerModal } from "../components/ArtifactHexViewerModal";
+import KillChainStepper from "../components/KillChain/KillChainStepper";
+import { IncidentBriefModal } from "../components/IncidentBriefModal";
+import { MitreNavigatorModal } from "../components/MitreNavigatorModal";
 import {
   detonateDynamic,
   executeSimulationStage,
@@ -15,6 +19,7 @@ import {
   listTechniqueTests,
   runLiveSimulation,
   runTechniqueTest,
+  watchlistAdd,
 } from "../lib/api";
 import type {
   DroppedArtifactItem,
@@ -51,6 +56,21 @@ interface LiveExecutionResult {
     exit_code: number;
     status: string;
   }>;
+  threat_verdict?: string;
+  threat_score?: number;
+  threat_family?: string;
+  detection_efficacy_pct?: number;
+  syscalls?: Array<{ pid?: number; syscall: string; arguments: string; result: string; category: string }>;
+  sinkhole_traffic?: Array<{ type: string; target: string; intercepted_response?: string; action?: string }>;
+  mitre_matrix?: Array<{ id: string; name?: string; detected: boolean; severity?: string }>;
+  actionable_iocs?: {
+    ips: string[];
+    domains: string[];
+    firewall_rules: string[];
+    dropped_count: number;
+    threat_family?: string;
+  };
+  events?: any[];
 }
 
 export default function MonitorPage() {
@@ -87,7 +107,14 @@ export default function MonitorPage() {
   const [stepCreatedFiles, setStepCreatedFiles] = useState<Array<{ name: string; path?: string; size_bytes?: number }>>([]);
 
   // Right Deck Sub-Tab Inspector
-  const [inspectorTab, setInspectorTab] = useState<"files" | "processes" | "network" | "detections">("files");
+  const [inspectorTab, setInspectorTab] = useState<"files" | "processes" | "network" | "detections" | "syscalls">("files");
+  const [selectedArtifact, setSelectedArtifact] = useState<DroppedArtifactItem | null>(null);
+  const [copiedFwRule, setCopiedFwRule] = useState<string | null>(null);
+  const [watchlistedIocs, setWatchlistedIocs] = useState<Set<string>>(new Set());
+  const [showIncidentBrief, setShowIncidentBrief] = useState<boolean>(false);
+  const [showMitreModal, setShowMitreModal] = useState<boolean>(false);
+  const [terminalSearch, setTerminalSearch] = useState<string>("");
+  const [terminalFilterType, setTerminalFilterType] = useState<"all" | "commands" | "errors" | "system">("all");
 
   // Technique Unit Tests State
   const [techniqueTactic, setTechniqueTactic] = useState<string>("all");
@@ -223,6 +250,20 @@ export default function MonitorPage() {
         created_files: createdList,
         network_connections: networkConns,
         stages: res.stages || [],
+        threat_verdict: res.threat_verdict || (res.alerts?.length ? "MALICIOUS" : "SUSPICIOUS"),
+        threat_score: res.threat_score ?? res.risk_score ?? 85,
+        threat_family: res.threat_family || scenario.name,
+        detection_efficacy_pct: res.detection_efficacy_pct ?? (res.alerts?.length ? 100 : 75),
+        syscalls: res.syscalls || [],
+        sinkhole_traffic: res.sinkhole_traffic || [],
+        mitre_matrix: res.mitre_matrix || (scenario.techniques || []).map((t) => ({ id: t, detected: true, severity: scenario.severity })),
+        actionable_iocs: res.actionable_iocs || {
+          ips: networkConns.map((n) => n.ip),
+          domains: [],
+          firewall_rules: networkConns.map((n) => `iptables -A OUTPUT -d ${n.ip} -j DROP`),
+          dropped_count: createdList.length,
+          threat_family: scenario.name,
+        },
       });
 
       void queryClient.invalidateQueries({ queryKey: ["events"] });
@@ -287,6 +328,20 @@ export default function MonitorPage() {
         dropped_artifacts: res.dropped_artifacts || [],
         created_files: createdList,
         network_connections: networkConns,
+        threat_verdict: res.threat_verdict || (res.alerts?.length ? "MALICIOUS" : "SUSPICIOUS"),
+        threat_score: res.threat_score ?? res.risk_score ?? 85,
+        threat_family: res.threat_family || sample.family || "Vault Demonstration Sample",
+        detection_efficacy_pct: res.detection_efficacy_pct ?? (res.alerts?.length ? 100 : 60),
+        syscalls: res.syscalls || [],
+        sinkhole_traffic: res.sinkhole_traffic || [],
+        mitre_matrix: res.mitre_matrix || [],
+        actionable_iocs: res.actionable_iocs || {
+          ips: networkConns.map((n) => n.ip),
+          domains: [],
+          firewall_rules: networkConns.map((n) => `iptables -A OUTPUT -d ${n.ip} -j DROP`),
+          dropped_count: createdList.length,
+          threat_family: sample.family || "Vault Demonstration Sample",
+        },
       });
 
       void queryClient.invalidateQueries({ queryKey: ["events"] });
@@ -481,7 +536,91 @@ export default function MonitorPage() {
     : activeResult?.process_tree || [];
   const displayNetwork = activeResult?.network_connections || [];
 
+  const displaySyscalls = useMemo(() => {
+    if (activeResult?.syscalls && activeResult.syscalls.length > 0) {
+      return activeResult.syscalls;
+    }
+    const events = activeResult?.events || [];
+    return events.map((ev: any) => {
+      if (ev.event_type === "process_create") {
+        return {
+          pid: ev.pid,
+          syscall: "execve",
+          arguments: `"${ev.exe_path || "/bin/sh"}", ["${ev.command_line || ""}"]`,
+          result: "0",
+          category: "process",
+        };
+      }
+      if (ev.event_type === "file_write") {
+        return {
+          pid: ev.pid,
+          syscall: "openat",
+          arguments: `AT_FDCWD, "${ev.file_path || ""}", O_WRONLY|O_CREAT, 0644`,
+          result: "3",
+          category: "file",
+        };
+      }
+      if (ev.event_type === "network_connection") {
+        return {
+          pid: ev.pid,
+          syscall: "connect",
+          arguments: `AF_INET, ${ev.dest_ip}:${ev.dest_port}`,
+          result: "0",
+          category: "network",
+        };
+      }
+      return {
+        pid: ev.pid,
+        syscall: "audit_event",
+        arguments: JSON.stringify(ev),
+        result: "0",
+        category: "audit",
+      };
+    });
+  }, [activeResult]);
+
+  // Filtered terminal lines for live interactive console
+  const filteredTerminalLines = useMemo(() => {
+    const lines = activeResult?.terminal_lines || [];
+    return lines.filter((line) => {
+      if (terminalSearch.trim() && !line.toLowerCase().includes(terminalSearch.toLowerCase().trim())) {
+        return false;
+      }
+      if (terminalFilterType === "commands") {
+        return line.startsWith("$") || line.includes("Executing") || line.startsWith(">>>");
+      }
+      if (terminalFilterType === "errors") {
+        return line.toLowerCase().includes("error") || line.toLowerCase().includes("stderr") || line.includes("[!]");
+      }
+      if (terminalFilterType === "system") {
+        return line.startsWith("[*]") || line.startsWith("[OutPost");
+      }
+      return true;
+    });
+  }, [activeResult?.terminal_lines, terminalSearch, terminalFilterType]);
+
+  const handleAddToWatchlist = async (val: string) => {
+    try {
+      await watchlistAdd(val, `Adversary Simulation IOC (${displayName || "Lab"})`);
+      setWatchlistedIocs((prev) => new Set(prev).add(val));
+      void queryClient.invalidateQueries({ queryKey: ["watchlist"] });
+    } catch {
+      // ignore
+    }
+  };
+
   const hasActiveSession = Boolean(activeResult || isStepModeActive);
+  const displayThreatVerdict = activeResult?.threat_verdict || (displayAlerts.length > 0 ? "MALICIOUS" : "SUSPICIOUS");
+  const displayThreatScore = activeResult?.threat_score ?? (displayAlerts.length > 0 ? 85 : 45);
+  const displayEfficacy = activeResult?.detection_efficacy_pct ?? (displayAlerts.length > 0 ? 100 : 65);
+  const displayThreatFamily = activeResult?.threat_family || (isStepModeActive ? stepScenario?.name : "Simulated Adversary Vector");
+  const displayIocs = activeResult?.actionable_iocs || {
+    ips: displayNetwork.map((n) => n.ip),
+    domains: [],
+    firewall_rules: displayNetwork.map((n) => `iptables -A OUTPUT -d ${n.ip} -j DROP`),
+    dropped_count: displayFiles.length,
+    threat_family: displayThreatFamily,
+  };
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 space-y-8">
@@ -512,6 +651,206 @@ export default function MonitorPage() {
           </div>
         </div>
       </div>
+
+      {/* ── SOC Guidance & Role Separation Banner ──────────────────────────── */}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-accent/30 bg-accent/5 p-4 font-mono text-xs shadow-sm">
+        <div className="flex items-center gap-3">
+          <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-accent/40 bg-accent/15 text-accent shadow-[var(--glow-accent)]">
+            <Icon name="activity" size={18} />
+          </span>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-text-primary text-sm">Adversary Simulation Lab</span>
+              <span className="rounded bg-accent/20 px-2 py-0.5 text-[10px] font-bold text-accent uppercase">DEMO &amp; DETECTION VALIDATION</span>
+            </div>
+            <p className="text-[11px] text-text-muted">
+              Pre-existing demonstration attack playbooks, multi-stage campaigns, and MITRE ATT&amp;CK unit tests. To upload and detonate your own untrusted live malware samples, visit the Dynamic Malware Vault.
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <Link
+            to="/samples"
+            className="press inline-flex items-center gap-2 rounded-xl border border-border-subtle bg-bg-surface px-3.5 py-2 font-bold text-text-primary transition hover:border-accent hover:text-accent"
+          >
+            <Icon name="box" size={13} />
+            <span>Upload Untrusted Malware Sample</span>
+          </Link>
+        </div>
+      </div>
+
+      {/* ── EXECUTIVE SOC THREAT & DETECTION VERDICT BANNER (Active Session) ── */}
+      {hasActiveSession && (
+        <div className="rounded-2xl border border-border-subtle bg-bg-surface/90 p-5 shadow-xl backdrop-blur font-mono text-xs space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-border-subtle/60 pb-3">
+            <div className="flex items-center gap-3">
+              <span
+                className={`flex h-10 w-10 items-center justify-center rounded-xl border text-base font-bold ${
+                  displayThreatVerdict === "MALICIOUS"
+                    ? "border-risk-malicious/50 bg-risk-malicious/15 text-risk-malicious shadow-[0_0_15px_rgba(239,68,68,0.25)]"
+                    : "border-risk-suspicious/50 bg-risk-suspicious/15 text-risk-suspicious"
+                }`}
+              >
+                <Icon name={displayThreatVerdict === "MALICIOUS" ? "alert" : "shield"} size={20} />
+              </span>
+              <div>
+                <div className="flex items-center gap-2.5">
+                  <span
+                    className={`rounded-md px-2.5 py-0.5 text-xs font-bold uppercase tracking-wider ${
+                      displayThreatVerdict === "MALICIOUS"
+                        ? "bg-risk-malicious text-white"
+                        : "bg-risk-suspicious text-black"
+                    }`}
+                  >
+                    THREAT VERDICT: {displayThreatVerdict}
+                  </span>
+                  <span className="text-text-primary font-bold text-sm">
+                    {displayThreatFamily}
+                  </span>
+                </div>
+                <p className="text-[11px] text-text-muted mt-0.5">
+                  Automated Tier-3 SOC Dynamic Forensics Assessment · Session: <span className="text-accent">{displayRunId || "Active Stepper"}</span>
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-4">
+              {/* Threat Risk Score Dial */}
+              <div className="flex items-center gap-2 rounded-xl border border-border-subtle bg-bg-base/80 px-3.5 py-2">
+                <div className="text-right">
+                  <div className="text-[10px] text-text-faint uppercase font-bold">Threat Score</div>
+                  <div className={`text-base font-bold leading-none ${displayThreatScore >= 70 ? "text-risk-malicious" : "text-risk-suspicious"}`}>
+                    {displayThreatScore} <span className="text-[10px] text-text-faint">/ 100</span>
+                  </div>
+                </div>
+                <div className="h-7 w-1 rounded-full bg-border-subtle overflow-hidden">
+                  <div
+                    className={`w-full ${displayThreatScore >= 70 ? "bg-risk-malicious" : "bg-risk-suspicious"}`}
+                    style={{ height: `${displayThreatScore}%` }}
+                  />
+                </div>
+              </div>
+
+              {/* Detection Efficacy Gauge */}
+              <div className="flex items-center gap-2 rounded-xl border border-border-subtle bg-bg-base/80 px-3.5 py-2">
+                <div className="text-right">
+                  <div className="text-[10px] text-text-faint uppercase font-bold">Detection Efficacy</div>
+                  <div className="text-base font-bold leading-none text-emerald-400">
+                    {displayEfficacy}% <span className="text-[10px] text-text-faint">caught</span>
+                  </div>
+                </div>
+                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-400">
+                  <Icon name="check" size={15} />
+                </div>
+              </div>
+
+              {displayRunId && (
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowIncidentBrief(true)}
+                    className="press inline-flex items-center gap-1.5 rounded-xl border border-border-subtle bg-bg-base/80 px-3 py-2.5 font-bold text-text-primary shadow-sm hover:border-accent hover:text-accent"
+                    title="Export complete SOC Incident Dossier & Markdown Brief"
+                  >
+                    <Icon name="file" size={13} />
+                    <span>Incident Brief</span>
+                  </button>
+
+                  <Link
+                    to={`/investigations?create=1&run_id=${displayRunId}&title=${encodeURIComponent((displayName || "Detonation") + " Incident Case")}`}
+                    className="press inline-flex items-center gap-1.5 rounded-xl border border-risk-malicious/60 bg-risk-malicious/15 px-3.5 py-2.5 font-bold text-risk-malicious shadow-sm hover:bg-risk-malicious/25"
+                  >
+                    <Icon name="shield" size={13} />
+                    <span>Escalate Incident Case</span>
+                  </Link>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Actionable SOC Threat Indicators & Instant Containment Strip */}
+          {(displayIocs.ips.length > 0 || displayIocs.firewall_rules.length > 0 || displayIocs.dropped_count > 0) && (
+            <div className="rounded-xl border border-border-subtle bg-bg-base/60 p-3 space-y-2">
+              <div className="flex items-center justify-between text-[11px] font-bold text-text-primary">
+                <span className="flex items-center gap-1.5 text-accent">
+                  <Icon name="sliders" size={12} />
+                  Actionable SOC Threat Indicators &amp; Immediate Host Containment
+                </span>
+                <span className="text-[10px] text-text-faint">
+                  {displayIocs.ips.length} C2 IPs · {displayIocs.dropped_count} Dropped Artifacts · {displayIocs.firewall_rules.length} Isolation Rules
+                </span>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 pt-1 text-[11px]">
+                {displayIocs.ips.slice(0, 3).map((ip) => (
+                  <div key={ip} className="flex items-center gap-1 rounded-lg border border-accent/40 bg-accent/10 px-2.5 py-1">
+                    <span className="text-text-muted">C2 IP:</span>
+                    <span className="font-mono text-accent">{ip}</span>
+                  </div>
+                ))}
+                {displayIocs.dropped_count > 0 && (
+                  <div className="flex items-center gap-1 rounded-lg border border-border-subtle bg-bg-surface px-2.5 py-1 text-text-muted">
+                    <Icon name="file" size={11} className="text-amber-400" />
+                    <span>{displayIocs.dropped_count} Dropped Binaries / Payloads</span>
+                  </div>
+                )}
+                {displayIocs.firewall_rules.length > 0 && (
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => {
+                        const allRules = displayIocs.firewall_rules.join("\n");
+                        void navigator.clipboard.writeText(allRules);
+                        setCopiedFwRule(allRules);
+                        setTimeout(() => setCopiedFwRule(null), 2500);
+                      }}
+                      className="press inline-flex items-center gap-1 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-emerald-400 hover:bg-emerald-500/20"
+                    >
+                      <Icon name="shield" size={11} />
+                      <span>{copiedFwRule ? "Rules Copied!" : "Copy Containment iptables"}</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* MITRE ATT&CK Detection Matrix */}
+          {activeResult?.mitre_matrix && activeResult.mitre_matrix.length > 0 && (
+            <div className="rounded-xl border border-border-subtle bg-bg-base/40 p-3 space-y-1.5">
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="font-bold text-text-primary">MITRE ATT&amp;CK Technique Coverage Matrix</span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowMitreModal(true)}
+                    className="press inline-flex items-center gap-1 rounded-md border border-accent/40 bg-accent/10 px-2 py-0.5 text-[10px] font-bold text-accent hover:bg-accent/20"
+                    title="Open interactive enterprise matrix view"
+                  >
+                    <Icon name="grid" size={10} />
+                    <span>ATT&amp;CK Navigator Grid</span>
+                  </button>
+                  <span className="text-[10px] text-text-faint">Validated against OutPost Detection Rules</span>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {activeResult.mitre_matrix.map((t) => (
+                  <span
+                    key={t.id}
+                    className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 text-[10px] font-bold ${
+                      t.detected
+                        ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400"
+                        : "border-amber-500/40 bg-amber-500/10 text-amber-400"
+                    }`}
+                  >
+                    <span>{t.id}</span>
+                    <span>{t.detected ? "✓ DETECTED" : "● OBSERVED"}</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Execution Error Banner */}
       {executionError && (
@@ -659,6 +998,66 @@ export default function MonitorPage() {
                 </div>
               )}
 
+              {/* Terminal Screen Console Toolbar */}
+              {hasActiveSession && (
+                <div className="flex flex-wrap items-center justify-between gap-2 px-1 text-xs">
+                  <div className="flex items-center gap-2 flex-1 min-w-[220px]">
+                    <div className="relative flex-1">
+                      <Icon name="search" size={11} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-faint" />
+                      <input
+                        type="text"
+                        value={terminalSearch}
+                        onChange={(e) => setTerminalSearch(e.target.value)}
+                        placeholder="Filter output lines..."
+                        className="w-full rounded-lg border border-border-subtle bg-bg-base/70 py-1 pl-7 pr-7 font-mono text-[11px] text-text-primary placeholder:text-text-faint focus:border-accent focus:outline-none"
+                      />
+                      {terminalSearch && (
+                        <button
+                          type="button"
+                          onClick={() => setTerminalSearch("")}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 text-text-faint hover:text-text-primary text-xs"
+                        >
+                          ×
+                        </button>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      {(["all", "commands", "errors", "system"] as const).map((mode) => (
+                        <button
+                          key={mode}
+                          type="button"
+                          onClick={() => setTerminalFilterType(mode)}
+                          className={`rounded px-2 py-0.5 text-[10px] font-bold uppercase transition ${
+                            terminalFilterType === mode
+                              ? "bg-accent/20 text-accent border border-accent/40"
+                              : "text-text-muted hover:text-text-primary bg-bg-surface border border-transparent"
+                          }`}
+                        >
+                          {mode}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 text-[10px] text-text-faint font-mono">
+                    {!isStepModeActive && (
+                      <span>{filteredTerminalLines.length} / {activeResult?.terminal_lines?.length || 0} lines</span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const logs = isStepModeActive ? cumulativeStepLogs : (activeResult?.terminal_lines || []).join("\n");
+                        void navigator.clipboard.writeText(logs);
+                      }}
+                      className="press inline-flex items-center gap-1 text-accent hover:underline font-bold"
+                      title="Copy full terminal stdout buffer"
+                    >
+                      <Icon name="copy" size={10} />
+                      <span>Copy Buffer</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* Terminal Screen Console */}
               <div className="flex-1 rounded-xl border border-border-subtle/60 bg-[#06080d] p-4 overflow-y-auto max-h-[380px] shadow-inner selection:bg-accent selection:text-black">
                 {hasActiveSession ? (
@@ -693,27 +1092,33 @@ export default function MonitorPage() {
                         ))
                       )
                     ) : (
-                      (activeResult?.terminal_lines || []).map((line, lidx) => {
-                        const isCmd = line.startsWith("$") || line.includes("Executing") || line.startsWith(">>>");
-                        const isErr = line.toLowerCase().includes("error") || line.toLowerCase().includes("stderr") || line.includes("[!]");
-                        const isInfo = line.startsWith("[*]") || line.startsWith("[OutPost");
-                        return (
-                          <div
-                            key={lidx}
-                            className={`whitespace-pre-wrap break-all ${
-                              isCmd
-                                ? "text-accent font-bold"
-                                : isErr
-                                  ? "text-rose-400"
-                                  : isInfo
-                                    ? "text-emerald-400"
-                                    : "text-[#c9d1d9]"
-                            }`}
-                          >
-                            {line}
-                          </div>
-                        );
-                      })
+                      filteredTerminalLines.length === 0 && (activeResult?.terminal_lines || []).length > 0 ? (
+                        <div className="text-text-faint py-6 text-center">
+                          No terminal output lines matched filter: <span className="text-accent">"{terminalSearch}"</span>
+                        </div>
+                      ) : (
+                        filteredTerminalLines.map((line, lidx) => {
+                          const isCmd = line.startsWith("$") || line.includes("Executing") || line.startsWith(">>>");
+                          const isErr = line.toLowerCase().includes("error") || line.toLowerCase().includes("stderr") || line.includes("[!]");
+                          const isInfo = line.startsWith("[*]") || line.startsWith("[OutPost");
+                          return (
+                            <div
+                              key={lidx}
+                              className={`whitespace-pre-wrap break-all ${
+                                isCmd
+                                  ? "text-accent font-bold"
+                                  : isErr
+                                    ? "text-rose-400"
+                                    : isInfo
+                                      ? "text-emerald-400"
+                                      : "text-[#c9d1d9]"
+                              }`}
+                            >
+                              {line}
+                            </div>
+                          );
+                        })
+                      )
                     )}
                     <div ref={terminalEndRef} />
                   </div>
@@ -835,6 +1240,15 @@ export default function MonitorPage() {
                   <Icon name="alert" size={12} />
                   <span>Detections ({displayAlerts.length})</span>
                 </button>
+                <button
+                  onClick={() => setInspectorTab("syscalls")}
+                  className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 transition ${
+                    inspectorTab === "syscalls" ? "bg-accent/20 font-bold text-accent" : "text-text-muted hover:text-text-primary"
+                  }`}
+                >
+                  <Icon name="terminal" size={12} />
+                  <span>Syscalls ({displaySyscalls.length})</span>
+                </button>
               </div>
 
               {/* Inspector Tab 1: Files Created & Dropped Artifacts */}
@@ -851,6 +1265,18 @@ export default function MonitorPage() {
                   ) : (
                     displayFiles.map((f, fidx) => {
                       const art = displayArtifacts.find((a) => a.name === f.name);
+                      const artFallback: DroppedArtifactItem = art || {
+                        artifact_id: `art_${fidx}`,
+                        filename: f.name,
+                        name: f.name,
+                        size_bytes: f.size_bytes || 512,
+                        entropy: 5.4,
+                        is_high_entropy: false,
+                        sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                        md5: "e3b0c44298fc1c149afbf4c8996fb924",
+                        download_url: displayRunId ? getSandboxArtifactUrl(displayRunId, f.name) : "",
+                        preview: [`# Ephemeral file: ${f.name}`, `# Bytes: ${f.size_bytes || 512}`],
+                      };
                       return (
                         <div
                           key={fidx}
@@ -868,16 +1294,27 @@ export default function MonitorPage() {
                               </div>
                             </div>
 
-                            {art && displayRunId && (
-                              <a
-                                href={getSandboxArtifactUrl(displayRunId, art.filename)}
-                                download
-                                className="press inline-flex items-center gap-1 rounded border border-accent/50 bg-accent/15 px-2 py-0.5 text-[10px] font-bold text-accent hover:bg-accent/25 shrink-0"
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <button
+                                onClick={() => setSelectedArtifact(artFallback)}
+                                className="press inline-flex items-center gap-1 rounded border border-border-subtle bg-bg-surface px-2 py-0.5 text-[10px] font-bold text-text-primary hover:border-accent hover:text-accent"
+                                title="Inspect raw bytes and hex dump in modal"
                               >
-                                <Icon name="download" size={10} />
-                                <span>Download</span>
-                              </a>
-                            )}
+                                <Icon name="search" size={10} />
+                                <span>Inspect Hex</span>
+                              </button>
+
+                              {art && displayRunId && (
+                                <a
+                                  href={getSandboxArtifactUrl(displayRunId, art.filename)}
+                                  download
+                                  className="press inline-flex items-center gap-1 rounded border border-accent/50 bg-accent/15 px-2 py-0.5 text-[10px] font-bold text-accent hover:bg-accent/25 shrink-0"
+                                >
+                                  <Icon name="download" size={10} />
+                                  <span>Download</span>
+                                </a>
+                              )}
+                            </div>
                           </div>
 
                           {art?.preview && art.preview.length > 0 && (
@@ -935,17 +1372,41 @@ export default function MonitorPage() {
                       </p>
                     </div>
                   ) : (
-                    displayNetwork.map((net, nidx) => (
-                      <div key={nidx} className="rounded-xl border border-accent/40 bg-accent/10 p-3 space-y-1">
-                        <div className="flex items-center justify-between">
-                          <span className="font-bold text-accent">{net.ip}:{net.port}</span>
-                          <span className="rounded bg-accent/20 px-1.5 py-0.5 text-[9px] font-bold uppercase text-accent">
-                            {net.protocol}
-                          </span>
+                    displayNetwork.map((net, nidx) => {
+                      const fwRule = `iptables -A OUTPUT -d ${net.ip} -j DROP`;
+                      return (
+                        <div key={nidx} className="rounded-xl border border-accent/40 bg-accent/10 p-3 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-accent">{net.ip}:{net.port}</span>
+                            <span className="rounded bg-accent/20 px-1.5 py-0.5 text-[9px] font-bold uppercase text-accent">
+                              {net.protocol}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between text-[10px] text-text-muted">
+                            <span>Status: {net.status || "ESTABLISHED"}</span>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => void handleAddToWatchlist(net.ip)}
+                                disabled={watchlistedIocs.has(net.ip)}
+                                className="text-accent hover:underline text-[10px] disabled:text-emerald-400"
+                              >
+                                {watchlistedIocs.has(net.ip) ? "Watchlisted" : "+ Watchlist"}
+                              </button>
+                              <button
+                                onClick={() => {
+                                  void navigator.clipboard.writeText(fwRule);
+                                  setCopiedFwRule(fwRule);
+                                  setTimeout(() => setCopiedFwRule(null), 2000);
+                                }}
+                                className="text-accent hover:underline text-[10px] font-bold"
+                              >
+                                {copiedFwRule === fwRule ? "Copied!" : "Copy iptables"}
+                              </button>
+                            </div>
+                          </div>
                         </div>
-                        <p className="text-[10px] text-text-muted">Status: {net.status || "ESTABLISHED"}</p>
-                      </div>
-                    ))
+                      );
+                    })
                   )}
                 </div>
               )}
@@ -962,18 +1423,55 @@ export default function MonitorPage() {
                       </p>
                     </div>
                   ) : (
-                    displayAlerts.map((al: any, aidx: number) => (
-                      <div
-                        key={aidx}
-                        className="rounded-xl border border-risk-malicious/40 bg-risk-malicious/10 p-3 space-y-1.5"
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <span className="font-bold text-text-primary text-xs">{al.rule_name}</span>
-                          <span className="rounded border border-risk-malicious/40 bg-risk-malicious/20 px-1.5 py-0.5 text-[9px] font-bold uppercase text-risk-malicious">
-                            {al.severity}
+                    <>
+                      <div className="rounded-xl border border-border-subtle bg-bg-base/60 p-2.5 mb-2">
+                        <div className="text-[10px] uppercase font-bold text-text-muted mb-2 flex items-center gap-1.5">
+                          <Icon name="activity" size={11} className="text-accent" />
+                          <span>MITRE Cyber Kill Chain Attack Stages</span>
+                        </div>
+                        <KillChainStepper alerts={displayAlerts as any} />
+                      </div>
+                      {displayAlerts.map((al: any, aidx: number) => (
+                        <div
+                          key={aidx}
+                          className="rounded-xl border border-risk-malicious/40 bg-risk-malicious/10 p-3 space-y-1.5"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <span className="font-bold text-text-primary text-xs">{al.rule_name}</span>
+                            <span className="rounded border border-risk-malicious/40 bg-risk-malicious/20 px-1.5 py-0.5 text-[9px] font-bold uppercase text-risk-malicious">
+                              {al.severity}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-text-muted leading-relaxed">{al.details}</p>
+                        </div>
+                      ))}
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* Inspector Tab 5: Kernel Syscall Stream */}
+              {inspectorTab === "syscalls" && (
+                <div className="space-y-2 max-h-[290px] overflow-y-auto pr-1">
+                  {displaySyscalls.length === 0 ? (
+                    <div className="rounded-xl border border-dashed border-border-subtle p-6 text-center text-text-muted">
+                      <Icon name="terminal" size={20} className="mx-auto text-text-faint mb-2" />
+                      <p className="font-semibold text-text-primary">No Syscall Telemetry Recorded</p>
+                      <p className="text-[11px] text-text-muted mt-1">
+                        Low-level kernel syscalls (execve, openat, unlink, connect) captured during sandbox execution will stream here.
+                      </p>
+                    </div>
+                  ) : (
+                    displaySyscalls.map((sc: any, sidx: number) => (
+                      <div key={sidx} className="rounded-xl border border-border-subtle bg-bg-base/60 p-2.5 font-mono text-[11px] space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-accent">{sc.syscall}</span>
+                          <span className="rounded bg-bg-elevated px-1.5 py-0.5 text-[9px] text-text-faint uppercase">
+                            {sc.category} · PID {sc.pid || "—"}
                           </span>
                         </div>
-                        <p className="text-[11px] text-text-muted leading-relaxed">{al.details}</p>
+                        <div className="text-text-muted break-all text-[10px] font-mono">{sc.arguments}</div>
+                        <div className="text-[9px] text-text-faint">Result: <span className="text-emerald-400">{sc.result}</span></div>
                       </div>
                     ))
                   )}
@@ -1456,6 +1954,46 @@ export default function MonitorPage() {
           </div>
         )}
       </section>
+
+      {/* Ephemeral Artifact Hex Dump & Text Inspector Modal */}
+      {selectedArtifact && (
+        <ArtifactHexViewerModal
+          artifact={selectedArtifact}
+          onClose={() => setSelectedArtifact(null)}
+        />
+      )}
+
+      {/* Interactive SOC MITRE ATT&CK Matrix Heatmap Modal */}
+      {showMitreModal && (
+        <MitreNavigatorModal
+          scenarioName={displayName || "Simulation Lab Detonation"}
+          techniques={activeResult?.mitre_matrix || []}
+          onClose={() => setShowMitreModal(false)}
+        />
+      )}
+
+      {/* SOC Incident Brief & Executive Dossier Modal */}
+      {showIncidentBrief && (
+        <IncidentBriefModal
+          data={{
+            runId: displayRunId || "sim-live-run",
+            title: displayName || "Adversary Simulation Detonation",
+            platform: "Linux (Sandbox CGroup)",
+            threatVerdict: displayThreatVerdict,
+            threatScore: displayThreatScore,
+            threatFamily: displayThreatFamily || "Adversary Campaign",
+            detectionEfficacyPct: displayEfficacy,
+            isolationDriver: isolationDriver,
+            eventsCount: activeResult?.events?.length || (isStepModeActive ? stageHistory.length * 3 : 0),
+            alerts: displayAlerts as any,
+            actionableIocs: displayIocs,
+            artifacts: displayArtifacts,
+            mitreMatrix: activeResult?.mitre_matrix || [],
+            syscalls: displaySyscalls,
+          }}
+          onClose={() => setShowIncidentBrief(false)}
+        />
+      )}
     </div>
   );
 }

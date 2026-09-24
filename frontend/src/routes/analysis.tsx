@@ -28,9 +28,9 @@ const STATUS_TABS: { value: AnalysisStatus | ""; label: string }[] = [
 
 const BACKENDS: { value: AnalysisBackend; label: string; hint: string; available?: boolean }[] = [
   { value: "static", label: "Static", hint: "Synchronous triage over the stored bytes — strings, IOCs, PE/ELF metadata" },
+  { value: "isolated-outpost", label: "Isolated OutPost", hint: "Native dynamic sandbox detonation with process tracing and network containment", available: true },
   { value: "watched-host", label: "Watched host", hint: "Execution backend not configured — no host executor exists yet (501)", available: false },
   { value: "external-provider", label: "External provider", hint: "Execution backend not configured — no sandbox provider wired yet (501); use Sandbox detonate", available: false },
-  { value: "isolated-outpost", label: "Isolated OutPost", hint: "Reserved — no isolated execution environment exists yet (501)", available: false },
 ];
 
 const STATUS_TONE: Record<AnalysisStatus, "muted" | "accent" | "clean" | "malicious"> = {

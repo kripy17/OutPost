@@ -1,6 +1,6 @@
 # Build Plan — Ordered Task List
 
-Work through these sequentially. Each task references the relevant spec doc — read it before starting. Paste a task directly into OpenCode/Cursor chat (e.g. "Do Task 4 from docs/06-BUILD-PLAN.md") to have the agent execute it with full context already loaded from AGENTS.md.
+Work through these sequentially. Each task references the relevant spec doc — read it before starting. Paste a task directly into chat (e.g. "Do Task 4 from docs/06-BUILD-PLAN.md") to have the agent execute it with full context already loaded from AGENTS.md.
 
 ## Phase 1 — Backend Core
 

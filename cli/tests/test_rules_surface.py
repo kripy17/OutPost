@@ -218,3 +218,29 @@ def test_rules_sigma_command(monkeypatch):
     assert "command_line" in out
 
 
+def test_rules_transpile_command(monkeypatch):
+    from outpost.commands.rules import transpile
+
+    wide = _wide(monkeypatch)
+    monkeypatch.setattr(
+        api_client,
+        "transpile_sigma",
+        lambda y: {
+            "rule_id": "sigma-trans-456",
+            "title": "Encoded Command Exec",
+            "severity": "critical",
+            "mitre_tactics": ["Execution"],
+            "mitre_techniques": ["T1059"],
+            "criteria": [{"target_field": "command_line", "modifier": "contains", "value": "-enc", "original_field": "CommandLine"}],
+        },
+    )
+
+    with wide.capture() as capture:
+        transpile("title: Encoded Command")
+    out = capture.get()
+    assert "Encoded Command Exec" in out
+    assert "sigma-trans-456" in out
+    assert "Execution" in out
+
+
+

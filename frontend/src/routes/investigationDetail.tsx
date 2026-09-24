@@ -189,12 +189,12 @@ export default function InvestigationDetailPage() {
               {synthesizing ? "Synthesizing…" : "Synthesize Narrative"}
             </button>
             <button
-              className="btn btn-secondary flex items-center gap-1.5 border-accent/40 bg-accent/10 text-accent hover:bg-accent/20 transition"
+              className="btn btn-secondary flex items-center gap-1.5 border-amber-500/40 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 transition shadow-xs font-semibold"
               onClick={() => setShowPlaybookModal(true)}
-              title="Apply Incident Response Playbook"
+              title="Launch Automated SOAR & IR Playbook"
             >
-              <Icon name="shield" size={13} />
-              <span>Apply IR Playbook</span>
+              <Icon name="shield" size={13} className="text-amber-400" />
+              <span>⚡ Run SOAR Playbook</span>
             </button>
             <div className="inline-flex rounded-lg border border-border-subtle bg-bg-surface overflow-hidden">
               <button
@@ -232,6 +232,14 @@ export default function InvestigationDetailPage() {
                 PS1
               </button>
             </div>
+            <button
+              className="px-3 py-1.5 text-xs font-semibold text-text rounded-lg border border-border-subtle bg-bg-surface hover:bg-bg-elevated transition flex items-center gap-1.5 print:hidden"
+              onClick={() => window.print()}
+              title="Print Executive Incident Dossier / Save as PDF"
+            >
+              <Icon name="download" size={12} className="text-amber-400" />
+              <span>Print Dossier (PDF)</span>
+            </button>
             {inv.status !== "closed" ? (
               <button className="btn" onClick={() => setShowClose((v) => !v)}>
                 Close case

@@ -62,8 +62,14 @@ def knobs() -> None:
     try:
         data = api_client.get_tuning()
     except api_client.APIError as exc:
-        console.print(f"[bold #C4453B]Failed: {exc}[/bold #C4453B]")
-        raise typer.Exit(1)
+        if "Backend unreachable" in str(exc):
+            from ..lib import offline_store
+            data = offline_store.get_offline_tuning_knobs()
+        else:
+            data = None
+        if data is None:
+            console.print(f"[bold #C4453B]Failed: {exc}[/bold #C4453B]")
+            raise typer.Exit(1)
 
     knobs_list = data.get("knobs") or []
     if not knobs_list:
@@ -111,8 +117,14 @@ def log_patterns(
     try:
         data = api_client.get_log_patterns()
     except api_client.APIError as exc:
-        console.print(f"[bold #C4453B]Failed: {exc}[/bold #C4453B]")
-        raise typer.Exit(1)
+        if "Backend unreachable" in str(exc):
+            from ..lib import offline_store
+            data = offline_store.get_offline_log_patterns()
+        else:
+            data = None
+        if data is None:
+            console.print(f"[bold #C4453B]Failed: {exc}[/bold #C4453B]")
+            raise typer.Exit(1)
 
     kinds = data.get("kinds") or {}
     valid_kinds = {"service_stop", "log_clear"}
@@ -164,8 +176,12 @@ def suppressions_list() -> None:
     try:
         rows = api_client.get_suppressions()
     except api_client.APIError as exc:
-        console.print(f"[bold #C4453B]Failed: {exc}[/bold #C4453B]")
-        raise typer.Exit(1)
+        if "Backend unreachable" in str(exc):
+            from ..lib import offline_store
+            rows = offline_store.get_offline_suppressions() or []
+        else:
+            console.print(f"[bold #C4453B]Failed: {exc}[/bold #C4453B]")
+            raise typer.Exit(1)
     if not rows:
         console.print("[dim]No rule suppressions — every rule fires normally.[/dim]")
         return
@@ -260,6 +276,14 @@ def sigma(
             c.get("original_field", "-"),
         )
     console.print(table)
+
+
+@app.command("transpile")
+def transpile(
+    file_or_yaml: str = typer.Argument(..., help="Path to Sigma YAML file, or raw YAML string"),
+) -> None:
+    """Alias for 'outpost rules sigma' — transpile Sigma YAML into OutPost criteria."""
+    return sigma(file_or_yaml=file_or_yaml)
 
 
 @app.command("backtest")

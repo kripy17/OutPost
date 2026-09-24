@@ -429,8 +429,20 @@ def test_host_containment_isolation_and_kill(client):
     hb_res = client.post(f"/agents/{host}/heartbeat", json={"platform": "linux", "version": "0.1.0"}).json()
     assert hb_res["isolated"] is True
     assert len(hb_res["pending_actions"]) == 1
+    act_id = hb_res["pending_actions"][0]["action_id"]
+
+    # Acknowledge executed remediation action
+    ack_res = client.post(f"/agents/{host}/actions/ack", json={"action_ids": [act_id]})
+    assert ack_res.status_code == 200
+    assert ack_res.json()["cleared_count"] == 1
+    assert ack_res.json()["remaining_count"] == 0
+
+    # Verify pending_actions is now empty
+    cont_res2 = client.get(f"/agents/{host}/containment").json()
+    assert cont_res2["pending_actions"] == []
 
     # Un-isolate
     uniso_res = client.post(f"/agents/{host}/isolate", json={"isolated": False})
     assert uniso_res.status_code == 200
     assert uniso_res.json()["isolated"] is False
+

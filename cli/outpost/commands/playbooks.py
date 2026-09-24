@@ -33,8 +33,12 @@ def list_playbooks() -> None:
     try:
         playbooks = api_client.get_playbooks()
     except api_client.APIError as exc:
-        console.print(f"[bold #C4453B]Failed: {exc}[/bold #C4453B]")
-        raise typer.Exit(1)
+        from ..lib import offline_store
+        playbooks = offline_store.get_offline_playbooks()
+        if not playbooks:
+            console.print(f"[bold #C4453B]Failed: {exc}[/bold #C4453B]")
+            raise typer.Exit(1)
+        console.print("[dim]Notice: Backend unreachable — showing attack playbooks from offline catalog.[/dim]\n")
 
     table = Table(title="OutPost — Attack Scenario Playbooks", border_style="dim")
     table.add_column("ID", style="cyan bold", no_wrap=True)
@@ -71,8 +75,16 @@ def run_playbook(
     try:
         res = api_client.detonate_playbook(playbook_id)
     except api_client.APIError as exc:
-        console.print(f"[bold #C4453B]Detonation failed: {exc}[/bold #C4453B]")
-        raise typer.Exit(1)
+        try:
+            from ..lib.offline_store import _ensure_backend_on_path
+            _ensure_backend_on_path()
+            import asyncio
+            from app.services.dynamic_sandbox import execute_simulation_scenario_live
+            res = asyncio.run(execute_simulation_scenario_live(playbook_id))
+            console.print("[dim]Notice: Backend unreachable — executed playbook directly in local simulation sandbox.[/dim]\n")
+        except Exception:
+            console.print(f"[bold #C4453B]Detonation failed: {exc}[/bold #C4453B]")
+            raise typer.Exit(1)
 
     run_id = res["run_id"]
     risk = res.get("risk_score", 0)
@@ -175,3 +187,29 @@ def run_technique(
     if res.get("stderr"):
         console.print("\n[dim #C4453B]Command Error (stderr):[/dim #C4453B]")
         console.print(f"[#C4453B]{res['stderr']}[/#C4453B]")
+
+
+@app.command("ir-list")
+def ir_list() -> None:
+    """List Incident Response Playbooks (alias for 'outpost investigations playbooks')."""
+    from .investigations import investigations_playbooks
+    return investigations_playbooks()
+
+
+@app.command("ir-execute")
+def ir_execute(
+    investigation_id: str = typer.Argument(..., help="Target investigation ID"),
+    playbook_id: str = typer.Argument(..., help="Playbook ID to execute (e.g. ransomware_containment)"),
+    contain: bool = typer.Option(False, "--contain", "-c", help="Automatically network-isolate target host"),
+    no_probes: bool = typer.Option(False, "--no-probes", help="Skip running forensic hunt probes"),
+    host: str = typer.Option("local", "--host", "-h", help="Target host identifier"),
+) -> None:
+    """Execute automated incident response playbook actions (alias for 'outpost investigations execute-playbook')."""
+    from .investigations import investigations_execute_playbook
+    return investigations_execute_playbook(
+        investigation_id=investigation_id,
+        playbook_id=playbook_id,
+        contain=contain,
+        no_probes=no_probes,
+        host=host,
+    )

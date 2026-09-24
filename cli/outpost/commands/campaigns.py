@@ -68,13 +68,14 @@ def _render_campaign(c: dict) -> None:
     console.print(runs)
 
     evidence: list[tuple[str, str, int]] = []
+    iocs_dict = c.get("iocs") or {}
     for label, key in (
         ("IP", "ips"),
         ("Registry key", "registry_keys"),
         ("File path", "file_paths"),
         ("Process", "processes"),
     ):
-        for ioc in c["iocs"][key]:
+        for ioc in iocs_dict.get(key, []):
             evidence.append((label, ioc["value"], ioc["runs"]))
     if evidence:
         iocs = Table(title=f"Shared IOCs ({len(evidence)} values)", border_style="dim")
@@ -93,7 +94,7 @@ def _render_campaign(c: dict) -> None:
         tail.add_column("Type")
         tail.add_column("Detail")
         for e in events[-_TIMELINE_TAIL:]:
-            tail.add_row(e["sample_name"], (e["timestamp"] or "")[11:19], e["event_type"], _detail(e))
+            tail.add_row(e.get("sample_name", "-"), (e.get("timestamp") or "")[11:19], e.get("event_type", "-"), _detail(e))
         console.print(tail)
 
 
@@ -121,8 +122,16 @@ def campaigns(
     try:
         data = api_client.get_campaigns()
     except api_client.APIError as exc:
-        console.print(f"[bold #C4453B]Campaigns failed: {exc}[/bold #C4453B]")
-        raise typer.Exit(1)
+        if "Backend unreachable" in str(exc):
+            from ..lib import offline_store
+            data = offline_store.get_offline_campaigns()
+            if data is not None:
+                console.print("[dim yellow]Notice: Backend offline — showing campaigns directly from local SQLite database (offline mode)[/dim yellow]\n")
+        else:
+            data = None
+        if data is None:
+            console.print(f"[bold #C4453B]Campaigns failed: {exc}[/bold #C4453B]")
+            raise typer.Exit(1)
 
     if not data:
         console.print("[dim]No campaigns yet — two or more runs must share an IP.[/dim]")
@@ -140,8 +149,14 @@ def _export_campaign_stix(campaign_key: str, output: Path | None) -> None:
     try:
         bundle = api_client.export_campaign_stix(campaign_key)
     except api_client.APIError as exc:
-        console.print(f"[bold #C4453B]Campaign STIX export failed: {exc}[/bold #C4453B]")
-        raise typer.Exit(1)
+        if "Backend unreachable" in str(exc):
+            from ..lib import offline_store
+            bundle = offline_store.get_offline_campaign_stix(campaign_key)
+        else:
+            bundle = None
+        if not bundle:
+            console.print(f"[bold #C4453B]Campaign STIX export failed: {exc}[/bold #C4453B]")
+            raise typer.Exit(1)
 
     dest = output or Path(f"outpost-campaign-stix-{campaign_key}.json")
     dest.write_text(json.dumps(bundle, indent=2))

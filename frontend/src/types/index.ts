@@ -620,8 +620,21 @@ export interface SampleDetonationResult {
   timeline?: TimelineEventItem[];
   dropped_artifacts?: DroppedArtifactItem[];
   isolation_driver?: string;
+  network_connections?: any[];
   forecast?: BehavioralForecast;
   reconciliation?: ForecastReconciliation;
+  threat_verdict?: "MALICIOUS" | "SUSPICIOUS" | "BENIGN";
+  threat_score?: number;
+  threat_family?: string;
+  detection_efficacy_pct?: number;
+  mitre_matrix?: Array<{ id: string; name?: string; tactic?: string; detected: boolean; severity?: string; command?: string }>;
+  actionable_iocs?: {
+    ips: string[];
+    domains: string[];
+    firewall_rules: string[];
+    dropped_count: number;
+    threat_family?: string;
+  };
 }
 
 export interface SimulationStageResult {
@@ -753,7 +766,9 @@ export interface PropagationEdge {
   target: string;
   type: string;
   label: string;
+  protocol?: string;
 }
+
 
 export interface PropagationGraph {
   nodes: PropagationNode[];

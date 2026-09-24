@@ -23,6 +23,8 @@ import { platformTone, readSavedQuery, writeSavedQuery } from "./searchHelpers";
 import NetworkContextModal from "../components/NetworkContextModal";
 import ProcessContextModal from "../components/ProcessContextModal";
 import WatchlistPage from "./watchlist";
+import { IocWorkbench } from "../components/IocWorkbench";
+import { CyberDecoder } from "../components/CyberDecoder";
 
 type Scope = "ioc" | "global";
 
@@ -237,9 +239,13 @@ function GlobalResults({
 
 export default function SearchPage() {
   const [params, setParams] = useSearchParams();
-  const [activeTab, setActiveTab] = useState<"search" | "watchlist">(() =>
-    params.get("tab") === "watchlist" ? "watchlist" : "search"
-  );
+  const [activeTab, setActiveTab] = useState<"search" | "watchlist" | "workbench" | "decoder">(() => {
+    const t = params.get("tab");
+    if (t === "watchlist") return "watchlist";
+    if (t === "workbench") return "workbench";
+    if (t === "decoder") return "decoder";
+    return "search";
+  });
   const [scope, setScope] = useState<Scope>(() => readScope(params));
   const [value, setValue] = useState(params.get("q") ?? readSavedQuery());
   const [result, setResult] = useState<IocSearchResponse | null>(null);
@@ -255,9 +261,12 @@ export default function SearchPage() {
   // run once on mount; a bare visit re-runs the last saved query in the
   // saved scope (same resume-mid-thought UX as before).
   useEffect(() => {
-    if (params.get("tab") === "watchlist") {
+    const t = params.get("tab");
+    if (t === "watchlist") {
       setActiveTab("watchlist");
-    } else if (params.get("tab") === "search") {
+    } else if (t === "workbench") {
+      setActiveTab("workbench");
+    } else if (t === "search") {
       setActiveTab("search");
     }
   }, [params]);
@@ -324,9 +333,25 @@ export default function SearchPage() {
   return (
     <div className="mx-auto max-w-5xl px-5 py-8 lg:px-8">
       <PageHeader
-        kicker={activeTab === "watchlist" ? "Detection & Intel · Watchlist" : scope === "global" ? "Detection & Intel · Global search" : "Detection & Intel · IOC Search"}
+        kicker={
+          activeTab === "workbench"
+            ? "Threat Intelligence · IOC Workbench"
+            : activeTab === "watchlist"
+            ? "Detection & Intel · Watchlist"
+            : scope === "global"
+            ? "Detection & Intel · Global search"
+            : "Detection & Intel · IOC Search"
+        }
         title={
-          activeTab === "watchlist" ? (
+          activeTab === "decoder" ? (
+            <>
+              CyberDecoder <span className="font-normal text-text-muted">— payload deobfuscator &amp; IOC extractor</span>
+            </>
+          ) : activeTab === "workbench" ? (
+            <>
+              IOC Defanger &amp; Extractor <span className="font-normal text-text-muted">— OSINT &amp; Log Workbench</span>
+            </>
+          ) : activeTab === "watchlist" ? (
             <>
               Infrastructure Watchlist <span className="font-normal text-text-muted">— tracked adversary hosts</span>
             </>
@@ -339,7 +364,11 @@ export default function SearchPage() {
           )
         }
         lede={
-          activeTab === "watchlist"
+          activeTab === "decoder"
+            ? "Inspect, deobfuscate, and extract indicators from encoded PowerShell commands, Hex shellcode, URL parameters, and defanged IOCs."
+            : activeTab === "workbench"
+            ? "Extract, defang/refang, deduplicate, and cross-reference indicators from raw threat advisories, phishing emails, or syslog lines directly into OutPost."
+            : activeTab === "watchlist"
             ? "Flag and monitor persistent adversary IP addresses, domain names, and file hashes across all telemetry."
             : scope === "global"
             ? "One query across every analyst-facing resource — findings, IOCs, artifacts, hosts, sessions, investigations, campaigns — with qualifiers and direct navigation into each result."
@@ -383,9 +412,47 @@ export default function SearchPage() {
           <Icon name="target" size={13} />
           <span>Infrastructure Watchlist</span>
         </button>
+        <button
+          onClick={() => {
+            setActiveTab("workbench");
+            setParams((p) => {
+              p.set("tab", "workbench");
+              return p;
+            });
+          }}
+          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-medium transition ${
+            activeTab === "workbench"
+              ? "border border-cyan-500/40 bg-cyan-500/15 font-bold text-cyan-400 shadow-sm"
+              : "text-text-muted hover:text-text-primary"
+          }`}
+        >
+          <Icon name="zap" size={13} />
+          <span>⚡ IOC Defanger</span>
+        </button>
+        <button
+          onClick={() => {
+            setActiveTab("decoder");
+            setParams((p) => {
+              p.set("tab", "decoder");
+              return p;
+            });
+          }}
+          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-medium transition ${
+            activeTab === "decoder"
+              ? "border border-amber-500/40 bg-amber-500/15 font-bold text-amber-400 shadow-sm"
+              : "text-text-muted hover:text-text-primary"
+          }`}
+        >
+          <Icon name="terminal" size={13} />
+          <span>⚡ CyberDecoder</span>
+        </button>
       </div>
 
-      {activeTab === "watchlist" ? (
+      {activeTab === "decoder" ? (
+        <CyberDecoder initialValue={value} />
+      ) : activeTab === "workbench" ? (
+        <IocWorkbench />
+      ) : activeTab === "watchlist" ? (
         <WatchlistPage />
       ) : (
         <>
@@ -430,30 +497,55 @@ export default function SearchPage() {
           </form>
 
           {scope === "global" && (
-            <div className="mt-2.5 flex flex-wrap items-center gap-1.5 font-mono text-[10px]">
-              <span className="text-text-faint">Syntax filters:</span>
-              {[
-                "type:finding",
-                "type:ioc",
-                "type:host",
-                "type:session",
-                "status:open",
-                "severity:malicious",
-                "severity:suspicious",
-              ].map((filterChip) => (
-                <button
-                  key={filterChip}
-                  type="button"
-                  onClick={() => {
-                    const nextVal = value ? `${value} ${filterChip}` : filterChip;
-                    setValue(nextVal);
-                    void runGlobalSearch(nextVal);
-                  }}
-                  className="press rounded border border-border-subtle bg-bg-surface px-2 py-0.5 text-text-muted hover:border-accent/50 hover:text-accent"
-                >
-                  +{filterChip}
-                </button>
-              ))}
+            <div className="mt-3 space-y-2">
+              <div className="flex flex-wrap items-center gap-1.5 font-mono text-[10px]">
+                <span className="text-text-faint font-semibold uppercase tracking-wide">Preset Hunts:</span>
+                {[
+                  { label: "Critical Findings", query: "type:finding severity:malicious" },
+                  { label: "Active Cases", query: "type:investigation status:open" },
+                  { label: "Network C2 IOCs", query: "type:ioc kind:ip" },
+                  { label: "PowerShell Commands", query: "powershell" },
+                  { label: "Fleet Hosts", query: "type:host" },
+                  { label: "Sample Vault", query: "type:artifact" },
+                ].map((preset) => (
+                  <button
+                    key={preset.label}
+                    type="button"
+                    onClick={() => {
+                      setValue(preset.query);
+                      void runGlobalSearch(preset.query);
+                    }}
+                    className="press rounded-md border border-accent/40 bg-accent/10 px-2 py-0.5 text-accent hover:bg-accent/20 hover:border-accent transition-colors"
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5 font-mono text-[10px]">
+                <span className="text-text-faint">Syntax filters:</span>
+                {[
+                  "type:finding",
+                  "type:ioc",
+                  "type:host",
+                  "type:session",
+                  "status:open",
+                  "severity:malicious",
+                  "severity:suspicious",
+                ].map((filterChip) => (
+                  <button
+                    key={filterChip}
+                    type="button"
+                    onClick={() => {
+                      const nextVal = value ? `${value} ${filterChip}` : filterChip;
+                      setValue(nextVal);
+                      void runGlobalSearch(nextVal);
+                    }}
+                    className="press rounded border border-border-subtle bg-bg-surface px-2 py-0.5 text-text-muted hover:border-accent/50 hover:text-accent"
+                  >
+                    +{filterChip}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
 

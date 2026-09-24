@@ -20,8 +20,14 @@ def compare(
     try:
         data = api_client.compare_runs(run_id_a, run_id_b)
     except api_client.APIError as exc:
-        console.print(f"[bold #C4453B]Compare failed: {exc}[/bold #C4453B]")
-        raise typer.Exit(1)
+        if "Backend unreachable" in str(exc):
+            from ..lib import offline_store
+            data = offline_store.get_offline_run_comparison(run_id_a, run_id_b)
+        else:
+            data = None
+        if not data:
+            console.print(f"[bold #C4453B]Compare failed: {exc}[/bold #C4453B]")
+            raise typer.Exit(1)
 
     ra, rb = data["run_a"], data["run_b"]
     console.print(

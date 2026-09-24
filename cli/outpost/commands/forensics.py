@@ -569,3 +569,119 @@ def hunt(
     else:
         console.print("[green]✓ No forensic anomalies or IOCs discovered for this hunt.[/green]")
 
+
+@app.command("scan-memory")
+def scan_memory(
+    limit: int = typer.Option(50, "--limit", "-l", min=1, max=200, help="Maximum number of active processes to inspect"),
+) -> None:
+    """Scan volatile memory and executable binaries of active running processes against OutPost YARA engine."""
+    show_banner(primary=False)
+    console.print(f"[#D9A441]Scanning active host processes against YARA rule catalog (limit: {limit})...[/#D9A441]")
+
+    try:
+        data = api_client.scan_live_memory_yara(limit=limit)
+    except api_client.APIError as exc:
+        console.print(f"[bold #C4453B]Memory YARA scan failed: {exc}[/bold #C4453B]")
+        raise typer.Exit(1)
+
+    scanned = data.get("total_scanned_processes", 0)
+    threat_count = data.get("threat_count", 0)
+    threat_color = "red" if threat_count > 0 else "green"
+
+    console.print(Panel(
+        f"Processes Scanned: [bold]{scanned}[/bold]\n"
+        f"Threat Hits: [bold {threat_color}]{threat_count}[/bold {threat_color}]\n"
+        f"Status: [{'bold red]MALICIOUS PROCESS DETECTED' if threat_count > 0 else 'bold green]CLEAN (No YARA signature matches)'}[/]",
+        title="[bold white]Live Process Memory YARA Inspection[/bold white]",
+        border_style="red" if threat_count > 0 else "green",
+    ))
+
+    threats = data.get("threats", [])
+    if threats:
+        table = Table(title="Detected Malicious Processes", border_style="dim")
+        table.add_column("PID", style="bold cyan")
+        table.add_column("Process Name", style="bold")
+        table.add_column("Executable Path", style="dim")
+        table.add_column("Matched YARA Rules", style="bold yellow")
+        for t in threats:
+            rules_str = ", ".join(m.get("rule_name") or m.get("rule") or str(m) for m in t.get("matches", []))
+            table.add_row(
+                str(t.get("pid", "-")),
+                t.get("process_name") or "-",
+                t.get("exe_path") or "-",
+                rules_str or "-",
+            )
+        console.print(table)
+    else:
+        console.print("[green]✓ All scanned running processes passed YARA signature verification cleanly.[/green]")
+
+
+@app.command("triage-pack")
+def triage_pack(
+    host: str = typer.Option("local", "--host", "-h", help="Target host identifier"),
+    output: str | None = typer.Option(None, "--output", "-o", help="Write full JSON triage package to disk"),
+    no_yara: bool = typer.Option(False, "--no-yara", help="Skip live memory YARA scanning for faster acquisition"),
+) -> None:
+    """Acquire and compile a comprehensive live endpoint forensic triage pack."""
+    import json
+    show_banner(primary=False)
+    console.print(f"[#D9A441]Acquiring live forensic triage pack from host '[bold]{host}[/bold]'...[/#D9A441]")
+
+    try:
+        data = api_client.collect_forensic_triage(host_id=host, include_yara=not no_yara)
+    except api_client.APIError as exc:
+        console.print(f"[bold #C4453B]Triage pack acquisition failed: {exc}[/bold #C4453B]")
+        raise typer.Exit(1)
+
+    summary = data.get("summary", {})
+    sev = summary.get("severity", "clean")
+    sev_color = "red" if sev == "critical" else ("yellow" if sev == "suspicious" else "green")
+
+    console.print(
+        Panel(
+            f"[bold]Triage ID:[/bold] [cyan]{data.get('triage_id')}[/cyan]\n"
+            f"[dim]Timestamp:[/dim] {data.get('collected_at', '')[:19].replace('T', ' ')} UTC  ·  "
+            f"[dim]Host:[/dim] [white]{data.get('hostname', host)}[/white] ({data.get('platform', '-')})\n"
+            f"[dim]Severity Rollup:[/dim] [bold {sev_color}]{sev.upper()}[/bold {sev_color}]\n"
+            f"[dim]Probes Executed:[/dim] [bold]{summary.get('total_probes_executed', 0)}[/bold]  ·  "
+            f"[dim]Probe Anomalies:[/dim] [bold {'red' if summary.get('probe_anomalies_count', 0) > 0 else 'green'}]{summary.get('probe_anomalies_count', 0)}[/]  ·  "
+            f"[dim]YARA Hits:[/dim] [bold {'red' if summary.get('yara_threats_count', 0) > 0 else 'green'}]{summary.get('yara_threats_count', 0)}[/]\n"
+            f"[dim]Telemetry:[/dim] {summary.get('total_processes', 0)} processes, {summary.get('total_sockets', 0)} active sockets captured",
+            title="[bold #3B82F6]Endpoint Live Forensic Triage Pack[/bold #3B82F6]",
+            border_style=sev_color,
+        )
+    )
+
+    probe_results = data.get("probe_results", {})
+    if probe_results:
+        table = Table(title="Forensic Probe Breakdown", border_style="dim")
+        table.add_column("Probe", style="bold cyan")
+        table.add_column("Tactic", style="magenta")
+        table.add_column("Items Scanned", justify="right")
+        table.add_column("Anomalies", justify="right")
+        table.add_column("Status")
+
+        for p_id, p_data in probe_results.items():
+            anoms = p_data.get("anomalies_count", 0)
+            a_color = "bold red" if anoms > 0 else "green"
+            table.add_row(
+                p_data.get("name") or p_id,
+                p_data.get("tactic") or "-",
+                str(p_data.get("total_items", 0)),
+                f"[{a_color}]{anoms}[/{a_color}]",
+                f"[{a_color}]{'ANOMALY DETECTED' if anoms > 0 else 'Clean'}[/{a_color}]",
+            )
+        console.print(table)
+
+    if output:
+        try:
+            with open(output, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, default=str)
+            console.print(f"\n[green]✓ Triage pack written successfully to disk: [bold]{output}[/bold][/green]")
+        except Exception as e:
+            console.print(f"\n[red]Failed to write triage pack to {output}: {e}[/red]")
+            raise typer.Exit(1)
+    else:
+        console.print("\n[dim]To export complete raw forensic payload, run with:[/dim] [bold cyan]outpost forensics triage-pack --output <file.json>[/bold cyan]")
+
+

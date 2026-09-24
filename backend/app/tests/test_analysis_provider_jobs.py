@@ -265,3 +265,26 @@ async def test_finalizer_fails_honestly_when_task_record_is_lost(client, conn):
         assert "lost" in row["error"]
     finally:
         _cleanup(conn, run_id, None)
+
+
+def test_isolated_outpost_launch_and_execution(client, conn, monkeypatch):
+    """POST /analysis with backend='isolated-outpost' creates an isolated dynamic sandbox job."""
+    sample = _upload_unique(client, "iso-launch", "iso-launch.bin")
+    run_id = None
+    try:
+        resp = client.post(
+            "/analysis",
+            json={"backend": "isolated-outpost", "sample_id": sample["sample_id"], "timeout_seconds": 10},
+        )
+        assert resp.status_code == 201
+        job = resp.json()
+        run_id = job["run_id"]
+        assert job["backend"] == "isolated-outpost"
+        assert job["status"] in ("queued", "running", "completed")
+
+        row = jobs_store.get_job(conn, run_id)
+        assert row is not None
+        assert row["backend"] == "isolated-outpost"
+    finally:
+        _cleanup(conn, run_id, sample.get("sample_id"))
+

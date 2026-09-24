@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Icon } from "./Icon";
-import { listIncidentPlaybooks, applyIncidentPlaybook } from "../lib/api";
+import { listIncidentPlaybooks, applyIncidentPlaybook, executeIncidentPlaybook } from "../lib/api";
 import type { IncidentPlaybookItem } from "../types";
 
 interface IncidentPlaybookModalProps {
@@ -16,6 +16,11 @@ export const IncidentPlaybookModal: React.FC<IncidentPlaybookModalProps> = ({
   const queryClient = useQueryClient();
   const [selectedPlaybookId, setSelectedPlaybookId] = useState<string>("ransomware_containment");
   const [assignee, setAssignee] = useState("");
+  const [mode, setMode] = useState<"tasks" | "soar">("soar");
+  const [autoContain, setAutoContain] = useState(false);
+  const [runProbes, setRunProbes] = useState(true);
+  const [targetHost, setTargetHost] = useState("local");
+  const [executionResult, setExecutionResult] = useState<any | null>(null);
 
   const { data: playbooks = [], isLoading } = useQuery<IncidentPlaybookItem[]>({
     queryKey: ["incident-playbooks"],
@@ -34,6 +39,22 @@ export const IncidentPlaybookModal: React.FC<IncidentPlaybookModalProps> = ({
       void queryClient.invalidateQueries({ queryKey: ["investigation-tasks", investigationId] });
       void queryClient.invalidateQueries({ queryKey: ["investigation-timeline", investigationId] });
       onClose();
+    },
+  });
+
+  const executeMutation = useMutation({
+    mutationFn: async () => {
+      return executeIncidentPlaybook(investigationId, selectedPlaybookId, {
+        auto_contain: autoContain,
+        run_probes: runProbes,
+        target_host: targetHost.trim() || "local",
+      });
+    },
+    onSuccess: (data) => {
+      setExecutionResult(data);
+      void queryClient.invalidateQueries({ queryKey: ["investigation", investigationId] });
+      void queryClient.invalidateQueries({ queryKey: ["investigation-tasks", investigationId] });
+      void queryClient.invalidateQueries({ queryKey: ["investigation-timeline", investigationId] });
     },
   });
 
@@ -184,19 +205,122 @@ export const IncidentPlaybookModal: React.FC<IncidentPlaybookModalProps> = ({
                   </div>
                 </div>
 
-                {/* Assignee Config */}
-                <div className="space-y-1.5 border-t border-border-subtle pt-4">
-                  <label className="font-mono text-xs font-semibold text-text-primary">
-                    Assign Response Lead (Optional)
-                  </label>
-                  <input
-                    type="text"
-                    value={assignee}
-                    onChange={(e) => setAssignee(e.target.value)}
-                    placeholder="e.g. secops_lead, analyst_carter"
-                    className="w-full rounded-xl border border-border-subtle bg-bg-base px-3 py-2 text-xs text-text-primary focus:border-accent focus:outline-none"
-                  />
+                {/* Mode Selector */}
+                <div className="flex items-center gap-2 border-t border-border-subtle pt-4">
+                  <button
+                    type="button"
+                    onClick={() => setMode("soar")}
+                    className={`flex-1 py-1.5 px-3 rounded-lg font-mono text-xs font-bold transition flex items-center justify-center gap-2 ${
+                      mode === "soar"
+                        ? "bg-accent text-bg-base shadow-sm"
+                        : "bg-bg-elevated text-text-muted hover:text-text-primary"
+                    }`}
+                  >
+                    <Icon name="play" size={12} />
+                    <span>Automated SOAR Orchestrator</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMode("tasks")}
+                    className={`flex-1 py-1.5 px-3 rounded-lg font-mono text-xs font-bold transition flex items-center justify-center gap-2 ${
+                      mode === "tasks"
+                        ? "bg-accent text-bg-base shadow-sm"
+                        : "bg-bg-elevated text-text-muted hover:text-text-primary"
+                    }`}
+                  >
+                    <Icon name="check" size={12} />
+                    <span>Task Checklist Only</span>
+                  </button>
                 </div>
+
+                {executionResult ? (
+                  /* Execution Results Card */
+                  <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-4 space-y-3">
+                    <div className="flex items-center gap-2 text-emerald-400 font-bold text-xs">
+                      <Icon name="check" size={16} />
+                      <span>Automated SOAR Execution Successful</span>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2 font-mono text-[11px]">
+                      <div className="rounded-lg bg-bg-base p-2 border border-border-subtle">
+                        <span className="text-text-muted block text-[10px]">Tasks Created</span>
+                        <span className="font-bold text-text-primary">{executionResult.tasks_instantiated}</span>
+                      </div>
+                      <div className="rounded-lg bg-bg-base p-2 border border-border-subtle">
+                        <span className="text-text-muted block text-[10px]">Probes Run</span>
+                        <span className="font-bold text-text-primary">{executionResult.probes_executed_count}</span>
+                      </div>
+                      <div className="rounded-lg bg-bg-base p-2 border border-border-subtle">
+                        <span className="text-text-muted block text-[10px]">Anomalies</span>
+                        <span className={`font-bold ${executionResult.total_anomalies_detected > 0 ? "text-rose-400" : "text-emerald-400"}`}>
+                          {executionResult.total_anomalies_detected}
+                        </span>
+                      </div>
+                    </div>
+                    {executionResult.contained && (
+                      <div className="flex items-center gap-2 rounded-lg bg-rose-500/20 border border-rose-500/40 px-3 py-1.5 text-xs text-rose-300 font-bold">
+                        <Icon name="shield" size={14} />
+                        <span>Host '{executionResult.target_host}' is now Network Isolated (Quarantined)</span>
+                      </div>
+                    )}
+                    <div className="space-y-1">
+                      <span className="font-mono text-[10px] uppercase text-text-faint">Audited SOAR Actions:</span>
+                      <ul className="text-xs text-text-muted space-y-0.5 list-disc list-inside">
+                        {(executionResult.actions_taken || []).map((act: string, idx: number) => (
+                          <li key={idx} className="font-mono text-[11px]">{act}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                ) : mode === "soar" ? (
+                  /* SOAR Configuration */
+                  <div className="rounded-xl border border-accent/20 bg-accent/5 p-4 space-y-3">
+                    <span className="font-mono text-xs font-bold text-text-primary block">
+                      SOAR Execution Parameters
+                    </span>
+                    <label className="flex items-center gap-2 text-xs text-text-primary cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={runProbes}
+                        onChange={(e) => setRunProbes(e.target.checked)}
+                        className="rounded border-border-subtle bg-bg-base text-accent focus:ring-0"
+                      />
+                      <span>Automatically execute recommended forensic hunt probes ({selectedPlaybook?.recommended_probes?.length || 0})</span>
+                    </label>
+                    <label className="flex items-center gap-2 text-xs text-rose-400 font-semibold cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={autoContain}
+                        onChange={(e) => setAutoContain(e.target.checked)}
+                        className="rounded border-rose-500/50 bg-bg-base text-rose-500 focus:ring-0"
+                      />
+                      <span>Quarantine Endpoint Immediately (Apply Host Network Isolation)</span>
+                    </label>
+                    <div className="space-y-1 pt-1">
+                      <label className="font-mono text-[11px] text-text-muted">Target Host ID:</label>
+                      <input
+                        type="text"
+                        value={targetHost}
+                        onChange={(e) => setTargetHost(e.target.value)}
+                        placeholder="local"
+                        className="w-full rounded-xl border border-border-subtle bg-bg-base px-3 py-1.5 text-xs text-text-primary focus:border-accent focus:outline-none"
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  /* Task Checklist Configuration */
+                  <div className="space-y-1.5 border-t border-border-subtle pt-2">
+                    <label className="font-mono text-xs font-semibold text-text-primary">
+                      Assign Response Lead (Optional)
+                    </label>
+                    <input
+                      type="text"
+                      value={assignee}
+                      onChange={(e) => setAssignee(e.target.value)}
+                      placeholder="e.g. secops_lead, analyst_carter"
+                      className="w-full rounded-xl border border-border-subtle bg-bg-base px-3 py-2 text-xs text-text-primary focus:border-accent focus:outline-none"
+                    />
+                  </div>
+                )}
               </>
             )}
           </div>
@@ -205,7 +329,11 @@ export const IncidentPlaybookModal: React.FC<IncidentPlaybookModalProps> = ({
         {/* Modal Footer */}
         <div className="flex items-center justify-between border-t border-border-subtle px-6 py-4">
           <span className="font-mono text-xs text-text-muted">
-            {selectedPlaybook?.tasks.length ?? 0} tasks will be created and added to the case timeline
+            {executionResult
+              ? "All actions logged to case audit timeline"
+              : mode === "soar"
+              ? "Automated triage findings and probes will be attached to case dossier"
+              : `${selectedPlaybook?.tasks.length ?? 0} tasks will be created and added to the case timeline`}
           </span>
           <div className="flex items-center gap-3">
             <button
@@ -213,17 +341,39 @@ export const IncidentPlaybookModal: React.FC<IncidentPlaybookModalProps> = ({
               onClick={onClose}
               className="rounded-lg border border-border-subtle px-4 py-2 font-mono text-xs font-semibold text-text-muted hover:bg-bg-elevated hover:text-text-primary"
             >
-              Cancel
+              {executionResult ? "Close & View Case" : "Cancel"}
             </button>
-            <button
-              type="button"
-              onClick={() => applyMutation.mutate()}
-              disabled={applyMutation.isPending || !selectedPlaybook}
-              className="press inline-flex items-center gap-2 rounded-xl bg-accent px-4 py-2 font-mono text-xs font-bold text-bg-base hover:bg-accent/90 disabled:opacity-50"
-            >
-              <Icon name={applyMutation.isPending ? "refresh" : "check"} size={14} className={applyMutation.isPending ? "animate-spin" : ""} />
-              <span>{applyMutation.isPending ? "Applying Playbook..." : "Apply Playbook to Case"}</span>
-            </button>
+            {!executionResult && (
+              mode === "soar" ? (
+                <button
+                  type="button"
+                  onClick={() => executeMutation.mutate()}
+                  disabled={executeMutation.isPending || !selectedPlaybook}
+                  className="press inline-flex items-center gap-2 rounded-xl bg-accent px-4 py-2 font-mono text-xs font-bold text-bg-base hover:bg-accent/90 disabled:opacity-50 shadow-md shadow-accent/20"
+                >
+                  <Icon
+                    name={executeMutation.isPending ? "refresh" : "play"}
+                    size={14}
+                    className={executeMutation.isPending ? "animate-spin" : ""}
+                  />
+                  <span>{executeMutation.isPending ? "Executing SOAR..." : "⚡ Execute SOAR Playbook"}</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => applyMutation.mutate()}
+                  disabled={applyMutation.isPending || !selectedPlaybook}
+                  className="press inline-flex items-center gap-2 rounded-xl bg-accent px-4 py-2 font-mono text-xs font-bold text-bg-base hover:bg-accent/90 disabled:opacity-50"
+                >
+                  <Icon
+                    name={applyMutation.isPending ? "refresh" : "check"}
+                    size={14}
+                    className={applyMutation.isPending ? "animate-spin" : ""}
+                  />
+                  <span>{applyMutation.isPending ? "Applying Tasks..." : "Apply Tasks to Case"}</span>
+                </button>
+              )
+            )}
           </div>
         </div>
       </div>

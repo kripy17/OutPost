@@ -925,16 +925,21 @@ def scan_live_memory_yara(limit_pids: int = 50) -> dict[str, Any]:
                 if not matched_rules and Path(f"/proc/{pid}/maps").exists():
                     try:
                         maps = Path(f"/proc/{pid}/maps").read_text(errors="ignore")
-                        for line in maps.splitlines():
-                            if "rwxp" in line and "[anon]" in line:
+                        lines = [l for l in maps.splitlines() if not any(skip in l for skip in ("/usr/lib", "/lib", "/usr/share", "locale", "fonts"))]
+                        bytes_scanned_proc = 0
+                        for line in lines[:30]:
+                            if ("rwxp" in line or "r-xp" in line or "[anon]" in line or "[stack]" in line or "[heap]" in line) and "-" in line:
                                 parts = line.split()[0].split("-")
                                 start = int(parts[0], 16)
                                 end = int(parts[1], 16)
-                                sz = min(end - start, 256 * 1024)
+                                sz = min(end - start, 128 * 1024)
+                                if sz <= 0 or bytes_scanned_proc > 512 * 1024:
+                                    break
                                 with open(f"/proc/{pid}/mem", "rb") as mf:
                                     mf.seek(start)
                                     buf = mf.read(sz)
                                     if buf:
+                                        bytes_scanned_proc += len(buf)
                                         m = yara_service.scan_sample(buf)
                                         if m:
                                             matched_rules.extend(m)

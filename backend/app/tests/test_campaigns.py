@@ -144,3 +144,32 @@ def test_campaign_timeline_and_ioc_evidence(client):
 
     keys = {r["value"] for r in hit["iocs"]["registry_keys"]}
     assert any("CurrentVersion\\Run" in k for k in keys)
+
+
+def test_campaign_propagation_graph_lateral_protocol_classification(client):
+    """Multi-host campaigns classify lateral movement ports (SSH 22, SMB 445) on propagation graph edges."""
+    a = make_run(client, sample_name="lateral-a.bin")
+    b = make_run(client, sample_name="lateral-b.bin")
+    shared_ip = "198.51.100.245"
+
+
+    _ingest(client, a, [
+        {"run_id": a, "platform": "linux", "event_type": "network_connection",
+         "timestamp": _ts(1), "pid": 100, "dest_ip": shared_ip, "dest_port": 443, "protocol": "TCP", "host_id": "host-alpha"},
+        {"run_id": a, "platform": "linux", "event_type": "network_connection",
+         "timestamp": _ts(2), "pid": 101, "dest_ip": "10.0.0.5", "dest_port": 22, "protocol": "TCP", "host_id": "host-alpha"},
+    ])
+    _ingest(client, b, [
+        {"run_id": b, "platform": "linux", "event_type": "network_connection",
+         "timestamp": _ts(5), "pid": 200, "dest_ip": shared_ip, "dest_port": 443, "protocol": "TCP", "host_id": "host-beta"},
+    ])
+
+    camps = client.get("/campaigns").json()
+    hit = [c for c in camps if c["key"] == shared_ip][0]
+    graph = hit.get("propagation_graph", {})
+    assert len(graph.get("nodes", [])) == 2
+    edges = graph.get("edges", [])
+    assert len(edges) == 1
+    assert "SSH" in edges[0]["label"]
+    assert edges[0]["protocol"] == "SSH"
+

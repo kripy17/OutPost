@@ -58,10 +58,16 @@ function AttackPropagationDAG({ graph }: { graph?: PropagationGraph }) {
               </div>
             </Link>
             {i < graph.nodes.length - 1 && (
-              <div className="flex items-center text-text-faint">
-                <span className="font-mono text-[10px] text-accent/70">──[traversal]──▶</span>
+              <div
+                className="flex items-center text-text-faint"
+                title={graph.edges?.[i]?.protocol ? `Protocol: ${graph.edges[i].protocol}` : undefined}
+              >
+                <span className="font-mono text-[10px] font-semibold text-accent/80">
+                  ──[{graph.edges?.[i]?.label || "traversal"}]──▶
+                </span>
               </div>
             )}
+
           </div>
         ))}
       </div>

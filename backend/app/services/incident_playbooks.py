@@ -331,3 +331,121 @@ def apply_playbook_to_investigation(
         "recommended_probes": pb.get("recommended_probes", []),
         "hunt_queries": pb.get("hunt_queries", []),
     }
+
+
+def execute_playbook_automated(
+    conn: sqlite3.Connection,
+    investigation_id: str,
+    playbook_id: str,
+    auto_contain: bool = False,
+    run_probes: bool = True,
+    target_host: str = "local",
+    actor: str = "OutPost SOAR Engine",
+) -> Dict[str, Any]:
+    """Execute automated incident response playbook containment & triage workflows.
+
+    Actions executed:
+    1. Instantiates or verifies playbook checklist tasks.
+    2. Runs recommended forensic hunt probes against the target host.
+    3. Analyzes probe findings and logs high-fidelity anomalies to the case.
+    4. Automatically applies network containment if auto_contain is True.
+    5. Appends a SOAR execution log note to the case history.
+    """
+    pb = get_playbook(playbook_id)
+    if not pb:
+        raise ValueError(f"Playbook '{playbook_id}' not found")
+
+    inv = inv_model.get(conn, investigation_id)
+    if not inv:
+        raise ValueError(f"Investigation '{investigation_id}' not found")
+
+    applied = apply_playbook_to_investigation(conn, investigation_id, playbook_id, assignee=actor)
+
+    actions_taken: List[str] = [f"Instantiated {applied['tasks_created_count']} playbook tasks"]
+    executed_probes: Dict[str, Any] = {}
+    total_anomalies = 0
+
+    # Execute recommended forensic probes
+    if run_probes:
+        from .forensic_probes import run_forensic_probe
+        for p_id in pb.get("recommended_probes", []):
+            try:
+                probe_res = run_forensic_probe(p_id)
+                executed_probes[p_id] = probe_res
+                anom_count = probe_res.get("anomalies_count", 0)
+                total_anomalies += anom_count
+
+                if anom_count > 0:
+                    findings_summary = "\n".join(
+                        f"- [{f.get('severity', 'warning').upper()}] {f.get('location', '') or f.get('entry', '') or f.get('command', '')}: {f.get('details', '')}"
+                        for f in probe_res.get("findings", [])[:5] if f.get("is_suspicious")
+                    )
+                    inv_model.add_note(
+                        conn,
+                        investigation_id,
+                        note=(
+                            f"🚨 **[Automated SOAR Hunt]** Probe `{probe_res['name']}` flagged **{anom_count} anomaly(ies)**:\n\n"
+                            f"{findings_summary}"
+                        ),
+                        actor=actor,
+                    )
+                    actions_taken.append(f"Probe '{p_id}' identified {anom_count} anomalies")
+                else:
+                    actions_taken.append(f"Probe '{p_id}' passed cleanly")
+            except Exception as e:
+                executed_probes[p_id] = {"error": str(e), "anomalies_count": 0}
+                actions_taken.append(f"Probe '{p_id}' failed: {e}")
+
+    # Automated Host Containment
+    contained = False
+    if auto_contain:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        reason = f"Automated SOAR Playbook Execution ({pb['name']})"
+        conn.execute(
+            """
+            INSERT INTO host_containment (host_id, isolated, isolated_at, isolated_by, reason, pending_actions, updated_at)
+            VALUES (?, 1, ?, ?, ?, '[]', ?)
+            ON CONFLICT(host_id) DO UPDATE SET
+                isolated = 1,
+                isolated_at = excluded.isolated_at,
+                isolated_by = excluded.isolated_by,
+                reason = excluded.reason,
+                updated_at = excluded.updated_at
+            """,
+            (target_host, now_iso, actor, reason, now_iso),
+        )
+        contained = True
+        actions_taken.append(f"Target host '{target_host}' isolated in network containment")
+        inv_model.add_note(
+            conn,
+            investigation_id,
+            note=f"🛡️ **[Automated Containment]** Host `{target_host}` has been network-isolated via OutPost quarantine.",
+            actor=actor,
+        )
+        if inv.get("status") in ("created", "triage", "active"):
+            inv_model.update(conn, investigation_id, status="contained")
+
+    exec_summary_note = (
+        f"**[SOAR Playbook Execution Complete]** `{pb['name']}`\n\n"
+        f"- **Status:** Execution successful\n"
+        f"- **Containment Action:** {'Host isolated' if contained else 'No containment requested'}\n"
+        f"- **Probes Executed:** {len(executed_probes)}\n"
+        f"- **Anomalies Flagged:** {total_anomalies}\n"
+        f"- **Actions Performed:**\n  • " + "\n  • ".join(actions_taken)
+    )
+    inv_model.add_note(conn, investigation_id, note=exec_summary_note, actor=actor)
+
+    return {
+        "investigation_id": investigation_id,
+        "playbook_id": pb["id"],
+        "playbook_name": pb["name"],
+        "executed_at": datetime.now(timezone.utc).isoformat(),
+        "status": "completed",
+        "contained": contained,
+        "target_host": target_host,
+        "tasks_instantiated": applied["tasks_created_count"],
+        "probes_executed_count": len(executed_probes),
+        "total_anomalies_detected": total_anomalies,
+        "actions_taken": actions_taken,
+        "probes": executed_probes,
+    }

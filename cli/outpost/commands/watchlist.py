@@ -34,15 +34,29 @@ def add(
     try:
         entry = api_client.watchlist_add(value, label)
     except api_client.APIError as exc:
-        console.print(f"[bold #C4453B]Failed: {exc}[/bold #C4453B]")
-        raise typer.Exit(1)
+        if "Backend unreachable" in str(exc):
+            from ..lib import offline_store
+            entry = offline_store.add_offline_watchlist(value, label)
+        else:
+            entry = None
+        if not entry:
+            console.print(f"[bold #C4453B]Failed: {exc}[/bold #C4453B]")
+            raise typer.Exit(1)
     console.print(f"[#3FA796]Added {entry['value']} to watchlist[/#3FA796]")
 
 
 @app.command("list")
 def list_entries() -> None:
     show_banner(primary=False)
-    entries = api_client.watchlist_list()
+    try:
+        entries = api_client.watchlist_list()
+    except api_client.APIError as exc:
+        if "Backend unreachable" in str(exc):
+            from ..lib import offline_store
+            entries = offline_store.get_offline_watchlist() or []
+        else:
+            console.print(f"[bold #C4453B]Failed: {exc}[/bold #C4453B]")
+            raise typer.Exit(1)
     if not entries:
         console.print("[dim]Watchlist is empty.[/dim]")
         return
@@ -51,7 +65,7 @@ def list_entries() -> None:
     table.add_column("Label")
     table.add_column("Added")
     for e in entries:
-        table.add_row(e["value"], e["label"], e["added_at"][:19].replace("T", " "))
+        table.add_row(e["value"], e.get("label", ""), (e.get("added_at") or "")[:19].replace("T", " "))
     console.print(table)
 
 
@@ -61,8 +75,14 @@ def remove(value: str = typer.Argument(..., help="Value to stop tracking")) -> N
     try:
         api_client.watchlist_remove(value)
     except api_client.APIError as exc:
-        console.print(f"[bold #C4453B]Failed: {exc}[/bold #C4453B]")
-        raise typer.Exit(1)
+        if "Backend unreachable" in str(exc):
+            from ..lib import offline_store
+            if not offline_store.remove_offline_watchlist(value):
+                console.print(f"[bold #C4453B]Failed: {exc}[/bold #C4453B]")
+                raise typer.Exit(1)
+        else:
+            console.print(f"[bold #C4453B]Failed: {exc}[/bold #C4453B]")
+            raise typer.Exit(1)
     console.print(f"[#3FA796]Removed {value} from watchlist[/#3FA796]")
 
 
@@ -77,7 +97,18 @@ def export(
         console.print(f"[bold #C4453B]Unknown format: {format}[/bold #C4453B] (use json or csv)")
         raise typer.Exit(2)
     dest = output or Path(f"outpost-watchlist.{format}")
-    dest.write_bytes(api_client.watchlist_export(format))
+    try:
+        content = api_client.watchlist_export(format)
+    except api_client.APIError as exc:
+        if "Backend unreachable" in str(exc):
+            from ..lib import offline_store
+            content = offline_store.export_offline_watchlist(format)
+        else:
+            content = None
+        if content is None:
+            console.print(f"[bold #C4453B]Export failed: {exc}[/bold #C4453B]")
+            raise typer.Exit(1)
+    dest.write_bytes(content)
     console.print(f"[#3FA796]Exported watchlist → {dest}[/#3FA796]")
 
 

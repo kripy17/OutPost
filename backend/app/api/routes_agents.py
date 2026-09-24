@@ -747,9 +747,11 @@ def queue_process_kill(host_id: str, request: Request, payload: dict | None = No
     if not pid and not process_name:
         raise HTTPException(status_code=422, detail="Either 'pid' or 'process_name' is required.")
 
+    import uuid
     actor = auth_service.role_from_request(request) or "analyst"
     now = datetime.now(timezone.utc).isoformat()
     action = {
+        "action_id": str(uuid.uuid4()),
         "action": "kill_process",
         "pid": pid,
         "process_name": process_name,
@@ -786,4 +788,63 @@ def queue_process_kill(host_id: str, request: Request, payload: dict | None = No
         "action": action,
         "total_pending": len(actions),
     }
+
+
+@router.post("/agents/{host_id}/actions/ack", response_model=None)
+def ack_host_actions(host_id: str, request: Request, payload: dict | None = None) -> dict:
+    """Acknowledge and clear executed containment/remediation actions for a host."""
+    from ..core import auth as auth_service
+    from ..models import audit
+
+    payload = payload or {}
+    action_ids = set(str(x) for x in (payload.get("action_ids") or []))
+
+    with db_session() as conn:
+        row = conn.execute(
+            "SELECT pending_actions FROM host_containment WHERE host_id = ?",
+            (host_id,),
+        ).fetchone()
+        if not row or not row["pending_actions"]:
+            return {"host_id": host_id, "status": "ok", "cleared_count": 0, "remaining_count": 0}
+
+        try:
+            current_actions = json.loads(row["pending_actions"])
+        except Exception:
+            current_actions = []
+
+        if action_ids:
+            remaining = [
+                a for a in current_actions
+                if a.get("action_id") not in action_ids and str(a.get("pid")) not in action_ids
+            ]
+            cleared = len(current_actions) - len(remaining)
+        else:
+            cleared = len(current_actions)
+            remaining = []
+
+
+        now = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            """
+            UPDATE host_containment
+            SET pending_actions = ?, updated_at = ?
+            WHERE host_id = ?
+            """,
+            (json.dumps(remaining), now, host_id),
+        )
+
+        actor = auth_service.role_from_request(request) or "collector"
+        audit.log(
+            conn, actor, "agent.action.ack",
+            target_type="host", target_id=host_id,
+            detail=f"cleared {cleared} action(s) on host {host_id}",
+        )
+
+    return {
+        "host_id": host_id,
+        "status": "ok",
+        "cleared_count": cleared,
+        "remaining_count": len(remaining),
+    }
+
 

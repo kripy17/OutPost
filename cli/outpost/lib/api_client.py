@@ -66,7 +66,7 @@ def _get(path: str) -> Any:
     try:
         resp = requests.get(f"{base}{path}", headers=_auth_headers(), timeout=15)
     except requests.RequestException as exc:
-        raise APIError(f"Backend unreachable at {base} — is OutPost running? Start it with `bash scripts/dev.sh start`") from None
+        raise APIError(f"Backend unreachable at {base} — is OutPost running? Start it with `./outpost.sh start`") from None
     if not resp.ok:
         raise APIError(f"GET {path} → {resp.status_code}: {resp.text[:200]}")
     return resp.json()
@@ -77,7 +77,7 @@ def _post(path: str, body: dict | None = None) -> Any:
     try:
         resp = requests.post(f"{base}{path}", json=body or {}, headers=_auth_headers(), timeout=15)
     except requests.RequestException:
-        raise APIError(f"Backend unreachable at {base} — is OutPost running? Start it with `bash scripts/dev.sh start`") from None
+        raise APIError(f"Backend unreachable at {base} — is OutPost running? Start it with `./outpost.sh start`") from None
     if not resp.ok:
         raise APIError(f"POST {path} → {resp.status_code}: {resp.text[:200]}")
     return resp.json()
@@ -88,7 +88,7 @@ def _patch(path: str, body: dict | None = None) -> Any:
     try:
         resp = requests.patch(f"{base}{path}", json=body or {}, headers=_auth_headers(), timeout=15)
     except requests.RequestException:
-        raise APIError(f"Backend unreachable at {base} — is OutPost running? Start it with `bash scripts/dev.sh start`") from None
+        raise APIError(f"Backend unreachable at {base} — is OutPost running? Start it with `./outpost.sh start`") from None
     if not resp.ok:
         raise APIError(f"PATCH {path} → {resp.status_code}: {resp.text[:200]}")
     return resp.json()
@@ -102,7 +102,7 @@ def _delete(path: str) -> None:
     try:
         resp = requests.delete(f"{base}{path}", headers=_auth_headers(), timeout=15)
     except requests.RequestException:
-        raise APIError(f"Backend unreachable at {base} — is OutPost running? Start it with `bash scripts/dev.sh start`") from None
+        raise APIError(f"Backend unreachable at {base} — is OutPost running? Start it with `./outpost.sh start`") from None
     if resp.status_code not in (200, 204):
         raise APIError(f"DELETE {path} → {resp.status_code}: {resp.text[:200]}")
 
@@ -268,6 +268,10 @@ def watchlist_list() -> list[dict]:
     return _get("/watchlist")
 
 
+get_watchlist = watchlist_list
+
+
+
 def watchlist_add(value: str, label: str = "") -> dict:
     return _post("/watchlist", {"value": value, "label": label})
 
@@ -284,6 +288,12 @@ def get_agents(identity: str = "") -> dict:
     """
     q = f"?identity={identity}" if identity else ""
     return _get(f"/agents{q}")
+
+
+def isolate_agent(host_id: str, isolated: bool = True, reason: str = "") -> dict:
+    """Contain or release an agent host (`POST /agents/{host_id}/isolate`)."""
+    return _post(f"/agents/{quote(host_id)}/isolate", {"isolated": isolated, "reason": reason})
+
 
 
 def get_campaigns() -> list[dict]:
@@ -316,6 +326,14 @@ def upload_sample(data: bytes, name: str = "") -> dict:
         raise APIError(f"POST /samples → {resp.status_code}: {resp.text[:200]}")
     return resp.json()
 
+
+
+def get_audit(limit: int = 50, action: str = "") -> dict:
+    """Analyst audit log (`GET /audit`). `?action=` filters by action kind."""
+    q = f"?limit={limit}"
+    if action:
+        q += f"&action={urllib.parse.quote(action)}"
+    return _get(f"/audit{q}")
 
 
 def export_stix(run_id: str) -> dict:
@@ -527,6 +545,17 @@ def set_alert_investigation(alert_id: int, investigation_id: str | None, current
     return _patch(f"/alerts/{alert_id}", {"status": current_status, "investigation_id": investigation_id})
 
 
+def export_investigation(investigation_id: str, format: str = "markdown") -> bytes:
+    """Export incident response case dossier as Markdown or JSON (GET /investigations/{id}/export)."""
+    resp = requests.get(
+        f"{BASE_URL}/investigations/{quote(str(investigation_id))}/export?format={format}",
+        timeout=15,
+    )
+    if not resp.ok:
+        raise APIError(f"GET /investigations/{investigation_id}/export → {resp.status_code}: {resp.text[:200]}")
+    return resp.content
+
+
 def watchlist_export(format: str = "json") -> bytes:
     resp = requests.get(f"{BASE_URL}/watchlist/export?format={format}", timeout=15)
     if not resp.ok:
@@ -642,6 +671,27 @@ def isolate_host(host_id: str, isolated: bool = True, reason: str = "") -> dict:
 def kill_host_process(host_id: str, pid: int | None = None, process_name: str = "") -> dict:
     """Queue a process kill action on an agent host."""
     return _post(f"/agents/{quote(host_id)}/kill-process", {"pid": pid, "process_name": process_name})
+
+
+def get_host_containment(host_id: str) -> dict:
+    """Retrieve active network containment status and pending actions for a host."""
+    return _get(f"/agents/{quote(host_id)}/containment")
+
+
+def ack_host_actions(host_id: str, action_ids: list[str] | None = None) -> dict:
+    """Acknowledge and clear executed containment/remediation actions."""
+    return _post(f"/agents/{quote(host_id)}/actions/ack", {"action_ids": action_ids or []})
+
+
+def ioc_fleet_hunt(ioc_id: str) -> dict:
+    """Assess fleet-wide compromise for an indicator across all hosts and events."""
+    return _get(f"/iocs/{quote(ioc_id)}/fleet-hunt")
+
+
+def scan_live_memory_yara(limit: int = 50) -> dict:
+    """Scan active process memory against OutPost YARA engine."""
+    return _post(f"/system/forensics/scan/yara?limit={limit}", {})
+
 
 
 def get_similar_samples(sample_id: str, min_similarity: int = 20) -> dict:
@@ -761,5 +811,36 @@ def run_forensic_probe(probe_id: str, host_id: str = "local") -> dict:
     """Execute an on-demand live host forensic hunt probe."""
     from urllib.parse import quote
     return _post(f"/system/forensics/probes/{quote(probe_id)}/run?host_id={quote(host_id)}", {})
+
+
+def collect_forensic_triage(host_id: str = "local", include_yara: bool = True) -> dict:
+    """Acquire full live host forensic triage package."""
+    from urllib.parse import quote
+    yara_param = "true" if include_yara else "false"
+    return _post(f"/hosts/{quote(host_id)}/triage?include_yara={yara_param}", {})
+
+
+def list_investigation_playbooks() -> list[dict]:
+    """Retrieve catalog of Incident Response Playbooks."""
+    return _get("/investigations/playbooks")
+
+
+def execute_investigation_playbook(
+    investigation_id: str,
+    playbook_id: str,
+    auto_contain: bool = False,
+    run_probes: bool = True,
+    target_host: str = "local",
+) -> dict:
+    """Execute automated incident response playbook containment & triage actions."""
+    from urllib.parse import quote
+    return _post(
+        f"/investigations/{quote(investigation_id)}/playbooks/{quote(playbook_id)}/execute",
+        {
+            "auto_contain": auto_contain,
+            "run_probes": run_probes,
+            "target_host": target_host,
+        },
+    )
 
 

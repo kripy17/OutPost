@@ -334,3 +334,55 @@ def test_agent_summary_json_feeds_the_timer_log(monkeypatch):
     assert by_rule["beaconing"]["runs"] == ["agent-run-1"]
     assert by_rule["masquerading"]["malicious"] == 1
     assert len(data["per_run"]) == 2
+
+
+def test_agent_kill_process_and_containment_commands(monkeypatch):
+    """Test outpost agent kill-process and outpost agent containment commands."""
+    from outpost.lib import api_client
+
+    kill_calls = []
+    containment_data = {
+        "host_id": "sensor-99",
+        "isolated": True,
+        "isolated_at": "2026-09-01T12:00:00Z",
+        "isolated_by": "analyst",
+        "reason": "Suspicious reverse shell",
+        "pending_actions": [
+            {
+                "action": "kill_process",
+                "pid": 5544,
+                "process_name": "nc",
+                "requested_by": "analyst",
+                "requested_at": "2026-09-01T12:01:00Z",
+                "action_id": "act-99",
+            }
+        ],
+    }
+
+    monkeypatch.setattr(
+        api_client,
+        "kill_host_process",
+        lambda hid, pid=None, process_name="": kill_calls.append({"host": hid, "pid": pid, "pname": process_name}) or {
+            "status": "queued",
+            "action": {"pid": pid, "process_name": process_name, "action_id": "act-1"},
+        },
+    )
+    monkeypatch.setattr(api_client, "get_host_containment", lambda hid: containment_data)
+
+    # Test kill-process
+    res_kill = runner.invoke(app, ["agent", "kill-process", "sensor-99", "--pid", "5544", "--process-name", "nc"])
+    assert res_kill.exit_code == 0
+    assert "Queued process kill on host 'sensor-99'" in res_kill.output
+    assert "PID: 5544" in res_kill.output
+    assert len(kill_calls) == 1
+    assert kill_calls[0] == {"host": "sensor-99", "pid": 5544, "pname": "nc"}
+
+    # Test containment
+    res_cont = runner.invoke(app, ["agent", "containment", "sensor-99"])
+    assert res_cont.exit_code == 0
+    assert "sensor-99" in res_cont.output
+    assert "ISOLATED" in res_cont.output
+    assert "Suspicious reverse shell" in res_cont.output
+    assert "kill_process" in res_cont.output
+    assert "5544" in res_cont.output
+

@@ -7,7 +7,9 @@ import { Chip, PageHeader, Panel } from "../components/ui";
 import { deleteSample, detonateDynamic, detonateSample, downloadSample, getRuns, getSample, getSampleForecast, getSampleStatic, getSandboxArtifactUrl, getSandboxProviders, getSandboxTask, getSimilarSamples, sandboxDetonate, watchlistAdd } from "../lib/api";
 import { ProcessCausalityTree } from "../components/ProcessCausalityTree";
 import { NetworkProtocolInspector } from "../components/NetworkProtocolInspector";
-import type { BehavioralForecast, ForecastReconciliation, Platform, RunSummary, SampleDetonationResult, SampleStatic, SandboxTask } from "../types";
+import { ArtifactHexViewerModal } from "../components/ArtifactHexViewerModal";
+import { IncidentBriefModal } from "../components/IncidentBriefModal";
+import type { BehavioralForecast, DroppedArtifactItem, ForecastReconciliation, Platform, RunSummary, SampleDetonationResult, SampleStatic, SandboxTask } from "../types";
 import { filterStrings, formatBytes, getVirusTotalFileUrl, getVirusTotalIocUrl, iocTotal } from "./samplesHelpers";
 
 /* ── Static analysis (strings / IOCs / PE / ELF) ─────────────────────────── */
@@ -341,9 +343,36 @@ function EntropyHistogramChart({ histogram }: { histogram?: number[] }) {
   );
 }
 
+function tryDecodeString(s: string): { decoded: string; format: "Base64" | "Hex" } | null {
+  const trimmed = s.trim();
+  if (trimmed.length >= 8 && trimmed.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(trimmed)) {
+    try {
+      const decoded = atob(trimmed);
+      if (/^[\x20-\x7E\t\r\n]+$/.test(decoded) && decoded.length >= 4) {
+        return { decoded, format: "Base64" };
+      }
+    } catch {}
+  }
+  if (trimmed.length >= 8 && trimmed.length % 2 === 0 && /^[0-9a-fA-F]+$/.test(trimmed)) {
+    try {
+      let dec = "";
+      for (let i = 0; i < trimmed.length; i += 2) {
+        dec += String.fromCharCode(parseInt(trimmed.substr(i, 2), 16));
+      }
+      if (/^[\x20-\x7E\t\r\n]+$/.test(dec) && dec.length >= 4) {
+        return { decoded: dec, format: "Hex" };
+      }
+    } catch {}
+  }
+  return null;
+}
+
 function CategorizedStringsPanel({ categorized, rawStrings }: { categorized?: SampleStatic["categorized_strings"]; rawStrings: string[] }) {
   const [activeTab, setActiveTab] = useState<"all" | "network" | "file_paths" | "commands" | "registry" | "security_apis">("all");
   const [search, setSearch] = useState("");
+  const [selectedString, setSelectedString] = useState<{ raw: string; decoded?: string; format?: string } | null>(null);
+  const [copiedRaw, setCopiedRaw] = useState(false);
+  const [copiedDecoded, setCopiedDecoded] = useState(false);
 
   const currentList = useMemo(() => {
     let list: string[] = [];
@@ -353,6 +382,17 @@ function CategorizedStringsPanel({ categorized, rawStrings }: { categorized?: Sa
     const q = search.toLowerCase();
     return list.filter((s) => s.toLowerCase().includes(q));
   }, [activeTab, categorized, rawStrings, search]);
+
+  const handleSelectString = (s: string) => {
+    const dec = tryDecodeString(s);
+    setSelectedString({
+      raw: s,
+      decoded: dec?.decoded,
+      format: dec?.format,
+    });
+    setCopiedRaw(false);
+    setCopiedDecoded(false);
+  };
 
   return (
     <div className="space-y-3 border-t border-border-subtle pt-4">
@@ -387,17 +427,90 @@ function CategorizedStringsPanel({ categorized, rawStrings }: { categorized?: Sa
         />
       </div>
 
-      <div className="max-h-64 overflow-y-auto rounded-xl border border-border-subtle bg-bg-elevated/20 p-3 font-mono text-[11px] leading-relaxed text-[#c9d1d9]">
+      <div className="max-h-64 overflow-y-auto rounded-xl border border-border-subtle bg-bg-elevated/20 p-2 font-mono text-[11px] leading-relaxed text-[#c9d1d9]">
         {currentList.length === 0 ? (
           <p className="text-text-faint text-center py-4">No strings found in this category.</p>
         ) : (
-          currentList.slice(0, 150).map((s, idx) => (
-            <div key={idx} className="hover:bg-accent/10 rounded px-1.5 py-0.5 truncate">
-              {s}
-            </div>
-          ))
+          currentList.slice(0, 150).map((s, idx) => {
+            const dec = tryDecodeString(s);
+            const isSelected = selectedString?.raw === s;
+            return (
+              <div
+                key={idx}
+                onClick={() => handleSelectString(s)}
+                className={`flex items-center justify-between gap-2 rounded px-2 py-1 cursor-pointer transition ${
+                  isSelected
+                    ? "bg-accent/20 text-accent font-semibold ring-1 ring-accent/40"
+                    : "hover:bg-accent/10"
+                }`}
+                title="Click to inspect and decode"
+              >
+                <span className="truncate flex-1">{s}</span>
+                {dec && (
+                  <span className="shrink-0 rounded bg-accent/20 border border-accent/40 px-1.5 py-0.2 text-[9px] font-bold uppercase text-accent">
+                    {dec.format}
+                  </span>
+                )}
+              </div>
+            );
+          })
         )}
       </div>
+
+      {/* Quick String Inspector & Plaintext Decoder Drawer */}
+      {selectedString && (
+        <div className="rounded-xl border border-accent/40 bg-accent/5 p-3 font-mono text-xs space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="font-bold text-accent flex items-center gap-1.5">
+              <Icon name="search" size={12} />
+              <span>String Inspector {selectedString.format && `· Obfuscated ${selectedString.format} Detected`}</span>
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  void navigator.clipboard.writeText(selectedString.raw);
+                  setCopiedRaw(true);
+                  setTimeout(() => setCopiedRaw(false), 2000);
+                }}
+                className="press text-accent hover:underline text-[10px] font-bold"
+              >
+                {copiedRaw ? "Copied Raw!" : "Copy Raw"}
+              </button>
+              <button
+                onClick={() => setSelectedString(null)}
+                className="text-text-muted hover:text-text-primary text-xs"
+              >
+                ×
+              </button>
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-border-subtle bg-bg-base/80 p-2 text-[11px] text-text-primary break-all max-h-24 overflow-y-auto">
+            {selectedString.raw}
+          </div>
+
+          {selectedString.decoded && (
+            <div className="space-y-1 pt-1 border-t border-accent/20">
+              <div className="flex items-center justify-between text-[10px] font-bold text-emerald-400">
+                <span>✓ Decoded Plaintext ({selectedString.format}):</span>
+                <button
+                  onClick={() => {
+                    void navigator.clipboard.writeText(selectedString.decoded!);
+                    setCopiedDecoded(true);
+                    setTimeout(() => setCopiedDecoded(false), 2000);
+                  }}
+                  className="press text-emerald-400 hover:underline"
+                >
+                  {copiedDecoded ? "Copied Decoded!" : "Copy Decoded"}
+                </button>
+              </div>
+              <pre className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-2 text-[11px] text-emerald-300 whitespace-pre-wrap break-all max-h-28 overflow-y-auto font-mono">
+                {selectedString.decoded}
+              </pre>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -822,9 +935,23 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
   const [result, setResult] = useState<SampleDetonationResult | null>(null);
   const [inspectorTab, setInspectorTab] = useState<"files" | "processes" | "network" | "detections" | "syscalls" | "timeline">("files");
   const [copiedTerminal, setCopiedTerminal] = useState(false);
+  const [selectedArtifact, setSelectedArtifact] = useState<DroppedArtifactItem | null>(null);
+  const [copiedFwRule, setCopiedFwRule] = useState<string | null>(null);
+  const [watchlistedIocs, setWatchlistedIocs] = useState<Set<string>>(new Set());
+  const [showIncidentBrief, setShowIncidentBrief] = useState(false);
   const [executionTimer, setExecutionTimer] = useState<number>(0);
   const timerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const terminalEndRef = useRef<HTMLDivElement>(null);
+
+  const handleAddToWatchlist = async (val: string) => {
+    try {
+      await watchlistAdd(val, `Dynamic detonation IOC from ${sample.original_name}`);
+      setWatchlistedIocs((prev) => new Set(prev).add(val));
+      void queryClient.invalidateQueries({ queryKey: ["watchlist"] });
+    } catch {
+      // ignore
+    }
+  };
 
   const {
     data: forecastData,
@@ -906,6 +1033,98 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
         executionTimer={executionTimer}
         onProceed={() => void handleDetonateLive()}
       />
+
+      {/* Dynamic Sandbox Role Separation Guidance Strip */}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-accent/30 bg-accent/5 p-4 text-xs shadow-sm">
+        <div className="flex items-center gap-3">
+          <span className="flex h-8 w-8 items-center justify-center rounded-xl border border-accent/40 bg-accent/15 text-accent shadow-[var(--glow-accent)]">
+            <Icon name="box" size={16} />
+          </span>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-text-primary text-sm">Dynamic Malware Sandbox</span>
+              <span className="rounded bg-accent/20 px-2 py-0.5 text-[10px] font-bold text-accent uppercase">CUSTOM UPLOAD DETONATION</span>
+            </div>
+            <p className="text-[11px] text-text-muted">
+              Live double-layer isolation cage for uploaded untrusted binaries. Looking to execute pre-built adversary canaries or MITRE ATT&amp;CK detection validation?
+            </p>
+          </div>
+        </div>
+        <Link
+          to="/monitor"
+          className="press inline-flex items-center gap-1.5 rounded-xl border border-border-subtle bg-bg-surface px-3 py-1.5 font-bold text-text-primary transition hover:border-accent hover:text-accent"
+        >
+          <Icon name="activity" size={12} />
+          <span>Go to Simulation Lab</span>
+        </Link>
+      </div>
+
+      {/* Actionable Threat Containment Strip when detonation result is present */}
+      {result && (
+        <div className="rounded-xl border border-border-subtle bg-bg-surface/90 p-4 space-y-2.5 shadow-md">
+          <div className="flex items-center justify-between text-xs">
+            <div className="flex items-center gap-2">
+              <span
+                className={`rounded px-2 py-0.5 text-[10px] font-bold uppercase ${
+                  (result.alerts || []).length > 0
+                    ? "bg-rose-500/20 text-rose-400 border border-rose-500/40"
+                    : "bg-amber-500/20 text-amber-400 border border-amber-500/40"
+                }`}
+              >
+                VERDICT: {(result.alerts || []).length > 0 ? "MALICIOUS" : "SUSPICIOUS"}
+              </span>
+              <span className="font-bold text-text-primary">
+                Immediate Host Containment &amp; Actionable SOC IOCs
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowIncidentBrief(true)}
+                className="press inline-flex items-center gap-1 rounded-lg border border-border-subtle bg-bg-base px-2.5 py-1 text-[11px] font-bold text-text-primary hover:border-accent hover:text-accent shadow-sm"
+                title="Export complete SOC Incident Dossier & Markdown Brief"
+              >
+                <Icon name="file" size={11} />
+                <span>Incident Brief</span>
+              </button>
+              <span className="text-[10px] text-text-faint font-mono">Run: {result.run_id}</span>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 pt-1 text-[11px]">
+            {displayNetwork.slice(0, 3).map((net: any, idx: number) => {
+              const target = net.target || net.dest_ip;
+              if (!target) return null;
+              const cleanIp = target.split(":")[0];
+              const fwRule = `iptables -A OUTPUT -d ${cleanIp} -j DROP`;
+              return (
+                <div key={idx} className="flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-base/70 px-2.5 py-1">
+                  <span className="text-text-faint text-[10px]">C2:</span>
+                  <span className="font-bold text-accent">{cleanIp}</span>
+                  <button
+                    onClick={() => void handleAddToWatchlist(cleanIp)}
+                    disabled={watchlistedIocs.has(cleanIp)}
+                    className="ml-1 text-[10px] text-accent hover:underline disabled:text-emerald-400"
+                  >
+                    {watchlistedIocs.has(cleanIp) ? "Watchlisted" : "+Watchlist"}
+                  </button>
+                  <button
+                    onClick={() => {
+                      void navigator.clipboard.writeText(fwRule);
+                      setCopiedFwRule(fwRule);
+                      setTimeout(() => setCopiedFwRule(null), 2000);
+                    }}
+                    className="text-accent hover:underline text-[10px] font-bold ml-1"
+                  >
+                    {copiedFwRule === fwRule ? "Copied!" : "Copy iptables"}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* ── LAYER 2: Live Dynamic Sandbox Cage Flight Recorder ────────── */}
       <div className="overflow-hidden rounded-2xl border border-border-subtle bg-bg-surface/90 shadow-xl backdrop-blur">
@@ -1239,16 +1458,26 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
                               )}
                             </div>
                           </div>
-                          {result && (
-                            <a
-                              href={getSandboxArtifactUrl(result.run_id, art.filename)}
-                              download
-                              className="press shrink-0 inline-flex items-center gap-1 rounded border border-accent/40 bg-accent/10 px-2 py-0.5 text-[10px] font-bold text-accent hover:bg-accent/20"
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <button
+                              onClick={() => setSelectedArtifact(art)}
+                              className="press inline-flex items-center gap-1 rounded border border-border-subtle bg-bg-surface px-2 py-0.5 text-[10px] font-bold text-text-primary hover:border-accent hover:text-accent"
+                              title="Inspect raw bytes and hex dump in modal"
                             >
-                              <Icon name="download" size={10} />
-                              <span>Download</span>
-                            </a>
-                          )}
+                              <Icon name="search" size={10} />
+                              <span>Inspect Hex</span>
+                            </button>
+                            {result && (
+                              <a
+                                href={getSandboxArtifactUrl(result.run_id, art.filename)}
+                                download
+                                className="press shrink-0 inline-flex items-center gap-1 rounded border border-accent/40 bg-accent/10 px-2 py-0.5 text-[10px] font-bold text-accent hover:bg-accent/20"
+                              >
+                                <Icon name="download" size={10} />
+                                <span>Download</span>
+                              </a>
+                            )}
+                          </div>
                         </div>
 
                         {/* Shannon Entropy Visual Bar */}
@@ -1316,24 +1545,52 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
                       </p>
                     </div>
                   ) : (
-                    displayNetwork.map((net: any, nidx: number) => (
-                      <div
-                        key={nidx}
-                        className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-2.5 text-xs"
-                      >
-                        <div className="flex items-center gap-2">
-                          <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[9px] font-bold text-amber-400 uppercase">
-                            {net.type ? net.type.replace("_", " ") : net.protocol || "SOCKET"}
-                          </span>
-                          <span className="font-bold text-text-primary">
-                            {net.target || `${net.dest_ip}:${net.dest_port}`}
-                          </span>
+                    displayNetwork.map((net: any, nidx: number) => {
+                      const targetStr = net.target || (net.dest_ip ? `${net.dest_ip}:${net.dest_port}` : "socket");
+                      const cleanIp = (net.target ? net.target.split(":")[0] : net.dest_ip) || "";
+                      const fwRule = `iptables -A OUTPUT -d ${cleanIp} -j DROP`;
+                      return (
+                        <div
+                          key={nidx}
+                          className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-2.5 text-xs font-mono"
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[9px] font-bold text-amber-400 uppercase">
+                              {net.type ? net.type.replace("_", " ") : net.protocol || "SOCKET"}
+                            </span>
+                            <span className="font-bold text-text-primary">
+                              {targetStr}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] text-amber-300">
+                              {net.intercepted_response || "Sinkholed / Intercepted"}
+                            </span>
+                            {cleanIp && (
+                              <>
+                                <button
+                                  onClick={() => void handleAddToWatchlist(cleanIp)}
+                                  disabled={watchlistedIocs.has(cleanIp)}
+                                  className="text-accent hover:underline text-[10px] disabled:text-emerald-400"
+                                >
+                                  {watchlistedIocs.has(cleanIp) ? "Watchlisted" : "+Watchlist"}
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    void navigator.clipboard.writeText(fwRule);
+                                    setCopiedFwRule(fwRule);
+                                    setTimeout(() => setCopiedFwRule(null), 2000);
+                                  }}
+                                  className="text-accent hover:underline text-[10px] font-bold"
+                                >
+                                  {copiedFwRule === fwRule ? "Copied!" : "Copy iptables"}
+                                </button>
+                              </>
+                            )}
+                          </div>
                         </div>
-                        <span className="text-[10px] text-amber-300">
-                          {net.intercepted_response || "Sinkholed / Intercepted"}
-                        </span>
-                      </div>
-                    ))
+                      );
+                    })
                   )}
                 </div>
               )}
@@ -1466,6 +1723,43 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
       {/* ── VERIFICATION MATRIX: Predicted vs. Observed Telemetry ────────── */}
       {effectiveReconciliation && (
         <ForecastVerificationMatrixView reconciliation={effectiveReconciliation} />
+      )}
+
+      {/* Ephemeral Artifact Hex Dump & Text Inspector Modal */}
+      {selectedArtifact && (
+        <ArtifactHexViewerModal
+          artifact={selectedArtifact}
+          onClose={() => setSelectedArtifact(null)}
+        />
+      )}
+
+      {/* SOC Incident Brief & Executive Dossier Modal */}
+      {showIncidentBrief && result && (
+        <IncidentBriefModal
+          data={{
+            runId: result.run_id,
+            title: `Dynamic Detonation: ${sample.original_name}`,
+            platform: sample.detected_platform || "Linux",
+            threatVerdict: result.threat_verdict || ((result.alerts || []).length > 0 ? "MALICIOUS" : "SUSPICIOUS"),
+            threatScore: result.threat_score ?? ((result.alerts || []).length > 0 ? 85 : 45),
+            threatFamily: result.threat_family || (sample.detected_platform + " Sample"),
+            detectionEfficacyPct: result.detection_efficacy_pct ?? ((result.alerts || []).length > 0 ? 100 : 65),
+            isolationDriver: isolationDriver,
+            eventsCount: result.events?.length || 0,
+            alerts: (result.alerts || []) as any,
+            actionableIocs: result.actionable_iocs || {
+              ips: (result.network_connections || []).map((n: any) => n.dest_ip || n.ip || n.target?.split(":")[0]).filter(Boolean),
+              domains: [],
+              firewall_rules: (result.network_connections || []).map((n: any) => `iptables -A OUTPUT -d ${n.dest_ip || n.ip || n.target?.split(":")[0]} -j DROP`),
+              dropped_count: (result.dropped_artifacts || []).length,
+              threat_family: result.threat_family,
+            },
+            artifacts: result.dropped_artifacts || [],
+            mitreMatrix: result.mitre_matrix || [],
+            syscalls: (result.syscalls || []) as any,
+          }}
+          onClose={() => setShowIncidentBrief(false)}
+        />
       )}
     </div>
   );
@@ -1918,6 +2212,37 @@ export default function SampleDetailPage() {
     enabled: sample !== undefined,
   });
 
+  const handleExportStix = () => {
+    if (!sample) return;
+    if (runs && runs.length > 0) {
+      window.open(`/api/runs/${runs[0].run_id}/export?format=stix`, "_blank");
+    } else {
+      const bundle = {
+        type: "bundle",
+        id: `bundle--${sample.sample_id}`,
+        objects: [
+          {
+            type: "file",
+            spec_version: "2.1",
+            id: `file--${sample.sample_id}`,
+            hashes: {
+              "SHA-256": sample.sha256,
+            },
+            name: sample.original_name,
+            size: sample.size,
+          },
+        ],
+      };
+      const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `outpost-stix-${sample.original_name || sample.sample_id}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+  };
+
   const copyHash = async () => {
     if (!sample) return;
     try {
@@ -2015,6 +2340,14 @@ export default function SampleDetailPage() {
                 download
               </button>
             </span>
+            <button
+              onClick={handleExportStix}
+              className="press inline-flex items-center gap-1.5 rounded border border-border-subtle px-3.5 py-2 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
+              title="Export sample indicators as STIX 2.1 JSON bundle"
+            >
+              <Icon name="shield" size={12} />
+              <span>STIX 2.1</span>
+            </button>
             <button
               onClick={() => void copyHash()}
               className="press inline-flex items-center gap-1.5 rounded border border-accent/60 px-4 py-2 font-mono text-xs text-accent transition-colors duration-150 hover:bg-accent/10"

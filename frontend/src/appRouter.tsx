@@ -16,6 +16,7 @@ import { createBrowserRouter, Navigate, Outlet, useLocation, useNavigate } from 
 import BrowserCheck from "./components/BrowserCheck/BrowserCheck";
 import BrowserNotifications from "./components/BrowserNotifications/BrowserNotifications";
 import Nav from "./components/Nav";
+import TopCommandBar from "./components/TopCommandBar";
 import WatchlistToaster from "./components/WatchlistToaster/WatchlistToaster";
 import { getMe, getMeta } from "./lib/api";
 import { shouldShowLogin } from "./routes/authGate";
@@ -247,6 +248,7 @@ function Layout() {
           Both widths come from var(--rail-w), so the collapsed icon-only rail
           and the content offset always match. */}
       <main className="transition-[padding] duration-200 ease-out lg:pl-[var(--rail-w)]">
+        <TopCommandBar />
         {/* Route-keyed fade-up: every navigation rises in once, deliberately. */}
         <div key={location.pathname} className="animate-fade-up">
           <Suspense fallback={<RouteFallback />}>

@@ -145,3 +145,55 @@ def test_alerts_api_error_exits_1(monkeypatch):
     result = runner.invoke(app, ["alerts"])
     assert result.exit_code == 1
     assert "Queue failed" in result.output
+
+
+def test_alerts_follow_mode(monkeypatch):
+    monkeypatch.setattr(console, "width", 160)
+    monkeypatch.setattr(
+        api_client,
+        "get_alert_queue",
+        lambda **kw: {"total": 1, "open": 1, "acknowledged": 0, "resolved": 0, "alerts": [_row(1, sample="host-1")]},
+    )
+
+    import time
+
+    def fake_sleep(sec):
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(time, "sleep", fake_sleep)
+
+    result = runner.invoke(app, ["alerts", "-f"])
+    assert result.exit_code == 0
+    assert "Live alert follower active" in result.output
+    assert "Live alert stream terminated by operator." in result.output
+
+
+def test_alerts_follow_streaming_new_alerts(monkeypatch):
+    monkeypatch.setattr(console, "width", 160)
+    call_count = 0
+
+    def mock_queue(**kw):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return {"total": 1, "open": 1, "acknowledged": 0, "resolved": 0, "alerts": [_row(1, sample="host-1")]}
+        else:
+            return {"total": 2, "open": 2, "acknowledged": 0, "resolved": 0, "alerts": [_row(2, sample="host-2", rule="lateral-smb"), _row(1, sample="host-1")]}
+
+    sleep_count = 0
+    import time
+
+    def fake_sleep(sec):
+        nonlocal sleep_count
+        sleep_count += 1
+        if sleep_count > 1:
+            raise KeyboardInterrupt()
+
+    monkeypatch.setattr(time, "sleep", fake_sleep)
+    monkeypatch.setattr(api_client, "get_alert_queue", mock_queue)
+
+    result = runner.invoke(app, ["alerts", "--follow"])
+    assert result.exit_code == 0
+    assert "Live alert follower active" in result.output
+    assert "lateral-smb" in result.output
+    assert "host-2" in result.output
