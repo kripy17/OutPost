@@ -140,6 +140,9 @@ async def poll_sandbox_process_tree(
                         elapsed_ms = int((time.monotonic() - start_time_mono) * 1000)
 
                         if "(deleted)" in target:
+                            # Ignore system IPC shared memory buffers and inherited dev descriptors
+                            if any(ignored in target for ignored in ("/dev/shm/.org.chromium", "/dev/shm/pulse", "/dev/shm/wayland", "/dev/dri", "/tmp/#")):
+                                continue
                             # Fileless in-memory execution / unlinked binary
                             ev = {
                                 "run_id": run_id,

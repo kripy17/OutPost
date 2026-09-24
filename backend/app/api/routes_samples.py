@@ -266,6 +266,57 @@ def _sample_synthetic_map(conn) -> dict[str, bool]:
     return {r["name"]: (r["total"] > 0 and r["real_n"] == 0) for r in rows}
 
 
+@router.post("/samples/seed-presets", status_code=201, response_model=None)
+def seed_preset_samples_endpoint() -> dict:
+    """Seed the vault with realistic benign verification samples and adversary payloads."""
+    samples_dir = config.BASE_DIR.parent / "samples"
+    if not samples_dir.exists():
+        return {"seeded": 0, "samples": []}
+
+    seeded = []
+    with db_session() as conn:
+        for file_path in sorted(samples_dir.iterdir()):
+            if not file_path.is_file() or file_path.name.startswith("."):
+                continue
+            body = file_path.read_bytes()
+            if not body:
+                continue
+            sniffed = sniff_platform(body)
+            if not sniffed:
+                continue
+            detected_platform, family = sniffed
+            sha256 = hashlib.sha256(body).hexdigest()
+            existing = samples_store.find_by_sha(conn, sha256)
+            if existing:
+                _store_bytes(existing["sample_id"], body)
+                seeded.append(dict(existing))
+                continue
+
+            sample_id = uuid.uuid4().hex[:12]
+            _store_bytes(sample_id, body)
+            yara_hits = yara_service.scan_sample_with_custom(body, conn)
+            yara_names = [h["name"] for h in yara_hits]
+            row = samples_store.add_sample(
+                conn,
+                sample_id,
+                file_path.name,
+                sha256,
+                detected_platform,
+                len(body),
+                family,
+            )
+            samples_store.set_sample_reputation(
+                conn,
+                sample_id,
+                None,
+                None,
+                json.dumps(yara_names),
+            )
+            seeded.append(dict(row))
+
+    return {"seeded": len(seeded), "samples": seeded}
+
+
 @router.get("/samples", response_model=None)
 def list_samples(
     q: str = Query("", max_length=200, description="Filter by name / hash prefix / family"),

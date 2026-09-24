@@ -5,7 +5,7 @@ import AnalysisPage from "./analysis";
 import { Icon } from "../components/Icon";
 import { platformIconName } from "../components/iconMeta";
 import { Chip, PageHeader, Panel, Stat } from "../components/ui";
-import { deleteAllSamples, deleteSample, exportSamplesCsv, getSamples, saveBlob, uploadSample } from "../lib/api";
+import { deleteAllSamples, deleteSample, exportSamplesCsv, getSamples, saveBlob, seedPresetSamples, uploadSample } from "../lib/api";
 import type { SampleRow } from "../types";
 import { formatBytes, getVirusTotalFileUrl } from "./samplesHelpers";
 
@@ -19,18 +19,25 @@ const PLATFORM_META: Record<SampleRow["detected_platform"], { label: string; ton
 function SampleTile({ s, onDelete }: { s: SampleRow; onDelete: (id: string, name: string) => void }) {
   const plat = PLATFORM_META[s.detected_platform];
   const vt = s.vt_detections;
+  const isBenign = s.original_name.toLowerCase().startsWith("benign") || (s.family?.toLowerCase().includes("benign") ?? false);
+  const isThreat = s.original_name.toLowerCase().startsWith("adversary") || s.original_name.toLowerCase().includes("ransomware") || s.yara_rules.length > 0;
+
   return (
     <li className="tile group relative flex flex-col rounded-xl border border-border-subtle bg-bg-surface p-4">
       <div className="flex items-start gap-3">
         <span
           className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border ${
-            s.detected_platform === "windows"
-              ? "border-accent/30 bg-accent/10 text-accent"
-              : s.detected_platform === "linux"
-                ? "border-risk-clean/30 bg-risk-clean/10 text-risk-clean"
-                : s.detected_platform === "macos"
-                  ? "border-purple-500/40 bg-purple-500/10 text-purple-400"
-                  : "border-border-subtle bg-bg-elevated/60 text-text-muted"
+            isBenign
+              ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400"
+              : isThreat
+                ? "border-rose-500/40 bg-rose-500/10 text-rose-400"
+                : s.detected_platform === "windows"
+                  ? "border-accent/30 bg-accent/10 text-accent"
+                  : s.detected_platform === "linux"
+                    ? "border-risk-clean/30 bg-risk-clean/10 text-risk-clean"
+                    : s.detected_platform === "macos"
+                      ? "border-purple-500/40 bg-purple-500/10 text-purple-400"
+                      : "border-border-subtle bg-bg-elevated/60 text-text-muted"
           }`}
         >
           <Icon name={platformIconName(s.detected_platform)} size={20} />
@@ -45,6 +52,16 @@ function SampleTile({ s, onDelete }: { s: SampleRow; onDelete: (id: string, name
           </Link>
           <p className="mt-0.5 truncate text-[11px] text-text-muted">{s.family ?? "untyped sample"}</p>
         </div>
+        {isBenign && (
+          <span className="rounded border border-emerald-500/40 bg-emerald-500/15 px-1.5 py-0.5 font-mono text-[9px] font-bold text-emerald-400 tracking-wider">
+            BENIGN
+          </span>
+        )}
+        {isThreat && (
+          <span className="rounded border border-rose-500/40 bg-rose-500/15 px-1.5 py-0.5 font-mono text-[9px] font-bold text-rose-400 tracking-wider">
+            THREAT
+          </span>
+        )}
         <Chip tone={plat.tone} dot title={`Detected ${s.detected_platform}`}>
           {plat.label}
         </Chip>
@@ -224,6 +241,19 @@ export default function SamplesPage() {
     }
   };
 
+  const [seeding, setSeeding] = useState(false);
+  const handleSeedPresets = async () => {
+    setSeeding(true);
+    try {
+      await seedPresetSamples();
+      void queryClient.invalidateQueries({ queryKey: ["samples"] });
+    } catch {
+      setExportError("Failed to seed preset samples");
+    } finally {
+      setSeeding(false);
+    }
+  };
+
   const withYara = samples.filter((s) => s.yara_rules.length > 0).length;
   const flagged = samples.filter((s) => (s.vt_detections ?? 0) > 0).length;
   const byPlatform = (p: SampleRow["detected_platform"]) => samples.filter((s) => s.detected_platform === p).length;
@@ -248,6 +278,15 @@ export default function SamplesPage() {
         actions={
           <div className="flex items-center gap-2">
             {exportError && <span className="font-mono text-[10px] text-risk-malicious">{exportError}</span>}
+            <button
+              onClick={() => void handleSeedPresets()}
+              disabled={seeding}
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/50 bg-emerald-500/10 px-3 py-2 font-mono text-xs font-semibold text-emerald-400 transition-colors duration-150 hover:bg-emerald-500/20 disabled:opacity-50"
+              title="Load curated test samples: Benign utilities & threat payloads"
+            >
+              <Icon name="refresh" size={12} className={seeding ? "animate-spin" : ""} />
+              {seeding ? "Loading..." : "Load Presets"}
+            </button>
             {samples.length > 0 && (
               <button
                 onClick={() => void handleClearVault()}
@@ -291,29 +330,62 @@ export default function SamplesPage() {
         }
       />
 
-      {/* Role Distinction Banner: Uploaded Vault vs. Simulation Demo Lab */}
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border-subtle bg-bg-surface/80 p-4 font-mono text-xs shadow-sm">
-        <div className="flex items-center gap-3">
-          <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-accent/40 bg-accent/15 text-accent shadow-[var(--glow-accent)]">
-            <Icon name="box" size={18} />
-          </span>
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="font-bold text-text-primary text-sm">Dynamic Malware Vault</span>
-              <span className="rounded bg-accent/20 px-2 py-0.5 text-[10px] font-bold text-accent uppercase">ANALYSIS VAULT</span>
+      {/* Architectural Distinction & Comparison Deck */}
+      <div className="mb-6 rounded-2xl border border-border-subtle bg-bg-surface/90 p-5 font-mono shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-border-subtle pb-4">
+          <div className="flex items-center gap-3">
+            <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-accent/40 bg-accent/15 text-accent shadow-[var(--glow-accent)]">
+              <Icon name="box" size={20} />
+            </span>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-text-primary text-base">Malware &amp; Artifact Lab vs. Simulation Lab</span>
+                <span className="rounded bg-accent/20 px-2 py-0.5 text-[10px] font-bold text-accent uppercase">Architecture</span>
+              </div>
+              <p className="text-xs text-text-muted mt-0.5">
+                Two complementary pillars inspired by professional malware sandboxes (ANY.RUN, Hatching Triage) and adversary emulation suites.
+              </p>
             </div>
-            <p className="text-[11px] text-text-muted">
-              Upload custom, untrusted adversary binaries (.exe, .elf, scripts) for Layer 1 static threat forecasting and Layer 2 live sandbox cage detonation.
+          </div>
+          <button
+            onClick={() => void handleSeedPresets()}
+            disabled={seeding}
+            className="press inline-flex items-center gap-2 rounded-xl border border-emerald-500/50 bg-emerald-500/15 px-4 py-2 text-xs font-bold text-emerald-400 transition hover:bg-emerald-500/25 disabled:opacity-50"
+          >
+            <Icon name="refresh" size={13} className={seeding ? "animate-spin" : ""} />
+            <span>{seeding ? "Provisioning..." : "Load Built-in Lab Samples"}</span>
+          </button>
+        </div>
+
+        <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+          <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-3.5">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="font-bold text-emerald-400 flex items-center gap-1.5">
+                <Icon name="shield" size={14} />
+                Artifact Lab (Black-Box Triage)
+              </span>
+              <span className="rounded bg-emerald-500/20 px-1.5 py-0.5 text-[9px] font-bold text-emerald-400">TEST THE FILE</span>
+            </div>
+            <p className="text-text-muted text-[11px] leading-relaxed">
+              Triage unknown binaries (.exe, .elf, scripts) to assess intent. Dissects static capabilities, measures entropy, extracts dropped files/IOCs, and proves zero false-positives on benign software.
+            </p>
+          </div>
+
+          <div className="rounded-xl border border-accent/30 bg-accent/5 p-3.5">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="font-bold text-accent flex items-center gap-1.5">
+                <Icon name="activity" size={14} />
+                Simulation Lab (Adversary Emulation)
+              </span>
+              <Link to="/monitor" className="rounded bg-accent/20 px-1.5 py-0.5 text-[9px] font-bold text-accent hover:underline">
+                GO TO PLAYBOOKS ↗
+              </Link>
+            </div>
+            <p className="text-text-muted text-[11px] leading-relaxed">
+              Deterministic, white-box adversary scenario execution (e.g. ransomware staging, reverse shells) to stress-test your detection rules, EDR heuristics, and MITRE ATT&CK coverage.
             </p>
           </div>
         </div>
-        <Link
-          to="/monitor"
-          className="press inline-flex items-center gap-1.5 rounded-xl border border-accent/40 bg-accent/10 px-3.5 py-2 font-bold text-accent transition hover:bg-accent/20"
-        >
-          <Icon name="activity" size={12} />
-          <span>Go to Simulation Lab (Demo Playbooks)</span>
-        </Link>
       </div>
 
       {/* Main Tab Switcher */}

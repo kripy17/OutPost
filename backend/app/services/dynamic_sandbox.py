@@ -268,6 +268,7 @@ async def execute_bytes_sandbox(
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=child_env,
+                close_fds=True,
             )
             main_pid = getattr(proc, "pid", os.getpid())
 
