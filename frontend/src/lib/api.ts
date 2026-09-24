@@ -1645,7 +1645,7 @@ export async function compareForensicCapsules(capsuleA: any, capsuleB: any): Pro
   return post<any>("/system/xray/capsule/compare", { capsule_a: capsuleA, capsule_b: capsuleB });
 }
 
-/** Retrieve target catalog (Omarchy X-Ray style): Apps, Processes, Ports, Devices. */
+/** Retrieve target catalog: Apps, Processes, Ports, Devices. */
 export async function getXRayTargetCatalog(): Promise<{
   total_targets_count: number;
   quick_inspect: {
@@ -1676,7 +1676,7 @@ export async function getXRayTargetCatalog(): Promise<{
   return get<any>("/system/xray/catalog");
 }
 
-/** Unified full target dossier for X-Ray Command Cockpit. */
+/** Unified full target dossier for Host Forensics Command Cockpit. */
 export async function getXRayFullTargetDossier(pid: number): Promise<{
   target: {
     pid: number;

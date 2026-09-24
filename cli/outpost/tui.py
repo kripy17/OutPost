@@ -339,7 +339,7 @@ class OutPostTUI:
         self.modal_scroll: int = 0
 
         self.main_menu = [
-            ("1", "Live Operations", "Monitor: Overview HUD, Host X-Ray pulse, incident findings & cases"),
+            ("1", "Live Operations", "Monitor: Overview HUD, Host forensics pulse, incident findings & cases"),
             ("2", "Malware & Lab", "Analyze: Simulation lab playbooks, sample vault, binary inspection"),
             ("3", "Incident Cases", "Investigate: SOC incident cases, findings, timeline & notes"),
             ("4", "Threat Intelligence", "IOCs: Cross-run indicator search, reputation cache, watchlist"),
@@ -348,7 +348,7 @@ class OutPostTUI:
             ("7", "Forensic Reports", "Reports: Run summaries, Sigma/Suricata rule synthesis, STIX"),
             ("8", "Detection Heuristics", "Rules: 38 explainable heuristics across 14 MITRE tactics"),
             ("9", "Platform Admin", "Settings: Local daemon, service controls, threat intel keys"),
-            ("0", "SOC Tools", "Tools: Cyber decoder, forensics triage pack, system audit"),
+            ("0", "SOC Tools", "Tools: Payload decoder, forensics triage pack, system audit"),
         ]
 
 

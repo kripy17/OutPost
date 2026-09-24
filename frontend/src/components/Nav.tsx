@@ -126,7 +126,7 @@ export function getNavigationGroups(
       label: "Live Operations",
       links: [
         { to: "/", label: "Overview", iconName: "grid", end: true },
-        { to: "/events", label: "Host X-Ray & Pulse", iconName: "activity" },
+        { to: "/events", label: "Host Forensics & Pulse", iconName: "activity" },
         {
           to: "/findings",
           label: "Incident Findings",

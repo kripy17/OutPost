@@ -827,7 +827,7 @@ export default function MonitorPage() {
                     title="Open interactive enterprise matrix view"
                   >
                     <Icon name="grid" size={10} />
-                    <span>ATT&amp;CK Navigator Grid</span>
+                    <span>ATT&amp;CK Technique Matrix</span>
                   </button>
                   <span className="text-[10px] text-text-faint">Validated against OutPost Detection Rules</span>
                 </div>

@@ -1,7 +1,7 @@
 """Network Protocol & C2 Beaconing Analytics Engine.
 
 Provides automated network protocol inspection and traffic reconstruction
-inspired by top-tier sandbox and digital forensics frameworks:
+with native deep packet dissection and digital forensics analytics:
 - DNS Conversation Ledger: domain parsing, DGA entropy analysis, tunneling heuristics.
 - HTTP / Web Request Ledger: method, URL, host header, status, suspicious path indicators.
 - TLS Handshake Analysis: SNI domain, JA3 client fingerprint matching against known C2 profiles.

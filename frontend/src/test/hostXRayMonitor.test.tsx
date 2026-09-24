@@ -349,7 +349,7 @@ describe("Host X-Ray & Live System Monitor", () => {
   it("renders Executive Pulse HUD with real OS telemetry", async () => {
     renderEventsPage();
 
-    expect(await screen.findByText(/Host X-Ray · Live System Monitor/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Host (Forensics|X-Ray) · Live System Monitor/i)).toBeInTheDocument();
     expect(screen.getByText("Live Real-Time")).toBeInTheDocument();
 
     // OS Identity Badge (wait for snapshot query to resolve)

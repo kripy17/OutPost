@@ -345,7 +345,7 @@ export default function SearchPage() {
         title={
           activeTab === "decoder" ? (
             <>
-              CyberDecoder <span className="font-normal text-text-muted">— payload deobfuscator &amp; IOC extractor</span>
+              Payload Decoder <span className="font-normal text-text-muted">— forensic deobfuscator &amp; IOC extractor</span>
             </>
           ) : activeTab === "workbench" ? (
             <>
@@ -444,7 +444,7 @@ export default function SearchPage() {
           }`}
         >
           <Icon name="terminal" size={13} />
-          <span>⚡ CyberDecoder</span>
+          <span>⚡ Payload Decoder</span>
         </button>
       </div>
 

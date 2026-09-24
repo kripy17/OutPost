@@ -1958,7 +1958,7 @@ function SandboxDetonation({ sample }: { sample: { sample_id: string; original_n
       }
     >
       <p className="mb-4 max-w-2xl text-sm text-text-muted">
-        Push the sample to an external sandbox (Any.Run, Triage, or Joe) and stream the report back
+        Push the sample to an external cloud analysis provider and stream the report back
         through the detection pipeline as a normal run.
       </p>
 
@@ -1969,7 +1969,7 @@ function SandboxDetonation({ sample }: { sample: { sample_id: string; original_n
             Local Isolated Sandbox Active
           </p>
           <p className="mt-1 text-[11px] text-text-faint">
-            Detonating runs directly in OutPost's local isolated subprocess sandbox with live process tracing, stdout/stderr capture, and detection rule evaluation. To optionally forward samples to external cloud sandboxes (Any.Run, Hatching Triage, Joe Sandbox), configure API keys in{" "}
+            Detonating runs directly in OutPost's local isolated subprocess sandbox with live process tracing, stdout/stderr capture, and detection rule evaluation. To optionally forward samples to external cloud analysis providers, configure API keys in{" "}
             <Link to="/settings" className="text-accent underline hover:text-accent-hover">
               Settings
             </Link>

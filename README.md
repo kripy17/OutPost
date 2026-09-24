@@ -44,8 +44,8 @@ It is structured around five core operational pillars:
           │                       │                          │                             │                         │
    LIVE OPERATIONS          ENDPOINT FLEET            MALWARE & LAB                 DETECTION & INTEL         ADMIN & TOOLS
           │                       │                          │                             │                         │
- • Real-time SOC pulse   • Sensor agent telemetry   • Dynamic sandbox detonation  • 14/14 MITRE ATT&CK matrix • Cyber Decoder & Deobf
- • Live telemetry radar  • Host X-Ray & /proc audit • Attack scenario playbooks   • Threat watchlist (IOCs)   • IOC defang/refang lab
+ • Real-time SOC pulse   • Sensor agent telemetry   • Dynamic sandbox detonation  • 14/14 MITRE ATT&CK matrix • Payload Decoder & Deobf
+ • Live telemetry radar  • Host Forensics & /proc audit • Attack scenario playbooks   • Threat watchlist (IOCs)   • IOC defang/refang lab
  • Incident findings     • Process tree causality   • Process lineage graphs      • Sigma / Suricata export   • Audit trail integrity
  • Case investigation    • Network threat matrix    • Artifact forensic analysis  • Custom YARA rule test     • Platform health HUD
  • Automated playbooks   • Host containment & kill  • STIX 2.1 bundle export      • Detection backtesting     • Autonomous CLI & TUI
@@ -72,12 +72,12 @@ The entry point. Real-time risk trends, live host telemetry pulse, MITRE ATT&CK 
 
 ---
 
-### 🔬 Host X-Ray — Deep Process Forensics
+### 🔬 Host Forensics — Deep Process Inspection
 
 Full-spectrum live forensics: every running process with CPU/memory, command lines, parent-child lineage, package manager provenance, Linux capabilities (`CAP_SYS_ADMIN`, `CAP_NET_RAW`, `CAP_SYS_PTRACE`), Seccomp mode, mapped `.so` libraries, open file descriptors, and 8-sensor device access detection (microphone, camera, GPU, screen capture).
 
 <p align="center">
-  <img src="demo/screenshots/fresh/24_host_xray_command_cockpit.png" alt="Host X-Ray Command Cockpit" width="90%">
+  <img src="demo/screenshots/fresh/24_host_xray_command_cockpit.png" alt="Host Forensics Command Cockpit" width="90%">
 </p>
 
 <details>
@@ -264,7 +264,7 @@ OutPost ships a standalone CLI with **32 commands** and a full-screen Rich TUI c
  │                                                                                  │
  │  [1] Live Watch        Stream real-time host telemetry & adversary markers       │
  │  [2] Alerts & Triage   Manage SOC queue, view findings & acknowledge alerts      │
- │  [3] Host X-Ray        Inspect live processes, sockets & Linux capabilities      │
+ │  [3] Host Forensics   Inspect live processes, sockets & Linux capabilities      │
  │  [4] Investigations    Track ongoing incident response cases & evidence          │
  │  [5] Detection Rules   View, tune & test 45 MITRE ATT&CK detection rules        │
  │  [6] Malware Vault     List samples, inspect YARA matches & detonate binaries    │
@@ -374,11 +374,11 @@ Once running, access OutPost via your browser or terminal:
 When running `./outpost.sh` in an interactive terminal, the following controls are available without exiting to bash:
 
 - **`[1]` - `[5]`**: Switch directly between the 5 Operational Pillars:
-  - `[1]` **Live Operations** (`Host X-Ray`, `Telemetry Radar`, `Incident Findings Queue`)
-  - `[2]` **Endpoint Fleet** (`Sensor Agents`, `Host X-Ray & /proc audit`, `Containment`)
+  - `[1]` **Live Operations** (`Host Forensics & Pulse`, `Telemetry Radar`, `Incident Findings Queue`)
+  - `[2]` **Endpoint Fleet** (`Sensor Agents`, `Host Forensics & /proc audit`, `Containment`)
   - `[3]` **Malware & Lab** (`Simulation Lab`, `Detonation Runs`, `Dynamic Sandbox`)
   - `[4]` **Detection & Intel** (`MITRE ATT&CK Matrix`, `Threat Watchlist`, `Rules`)
-  - `[5]` **Administration & Tools** (`Cyber Decoder`, `IOC Workbench`, `Audit Trail`)
+  - `[5]` **Administration & Tools** (`Payload Decoder`, `IOC Workbench`, `Audit Trail`)
 - **`[:]`**: Open the universal **In-App Command Palette** to execute any Typer command in-process
 - **`[t]`**: Open interactive **Alert Triage Modal** (Acknowledge, Resolve, Reopen)
 - **`[c]`**: Interactively **Create Incident Investigation Case**

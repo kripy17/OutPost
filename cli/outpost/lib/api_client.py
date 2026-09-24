@@ -40,6 +40,9 @@ BASE_URL = resolve_base_url()
 
 def get_base_url() -> str:
     global BASE_URL
+    env_url = os.getenv("OUTPOST_API_URL") or os.getenv("OUTPOST_BACKEND_URL")
+    if env_url:
+        return env_url.rstrip("/")
     # If the current BASE_URL isn't answering, attempt a quick re-probe of alternative ports
     if not _probe_url(BASE_URL):
         BASE_URL = resolve_base_url()

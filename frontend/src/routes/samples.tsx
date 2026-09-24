@@ -343,7 +343,7 @@ export default function SamplesPage() {
                 <span className="rounded bg-accent/20 px-2 py-0.5 text-[10px] font-bold text-accent uppercase">Architecture</span>
               </div>
               <p className="text-xs text-text-muted mt-0.5">
-                Two complementary pillars inspired by professional malware sandboxes (ANY.RUN, Hatching Triage) and adversary emulation suites.
+                Two complementary pillars: Black-box artifact triage paired directly with white-box adversary emulation and rule verification.
               </p>
             </div>
           </div>

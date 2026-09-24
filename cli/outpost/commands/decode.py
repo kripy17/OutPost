@@ -1,6 +1,6 @@
 """`outpost decode` and `outpost hash` — Forensic payload decoder & hash analyzer.
 
-CyberChef-inspired deobfuscation in the terminal:
+Multi-stage forensic payload deobfuscation and analysis in the terminal:
 - Base64 (UTF-8 & Windows UTF-16LE / PowerShell)
 - Hex / shellcode representations (\\x41\\x42, 0x41, or raw hex)
 - URL percent-encoding

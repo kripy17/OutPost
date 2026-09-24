@@ -271,7 +271,7 @@ export function IocWorkbench() {
               <div className="flex items-center gap-2">
                 <h3 className="text-base font-bold text-text-primary">IOC Defanger &amp; Extractor Workbench</h3>
                 <span className="rounded bg-cyan-500/15 border border-cyan-500/40 px-2 py-0.5 font-mono text-[10px] font-bold text-cyan-300 uppercase">
-                  CyberChef &amp; MISP Inspired
+                  Threat Intelligence Extraction
                 </span>
               </div>
               <p className="text-xs text-text-muted mt-0.5">

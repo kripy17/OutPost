@@ -276,10 +276,10 @@ export default function EventsPage() {
         <div>
           <div className="flex items-center gap-2 font-mono text-xs text-text-faint uppercase tracking-wider">
             <span className="flex h-2 w-2 rounded-full bg-accent animate-pulse" />
-            <span>Host X-Ray · Live System Monitor</span>
+            <span>Host Forensics · Live System Monitor</span>
           </div>
           <h1 className="mt-1 text-2xl font-bold tracking-tight text-text-primary flex items-center gap-3">
-            <span>Host X-Ray &amp; Process Inspector</span>
+            <span>Host Forensics &amp; Process Inspector</span>
             <span className="rounded-full bg-accent/15 px-2.5 py-0.5 text-xs font-mono font-semibold text-accent border border-accent/40">
               Live Real-Time
             </span>
@@ -630,7 +630,7 @@ export default function EventsPage() {
                     </th>
                     <th className="py-2.5 px-3">Threads</th>
                     <th className="py-2.5 px-3">Package / Provenance</th>
-                    <th className="py-2.5 px-3 text-right">X-Ray Actions</th>
+                    <th className="py-2.5 px-3 text-right">Process Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border-subtle">
@@ -734,7 +734,7 @@ export default function EventsPage() {
                               <button
                                 onClick={() => setInspectPid(p.pid)}
                                 className="press inline-flex items-center gap-1 rounded border border-accent/40 bg-accent/10 px-2 py-1 text-[10px] font-semibold text-accent hover:bg-accent/20 transition"
-                                title={`Inspect full X-Ray dossier for PID ${p.pid}`}
+                                title={`Inspect full forensic dossier for PID ${p.pid}`}
                               >
                                 <Icon name="search" size={10} />
                                 <span>Inspect</span>
@@ -938,7 +938,7 @@ export default function EventsPage() {
                       onClick={() => setInspectPid(item.pid)}
                       className="press rounded-lg border border-accent/40 bg-accent/15 px-3 py-1.5 font-bold text-accent hover:bg-accent/25"
                     >
-                      X-Ray Inspect
+                      Forensic Inspect
                     </button>
                     <button
                       onClick={() => void handleProcessAction(item.pid, "terminate")}
@@ -991,7 +991,7 @@ export default function EventsPage() {
         </section>
       )}
 
-      {/* ── Slide-Over / Modal: Deep Process X-Ray Target Dossier ───── */}
+      {/* ── Slide-Over / Modal: Deep Process Forensic Target Dossier ───── */}
       {inspectPid !== null && (
         <div className="fixed inset-0 z-50 flex items-center justify-end bg-black/60 backdrop-blur-xs">
           <div className="h-full w-full max-w-2xl bg-[#090d14] border-l border-white/10 p-6 font-mono text-xs overflow-y-auto shadow-2xl flex flex-col justify-between">
@@ -1015,7 +1015,7 @@ export default function EventsPage() {
                 <button
                   onClick={() => setInspectPid(null)}
                   className="press rounded-lg border border-white/15 bg-white/5 p-1.5 text-text-muted hover:text-white"
-                  title="Close X-Ray Drawer"
+                  title="Close Forensic Drawer"
                 >
                   ✕
                 </button>

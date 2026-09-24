@@ -1,6 +1,6 @@
-"""Host X-Ray Service — Live Local System & Process Inspection.
+"""Host Forensics Service — Live Local System & Process Inspection.
 
-Inspired by Omarchy X-Ray: deep, real-time live system inspection.
+OutPost Deep Host Forensics: deep, real-time live system inspection.
 Extracts active processes, process trees/lineage, open sockets (listening & connected),
 open file descriptors, security context, and process controls with audit logging.
 """
@@ -1283,7 +1283,7 @@ def terminate_process(pid: int, signal_name: str = "SIGTERM", request_user: str 
 
 
 def resolve_target_search(query: str) -> dict[str, Any]:
-    """Universal Target Resolver (Omarchy X-Ray style).
+    """Universal Target Resolver for host processes, sockets, and devices.
 
     Parses search patterns:
     - ':port' or 'port:8000' -> match listening/connected sockets
@@ -1553,7 +1553,7 @@ def get_categorized_network_matrix() -> dict[str, Any]:
 
 
 def generate_behavioral_explanations() -> list[dict[str, Any]]:
-    """Produce automated, actionable heuristic explanation cards (Omarchy X-Ray style)."""
+    """Produce automated, actionable heuristic explanation cards."""
     explanations: list[dict[str, Any]] = []
 
     net_matrix = get_categorized_network_matrix()
@@ -1667,7 +1667,7 @@ def capture_baseline_snapshot() -> dict[str, Any]:
 
 
 def compute_snapshot_diff(baseline: dict[str, Any] | None = None, current: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Compute differential changes (+/-) between baseline snapshot and current live state (Omarchy X-Ray style)."""
+    """Compute differential changes (+/-) between baseline snapshot and current live state."""
     global _LAST_BASELINE_SNAPSHOT
     base = baseline or _LAST_BASELINE_SNAPSHOT
     if not base or not base.get("processes"):

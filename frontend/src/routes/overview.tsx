@@ -1904,7 +1904,7 @@ export default function OverviewPage() {
         <IntelFreshness />
       </Deferred>
 
-      {/* Host X-Ray Real-time Telemetry Radar & MITRE Kill Chain Progression */}
+      {/* Host Forensics Real-time Telemetry Radar & MITRE Kill Chain Progression */}
       <Deferred>
         <HostForensicsRadarPanel />
         <MitreTacticalProgressionPanel />

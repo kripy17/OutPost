@@ -1,4 +1,4 @@
-"""Tests for advanced Omarchy X-Ray inspired features: capabilities, security posture, target resolver, lifecycle controls, forensic capsules."""
+"""Tests for advanced host forensics features: capabilities, security posture, target resolver, lifecycle controls, forensic capsules."""
 
 import os
 from fastapi.testclient import TestClient

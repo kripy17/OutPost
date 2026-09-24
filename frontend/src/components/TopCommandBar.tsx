@@ -10,7 +10,7 @@ interface RouteMeta {
 
 function resolveRouteMeta(pathname: string): RouteMeta {
   if (pathname === "/") return { pillar: "Live Operations", name: "Overview" };
-  if (pathname === "/events") return { pillar: "Live Operations", name: "Host X-Ray & Pulse" };
+  if (pathname === "/events") return { pillar: "Live Operations", name: "Host Forensics & Pulse" };
   if (pathname === "/findings") return { pillar: "Live Operations", name: "Incident Findings" };
   if (pathname === "/investigations") return { pillar: "Live Operations", name: "Incident Cases" };
   if (pathname.startsWith("/investigations/")) {

@@ -64,7 +64,7 @@ export function MitreNavigatorModal({
     <div
       role="dialog"
       aria-modal="true"
-      aria-label="MITRE ATT&CK Matrix Navigator"
+      aria-label="MITRE ATT&CK Technique Matrix"
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-md animate-fade-in font-mono"
       onClick={onClose}
     >
@@ -81,7 +81,7 @@ export function MitreNavigatorModal({
             <div>
               <div className="flex items-center gap-2">
                 <span className="rounded bg-emerald-500/20 px-2 py-0.5 text-[10px] font-bold text-emerald-400 uppercase">
-                  ATT&amp;CK MATRIX NAVIGATOR
+                  ATT&amp;CK TECHNIQUE MATRIX
                 </span>
                 <h2 className="text-sm font-bold text-text-primary">
                   {scenarioName}

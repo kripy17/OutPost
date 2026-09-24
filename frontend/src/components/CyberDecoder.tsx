@@ -85,7 +85,7 @@ export function CyberDecoder({ initialValue = "" }: { initialValue?: string }) {
             <span className="flex h-6 w-6 items-center justify-center rounded-md border border-accent/40 bg-accent/15 text-accent">
               <Icon name="terminal" size={13} />
             </span>
-            CyberDecoder · Payload Deobfuscator
+            Payload Decoder · Forensic Deobfuscator
           </h2>
           <p className="mt-1 text-xs text-text-muted">
             Inspect, deobfuscate, and extract indicators from encoded PowerShell commands, Hex shellcode, URL parameters, and defanged IOCs.
