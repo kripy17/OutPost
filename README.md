@@ -19,9 +19,9 @@
 
 <br>
 
-![Tests](https://img.shields.io/badge/tests-1376_passing-brightgreen?style=flat-square)
-![Rules](https://img.shields.io/badge/detection_rules-45_active-blue?style=flat-square)
-![CLI](https://img.shields.io/badge/cli-32_commands-orange?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-1517_passing-brightgreen?style=flat-square)
+![Rules](https://img.shields.io/badge/detection_rules-48_active-blue?style=flat-square)
+![CLI](https://img.shields.io/badge/cli-39_commands-orange?style=flat-square)
 ![MITRE](https://img.shields.io/badge/MITRE_ATT%26CK-14%2F14_tactics-teal?style=flat-square)
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![Air-Gap](https://img.shields.io/badge/air--gap-verified-critical?style=flat-square)
@@ -32,26 +32,23 @@
 
 ## What is OutPost?
 
-**OutPost** is a self-hosted security workstation built for SOC analysts, incident responders, and malware researchers. It watches what's running on your machines, flags suspicious behavior using 45 detection rules mapped to the MITRE ATT&CK framework, and lets you investigate threats from a web dashboard or a terminal CLI.
+**OutPost** is a self-hosted security workstation built for SOC analysts, incident responders, and malware researchers. It watches what's running on your machines, flags suspicious behavior using 48 detection rules mapped to the MITRE ATT&CK framework, and lets you investigate threats from a unified web console or a terminal TUI.
 
-It's built around three core pillars:
+It is structured around five core operational pillars:
 
 ```text
-                                  ┌─────────────────────────────────────┐
-                                  │         OUTPOST WORKSTATION         │
-                                  └──────────────┬──────────────────────┘
-         ┌───────────────────────────────────────┼───────────────────────────────────────┐
-         │                                       │                                       │
-   HOST FORENSICS                      DYNAMIC SANDBOX                          SOC OPERATIONS
-   & X-RAY ENGINE                     & SIMULATION LAB                        & INCIDENT RESPONSE
-         │                                       │                                       │
-  • Live /proc introspection            • Live binary detonation              • MITRE ATT&CK triage queue
-  • Process causality trees             • Real stdout/stderr streaming        • Investigation case dossiers
-  • Network threat matrix               • Multi-stage attack scenarios        • IOC search & watchlists
-  • Linux capabilities decoder          • YARA & entropy analysis             • Detection rule engineering
-  • Process freeze/kill controls        • Isolation drivers (bwrap/wine)      • Tamper-evident audit trail
-  • Differential baseline deltas        • Automated rule evaluation           • Fleet agent management
-  • Forensic capsule comparison         • Process lineage tracking            • Notification integrations
+                                  ┌────────────────────────────────────────────────────────┐
+                                  │               OUTPOST SOC WORKSTATION                  │
+                                  └──────────────────────────┬─────────────────────────────┘
+          ┌───────────────────────┬──────────────────────────┼─────────────────────────────┬─────────────────────────┐
+          │                       │                          │                             │                         │
+   LIVE OPERATIONS          ENDPOINT FLEET            MALWARE & LAB                 DETECTION & INTEL         ADMIN & TOOLS
+          │                       │                          │                             │                         │
+ • Real-time SOC pulse   • Sensor agent telemetry   • Dynamic sandbox detonation  • 14/14 MITRE ATT&CK matrix • Cyber Decoder & Deobf
+ • Live telemetry radar  • Host X-Ray & /proc audit • Attack scenario playbooks   • Threat watchlist (IOCs)   • IOC defang/refang lab
+ • Incident findings     • Process tree causality   • Process lineage graphs      • Sigma / Suricata export   • Audit trail integrity
+ • Case investigation    • Network threat matrix    • Artifact forensic analysis  • Custom YARA rule test     • Platform health HUD
+ • Automated playbooks   • Host containment & kill  • STIX 2.1 bundle export      • Detection backtesting     • Autonomous CLI & TUI
 ```
 
 ### Why OutPost?
@@ -325,21 +322,24 @@ OutPost ships a standalone CLI with **32 commands** and a full-screen Rich TUI c
 | **Node.js** | 18 or higher |
 | **Git** | Any recent version |
 
-### Linux & macOS
+### Linux & macOS (Universal `./outpost.sh` Launcher)
+
+OutPost provides a single, unified `./outpost.sh` executable at the repository root:
 
 ```bash
 # 1. Clone the repository
 git clone https://github.com/kripy17/OutPost.git
 cd OutPost
 
-# 2. Run the automated installer
-#    Detects your OS, installs Python/Node dependencies, creates a virtual environment,
-#    and builds the frontend — all in one step.
-bash scripts/install.sh
+# 2. Automated setup (installs Python/Node deps, venv, and builds frontend)
+./setup.sh
 
-# 3. Start OutPost
-#    Launches FastAPI backend on port 8001 and React frontend on port 5174.
-bash scripts/dev.sh start
+# 3. Operations with ./outpost.sh:
+./outpost.sh               # Launch interactive 5-Pillar SOC Terminal Console (TUI)
+./outpost.sh start         # Start backend (:8001) & web console (:5174) in background
+./outpost.sh status        # Real-time health diagnostic HUD of all platform components
+./outpost.sh stop          # Gracefully shut down all background services
+./outpost.sh <command>     # Direct execution of any of the 39 CLI commands
 ```
 
 ### Windows (PowerShell)
@@ -360,13 +360,32 @@ powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 start
 
 ### Access OutPost
 
-Once running, open your browser:
+Once running, access OutPost via your browser or terminal:
 
-| Service | URL |
-|---|---|
-| **Web Console** | [http://localhost:5174](http://localhost:5174) |
-| **API Docs (Swagger)** | [http://localhost:8001/docs](http://localhost:8001/docs) |
-| **CLI** | `./cli.sh --help` (Linux/macOS) or `.\cli.ps1 --help` (Windows) |
+| Service | Access Command / URL | Description |
+|---|---|---|
+| **Web Console** | [http://localhost:5174](http://localhost:5174) | Full React 19 SOC Operations Cockpit |
+| **API Docs (Swagger)** | [http://localhost:8001/docs](http://localhost:8001/docs) | Interactive OpenAPI / FastAPI documentation |
+| **SOC Terminal TUI** | `./outpost.sh` | Interactive 5-Pillar console with `:` Command Palette |
+| **CLI Direct** | `./outpost.sh --help` | 39 commands across all 5 operational pillars |
+
+### 5-Pillar SOC TUI Interactive Hotkeys
+
+When running `./outpost.sh` in an interactive terminal, the following controls are available without exiting to bash:
+
+- **`[1]` - `[5]`**: Switch directly between the 5 Operational Pillars:
+  - `[1]` **Live Operations** (`Host X-Ray`, `Telemetry Radar`, `Incident Findings Queue`)
+  - `[2]` **Endpoint Fleet** (`Sensor Agents`, `Host X-Ray & /proc audit`, `Containment`)
+  - `[3]` **Malware & Lab** (`Simulation Lab`, `Detonation Runs`, `Dynamic Sandbox`)
+  - `[4]` **Detection & Intel** (`MITRE ATT&CK Matrix`, `Threat Watchlist`, `Rules`)
+  - `[5]` **Administration & Tools** (`Cyber Decoder`, `IOC Workbench`, `Audit Trail`)
+- **`[:]`**: Open the universal **In-App Command Palette** to execute any Typer command in-process
+- **`[t]`**: Open interactive **Alert Triage Modal** (Acknowledge, Resolve, Reopen)
+- **`[c]`**: Interactively **Create Incident Investigation Case**
+- **`[i]`**: Toggle **Host Containment / Network Isolation**
+- **`[a]` / `[d]`**: Add / delete IOCs from personal Threat Watchlist
+- **`[/]`**: Interactive IOC search across historical sessions and telemetry
+- **`[u]` / `[d]` / `[o]`**: Service daemon controls (start, stop, open browser console)
 
 ### Deploy Agents to Remote Machines
 
@@ -374,12 +393,12 @@ Deploy OutPost telemetry collectors to monitored endpoints with a single command
 
 **Linux & macOS:**
 ```bash
-curl -fsSL http://<OUTPOST_SERVER>:8001/api/agents/install.sh | sudo bash
+curl -fsSL http://<OUTPOST_SERVER>:8001/agents/install.sh | sudo bash
 ```
 
 **Windows (PowerShell):**
 ```powershell
-irm http://<OUTPOST_SERVER>:8001/api/agents/install.ps1 | iex
+irm http://<OUTPOST_SERVER>:8001/agents/install.ps1 | iex
 ```
 
 ---
@@ -439,11 +458,11 @@ npm --prefix frontend test -- --run
 
 | Component | Framework | Tests | Status |
 |---|---|---|---|
-| Backend Core & APIs | Pytest | **822** | ✅ Passing |
-| Telemetry Collectors | Pytest | **43** | ✅ Passing |
-| CLI & SOC Terminal | Pytest | **146** | ✅ Passing |
-| Frontend Web Console | Vitest | **365** | ✅ Passing |
-| **Total** | | **1,376** | **✅ 100% Green** |
+| Backend Core & APIs | Pytest | **864** | ✅ Passing |
+| Telemetry Collectors | Pytest | **47** | ✅ Passing |
+| CLI & SOC Terminal | Pytest | **204** | ✅ Passing |
+| Frontend Web Console | Vitest | **402** | ✅ Passing |
+| **Total** | | **1,517** | **✅ 100% Green** |
 
 ---
 

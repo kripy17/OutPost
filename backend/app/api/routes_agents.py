@@ -382,6 +382,8 @@ def get_local_monitor_status() -> dict:
 
 
 @router.get("/agents/install.sh", response_class=PlainTextResponse)
+@router.get("/api/agents/install.sh", response_class=PlainTextResponse)
+@router.get("/agents/bootstrap/linux.sh", response_class=PlainTextResponse)
 def get_agent_install_script(request: Request, backend_url: str = Query("")) -> Response:
     """Generate universal 1-command Linux / macOS collector bootstrap script."""
     from ..core import auth as auth_service
@@ -518,6 +520,8 @@ printf '%b[*] Streaming events to %s...%b\\n' "$C_CYAN" "$OUTPOST_API_URL" "$C_R
 
 
 @router.get("/agents/install.ps1", response_class=PlainTextResponse)
+@router.get("/api/agents/install.ps1", response_class=PlainTextResponse)
+@router.get("/agents/bootstrap/windows.ps1", response_class=PlainTextResponse)
 def get_agent_install_ps1(request: Request, backend_url: str = Query("")) -> Response:
     """Generate universal 1-command Windows PowerShell collector bootstrap script with SwiftOnSecurity Sysmon."""
     from ..core import auth as auth_service
@@ -656,9 +660,9 @@ def get_agent_bootstrap_commands(request: Request) -> dict:
     return {
         "server": server,
         "agent_token_configured": bool(token),
-        "linux_command": f"curl -sSL {server}/api/agents/install.sh | sudo bash",
-        "macos_command": f"curl -sSL {server}/api/agents/install.sh | sudo bash",
-        "windows_command": f"irm {server}/api/agents/install.ps1 | iex",
+        "linux_command": f"curl -sSL {server}/agents/install.sh | sudo bash",
+        "macos_command": f"curl -sSL {server}/agents/install.sh | sudo bash",
+        "windows_command": f"irm {server}/agents/install.ps1 | iex",
     }
 
 
