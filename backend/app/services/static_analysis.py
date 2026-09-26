@@ -100,6 +100,52 @@ def _valid_ipv4(raw: bytes) -> bool:
         return False
 
 
+_KNOWN_TLDS = {
+    "com", "org", "net", "edu", "gov", "mil", "int", "io", "co", "ai", "me", "cc",
+    "tv", "to", "app", "dev", "cloud", "tech", "info", "biz", "xyz", "top", "online",
+    "site", "club", "live", "pro", "store", "vip", "icu", "pw", "space", "link",
+    "click", "work", "guru", "shop", "host", "security", "agency", "network", "email",
+    "ru", "cn", "uk", "de", "nl", "fr", "eu", "us", "ca", "au", "br", "in", "jp",
+    "kr", "it", "es", "ch", "se", "no", "fi", "dk", "cz", "pl", "ua", "ro", "bg",
+    "tr", "ir", "za", "mx", "ar", "cl", "id", "my", "th", "vn", "ph", "sg", "hk",
+    "tw", "by", "kz", "su", "onion",
+}
+
+_CODE_EXTENSIONS_OR_IDENTIFIERS = {
+    "py", "pyc", "pyd", "sh", "bash", "zsh", "c", "h", "cpp", "hpp", "rs", "go",
+    "js", "ts", "jsx", "tsx", "json", "yaml", "yml", "toml", "ini", "conf", "cfg",
+    "xml", "html", "htm", "css", "txt", "md", "log", "tmp", "bak", "dat", "bin",
+    "so", "dll", "exe", "o", "obj", "class", "jar", "war", "tar", "gz", "zip",
+    "7z", "lock", "service", "socket", "mount", "target", "rules", "sig", "yar",
+    "yara", "strip", "split", "join", "append", "extend", "pop", "insert", "remove",
+    "clear", "count", "index", "sort", "reverse", "copy", "get", "set", "read",
+    "write", "close", "flush", "seek", "tell", "exists", "isfile", "isdir", "stat",
+    "statvfs", "exit", "dumps", "loads", "dump", "load", "format", "print", "match",
+    "search", "findall", "finditer", "sub", "subn", "lower", "upper", "replace",
+    "encode", "decode", "startswith", "endswith", "items", "keys", "values", "update",
+    "path", "dict", "list", "system", "release", "machine", "version", "argv",
+    "environ", "run", "call", "check_output", "popen", "stdout", "stderr", "stdin",
+    "main", "self", "name", "time", "sleep", "size", "type", "mode", "length", "text",
+}
+
+
+def _valid_domain(cand: str) -> bool:
+    if not cand or "." not in cand:
+        return False
+    parts = cand.lower().split(".")
+    tld = parts[-1]
+    if tld in _CODE_EXTENSIONS_OR_IDENTIFIERS:
+        return False
+    if tld not in _KNOWN_TLDS:
+        return False
+    if len(parts) == 2 and parts[0] in {
+        "os", "sys", "re", "json", "time", "math", "platform", "subprocess", "socket",
+        "struct", "hashlib", "shutil", "urllib", "requests"
+    }:
+        return False
+    return True
+
+
 def extract_iocs(data: bytes) -> dict[str, list[str]]:
     """Candidate IOCs inside the blob — deduped, order-preserved, capped.
 
@@ -123,7 +169,7 @@ def extract_iocs(data: bytes) -> dict[str, list[str]]:
             ips.append(v)
     for m in _RE_DOMAIN.finditer(data):
         v = m.group(0).decode("ascii").lower()
-        if v not in seen_d:
+        if _valid_domain(v) and v not in seen_d:
             seen_d.add(v)
             domains.append(v)
     for m in _RE_HASH.finditer(data):

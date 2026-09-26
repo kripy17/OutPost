@@ -97,7 +97,7 @@ def generate_behavioral_forecast(
             "id": "act_net_c2",
             "category": "c2_beaconing",
             "title": "Outbound C2 Communication & Network Beaconing",
-            "severity": "critical" if predicted_endpoints else "high",
+            "severity": "critical" if (predicted_endpoints and has_net_apis) else "medium",
             "description": f"Anticipated outbound socket creation targeting {len(predicted_endpoints)} candidate remote endpoint(s).",
             "confidence": "high" if (predicted_endpoints and has_net_apis) else "medium",
             "indicators": [e["endpoint"] for e in predicted_endpoints[:4]],

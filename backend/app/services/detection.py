@@ -557,11 +557,13 @@ def check_masquerading(event: dict) -> Alert | None:
     # can arrive basename-only (older configs, some providers), and treating
     # it as resolved would flag every system binary (Windows-soak FP:
     # "expected C:\Windows\explorer.exe, resolved explorer.exe").
-    exe_is_abs = exe_path.startswith("/") or (
+    exe_is_abs = (exe_path.startswith("/") and not exe_path.startswith("/proc/")) or (
         len(exe_path) >= 3 and exe_path[1] == ":"
     )
     if exe_path and exe_is_abs:
         if expected in exe_path.lower():
+            return None
+        if name in ("python", "python3") and any(v in exe_path.lower() for v in (".venv", "/env", "virtualenv", "conda", "pyenv", "/usr/local/bin", "/home/", "/opt/")):
             return None
         return _make_alert(
             event["run_id"], "masquerading", "Process masquerading as system binary",
@@ -580,6 +582,11 @@ def check_masquerading(event: dict) -> Alert | None:
         return None  # pid 1's init execve — systemd via the distro symlink
     if name == "bash" and first_token in _BASH_SH_ALIASES:
         return None  # sh→bash symlink distros (see _BASH_SH_ALIASES)
+    if name in ("python", "python3"):
+        # Legitimate virtualenvs, pyenvs, conda environments, and user installations
+        check_path = (exe_path if (exe_path and exe_is_abs) else first_token).lower()
+        if any(v in check_path for v in (".venv", "/env", "virtualenv", "conda", "pyenv", "/usr/local/bin", "/home/", "/opt/")):
+            return None
     if expected in cmdline.lower():
         return None
     return _make_alert(

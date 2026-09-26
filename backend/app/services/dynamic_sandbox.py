@@ -30,6 +30,7 @@ from ..models import run as run_store
 from ..models import samples as samples_store
 from ..services import detection, killchain, process_tree, risk
 from . import sandbox_forensics
+from .static_analysis import _valid_domain
 
 
 def detect_runner(data: bytes, filename: str) -> list[str] | None:
@@ -1323,7 +1324,7 @@ def extract_c2_sinkhole_events(stdout_s: str, stderr_s: str) -> list[dict[str, A
 
     domains = set(re.findall(r"\b(?:[a-zA-Z0-9-]{1,63}\.)+[a-zA-Z]{2,6}\b", combined))
     for d in domains:
-        if not d.endswith((".local", ".internal", ".arpa", ".so", ".bin", ".sh", ".py", ".exe", ".dll")):
+        if _valid_domain(d) and not d.endswith((".local", ".internal", ".arpa")):
             requests.append({
                 "type": "dns_query",
                 "target": d,

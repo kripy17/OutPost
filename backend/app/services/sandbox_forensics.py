@@ -90,6 +90,15 @@ async def poll_sandbox_process_tree(
                                 now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
                                 elapsed_ms = int((time.monotonic() - start_time_mono) * 1000)
 
+                                resolved_exe = ""
+                                try:
+                                    resolved_exe = os.readlink(entry / "exe")
+                                except OSError:
+                                    if cmd_raw:
+                                        first = cmd_raw.split()[0]
+                                        if first.startswith("/"):
+                                            resolved_exe = first
+
                                 ev = {
                                     "run_id": run_id,
                                     "platform": platform_name,
@@ -99,7 +108,7 @@ async def poll_sandbox_process_tree(
                                     "ppid": ppid,
                                     "process_name": comm,
                                     "command_line": cmd_raw or comm,
-                                    "exe_path": str(entry / "exe"),
+                                    "exe_path": resolved_exe,
                                     "host_id": "local",
                                 }
                                 events_batch.append(ev)
@@ -140,8 +149,13 @@ async def poll_sandbox_process_tree(
                         elapsed_ms = int((time.monotonic() - start_time_mono) * 1000)
 
                         if "(deleted)" in target:
-                            # Ignore system IPC shared memory buffers and inherited dev descriptors
-                            if any(ignored in target for ignored in ("/dev/shm/.org.chromium", "/dev/shm/pulse", "/dev/shm/wayland", "/dev/dri", "/tmp/#")):
+                            # Genuine fileless malware unlinks payloads in volatile temp directories (/tmp, /dev/shm, /var/tmp, memfd:)
+                            # Exclude inherited system/editor/library caches and desktop IPC
+                            is_volatile_drop = any(target.startswith(v) for v in ("/tmp/", "/dev/shm/", "/var/tmp/", "/run/user/", "memfd:"))
+                            if not is_volatile_drop or any(ignored in target for ignored in (
+                                "/dev/shm/.org.chromium", "/dev/shm/pulse", "/dev/shm/wayland",
+                                "/dev/dri", "/tmp/#", "/opt/", "/usr/", "/lib", ".cache", "node_modules"
+                            )):
                                 continue
                             # Fileless in-memory execution / unlinked binary
                             ev = {
