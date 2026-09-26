@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { platformIconName } from "../components/iconMeta";
 import { PageHeader } from "../components/ui";
@@ -78,14 +78,41 @@ export default function MonitorPage() {
   const queryClient = useQueryClient();
   const terminalEndRef = useRef<HTMLDivElement | null>(null);
 
+  const [searchParams] = useSearchParams();
+  const sampleParam = searchParams.get("sample");
+  const playbookParam = searchParams.get("playbook");
+  const techniqueParam = searchParams.get("technique");
+  const queryParam = searchParams.get("q");
+
   // Top Gallery Navigation Tab
-  const [galleryTab, setGalleryTab] = useState<"canaries" | "vault" | "techniques">("canaries");
+  const [galleryTab, setGalleryTab] = useState<"canaries" | "vault" | "techniques">(() => {
+    if (sampleParam) return "vault";
+    if (techniqueParam) return "techniques";
+    return "canaries";
+  });
 
   // Filters & Search
   const [platformFilter, setPlatformFilter] = useState<string>("all");
   const [severityFilter, setSeverityFilter] = useState<string>("all");
-  const [searchQuery, setSearchQuery] = useState<string>("");
+  const [searchQuery, setSearchQuery] = useState<string>(() => {
+    return sampleParam || playbookParam || techniqueParam || queryParam || "";
+  });
   const [isolationDriver, setIsolationDriver] = useState<string>("auto");
+
+  useEffect(() => {
+    if (sampleParam) {
+      setGalleryTab("vault");
+      setSearchQuery(sampleParam);
+    } else if (techniqueParam) {
+      setGalleryTab("techniques");
+      setSearchQuery(techniqueParam);
+    } else if (playbookParam) {
+      setGalleryTab("canaries");
+      setSearchQuery(playbookParam);
+    } else if (queryParam) {
+      setSearchQuery(queryParam);
+    }
+  }, [sampleParam, techniqueParam, playbookParam, queryParam]);
 
   // Execution states
   const [isExecuting, setIsExecuting] = useState<boolean>(false);
@@ -169,6 +196,7 @@ export default function MonitorPage() {
     if (!searchQuery.trim()) return true;
     const q = searchQuery.toLowerCase();
     return (
+      s.sample_id.toLowerCase().includes(q) ||
       s.original_name.toLowerCase().includes(q) ||
       (s.family || "").toLowerCase().includes(q) ||
       s.sha256.toLowerCase().includes(q)

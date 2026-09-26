@@ -562,11 +562,33 @@ export default function SamplesPage() {
         )}
         {isError && <p className="p-6 text-sm text-risk-malicious">Couldn't load samples — is the backend running?</p>}
         {!isLoading && !isError && filteredSamples.length === 0 && (
-          <p className="p-6 text-sm text-text-muted">
-            {debounced || platformFilter !== "all" || threatFilter !== "all"
-              ? "No samples match active filters."
-              : "No samples in vault yet. Drag & drop or upload an executable binary above to begin static analysis or dynamic execution tracing."}
-          </p>
+          <div className="p-8 text-center space-y-4 font-mono">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl border border-border-subtle bg-bg-surface text-text-faint">
+              <Icon name="box" size={24} />
+            </div>
+            <div className="max-w-md mx-auto space-y-1">
+              <h3 className="text-sm font-bold text-text-primary">
+                {debounced || platformFilter !== "all" || threatFilter !== "all"
+                  ? "No matching samples found"
+                  : "No Samples in Vault Yet"}
+              </h3>
+              <p className="text-xs text-text-muted">
+                {debounced || platformFilter !== "all" || threatFilter !== "all"
+                  ? "Try adjusting your search terms or clearing the platform filter."
+                  : "Upload a binary (.exe, .elf, script) above, or instantly provision our curated benign and adversary verification suites."}
+              </p>
+            </div>
+            {!debounced && platformFilter === "all" && threatFilter === "all" && (
+              <button
+                onClick={() => void handleSeedPresets()}
+                disabled={seeding}
+                className="press inline-flex items-center gap-2 rounded-xl border border-emerald-500/50 bg-emerald-500/15 px-4 py-2 text-xs font-bold text-emerald-400 transition hover:bg-emerald-500/25 disabled:opacity-50"
+              >
+                <Icon name="refresh" size={13} className={seeding ? "animate-spin" : ""} />
+                <span>{seeding ? "Provisioning..." : "Load Built-in Lab Samples"}</span>
+              </button>
+            )}
+          </div>
         )}
         {!isLoading && !isError && filteredSamples.length > 0 && (
           <ul className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 xl:grid-cols-3">
