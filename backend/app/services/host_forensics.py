@@ -1197,13 +1197,14 @@ def control_process(
     - 'terminate' (SIGTERM)
     - 'kill' (SIGKILL)
     """
-    action_map = {
-        "freeze": signal.SIGSTOP,
-        "pause": signal.SIGSTOP,
-        "resume": signal.SIGCONT,
-        "terminate": signal.SIGTERM,
-        "kill": signal.SIGKILL,
-    }
+    valid_actions = {"freeze", "pause", "resume", "terminate", "kill"}
+    if action not in valid_actions:
+        return {
+            "pid": pid,
+            "action": action,
+            "success": False,
+            "message": f"Unsupported process action: {action}. Supported: freeze, resume, terminate, kill",
+        }
 
     if pid <= 1:
         return {
@@ -1213,31 +1214,53 @@ def control_process(
             "message": f"Action blocked by safety policy: cannot signal system init or broadcast group (PID {pid})",
         }
 
-    if action not in action_map:
+    # Cross-platform execution via psutil (Windows, macOS, Linux)
+    if psutil and psutil.pid_exists(pid):
+        try:
+            p = psutil.Process(pid)
+            if expected_create_time and abs(p.create_time() - expected_create_time) > 2.0:
+                return {
+                    "pid": pid,
+                    "action": action,
+                    "success": False,
+                    "message": "Identity verification failed: PID was recycled by another process",
+                }
+            if action in ("freeze", "pause"):
+                p.suspend()
+                return {"pid": pid, "action": action, "success": True, "message": f"Process PID {pid} paused / suspended"}
+            elif action == "resume":
+                p.resume()
+                return {"pid": pid, "action": action, "success": True, "message": f"Process PID {pid} resumed"}
+            elif action == "terminate":
+                p.terminate()
+                return {"pid": pid, "action": action, "success": True, "message": f"Process PID {pid} terminated"}
+            elif action == "kill":
+                p.kill()
+                return {"pid": pid, "action": action, "success": True, "message": f"Process PID {pid} forcefully killed"}
+        except psutil.NoSuchProcess:
+            return {"pid": pid, "action": action, "success": action in ("terminate", "kill"), "message": f"Process PID {pid} not found (already terminated)"}
+        except psutil.AccessDenied:
+            return {"pid": pid, "action": action, "success": False, "message": f"Access denied controlling PID {pid} (insufficient privileges)"}
+        except Exception:
+            pass
+
+    # POSIX OS fallback when psutil is unavailable
+    action_map = {
+        "freeze": getattr(signal, "SIGSTOP", None),
+        "pause": getattr(signal, "SIGSTOP", None),
+        "resume": getattr(signal, "SIGCONT", None),
+        "terminate": getattr(signal, "SIGTERM", signal.SIGTERM),
+        "kill": getattr(signal, "SIGKILL", None),
+    }
+
+    sig = action_map.get(action)
+    if sig is None:
         return {
             "pid": pid,
             "action": action,
             "success": False,
-            "message": f"Unsupported process action: {action}. Supported: freeze, resume, terminate, kill",
+            "message": f"Action '{action}' is not supported on {platform.system()} without psutil",
         }
-
-    sig = action_map[action]
-
-    # Target identity re-verification to prevent PID reuse race condition
-    if psutil and expected_create_time:
-        try:
-            if psutil.pid_exists(pid):
-                p = psutil.Process(pid)
-                actual_create_time = p.create_time()
-                if abs(actual_create_time - expected_create_time) > 2.0:
-                    return {
-                        "pid": pid,
-                        "action": action,
-                        "success": False,
-                        "message": "Identity verification failed: PID was recycled by another process",
-                    }
-        except Exception:
-            pass
 
     success = False
     message = ""
@@ -1245,12 +1268,12 @@ def control_process(
     try:
         os.kill(pid, sig)
         success = True
-        message = f"Signal {sig.name} ({action}) successfully dispatched to PID {pid}"
+        message = f"Signal {getattr(sig, 'name', sig)} ({action}) successfully dispatched to PID {pid}"
     except ProcessLookupError:
         message = f"Process PID {pid} not found (already terminated)"
         success = (action in ("terminate", "kill"))
     except PermissionError:
-        message = f"Permission denied to send {sig.name} to PID {pid}"
+        message = f"Permission denied to send signal to PID {pid}"
         success = False
     except Exception as exc:
         message = f"Failed to signal PID {pid}: {exc}"
