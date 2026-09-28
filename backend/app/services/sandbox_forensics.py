@@ -328,14 +328,19 @@ def extract_dropped_artifacts(
 
     artifacts: list[dict[str, Any]] = []
 
+    EXCLUDED_DIRS = {".wine", ".cache", ".local", "__pycache__", ".git", "windows", "system32", "syswow64"}
     try:
         for path in sandbox_dir.rglob("*"):
             if not path.is_file():
                 continue
             if path.resolve() == original_target.resolve():
                 continue
+            rel = path.relative_to(sandbox_dir)
+            if any(part.lower() in EXCLUDED_DIRS for part in rel.parts):
+                continue
+            if len(artifacts) >= 50:
+                break
             try:
-                rel = path.relative_to(sandbox_dir)
                 raw = path.read_bytes()
                 sha256 = hashlib.sha256(raw).hexdigest()
                 md5 = hashlib.md5(raw).hexdigest()

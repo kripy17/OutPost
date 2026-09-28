@@ -5,12 +5,7 @@ node_modules/
 dist/
 *.qcow2
 *.vmdk
-/samples/*
-!/samples/benign_sysinfo_audit.py
-!/samples/benign_backup_archive.sh
-!/samples/benign_http_healthcheck.py
-!/samples/adversary_ransomware_sim.py
-!/samples/mock_adversary_chain.py
+/samples/
 backend/data/samples/
 *.yar
 .pytest_cache/

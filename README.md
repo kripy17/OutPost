@@ -4,9 +4,9 @@
 
 # OutPost
 
-**Open-Source Behavioral Security Workstation & Closed-Loop Threat Operations Platform**
+**Open-Source Behavioral Security Workstation & Threat Operations Platform**
 
-*Real-time host forensics, dynamic malware micro-sandboxing, live adversary simulation, and incident response — all in one self-hosted, air-gapped platform.*
+*Real-time host forensics, dynamic malware micro-sandboxing, adversary simulation, and incident response — self-hosted and air-gapped.*
 
 <br>
 
@@ -28,11 +28,10 @@
 
 <p align="center">
   <a href="#-what-is-outpost">What is OutPost?</a> •
-  <a href="#-closed-loop-threat-validation">Closed-Loop Validation</a> •
   <a href="#-feature-tour">Feature Tour</a> •
   <a href="#️-cli--interactive-soc-terminal">CLI & TUI</a> •
   <a href="#-installation--quickstart">Quickstart</a> •
-  <a href="#️-architecture--cross-platform">Architecture</a> •
+  <a href="#️-architecture">Architecture</a> •
   <a href="#-test-suite">Test Suite</a>
 </p>
 
@@ -42,9 +41,9 @@
 
 ## 🛡️ What is OutPost?
 
-**OutPost** is an enterprise-grade, self-hosted security operations workstation built for SOC analysts, threat hunters, incident responders, and detection engineers. It continuously ingests endpoint telemetry, flags malicious activity across 48 behavioral heuristics mapped to all 14 MITRE ATT&CK tactics, and enables automated investigation and containment from either a rich web dashboard or a high-speed terminal TUI console.
+**OutPost** is a self-hosted security operations workstation built for SOC analysts, incident responders, and detection engineers. It continuously ingests endpoint telemetry, flags suspicious activity across 48 behavioral heuristics mapped to all 14 MITRE ATT&CK tactics, and enables automated investigation and containment from either a rich web dashboard or a high-speed terminal TUI console.
 
-OutPost is architectured around **Five Core Operational Pillars**:
+OutPost is organized around **Five Core Operational Pillars**:
 
 ```text
                                   ┌────────────────────────────────────────────────────────┐
@@ -61,41 +60,19 @@ OutPost is architectured around **Five Core Operational Pillars**:
  • Automated playbooks   • Host containment & kill  • STIX 2.1 bundle export      • Detection backtesting     • Autonomous CLI & TUI
 ```
 
-### Why OutPost?
+### Key Principles
 
-- **Closed-Loop Threat Validation** — Directly bridges the gap between black-box malware triage and fleet detection rule testing. Detonated artifact behaviors can be replayed inside the Simulation Lab with a single click.
-- **Genuine Execution, Zero Mock Data** — Every process PID, socket, file modification, and telemetry record is produced by real operating system execution.
-- **Dual-Interface Parity** — The React 19 web application and the Rich interactive terminal console (TUI) share 100% backend parity.
-- **100% Air-Gapped by Design** — Zero external CDN calls, zero analytics scripts, and zero remote font dependencies. Fully verified for offline and restricted defense networks.
+- **Genuine Execution, Zero Mock Data** — Telemetry, process PIDs, sockets, and file events reflect real operating system execution.
+- **Two Complete Interfaces** — The React 19 web application and the Rich interactive terminal console (TUI) share full backend parity.
+- **100% Air-Gapped by Design** — Zero external CDN calls, zero analytics scripts, and zero remote font dependencies. Verified for offline and restricted networks.
 - **Unified Multi-OS Normalization** — Ingests telemetry from Linux (`auditd`/`eBPF`), Windows (`Sysmon`), and macOS (`EndpointSecurity`) into a standardized schema.
-
----
-
-## 🔄 Closed-Loop Threat Validation
-
-OutPost uniquely unites **Black-Box Sample Triage** with **White-Box Simulation Lab Replay**.
-
-When a suspicious binary or administrative script is uploaded:
-1. **Pre-Execution Behavioral Forecast**: Static Shannon entropy, strings, and imported symbols predict potential threat levels and actions before running code.
-2. **Dynamic Sandbox Micro-Detonation**: The file executes within an isolated cage (Bubblewrap `bwrap` namespaces, Wine, or temporary directories) while syscalls, child processes, fileless in-memory descriptors, and sockets are flight-recorded live.
-3. **Verdict & Zero False Positives**:
-   - **Benign Software**: Verified with clean verdicts (`VERDICT: CLEAN (BENIGN)`), zero false alerts, and zero containment actions.
-   - **Malicious Payloads**: Instant containment recommendations, actionable `iptables` firewall rules, dropped artifact downloads, and a **"Validate in Simulation Lab ↗"** direct pivot.
-
-<p align="center">
-  <img src="demo/screenshots/fresh/15_sample_detail_benign.png" alt="Benign Sample Clean Verdict" width="48%">
-  <img src="demo/screenshots/fresh/16_sample_detail_adversary.png" alt="Adversary Ransomware Detonation & Containment" width="48%">
-</p>
-<p align="center">
-  <em>Left: Verified Clean Execution (benign_sysinfo_audit.py — Zero False Positives) · Right: Active Ransomware Detonation (adversary_ransomware_sim.py — C2 Containment & Lab Pivot)</em>
-</p>
 
 ---
 
 ## 📸 Feature Tour
 
-### 🎛️ 1. SOC Command Deck — Executive Overview (`/`)
-The central operations deck. Features the real-time **DEFCON Posture HUD**, 24-hour alert severity distribution, live endpoint telemetry pulse, active MITRE ATT&CK tactic radar, and fleet health diagnostics.
+### 🎛️ 1. SOC Command Deck (`/`)
+The central operations deck. Displays real-time alert severity distribution, live endpoint telemetry pulse, active MITRE ATT&CK tactic radar, and fleet health diagnostics.
 
 <p align="center">
   <img src="demo/screenshots/fresh/01_overview.png" alt="SOC Command Deck" width="94%">
@@ -104,14 +81,14 @@ The central operations deck. Features the real-time **DEFCON Posture HUD**, 24-h
 ---
 
 ### 🔬 2. Host Forensics & Live Process Inspector (`/events`)
-Live telemetry stream and process inspection with zero lag. Monitors CPU, RAM, Swap, Disk, and Network I/O throughput alongside running process lineages, binary paths, open sockets, and unmanaged executable warnings.
+Real-time process inspection and telemetry streaming. Monitors CPU, RAM, Swap, Disk, and Network throughput alongside running process lineages, executable paths, and open network sockets.
 
 <p align="center">
   <img src="demo/screenshots/fresh/02_events.png" alt="Host Forensics & Live Process Inspector" width="94%">
 </p>
 
 <details>
-<summary><b>🔍 Deep Host Forensics Sub-Views (Process Causality Tree, Network Matrix, Behavioral Insights)</b></summary>
+<summary><b>🔍 Deep Host Forensics Sub-Views (Causality Tree, Network Matrix, Behavioral Insights, Process Dossier)</b></summary>
 <br>
 
 #### 🌳 Process Causality Tree
@@ -126,44 +103,23 @@ Hierarchical parent-child visualization linking parent PIDs, shell execution cha
   <img src="demo/screenshots/fresh/20_network_threat_matrix.png" alt="Network Threat Matrix" width="90%">
 </p>
 
-#### 💡 Automated Behavioral Insights
-Heuristic explanations highlighting dropped binaries in temporary folders, elevated Linux capabilities, and public listeners:
+#### 💡 Automated Behavioral Insights & Anomalies
+Heuristic anomaly explanations highlighting dropped binaries in temporary folders, unmanaged processes, and elevated capabilities:
 <p align="center">
   <img src="demo/screenshots/fresh/21_behavioral_insights.png" alt="Behavioral Insights" width="90%">
 </p>
 
-#### ⚡ Differential Baseline Delta & Capsule Diffs
-Compares host states before and after detonation to reveal spawned child processes, newly bound ports, and ephemeral files:
+#### 📑 Deep Process Forensic Target Dossier
+Slide-over forensic examination drawer detailing memory mappings, open file descriptors, active sockets, security capabilities, and process controls:
 <p align="center">
-  <img src="demo/screenshots/fresh/22_differential_delta.png" alt="Differential Delta" width="90%">
+  <img src="demo/screenshots/fresh/22_process_context_dossier.png" alt="Process Forensic Dossier" width="90%">
 </p>
 
 </details>
 
 ---
 
-### 🧪 3. Adversary Attack Simulation Lab (`/monitor`)
-Deterministic adversary attack scenarios and vault executable detonations executed in real-time. Streams genuine terminal stdout/stderr, displays child process causality trees, and maps detection rule hits live during execution.
-
-<p align="center">
-  <img src="demo/screenshots/fresh/07_simulation_lab.png" alt="Simulation Lab Scenario Gallery" width="94%">
-</p>
-<p align="center">
-  <img src="demo/screenshots/fresh/14_live_simulation_cockpit.png" alt="Live Execution Flight Recorder" width="94%">
-</p>
-
----
-
-### 📦 4. Malware Sample Vault (`/samples`)
-Secure artifact vault supporting drag-and-drop binary ingestion, SHA-256/SSDEEP fingerprinting, Shannon entropy heatmaps, extracted strings, YARA signature matches, and pre-seeded lab verification suites.
-
-<p align="center">
-  <img src="demo/screenshots/fresh/06_samples.png" alt="Malware Sample Vault" width="94%">
-</p>
-
----
-
-### 🚨 5. Incident Findings & Alert Triage Queue (`/findings`)
+### 🚨 3. Incident Findings & Alert Queue (`/findings`)
 Centralized SOC alert queue with MITRE ATT&CK technique tags, severity badges (`critical`, `malicious`, `suspicious`, `info`), 1-click false-positive suppression, and direct escalation to investigation cases.
 
 <p align="center">
@@ -172,17 +128,8 @@ Centralized SOC alert queue with MITRE ATT&CK technique tags, severity badges (`
 
 ---
 
-### 📂 6. Incident Investigation Dossiers (`/investigations`)
-Full lifecycle investigation workspace. Build forensic evidence collections, correlate cross-run event timelines, write collaborative analyst notes, and track statuses from `open` → `in_progress` → `closed`.
-
-<p align="center">
-  <img src="demo/screenshots/fresh/05_investigations.png" alt="Investigation Dossiers" width="94%">
-</p>
-
----
-
-### 📡 7. Endpoint Fleet & Sensor Management (`/agents` & `/hosts/local`)
-Live endpoint agent fleet tracking. Displays enrollment tokens, OS badges, collector health metrics, and deep per-host forensic breakdowns.
+### 📡 4. Endpoint Fleet & Sensor Management (`/agents` & `/hosts/local`)
+Live endpoint agent tracking. Displays enrollment tokens, OS badges, collector health metrics, and deep per-host forensic breakdowns.
 
 <p align="center">
   <img src="demo/screenshots/fresh/04_agents.png" alt="Fleet Agents" width="48%">
@@ -191,7 +138,46 @@ Live endpoint agent fleet tracking. Displays enrollment tokens, OS badges, colle
 
 ---
 
-### 🎯 8. MITRE ATT&CK Technique Matrix & Coverage Heatmap (`/coverage`)
+### 📂 5. Incident Investigation Dossiers (`/investigations`)
+Full lifecycle investigation workspace. Build forensic evidence collections, correlate cross-run event timelines, write collaborative analyst notes, and track statuses from `open` → `in_progress` → `closed`.
+
+<p align="center">
+  <img src="demo/screenshots/fresh/05_investigations.png" alt="Investigation Dossiers" width="94%">
+</p>
+
+---
+
+### 📦 6. Malware Sample Vault (`/samples`)
+Secure artifact vault supporting drag-and-drop binary ingestion, SHA-256 fingerprinting, Shannon entropy analysis, extracted strings, and YARA signature matches.
+
+<p align="center">
+  <img src="demo/screenshots/fresh/06_samples.png" alt="Malware Sample Vault" width="94%">
+</p>
+
+---
+
+### 🧪 7. Adversary Attack Simulation Lab (`/monitor`)
+Deterministic attack scenarios and vault executable detonations executed in real-time. Streams terminal stdout/stderr, displays process causality trees, and maps detection rule hits live during execution.
+
+<p align="center">
+  <img src="demo/screenshots/fresh/07_simulation_lab.png" alt="Simulation Lab Scenario Gallery" width="94%">
+</p>
+<p align="center">
+  <img src="demo/screenshots/fresh/14_live_simulation_cockpit.png" alt="Live Execution Cockpit" width="94%">
+</p>
+
+---
+
+### 🎯 8. Detection Rules Studio (`/rules`)
+Rule management and tuning studio. Inspect YAML rule definitions, adjust severity weights, configure suppression allowlists, and backtest against past telemetry:
+
+<p align="center">
+  <img src="demo/screenshots/fresh/09_rules.png" alt="Detection Rules Studio" width="94%">
+</p>
+
+---
+
+### 🗺️ 9. MITRE ATT&CK Matrix & Coverage Heatmap (`/coverage`)
 Comprehensive tactical heatmap covering all 14 MITRE tactics with full Technique Matrix modal, rule weights, detection gaps, and layer export capabilities.
 
 <p align="center">
@@ -201,43 +187,36 @@ Comprehensive tactical heatmap covering all 14 MITRE tactics with full Technique
 
 ---
 
-### 🛠️ 9. Rules Studio, Threat Search, Settings & Audit Trail
+### 🔍 10. Global Search & Threat Watchlist (`/search`)
+Cross-session search across IP addresses, domains, process names, and SHA-256 hashes, with a personal watchlist manager:
 
-<details>
-<summary><b>View Detection Rules, Global Search, System Settings, and Audit Trail</b></summary>
-<br>
-
-#### Detection Rules Studio (`/rules`)
-Rule management and tuning studio. Inspect YAML rule definitions, adjust severity weights, and backtest against past telemetry:
 <p align="center">
-  <img src="demo/screenshots/fresh/09_rules.png" alt="Detection Rules Studio" width="90%">
+  <img src="demo/screenshots/fresh/08_search.png" alt="Global Search & Threat Watchlist" width="94%">
 </p>
 
-#### Global IOC Search & Personal Watchlist (`/search`)
-Instant cross-session search across IP addresses, domains, process names, and SHA-256 hashes, with a personal watchlist manager:
-<p align="center">
-  <img src="demo/screenshots/fresh/08_search.png" alt="Global Search & Threat Watchlist" width="90%">
-</p>
+---
 
-#### Tamper-Evident SHA-256 Audit Trail (`/audit`)
+### 🔒 11. Tamper-Evident SHA-256 Audit Trail (`/audit`)
 Cryptographically chained, immutable audit log of every analyst action, rule change, triage status update, and process kill command:
+
 <p align="center">
-  <img src="demo/screenshots/fresh/12_audit.png" alt="Audit Trail" width="90%">
+  <img src="demo/screenshots/fresh/12_audit.png" alt="Audit Trail" width="94%">
 </p>
 
-#### System Settings & Notification Integrations (`/settings`)
+---
+
+### ⚙️ 12. System Settings & Webhook Integrations (`/settings`)
 Configure data retention windows, telemetry thresholds, and outbound webhook integrations (Slack, Discord, Microsoft Teams, Syslog):
-<p align="center">
-  <img src="demo/screenshots/fresh/11_settings.png" alt="System Settings" width="90%">
-</p>
 
-</details>
+<p align="center">
+  <img src="demo/screenshots/fresh/11_settings.png" alt="System Settings" width="94%">
+</p>
 
 ---
 
 ## ⌨️ CLI & Interactive SOC Terminal
 
-OutPost includes a standalone CLI with **39 commands** and an interactive, full-screen Rich TUI console.
+OutPost includes a standalone CLI with **39 commands** across all 5 operational pillars, plus an interactive, full-screen Rich TUI console.
 
 ```bash
 # Launch the interactive 5-Pillar SOC Terminal Console
@@ -253,9 +232,11 @@ OutPost includes a standalone CLI with **39 commands** and an interactive, full-
 ./outpost.sh alerts        # View open SOC findings
 ./outpost.sh forensics snapshot # Capture complete forensic snapshot
 ./outpost.sh samples list  # List samples in the vault
+./outpost.sh playbooks     # Execute automated IR playbooks & containment
+./outpost.sh intel hunt    # Fleet-wide retrospective compromise hunt
 ```
 
-### 5-Pillar TUI Interactive Hotkeys
+### 5-Pillar SOC TUI Interactive Hotkeys
 
 When running `./outpost.sh` in an interactive terminal, control the entire platform without exiting:
 
@@ -337,7 +318,7 @@ irm http://<OUTPOST_SERVER>:8001/agents/install.ps1 | iex
 
 ---
 
-## 🏗️ Architecture & Cross-Platform
+## 🏗️ Architecture
 
 ```text
 ┌────────────────────┐    ┌────────────────────┐    ┌────────────────────┐
@@ -367,17 +348,17 @@ irm http://<OUTPOST_SERVER>:8001/agents/install.ps1 | iex
         └──────────────────┘            └──────────────────┘
 ```
 
-### OS Compatibility Matrix
+### OS Compatibility
 
 - **Linux (Primary / Best for Sandbox Isolation)**: Uses unprivileged user namespaces via Bubblewrap (`bwrap`) for zero-overhead sandbox confinement, Wine for Windows PE execution, and native `/proc` capability audits.
-- **Windows**: Full fleet monitoring via dedicated Sysmon collector (`collector_win.py`) mapping Event IDs 1, 3, 6, 7, 8, 10, 11, 12, 13, 14, 23. Cross-platform process lifecycle controls via `psutil`. For hosting the central stack, **WSL2** is recommended.
-- **macOS**: Full fleet monitoring via `collector_macos.py` parsing Apple EndpointSecurity & OpenBSM audit records, TCC database access detection, and LaunchDaemon persistence auditing.
+- **Windows**: Fleet monitoring via dedicated Sysmon collector (`collector_win.py`) mapping Event IDs 1, 3, 6, 7, 8, 10, 11, 12, 13, 14, 23. Cross-platform process lifecycle controls via `psutil`. For hosting the central stack, **WSL2** is recommended.
+- **macOS**: Fleet monitoring via `collector_macos.py` parsing Apple EndpointSecurity & OpenBSM audit records, TCC database access detection, and LaunchDaemon persistence auditing.
 
 ---
 
 ## 🧪 Test Suite
 
-OutPost enforces a strict quality gate with automated test coverage across all subsystems:
+OutPost enforces automated test coverage across all subsystems:
 
 ```bash
 # Execute the full automated test suite

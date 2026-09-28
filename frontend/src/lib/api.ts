@@ -669,10 +669,6 @@ export async function getSamples(params: { q?: string; limit?: number; include_s
   return get<SamplesResponse>(`/samples${suffix ? `?${suffix}` : ""}`);
 }
 
-export async function seedPresetSamples(): Promise<{ seeded: number; samples: SampleRow[] }> {
-  return post<{ seeded: number; samples: SampleRow[] }>("/samples/seed-presets", {});
-}
-
 export async function getSample(sampleId: string): Promise<SampleRow> {
   return get<SampleRow>(`/samples/${sampleId}`);
 }

@@ -17,7 +17,7 @@ const browser = await chromium.launch({
 
 const context = await browser.newContext({
   viewport: { width: 1440, height: 900 },
-  deviceScaleFactor: 2 // Crisp high-DPI retina rendering
+  deviceScaleFactor: 2 // High-DPI retina rendering
 });
 
 const page = await context.newPage();
@@ -36,8 +36,6 @@ const pagesToCapture = [
   { name: "11_settings", path: "/settings" },
   { name: "12_audit", path: "/audit" },
   { name: "13_host_detail", path: "/hosts/local" },
-  { name: "15_sample_detail_benign", path: "/samples/4e54acaf9e3a" },
-  { name: "16_sample_detail_adversary", path: "/samples/8438618d439e" },
 ];
 
 for (const p of pagesToCapture) {
@@ -53,12 +51,12 @@ for (const p of pagesToCapture) {
   }
 }
 
-// Capture Live Simulation Cockpit (detonate a Canary in /monitor)
+// Capture Live Simulation Cockpit (detonate a scenario in /monitor)
 try {
   console.log("[*] Capturing 14_live_simulation_cockpit.png...");
   await page.goto(`${FRONTEND_URL}/monitor`, { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(1000);
-  const runBtn = page.getByRole("button", { name: /Detonate Sample/i }).first();
+  const runBtn = page.locator("button", { hasText: /Detonate Sample/i }).first();
   if (await runBtn.isVisible()) {
     await runBtn.click();
     await page.waitForTimeout(4000); // Wait for simulation execution and terminal streaming
@@ -74,7 +72,7 @@ try {
   console.log("[*] Capturing 17_mitre_navigator_matrix.png...");
   await page.goto(`${FRONTEND_URL}/coverage`, { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(1000);
-  const matrixBtn = page.getByRole("button", { name: /ATT&CK Technique Matrix|Technique Matrix|Navigator/i }).first();
+  const matrixBtn = page.locator("button", { hasText: /ATT&CK Technique Matrix|Technique Matrix|Navigator/i }).first();
   if (await matrixBtn.isVisible()) {
     await matrixBtn.click();
     await page.waitForTimeout(1000);
@@ -85,20 +83,58 @@ try {
   console.warn("[!] MITRE modal capture warning:", e.message);
 }
 
-// Capture Host Forensics & Pulse Explorer view
+// Capture Host Forensics sub-views on /events
 try {
-  console.log("[*] Capturing 18_host_forensics_pulse.png...");
+  console.log("[*] Navigating to /events for host sub-views...");
   await page.goto(`${FRONTEND_URL}/events`, { waitUntil: "domcontentloaded" });
-  await page.waitForTimeout(1000);
-  const forensicsBtn = page.getByRole("button", { name: /Host Forensics & Pulse/i }).first();
-  if (await forensicsBtn.isVisible()) {
-    await forensicsBtn.click();
-    await page.waitForTimeout(1200);
-    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "18_host_forensics_pulse.png") });
-    console.log("[✓] Captured: 18_host_forensics_pulse.png");
+  await page.waitForTimeout(1500);
+
+  // 19_process_causality_tree.png
+  const treeTab = page.locator("button", { hasText: "Causality Tree" }).first();
+  if (await treeTab.isVisible()) {
+    console.log("[*] Capturing 19_process_causality_tree.png...");
+    await treeTab.click();
+    await page.waitForTimeout(1500);
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "19_process_causality_tree.png") });
+    console.log("[✓] Captured: 19_process_causality_tree.png");
+  }
+
+  // 20_network_threat_matrix.png
+  const netTab = page.locator("button", { hasText: "Network Matrix" }).first();
+  if (await netTab.isVisible()) {
+    console.log("[*] Capturing 20_network_threat_matrix.png...");
+    await netTab.click();
+    await page.waitForTimeout(1500);
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "20_network_threat_matrix.png") });
+    console.log("[✓] Captured: 20_network_threat_matrix.png");
+  }
+
+  // 21_behavioral_insights.png
+  const insightsTab = page.locator("button", { hasText: "Behavioral Insights" }).first();
+  if (await insightsTab.isVisible()) {
+    console.log("[*] Capturing 21_behavioral_insights.png...");
+    await insightsTab.click();
+    await page.waitForTimeout(1500);
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "21_behavioral_insights.png") });
+    console.log("[✓] Captured: 21_behavioral_insights.png");
+  }
+
+  // 22_process_context_dossier.png
+  const procTab = page.locator("button", { hasText: "Live Processes" }).first();
+  if (await procTab.isVisible()) {
+    await procTab.click();
+    await page.waitForTimeout(1000);
+    const inspectBtn = page.locator("button", { hasText: "Inspect" }).first();
+    if (await inspectBtn.isVisible()) {
+      console.log("[*] Capturing 22_process_context_dossier.png...");
+      await inspectBtn.click();
+      await page.waitForTimeout(1500);
+      await page.screenshot({ path: path.join(SCREENSHOT_DIR, "22_process_context_dossier.png") });
+      console.log("[✓] Captured: 22_process_context_dossier.png");
+    }
   }
 } catch (e) {
-  console.warn("[!] Forensics pulse capture warning:", e.message);
+  console.warn("[!] Events sub-views capture warning:", e.message);
 }
 
 await browser.close();

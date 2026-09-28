@@ -1060,104 +1060,63 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
       </div>
 
       {/* Actionable Threat Containment Strip when detonation result is present */}
-      {result && (() => {
-        const isClean = result.verdict === "clean" || ((result.alerts || []).length === 0 && (result.risk_score ?? 0) === 0);
-        const isMalicious = (result.alerts || []).length > 0 || (result.risk_score ?? 0) >= 50;
-
-        return (
-          <div className={`rounded-xl border p-4 space-y-2.5 shadow-md ${
-            isClean
-              ? "border-emerald-500/40 bg-emerald-500/10"
-              : isMalicious
-                ? "border-rose-500/40 bg-rose-500/5"
-                : "border-amber-500/40 bg-amber-500/5"
-          }`}>
-            <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
-              <div className="flex items-center gap-2">
-                <span
-                  className={`rounded px-2 py-0.5 text-[10px] font-bold uppercase ${
-                    isClean
-                      ? "bg-emerald-500/25 text-emerald-300 border border-emerald-500/40"
-                      : isMalicious
-                        ? "bg-rose-500/20 text-rose-400 border border-rose-500/40"
-                        : "bg-amber-500/20 text-amber-400 border border-amber-500/40"
-                  }`}
-                >
-                  VERDICT: {isClean ? "CLEAN (BENIGN)" : isMalicious ? "MALICIOUS" : "SUSPICIOUS"}
-                </span>
-                <span className="font-bold text-text-primary">
-                  {isClean
-                    ? "Verified Clean Execution · Zero Detection Alerts Tripped"
-                    : "Immediate Host Containment & Actionable SOC IOCs"}
-                </span>
-              </div>
-
-              <div className="flex items-center gap-2">
-                {!isClean && (
-                  <Link
-                    to={`/monitor?sample=${sample.sample_id}`}
-                    className="press inline-flex items-center gap-1 rounded-lg border border-accent/50 bg-accent/15 px-2.5 py-1 text-[11px] font-bold text-accent hover:bg-accent/25 shadow-sm"
-                    title="Validate detection rules in Simulation Lab"
-                  >
-                    <Icon name="activity" size={11} />
-                    <span>Validate in Simulation Lab ↗</span>
-                  </Link>
-                )}
-                {isClean && (
-                  <span className="inline-flex items-center gap-1 text-[11px] font-mono font-bold text-emerald-400">
-                    <Icon name="check" size={12} />
-                    <span>Zero False Positives</span>
-                  </span>
-                )}
-                <button
-                  type="button"
-                  onClick={() => setShowIncidentBrief(true)}
-                  className="press inline-flex items-center gap-1 rounded-lg border border-border-subtle bg-bg-base px-2.5 py-1 text-[11px] font-bold text-text-primary hover:border-accent hover:text-accent shadow-sm"
-                  title="Export complete SOC Incident Dossier & Markdown Brief"
-                >
-                  <Icon name="file" size={11} />
-                  <span>Incident Brief</span>
-                </button>
-                <span className="text-[10px] text-text-faint font-mono">Run: {result.run_id}</span>
-              </div>
+      {result && (
+        <div className="rounded-xl border border-rose-500/40 bg-rose-500/5 p-4 space-y-2.5 shadow-md">
+          <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-2">
+              <span className="rounded bg-rose-500/20 px-2 py-0.5 text-[10px] font-bold text-rose-400 uppercase border border-rose-500/40">
+                Actionable SOC Response
+              </span>
+              <span className="font-bold text-text-primary">Immediate Host Containment &amp; Actionable SOC IOCs</span>
             </div>
 
-            {!isClean && (
-              <div className="flex flex-wrap items-center gap-2 pt-1 text-[11px]">
-                {displayNetwork.slice(0, 3).map((net: any, idx: number) => {
-                  const target = net.target || net.dest_ip;
-                  if (!target) return null;
-                  const cleanIp = target.split(":")[0];
-                  const fwRule = `iptables -A OUTPUT -d ${cleanIp} -j DROP`;
-                  return (
-                    <div key={idx} className="flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-base/70 px-2.5 py-1">
-                      <span className="text-text-faint text-[10px]">C2:</span>
-                      <span className="font-bold text-accent">{cleanIp}</span>
-                      <button
-                        onClick={() => void handleAddToWatchlist(cleanIp)}
-                        disabled={watchlistedIocs.has(cleanIp)}
-                        className="ml-1 text-[10px] text-accent hover:underline disabled:text-emerald-400"
-                      >
-                        {watchlistedIocs.has(cleanIp) ? "Watchlisted" : "+Watchlist"}
-                      </button>
-                      <button
-                        onClick={() => {
-                          void navigator.clipboard.writeText(fwRule);
-                          setCopiedFwRule(fwRule);
-                          setTimeout(() => setCopiedFwRule(null), 2000);
-                        }}
-                        className="text-accent hover:underline text-[10px] font-bold ml-1"
-                      >
-                        {copiedFwRule === fwRule ? "Copied!" : "Copy iptables"}
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowIncidentBrief(true)}
+                className="press inline-flex items-center gap-1 rounded-lg border border-border-subtle bg-bg-base px-2.5 py-1 text-[11px] font-bold text-text-primary hover:border-accent hover:text-accent shadow-sm"
+                title="Export complete SOC Incident Dossier & Markdown Brief"
+              >
+                <Icon name="file" size={11} />
+                <span>Incident Brief</span>
+              </button>
+              <span className="text-[10px] text-text-faint font-mono">Run: {result.run_id}</span>
+            </div>
           </div>
-        );
-      })()}
+
+          <div className="flex flex-wrap items-center gap-2 pt-1 text-[11px]">
+            {displayNetwork.slice(0, 3).map((net: any, idx: number) => {
+              const target = net.target || net.dest_ip;
+              if (!target) return null;
+              const cleanIp = target.split(":")[0];
+              const fwRule = `iptables -A OUTPUT -d ${cleanIp} -j DROP`;
+              return (
+                <div key={idx} className="flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-base/70 px-2.5 py-1">
+                  <span className="text-text-faint text-[10px]">C2:</span>
+                  <span className="font-bold text-accent">{cleanIp}</span>
+                  <button
+                    onClick={() => void handleAddToWatchlist(cleanIp)}
+                    disabled={watchlistedIocs.has(cleanIp)}
+                    className="ml-1 text-[10px] text-accent hover:underline disabled:text-emerald-400"
+                  >
+                    {watchlistedIocs.has(cleanIp) ? "Watchlisted" : "+Watchlist"}
+                  </button>
+                  <button
+                    onClick={() => {
+                      void navigator.clipboard.writeText(fwRule);
+                      setCopiedFwRule(fwRule);
+                      setTimeout(() => setCopiedFwRule(null), 2000);
+                    }}
+                    className="text-accent hover:underline text-[10px] font-bold ml-1"
+                  >
+                    {copiedFwRule === fwRule ? "Copied!" : "Copy iptables"}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* ── LAYER 2: Live Dynamic Sandbox Cage Flight Recorder ────────── */}
       <div className="overflow-hidden rounded-2xl border border-border-subtle bg-bg-surface/90 shadow-xl backdrop-blur">
