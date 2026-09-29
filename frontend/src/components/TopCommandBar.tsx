@@ -1,4 +1,3 @@
-import { useEffect, useState } from "react";
 import { useLocation, Link } from "react-router-dom";
 import { Icon } from "./Icon";
 
@@ -79,15 +78,6 @@ export default function TopCommandBar() {
   const location = useLocation();
   const meta = resolveRouteMeta(location.pathname);
 
-  // Live ticking UTC military clock
-  const [utcTime, setUtcTime] = useState(() => new Date().toISOString().slice(11, 19));
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setUtcTime(new Date().toISOString().slice(11, 19));
-    }, 1000);
-    return () => clearInterval(timer);
-  }, []);
-
   const openPalette = () => {
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true }));
   };
@@ -121,17 +111,8 @@ export default function TopCommandBar() {
         <span className="font-semibold text-text-primary">{meta.name}</span>
       </nav>
 
-      {/* Right: Military UTC Clock, SOC Telemetry & Command Triggers */}
+      {/* Right: SOC Telemetry & Command Triggers */}
       <div className="flex items-center gap-3">
-        {/* Military UTC Clock */}
-        <div
-          className="hidden xl:flex items-center gap-1.5 rounded border border-border-subtle bg-bg-base/60 px-2.5 py-0.5 font-mono text-[11px] text-text-muted"
-          title="Current Zulu (UTC) Military Operational Time"
-        >
-          <span className="text-text-faint font-semibold">UTC</span>
-          <span className="font-bold tabular-nums text-text-primary">{utcTime}</span>
-        </div>
-
         {/* Stream Live Pulse */}
         <div
           className="flex items-center gap-1.5 rounded-full border border-risk-clean/30 bg-risk-clean/10 px-2.5 py-0.5 text-[11px] font-medium text-risk-clean"
