@@ -27,6 +27,7 @@ import statistics
 # with no semantic change. Evicted on run completion.
 from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from ..core.schema import Alert
 
