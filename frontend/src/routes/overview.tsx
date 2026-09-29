@@ -1090,10 +1090,10 @@ function HostForensicsRadarPanel() {
           </span>
           <div>
             <h3 className="font-mono text-xs font-bold uppercase tracking-wider text-text-primary">
-              Host Forensics & Live Telemetry Spectrum Cockpit
+              Host Forensics & Live Network Topology
             </h3>
             <p className="text-[11px] text-text-muted">
-              Live kernel procfs observation & 360° telemetry radar tracking across fleet sensor nodes
+              Live kernel procfs observation & real-time socket topology across host network interfaces
             </p>
           </div>
         </div>
@@ -1164,11 +1164,7 @@ function HostForensicsRadarPanel() {
 
         {/* Right: Bespoke Live Telemetry Radar Sweep Canvas */}
         <div className="lg:col-span-5 flex items-center justify-center">
-          <LiveTelemetryRadar
-            activeThreatCount={snapshot?.process_count && snapshot.process_count > 100 ? 1 : 0}
-            onlineAgentCount={1}
-            className="w-full"
-          />
+          <LiveTelemetryRadar className="w-full" />
         </div>
       </div>
     </section>

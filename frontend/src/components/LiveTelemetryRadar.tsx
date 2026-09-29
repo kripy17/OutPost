@@ -1,262 +1,466 @@
-import { useEffect, useRef, useState, useMemo } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
+import { getNetworkMatrix } from "../lib/api";
 
-export interface RadarTarget {
-  id: string;
+interface Socket {
+  protocol: string;
+  local_ip: string;
+  local_port: number;
+  remote_ip?: string | null;
+  remote_port?: number | null;
+  status: string;
+  pid?: number | null;
+  process_name: string;
+  label?: string;
+  is_external?: boolean;
+  is_suspicious_port?: boolean;
+}
+
+interface NetworkData {
+  public_listeners: Socket[];
+  loopback_listeners: Socket[];
+  outbound_connections: Socket[];
+  multicast_listeners: Socket[];
+  summary: {
+    public_listeners_count: number;
+    loopback_listeners_count: number;
+    outbound_count: number;
+    multicast_count: number;
+    total_sockets: number;
+  };
+}
+
+// Colours per category
+const CAT_COLOR = {
+  public: "#f85149",    // red — exposed to network
+  loopback: "#3fb950",  // green — local only
+  outbound: "#58a6ff",  // blue — initiated by host
+  multicast: "#d29922", // amber — multicast/broadcast
+} as const;
+
+type CatKey = keyof typeof CAT_COLOR;
+
+interface RingEntry {
+  cat: CatKey;
   label: string;
-  distance: number; // 0.1 to 0.95 (normalized radius)
-  angle: number; // 0 to 360 (degrees)
-  severity: "clean" | "suspicious" | "malicious";
-  type: "agent" | "threat" | "connection";
-  details?: string;
+  port: number;
+  proto: string;
+  process: string;
+  status: string;
+  is_suspicious?: boolean;
+  remote?: string;
 }
 
-interface LiveTelemetryRadarProps {
-  targets?: RadarTarget[];
-  activeThreatCount?: number;
-  onlineAgentCount?: number;
-  className?: string;
+function buildRing(net: NetworkData): RingEntry[] {
+  const entries: RingEntry[] = [];
+
+  for (const s of net.public_listeners) {
+    entries.push({
+      cat: "public",
+      label: s.label || s.process_name,
+      port: s.local_port,
+      proto: s.protocol.toUpperCase(),
+      process: s.process_name,
+      status: s.status,
+    });
+  }
+  for (const s of net.loopback_listeners) {
+    entries.push({
+      cat: "loopback",
+      label: s.label || s.process_name,
+      port: s.local_port,
+      proto: s.protocol.toUpperCase(),
+      process: s.process_name,
+      status: s.status,
+    });
+  }
+  for (const s of net.outbound_connections) {
+    entries.push({
+      cat: "outbound",
+      label: s.process_name,
+      port: s.local_port,
+      proto: s.protocol.toUpperCase(),
+      process: s.process_name,
+      status: s.status,
+      is_suspicious: s.is_suspicious_port,
+      remote: s.remote_ip ? `${s.remote_ip}:${s.remote_port}` : undefined,
+    });
+  }
+  for (const s of net.multicast_listeners) {
+    entries.push({
+      cat: "multicast",
+      label: s.label || s.process_name,
+      port: s.local_port,
+      proto: s.protocol.toUpperCase(),
+      process: s.process_name,
+      status: s.status,
+    });
+  }
+
+  return entries;
 }
 
-export default function LiveTelemetryRadar({
-  targets: propTargets,
-  activeThreatCount = 0,
-  onlineAgentCount = 1,
-  className = "",
-}: LiveTelemetryRadarProps) {
+function drawRing(canvas: HTMLCanvasElement, ring: RingEntry[], frameAngle: number) {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+
+  const W = canvas.width;
+  const H = canvas.height;
+  const cx = W / 2;
+  const cy = H / 2;
+  const outerR = Math.min(cx, cy) - 14;
+  const innerR = outerR * 0.38;
+  const midR = (outerR + innerR) / 2;
+
+  ctx.clearRect(0, 0, W, H);
+
+  // Dark background disc
+  ctx.fillStyle = "rgba(7,10,16,0.96)";
+  ctx.beginPath();
+  ctx.arc(cx, cy, outerR, 0, Math.PI * 2);
+  ctx.fill();
+
+  const total = ring.length;
+
+  if (total === 0) {
+    // Empty state
+    ctx.strokeStyle = "rgba(99,102,241,0.18)";
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 6]);
+    ctx.beginPath();
+    ctx.arc(cx, cy, midR, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = "rgba(148,163,184,0.4)";
+    ctx.font = "11px ui-monospace,monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("NO ACTIVE SOCKETS", cx, cy);
+    return;
+  }
+
+  const segAngle = (Math.PI * 2) / total;
+  const gap = Math.min(0.04, segAngle * 0.12);
+
+  // ── Arc segments ──────────────────────────────────────────────
+  for (let i = 0; i < total; i++) {
+    const entry = ring[i];
+    const startA = i * segAngle - Math.PI / 2 + gap / 2;
+    const endA = startA + segAngle - gap;
+    const color = CAT_COLOR[entry.cat];
+
+    // Outer filled arc (thin band)
+    const bandOuter = outerR;
+    const bandInner = outerR - 10;
+    ctx.beginPath();
+    ctx.arc(cx, cy, bandOuter, startA, endA);
+    ctx.arc(cx, cy, bandInner, endA, startA, true);
+    ctx.closePath();
+    ctx.fillStyle = entry.is_suspicious ? "rgba(239,68,68,0.85)" : color + "cc";
+    ctx.fill();
+
+    // Mid arc (connector line from center ring to outer band)
+    const spokeMidA = startA + (endA - startA) / 2;
+    const sx1 = cx + Math.cos(spokeMidA) * (innerR + 4);
+    const sy1 = cy + Math.sin(spokeMidA) * (innerR + 4);
+    const sx2 = cx + Math.cos(spokeMidA) * (bandInner - 2);
+    const sy2 = cy + Math.sin(spokeMidA) * (bandInner - 2);
+    ctx.strokeStyle = color + "55";
+    ctx.lineWidth = 1;
+    ctx.setLineDash([2, 3]);
+    ctx.beginPath();
+    ctx.moveTo(sx1, sy1);
+    ctx.lineTo(sx2, sy2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Port label on outer band (only when enough segments exist per arc)
+    if (segAngle > 0.18) {
+      const labelR = bandOuter - 5;
+      const lx = cx + Math.cos(spokeMidA) * labelR;
+      const ly = cy + Math.sin(spokeMidA) * labelR;
+      ctx.save();
+      ctx.translate(lx, ly);
+      ctx.rotate(spokeMidA + Math.PI / 2);
+      ctx.fillStyle = "#f0f6fc";
+      ctx.font = "bold 8px ui-monospace,monospace";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(String(entry.port), 0, 0);
+      ctx.restore();
+    }
+  }
+
+  // ── Inner hub ring ──────────────────────────────────────────────
+  // Animated sweep highlight around inner ring
+  const sweepLen = Math.PI * 0.6;
+  const sweepGrad = ctx.createConicGradient(frameAngle - sweepLen / 2, cx, cy);
+  sweepGrad.addColorStop(0, "rgba(6,182,212,0.0)");
+  sweepGrad.addColorStop(sweepLen / (Math.PI * 2), "rgba(6,182,212,0.3)");
+  sweepGrad.addColorStop(sweepLen / (Math.PI * 2) + 0.001, "rgba(6,182,212,0.0)");
+  sweepGrad.addColorStop(1, "rgba(6,182,212,0.0)");
+
+  ctx.beginPath();
+  ctx.arc(cx, cy, innerR + 4, 0, Math.PI * 2);
+  ctx.arc(cx, cy, innerR - 4, Math.PI * 2, 0, true);
+  ctx.closePath();
+  ctx.fillStyle = sweepGrad;
+  ctx.fill();
+
+  // Static inner ring border
+  ctx.strokeStyle = "rgba(6,182,212,0.35)";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.arc(cx, cy, innerR, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // Center hub stats
+  ctx.fillStyle = "#f0f6fc";
+  ctx.font = "bold 18px ui-monospace,monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(String(total), cx, cy - 8);
+  ctx.fillStyle = "rgba(148,163,184,0.7)";
+  ctx.font = "8px ui-monospace,monospace";
+  ctx.fillText("SOCKETS", cx, cy + 8);
+
+  // Outer bezel
+  ctx.strokeStyle = "rgba(99,102,241,0.3)";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.arc(cx, cy, outerR, 0, Math.PI * 2);
+  ctx.stroke();
+}
+
+export default function LiveTelemetryRadar({ className = "" }: { className?: string }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const [selectedTarget, setSelectedTarget] = useState<RadarTarget | null>(null);
-  const [rangeZoom, setRangeZoom] = useState<"LOCAL" | "FLEET" | "GLOBAL">("FLEET");
+  const frameRef = useRef<number>(0);
+  const angleRef = useRef<number>(0);
+  const [net, setNet] = useState<NetworkData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [selected, setSelected] = useState<RingEntry | null>(null);
+  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
 
-  // Fallback demo targets if none provided
-  const targets = useMemo<RadarTarget[]>(() => {
-    if (propTargets && propTargets.length > 0) return propTargets;
-    return [
-      { id: "tgt-1", label: "Primary Host (Linux 6.8)", distance: 0.25, angle: 45, severity: "clean", type: "agent", details: "PID 1492 · Normal" },
-      { id: "tgt-2", label: "Gateway Node", distance: 0.55, angle: 130, severity: "clean", type: "agent", details: "192.168.1.1 · Active" },
-      { id: "tgt-3", label: "SSH Ingress (Port 22)", distance: 0.72, angle: 215, severity: activeThreatCount > 0 ? "malicious" : "suspicious", type: "threat", details: "External probe detected" },
-      { id: "tgt-4", label: "DNS Tunneling Probe", distance: 0.88, angle: 310, severity: activeThreatCount > 0 ? "malicious" : "clean", type: "threat", details: "UDP 53 · High entropy" },
-      { id: "tgt-5", label: "Workstation Alpha", distance: 0.4, angle: 290, severity: "clean", type: "agent", details: "Telemetry Active" },
-    ];
-  }, [propTargets, activeThreatCount]);
+  const ring = net ? buildRing(net) : [];
 
+  const fetchData = useCallback(async () => {
+    try {
+      setError(false);
+      const data = await getNetworkMatrix();
+      setNet(data);
+      setLastRefresh(new Date());
+    } catch {
+      setError(true);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Initial fetch + 10s refresh
+  useEffect(() => {
+    fetchData();
+    const id = setInterval(fetchData, 10_000);
+    return () => clearInterval(id);
+  }, [fetchData]);
+
+  // Canvas animation loop
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
 
-    let animationFrameId: number;
-    let angleRad = 0;
-
-    const render = () => {
-      const width = canvas.width;
-      const height = canvas.height;
-      const centerX = width / 2;
-      const centerY = height / 2;
-      const radius = Math.min(centerX, centerY) - 18;
-
-      ctx.clearRect(0, 0, width, height);
-
-      // Radar background base
-      ctx.fillStyle = "rgba(7, 10, 16, 0.95)";
-      ctx.beginPath();
-      ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Concentric Range Rings
-      ctx.strokeStyle = "rgba(99, 102, 241, 0.15)";
-      ctx.lineWidth = 1;
-      const rings = [0.25, 0.5, 0.75, 1.0];
-      for (const r of rings) {
-        ctx.beginPath();
-        ctx.arc(centerX, centerY, radius * r, 0, Math.PI * 2);
-        ctx.stroke();
-      }
-
-      // Range ring distance labels
-      ctx.fillStyle = "rgba(148, 163, 184, 0.5)";
-      ctx.font = "9px ui-monospace, monospace";
-      ctx.fillText("25%", centerX + 4, centerY - radius * 0.25 + 10);
-      ctx.fillText("50%", centerX + 4, centerY - radius * 0.5 + 10);
-      ctx.fillText("75%", centerX + 4, centerY - radius * 0.75 + 10);
-      ctx.fillText("100%", centerX + 4, centerY - radius * 1.0 + 10);
-
-      // Crosshairs & Cardinal axes
-      ctx.strokeStyle = "rgba(99, 102, 241, 0.25)";
-      ctx.beginPath();
-      ctx.moveTo(centerX - radius, centerY);
-      ctx.lineTo(centerX + radius, centerY);
-      ctx.moveTo(centerX, centerY - radius);
-      ctx.lineTo(centerX, centerY + radius);
-      ctx.stroke();
-
-      // Degree Azimuth Labels
-      ctx.fillStyle = "rgba(99, 102, 241, 0.7)";
-      ctx.font = "10px ui-monospace, monospace";
-      ctx.textAlign = "center";
-      ctx.fillText("000°", centerX, centerY - radius + 12);
-      ctx.fillText("090°", centerX + radius - 14, centerY + 3);
-      ctx.fillText("180°", centerX, centerY + radius - 4);
-      ctx.fillText("270°", centerX - radius + 14, centerY + 3);
-
-      // Rotating Radar Beam with Phosphor Fade
-      const sweepTailAngle = 0.5; // ~28 degrees
-      const gradient = ctx.createConicGradient(angleRad, centerX, centerY);
-      gradient.addColorStop(0, "rgba(6, 182, 212, 0.45)");
-      gradient.addColorStop(sweepTailAngle / (Math.PI * 2), "rgba(6, 182, 212, 0.0)");
-      gradient.addColorStop(1, "rgba(6, 182, 212, 0.0)");
-
-      ctx.fillStyle = gradient;
-      ctx.beginPath();
-      ctx.moveTo(centerX, centerY);
-      ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Sharp Leading Radar Beam Line
-      const beamX = centerX + Math.cos(angleRad) * radius;
-      const beamY = centerY + Math.sin(angleRad) * radius;
-      ctx.strokeStyle = "rgba(6, 182, 212, 0.85)";
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.moveTo(centerX, centerY);
-      ctx.lineTo(beamX, beamY);
-      ctx.stroke();
-
-      // Render Targets / Blips
-      for (const tgt of targets) {
-        const tgtRad = (tgt.angle * Math.PI) / 180;
-        const tgtDist = tgt.distance * radius;
-        const tgtX = centerX + Math.cos(tgtRad) * tgtDist;
-        const tgtY = centerY + Math.sin(tgtRad) * tgtDist;
-
-        // Angle difference to current sweep beam to calculate flash
-        let diff = (angleRad - tgtRad) % (Math.PI * 2);
-        if (diff < 0) diff += Math.PI * 2;
-        const isSwept = diff < 0.6;
-
-        let blipColor = "rgba(16, 185, 129, 0.85)"; // clean
-        if (tgt.severity === "suspicious") blipColor = "rgba(245, 158, 11, 0.9)";
-        if (tgt.severity === "malicious") blipColor = "rgba(239, 68, 68, 0.95)";
-
-        // Blip Glow & Core
-        ctx.fillStyle = blipColor;
-        ctx.beginPath();
-        ctx.arc(tgtX, tgtY, isSwept ? 4.5 : 3, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Pulsing ring if threat or recently swept
-        if (isSwept || tgt.severity === "malicious") {
-          ctx.strokeStyle = blipColor;
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          ctx.arc(tgtX, tgtY, isSwept ? 8 : 6, 0, Math.PI * 2);
-          ctx.stroke();
-        }
-      }
-
-      // Outer bezel ring
-      ctx.strokeStyle = "rgba(99, 102, 241, 0.4)";
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
-      ctx.stroke();
-
-      // Advance sweep rotation (3.5 seconds per full 360 rotation)
-      angleRad = (angleRad + 0.03) % (Math.PI * 2);
-      animationFrameId = requestAnimationFrame(render);
+    const animate = () => {
+      angleRef.current = (angleRef.current + 0.018) % (Math.PI * 2);
+      drawRing(canvas, ring, angleRef.current);
+      frameRef.current = requestAnimationFrame(animate);
     };
+    frameRef.current = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(frameRef.current);
+  }, [ring]);
 
-    render();
+  // Click on canvas → select nearest entry
+  const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (ring.length === 0) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    const cx = canvas.width / 2;
+    const cy = canvas.height / 2;
+    const angle = Math.atan2(my - cy, mx - cx) + Math.PI / 2;
+    const norm = ((angle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+    const idx = Math.floor((norm / (Math.PI * 2)) * ring.length);
+    setSelected(ring[idx] ?? null);
+  };
 
-    return () => {
-      cancelAnimationFrame(animationFrameId);
-    };
-  }, [targets]);
+  const hasSuspicious = ring.some((e) => e.is_suspicious);
 
   return (
     <div className={`hud-card hud-corner flex flex-col p-4 ${className}`}>
-      {/* HUD Header */}
+      {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle/70 pb-3">
         <div className="flex items-center gap-2">
           <span className="led-dot led-dot-signal animate-pulse" />
           <span className="tactical-header text-text-primary">
-            Live Telemetry Radar // 360° Spectrum
+            Live Network Topology
           </span>
         </div>
-        <div className="flex items-center gap-1 font-mono text-[10px]">
-          {(["LOCAL", "FLEET", "GLOBAL"] as const).map((mode) => (
-            <button
-              key={mode}
-              onClick={() => setRangeZoom(mode)}
-              className={`rounded px-2 py-0.5 transition-colors ${
-                rangeZoom === mode
-                  ? "bg-accent/20 text-accent font-bold border border-accent/40"
-                  : "text-text-faint hover:text-text-muted hover:bg-bg-elevated"
-              }`}
-            >
-              {mode}
-            </button>
-          ))}
+        <div className="flex items-center gap-2">
+          {hasSuspicious && (
+            <span className="rounded border border-risk-malicious/40 bg-risk-malicious/10 px-2 py-0.5 font-mono text-[10px] font-bold text-risk-malicious">
+              ⚠ SUSPICIOUS PORT
+            </span>
+          )}
+          <button
+            onClick={fetchData}
+            className="rounded px-2 py-0.5 font-mono text-[10px] text-text-faint hover:text-text-muted hover:bg-bg-elevated transition-colors"
+            title="Refresh now"
+          >
+            ↻ REFRESH
+          </button>
         </div>
       </div>
 
-      {/* Canvas Radar Container */}
+      {/* Canvas Ring */}
       <div className="relative my-3 flex items-center justify-center">
-        <canvas
-          ref={canvasRef}
-          width={300}
-          height={300}
-          className="rounded-full shadow-[0_0_24px_rgba(6,182,212,0.12)] border border-cyan-500/20"
-        />
-
-        {/* Overlay HUD Readouts */}
-        <div className="pointer-events-none absolute left-3 top-3 font-mono text-[10px] text-text-faint space-y-0.5">
-          <p>RANGE: <span className="text-text-primary font-bold">{rangeZoom === "LOCAL" ? "10km" : rangeZoom === "FLEET" ? "250km" : "GLOBAL"}</span></p>
-          <p>AZIMUTH: <span className="text-signal font-bold">ACTIVE SCAN</span></p>
-        </div>
-
-        <div className="pointer-events-none absolute right-3 top-3 text-right font-mono text-[10px] text-text-faint space-y-0.5">
-          <p>AGENTS: <span className="text-risk-clean font-bold">{onlineAgentCount} ONLINE</span></p>
-          <p>THREATS: <span className={`font-bold ${activeThreatCount > 0 ? "text-risk-malicious" : "text-risk-clean"}`}>{activeThreatCount} DETECTED</span></p>
-        </div>
-      </div>
-
-      {/* Target Status Roster */}
-      <div className="mt-auto border-t border-border-subtle/70 pt-3">
-        <div className="flex items-center justify-between font-mono text-[10px] text-text-faint mb-1.5">
-          <span>TRACKED TARGETS ({targets.length})</span>
-          <span>RANGE BEARING</span>
-        </div>
-        <div className="space-y-1 max-h-28 overflow-y-auto pr-1">
-          {targets.map((tgt) => (
-            <button
-              key={tgt.id}
-              onClick={() => setSelectedTarget(tgt)}
-              className={`flex w-full items-center justify-between rounded px-2 py-1 text-left font-mono text-[11px] transition-colors ${
-                selectedTarget?.id === tgt.id
-                  ? "bg-accent/15 text-text-primary border border-accent/30"
-                  : "hover:bg-bg-elevated/60 text-text-muted"
-              }`}
-            >
-              <div className="flex items-center gap-2 truncate">
-                <span
-                  className={`h-1.5 w-1.5 rounded-full ${
-                    tgt.severity === "malicious"
-                      ? "bg-risk-malicious"
-                      : tgt.severity === "suspicious"
-                        ? "bg-risk-suspicious"
-                        : "bg-risk-clean"
-                  }`}
-                />
-                <span className="truncate">{tgt.label}</span>
-              </div>
-              <span className="text-text-faint shrink-0 ml-2">
-                {tgt.angle.toString().padStart(3, "0")}° · {Math.round(tgt.distance * 100)}%
-              </span>
+        {loading ? (
+          <div className="flex h-[280px] w-[280px] items-center justify-center font-mono text-[11px] text-text-faint animate-pulse">
+            SCANNING SOCKETS…
+          </div>
+        ) : error ? (
+          <div className="flex h-[280px] w-[280px] flex-col items-center justify-center gap-2 font-mono text-[11px] text-text-faint">
+            <span className="text-risk-malicious">⚠ BACKEND UNREACHABLE</span>
+            <button onClick={fetchData} className="text-accent hover:underline text-[10px]">
+              RETRY
             </button>
-          ))}
-        </div>
+          </div>
+        ) : (
+          <canvas
+            ref={canvasRef}
+            width={280}
+            height={280}
+            onClick={handleCanvasClick}
+            className="cursor-crosshair rounded-full border border-cyan-500/15 shadow-[0_0_20px_rgba(6,182,212,0.08)]"
+          />
+        )}
+
+        {/* Overlay: summary counters */}
+        {!loading && !error && net && (
+          <>
+            <div className="pointer-events-none absolute left-2 top-2 space-y-0.5 font-mono text-[10px] text-text-faint">
+              <p>
+                PUB{" "}
+                <span className="font-bold" style={{ color: CAT_COLOR.public }}>
+                  {net.summary.public_listeners_count}
+                </span>
+              </p>
+              <p>
+                LO{" "}
+                <span className="font-bold" style={{ color: CAT_COLOR.loopback }}>
+                  {net.summary.loopback_listeners_count}
+                </span>
+              </p>
+            </div>
+            <div className="pointer-events-none absolute right-2 top-2 space-y-0.5 text-right font-mono text-[10px] text-text-faint">
+              <p>
+                OUT{" "}
+                <span className="font-bold" style={{ color: CAT_COLOR.outbound }}>
+                  {net.summary.outbound_count}
+                </span>
+              </p>
+              <p>
+                MCAST{" "}
+                <span className="font-bold" style={{ color: CAT_COLOR.multicast }}>
+                  {net.summary.multicast_count}
+                </span>
+              </p>
+            </div>
+            {lastRefresh && (
+              <div className="pointer-events-none absolute bottom-2 left-0 right-0 text-center font-mono text-[9px] text-text-faint/60">
+                {lastRefresh.toLocaleTimeString()}
+              </div>
+            )}
+          </>
+        )}
       </div>
+
+      {/* Legend */}
+      <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[10px] text-text-faint">
+        {(Object.entries(CAT_COLOR) as [CatKey, string][]).map(([k, c]) => (
+          <span key={k} className="flex items-center gap-1">
+            <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: c }} />
+            {k.toUpperCase()}
+          </span>
+        ))}
+      </div>
+
+      {/* Selected socket detail */}
+      {selected ? (
+        <div className="mt-auto rounded border border-border-subtle/60 bg-bg-base/60 p-2 font-mono text-[11px] space-y-0.5">
+          <div className="flex items-center justify-between">
+            <span
+              className="font-bold uppercase"
+              style={{ color: CAT_COLOR[selected.cat] }}
+            >
+              {selected.cat}
+            </span>
+            {selected.is_suspicious && (
+              <span className="text-risk-malicious font-bold text-[10px]">⚠ SUSPICIOUS</span>
+            )}
+            <button
+              onClick={() => setSelected(null)}
+              className="text-text-faint hover:text-text-muted ml-2"
+            >
+              ✕
+            </button>
+          </div>
+          <div className="text-text-primary font-semibold truncate">{selected.process}</div>
+          <div className="text-text-muted">
+            {selected.proto} :{selected.port}
+            {selected.remote && (
+              <span className="ml-2 text-text-faint">→ {selected.remote}</span>
+            )}
+          </div>
+          <div className="text-text-faint text-[10px] uppercase">{selected.status}</div>
+        </div>
+      ) : (
+        /* Socket list (compact) */
+        <div className="mt-auto border-t border-border-subtle/70 pt-2">
+          <div className="mb-1.5 flex items-center justify-between font-mono text-[10px] text-text-faint">
+            <span>SOCKET ROSTER ({ring.length})</span>
+            <span>PROTO:PORT</span>
+          </div>
+          <div className="max-h-28 space-y-0.5 overflow-y-auto pr-1">
+            {ring.slice(0, 24).map((e, i) => (
+              <button
+                key={i}
+                onClick={() => setSelected(e)}
+                className="flex w-full items-center justify-between rounded px-2 py-0.5 text-left font-mono text-[11px] transition-colors hover:bg-bg-elevated/60 text-text-muted"
+              >
+                <div className="flex items-center gap-2 truncate">
+                  <span
+                    className="h-1.5 w-1.5 shrink-0 rounded-full"
+                    style={{
+                      backgroundColor: e.is_suspicious
+                        ? CAT_COLOR.public
+                        : CAT_COLOR[e.cat],
+                    }}
+                  />
+                  <span className="truncate">{e.process}</span>
+                </div>
+                <span className="ml-2 shrink-0 text-text-faint">
+                  {e.proto}:{e.port}
+                </span>
+              </button>
+            ))}
+            {ring.length === 0 && (
+              <div className="py-4 text-center text-[11px] text-text-faint">
+                No active sockets detected
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
