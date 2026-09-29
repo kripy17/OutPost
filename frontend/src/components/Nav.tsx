@@ -19,10 +19,9 @@ import {
 import { NavLink } from "react-router-dom";
 import CommandPalette from "./CommandPalette";
 import { ThemePalettePopover } from "./ThemePalettePopover";
-import { getAgents, getAlertQueue, getHealth, getMeta, getPlatform, getRecentAlerts, getRuns, listInvestigations } from "../lib/api";
+import { getAgents, getAlertQueue, getHealth, getMeta, getRecentAlerts, getRuns, listInvestigations } from "../lib/api";
 import { useEventStream } from "../lib/useEventStream";
 import { Icon, IconMenu, type IconName } from "./Icon";
-import { platformIconName } from "./iconMeta";
 
 const STORAGE_KEY = "outpost-theme-v2"; // v2 key: dark-first default (index.html pre-paint)
 const RAIL_KEY = "outpost-rail"; // "collapsed" | "expanded" (pre-paint restored)
@@ -279,43 +278,6 @@ function StatusCluster({
     </div>
   );
 }
-
-function HostOsChip({
-  collapsed = false,
-  makeTip,
-}: {
-  collapsed?: boolean;
-  makeTip?: TipHandlers;
-}) {
-  const { data } = useQuery({ queryKey: ["platform"], queryFn: getPlatform, staleTime: Infinity });
-  if (!data) return null;
-  const label = `Host OS auto-detected: ${data.name} ${data.release} (${data.machine}) · ${data.collector}`;
-
-  if (collapsed) {
-    return (
-      <span
-        {...(makeTip ? makeTip(label) : {})}
-        role="img"
-        className="flex h-8 w-8 items-center justify-center rounded-lg border border-border-subtle bg-bg-surface"
-        aria-label={label}
-      >
-        <Icon name={platformIconName(data.os)} size={15} className={data.os === "windows" ? "text-accent" : "text-risk-clean"} />
-      </span>
-    );
-  }
-
-  return (
-    <span
-      className="flex items-center gap-2 rounded-lg border border-border-subtle bg-bg-surface px-2 py-1.5 text-[11px] font-medium text-text-muted"
-      title={label}
-    >
-      <Icon name={platformIconName(data.os)} size={13} className={data.os === "windows" ? "text-accent" : "text-risk-clean"} />
-      <span className="capitalize">{data.os}</span>
-      <span className="ml-auto font-mono text-[10px] text-text-faint">{data.collector}</span>
-    </span>
-  );
-}
-
 
 function CommandButton({
   onClick,
@@ -637,18 +599,7 @@ export default function Nav() {
         </nav>
 
         <footer className={`w-full border-t border-border-subtle py-3 ${railCollapsed ? "flex flex-col items-center gap-2 px-2" : "space-y-2 px-3"}`}>
-          {/* Tactical Operator Station Tag */}
-          {!railCollapsed && (
-            <div className="flex items-center justify-between px-1 py-0.5 font-mono text-[10px] text-text-faint">
-              <span className="flex items-center gap-1.5">
-                <span className="h-1.5 w-1.5 rounded-full bg-risk-clean animate-pulse" />
-                <span>OP: SOC-L3</span>
-              </span>
-              <span className="text-text-muted/60">STATION 04</span>
-            </div>
-          )}
           <CommandButton onClick={openPalette} collapsed={railCollapsed} makeTip={railCollapsed ? makeTip : undefined} />
-          <HostOsChip collapsed={railCollapsed} makeTip={railCollapsed ? makeTip : undefined} />
           <div className={`flex items-center gap-2 rounded-lg border border-border-subtle ${railCollapsed ? "flex-col bg-bg-elevated/30 p-1.5" : "bg-bg-elevated/30 px-2.5 py-2"}`}>
             <StatusCluster collapsed={railCollapsed} makeTip={railCollapsed ? makeTip : undefined} />
             <ThemePalettePopover theme={theme} toggleTheme={toggle} />
