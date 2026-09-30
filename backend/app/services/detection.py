@@ -1120,7 +1120,7 @@ def check_remote_thread_injection(event: dict) -> Alert | None:
         return None
     if event.get("event_type") != "remote_thread":
         return None
-    target = (event.get("file_path") or event.get("process_name") or "").lower()
+    target = (event.get("exe_path") or event.get("file_path") or event.get("process_name") or "").lower()
     target_base = os.path.basename(target.replace("\\", "/"))
     if target_base in _CRITICAL_INJECTION_TARGETS:
         return _make_alert(

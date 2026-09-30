@@ -269,7 +269,7 @@ def _prune_old_backups(keep: int = 5) -> int:
     """Keep only the most recent N backup files in data/, removing older ones."""
     try:
         backups = sorted(
-            [p for p in DATA_DIR.glob("outpost-backup-*.db") if p.is_file()],
+            [p for p in config.DATA_DIR.glob("outpost-backup-*.db") if p.is_file()],
             key=lambda p: p.stat().st_mtime,
             reverse=True,
         )

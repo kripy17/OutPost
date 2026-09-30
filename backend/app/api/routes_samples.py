@@ -613,4 +613,71 @@ async def detonate_sample_endpoint(
     return result
 
 
+@router.get("/samples/{sample_id}/detonate/stream", response_model=None)
+async def detonate_sample_stream_endpoint(
+    sample_id: str,
+    timeout: int = Query(15, ge=2, le=60),
+    isolation_driver: str = Query("auto", max_length=32),
+):
+    """Real-time SSE stream of dynamic sandbox execution telemetry, logs, and process events."""
+    with db_session() as conn:
+        row = samples_store.get_sample(conn, sample_id)
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Unknown sample_id: {sample_id}")
+
+    body = _load_bytes(sample_id)
+    if body is None:
+        raise HTTPException(status_code=400, detail="Sample binary payload is not stored or unavailable for detonation.")
+
+    from fastapi.responses import StreamingResponse
+    from ..services import behavioral_forecaster, dynamic_sandbox
+
+    async def event_generator():
+        queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+
+        async def telemetry_callback(event_payload: dict[str, Any]):
+            await queue.put(event_payload)
+
+        async def run_worker():
+            try:
+                forecast = behavioral_forecaster.generate_behavioral_forecast(
+                    raw_bytes=body,
+                    sample_name=row["original_name"],
+                )
+                await queue.put({"type": "forecast", "data": forecast})
+
+                result = await dynamic_sandbox.execute_sample_detonation(
+                    sample_id=sample_id,
+                    raw_bytes=body,
+                    sample_name=row["original_name"],
+                    platform_hint=row.get("detected_platform") or "linux",
+                    timeout_seconds=timeout,
+                    isolation_driver=isolation_driver,
+                    on_telemetry_event=telemetry_callback,
+                )
+
+                reconciliation = behavioral_forecaster.reconcile_forecast_vs_runtime(forecast, result)
+                result["forecast"] = forecast
+                result["reconciliation"] = reconciliation
+                await queue.put({"type": "complete", "result": result})
+            except Exception as exc:
+                await queue.put({"type": "error", "error": str(exc)})
+            finally:
+                await queue.put(None)
+
+        worker_task = asyncio.create_task(run_worker())
+
+        yield "retry: 1000\n\n"
+        while True:
+            item = await queue.get()
+            if item is None:
+                break
+            yield f"event: {item.get('type', 'message')}\ndata: {json.dumps(item, default=str)}\n\n"
+
+        await worker_task
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+
 

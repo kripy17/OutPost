@@ -56,7 +56,8 @@ export function decodeBase64Utf8(input: string): string | null {
     }
     const decoded = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
     // Sanity check: must contain reasonable printable chars
-    if (/[\x00-\x08\x0E-\x1F]/.test(decoded) && decoded.length > 4) {
+    // eslint-disable-next-line no-control-regex
+    if (/[\u0000-\u0008\u000e-\u001f]/.test(decoded) && decoded.length > 4) {
       // High density of control chars usually indicates invalid or UTF-16
       return null;
     }
@@ -94,7 +95,8 @@ export function decodeBase64Utf16Le(input: string): string | null {
     }
     const decoded = new TextDecoder("utf-16le", { fatal: false }).decode(bytes);
     // If it looks like valid readable text
-    if (decoded && !/[\x00-\x08\x0E-\x1F]/.test(decoded)) {
+    // eslint-disable-next-line no-control-regex
+    if (decoded && !/[\u0000-\u0008\u000e-\u001f]/.test(decoded)) {
       return decoded;
     }
     return null;
@@ -110,7 +112,7 @@ export function decodeHex(input: string): string | null {
   const cleaned = input.trim();
   if (!cleaned) return null;
 
-  let hexStr = "";
+  let hexStr: string;
   if (cleaned.includes("\\x") || cleaned.includes("\\X")) {
     hexStr = cleaned.replace(/\\x/gi, "").replace(/\s+/g, "");
   } else if (cleaned.includes("0x") || cleaned.includes("0X")) {
@@ -129,7 +131,8 @@ export function decodeHex(input: string): string | null {
       bytes[i / 2] = parseInt(hexStr.substring(i, i + 2), 16);
     }
     const decoded = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
-    if (!/[\x00-\x08\x0E-\x1F]/.test(decoded) && decoded.length > 0) {
+    // eslint-disable-next-line no-control-regex
+    if (!/[\u0000-\u0008\u000e-\u001f]/.test(decoded) && decoded.length > 0) {
       return decoded;
     }
     // Return ascii representation even if binary

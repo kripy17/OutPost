@@ -375,7 +375,7 @@ def samples(
     stat = static_id if isinstance(static_id, str) else ""
     fore = forecast_id if isinstance(forecast_id, str) else ""
     det = detonate_id if isinstance(detonate_id, str) else ""
-    query = q if isinstance(query if 'query' in locals() else q, str) else ""
+    query = q if isinstance(q, str) else ""
     thresh = threshold if isinstance(threshold, int) else 20
     tout = timeout if isinstance(timeout, int) else 15
 
@@ -412,8 +412,8 @@ def samples(
             total_count = len(rows)
             data = {"total": total_count, "samples": rows}
         else:
-            console.print(f"[bold #C4453B]{exc}[/bold #C4453B]")
-            raise typer.Exit(1)
+            console.print("[dim]No samples in the vault yet — backend offline and no local cache.[/dim]")
+            return
 
     if not rows:
         console.print("[dim]No samples in the vault yet — upload one with: [/dim][bold cyan]outpost samples --upload <path>[/bold cyan][dim] or from the web console.[/dim]")

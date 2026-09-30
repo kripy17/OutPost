@@ -318,6 +318,24 @@ def parse_pe(data: bytes) -> dict | None:
 
     rich_header = _parse_rich_header(data, pe_off)
 
+    image_base = None
+    subsystem = None
+    if bits:
+        if bits == 64 and opt_off + 32 <= len(data):
+            image_base = int.from_bytes(data[opt_off + 24 : opt_off + 32], "little")
+        elif bits == 32 and opt_off + 32 <= len(data):
+            image_base = int.from_bytes(data[opt_off + 28 : opt_off + 32], "little")
+        if opt_off + 70 <= len(data):
+            sub_id = int.from_bytes(data[opt_off + 68 : opt_off + 70], "little")
+            subsystem = {
+                1: "Native",
+                2: "Windows GUI",
+                3: "Windows CUI (Console)",
+                7: "POSIX CUI",
+                9: "Windows CE",
+                10: "EFI Application",
+            }.get(sub_id, f"0x{sub_id:04X}")
+
     sections: list[dict] = []
     sect_off = opt_off + opt_size
     for i in range(min(num_sections, 96)):
@@ -332,6 +350,12 @@ def parse_pe(data: bytes) -> dict | None:
         raw_ptr = int.from_bytes(data[off + 20 : off + 24], "little")
         chars = int.from_bytes(data[off + 36 : off + 40], "little")
         flags = [label for mask, label in _SECTION_CHARS.items() if chars & mask]
+        raw_data = data[raw_ptr : raw_ptr + raw_size] if (raw_ptr > 0 and raw_ptr + raw_size <= len(data)) else b""
+        sec_entropy = calculate_entropy(raw_data) if raw_data else 0.0
+        is_exec = "EXECUTE" in flags
+        is_write = "WRITE" in flags
+        is_read = "READ" in flags
+        perm_str = ("R" if is_read else "-") + ("W" if is_write else "-") + ("X" if is_exec else "-")
         sections.append(
             {
                 "name": name,
@@ -340,6 +364,9 @@ def parse_pe(data: bytes) -> dict | None:
                 "flags": flags,
                 "virtual_address": virtual_address,
                 "raw_ptr": raw_ptr,
+                "entropy": sec_entropy,
+                "permissions": perm_str,
+                "is_rwx": is_exec and is_write,
             }
         )
 
@@ -373,6 +400,8 @@ def parse_pe(data: bytes) -> dict | None:
         "machine": _PE_MACHINES.get(machine, f"0x{machine:04X}"),
         "bits": bits,
         "entry_point_rva": entry_rva,
+        "image_base": f"0x{image_base:016X}" if (image_base and bits == 64) else f"0x{image_base:08X}" if image_base else None,
+        "subsystem": subsystem,
         "sections": sections,
         "imports": imports,
         "imphash": compute_imphash(imports),
@@ -861,9 +890,25 @@ def compute_static_risk_profile(
     }
 
 
+def generate_hex_preview(data: bytes, max_bytes: int = 512) -> list[dict[str, str]]:
+    """Format raw binary bytes as offset/hex/ASCII inspection rows for analyst inspection."""
+    preview: list[dict[str, str]] = []
+    chunk = data[:max_bytes]
+    for i in range(0, len(chunk), 16):
+        row = chunk[i : i + 16]
+        hex_str = " ".join(f"{b:02X}" for b in row)
+        ascii_str = "".join(chr(b) if 32 <= b <= 126 else "." for b in row)
+        preview.append({
+            "offset": f"{i:08X}",
+            "hex": hex_str,
+            "ascii": ascii_str,
+        })
+    return preview
+
+
 def analyze_sample(data: bytes) -> dict:
     """Full static analysis of a blob: strings, IOCs, PE/ELF metadata, entropy,
-    capabilities (heuristic + optional CAPA), imphash, fuzzy_hash, and risk profile."""
+    capabilities (heuristic + optional CAPA), imphash, fuzzy_hash, hashes, hex preview, and risk profile."""
     strings = extract_strings(data)
     entropy = calculate_entropy(data)
     entropy_hist = calculate_entropy_histogram(data, bins=32)
@@ -881,6 +926,11 @@ def analyze_sample(data: bytes) -> dict:
     is_packed = entropy > 7.1
     risk_profile = compute_static_risk_profile(entropy, capabilities, is_packed, pe_info, elf_info)
 
+    md5_hash = hashlib.md5(data).hexdigest()
+    sha1_hash = hashlib.sha1(data).hexdigest()
+    sha256_hash = hashlib.sha256(data).hexdigest()
+    hex_preview = generate_hex_preview(data, 512)
+
     return {
         "strings": strings,
         "categorized_strings": categorized,
@@ -894,6 +944,10 @@ def analyze_sample(data: bytes) -> dict:
         "capa": capa_report,
         "imphash": imphash,
         "fuzzy_hash": fuzzy,
+        "md5": md5_hash,
+        "sha1": sha1_hash,
+        "sha256": sha256_hash,
+        "hex_preview": hex_preview,
         **risk_profile,
     }
 

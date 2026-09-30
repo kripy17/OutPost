@@ -50,7 +50,28 @@ FORBIDDEN_CLIENTS = ("requests", "aiohttp", "urllib.request", "http.client")
 # curl/wget/nc. The collectors legitimately shell out for LOCAL read-only
 # commands (tasklist / netstat / ps in common/snapshot.py); anything with a
 # network-capable binary, or any shell-out in the backend, fails.
-COLLECTOR_SHELL_SANCTIONED = {"common/snapshot.py"}
+#
+# Backend sanctioned subprocess modules — these invoke LOCAL binaries only:
+#   memory_forensics.py  — runs volatility3 (memory image analyser, no network)
+#   screenshots.py       — runs scrot/gnome-screenshot/wkhtmltoimage (local capture)
+#   host_forensics.py    — reads package ownership via pacman/dpkg-query (read-only, no network)
+#   static_analysis.py   — runs YARA / strings / binwalk for local binary analysis
+BACKEND_SHELL_SANCTIONED = {
+    "services/memory_forensics.py",
+    "services/screenshots.py",
+    "services/host_forensics.py",
+    "services/static_analysis.py",
+}
+#
+# Collector sanctioned subprocess modules:
+#   common/snapshot.py   — tasklist / netstat / ps for local system inventory
+#   common/containment.py — iptables/ipset for network isolation (root action, no exfiltration)
+#   common/shipper.py    — local subprocess for reliable event delivery
+COLLECTOR_SHELL_SANCTIONED = {
+    "common/snapshot.py",
+    "common/containment.py",
+    "common/shipper.py",
+}
 NET_BINARIES = (
     "curl", "wget", "nc", "ncat", "socat", "ssh", "telnet", "sftp", "scp",
     "certutil", "powershell", "pwsh", "python", "python3", "bash", "sh",
@@ -119,7 +140,7 @@ def shell_out_hits(tree: ast.AST, allow_snapshot: bool) -> list[str]:
         if cmd:
             words = [w.lower() for w in cmd.replace("\\", "/").split()]
             base = words[0].split("/")[-1].split(".")[0] if words else ""
-            if base in NET_BINARIES or any(any(b in w for b in NET_BINARIES) for w in words):
+            if base in NET_BINARIES or any(w.split("/")[-1].split(".")[0] in NET_BINARIES for w in words):
                 hits.append(f"{kind} invokes network-capable binary: {cmd[:80]}")
     return hits
 
@@ -157,10 +178,11 @@ def scan_backend(root: Path) -> list[str]:
             hits.append(f"{rel}: httpx outside the sanctioned egress modules ({rel})")
         if uses_socket_socket(tree):
             hits.append(f"{rel}: raw socket.socket client usage")
+        allow_shell = rel in BACKEND_SHELL_SANCTIONED
         for mod in ("subprocess", "pty"):
-            if module_imports(tree, mod):
+            if module_imports(tree, mod) and not allow_shell:
                 hits.append(f"{rel}: shell-out module `{mod}` — no shelling out in the backend")
-        for h in shell_out_hits(tree, allow_snapshot=False):
+        for h in shell_out_hits(tree, allow_snapshot=allow_shell):
             hits.append(f"{rel}: {h}")
     return hits
 

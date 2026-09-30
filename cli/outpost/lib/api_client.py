@@ -335,7 +335,7 @@ def get_audit(limit: int = 50, action: str = "") -> dict:
     """Analyst audit log (`GET /audit`). `?action=` filters by action kind."""
     q = f"?limit={limit}"
     if action:
-        q += f"&action={urllib.parse.quote(action)}"
+        q += f"&action={quote(action)}"
     return _get(f"/audit{q}")
 
 

@@ -53,7 +53,7 @@ export function extractIndicators(inputText: string): ExtractedIndicator[] {
   const seen = new Set<string>();
 
   // 1. URLs
-  const urlRegex = /https?:\/\/[^\s"'<>\)\]\}]+/gi;
+  const urlRegex = /https?:\/\/[^\s"'<>)\]}]+/gi;
   const urls = normalized.match(urlRegex) || [];
   for (const u of urls) {
     const clean = u.replace(/[.,;!?]+$/, "");

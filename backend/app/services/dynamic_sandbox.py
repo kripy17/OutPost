@@ -135,7 +135,8 @@ async def execute_bytes_sandbox(
     timeout_seconds: int = 10,
     custom_args: list[str] | None = None,
     isolation_driver: str = "auto",
-) -> tuple[list[dict[str, Any]], str, str, int, str]:
+    on_telemetry_event: Any = None,
+) -> tuple[list[dict[str, Any]], str, str, int, str, list[dict[str, Any]], list[dict[str, Any]]]:
     """Execute raw sample bytes in an isolated sandbox workspace and collect genuine execution events."""
     sample_plat = platform_hint or platform.system().lower()
     runner = detect_runner(raw_bytes, sample_name)
@@ -259,6 +260,26 @@ async def execute_bytes_sandbox(
         ]
         dropped_artifacts: list[dict[str, Any]] = []
 
+        async def _emit(ev: dict[str, Any]):
+            if on_telemetry_event:
+                try:
+                    res = on_telemetry_event(ev)
+                    if asyncio.iscoroutine(res):
+                        await res
+                except Exception:
+                    pass
+
+        await _emit({
+            "type": "stage",
+            "stage": "provisioning",
+            "driver": active_driver,
+            "message": f"Sandbox isolation boundary active ({active_driver.upper()})",
+        })
+        await _emit({
+            "type": "log",
+            "line": f"[OutPost Dynamic Sandbox] Preparing environment: driver={active_driver} · target={safe_name}",
+        })
+
         main_pid = os.getpid()
         poller_task = None
         stop_poller = asyncio.Event()
@@ -272,6 +293,17 @@ async def execute_bytes_sandbox(
                 close_fds=True,
             )
             main_pid = getattr(proc, "pid", os.getpid())
+
+            await _emit({
+                "type": "stage",
+                "stage": "running",
+                "pid": main_pid,
+                "message": f"Payload process active (PID: {main_pid})",
+            })
+            await _emit({
+                "type": "log",
+                "line": f"[OutPost Dynamic Sandbox] Spawning execution: {' '.join(cmd)} (PID: {main_pid})",
+            })
 
             proc_ev = {
                 "run_id": run_id,
@@ -335,6 +367,19 @@ async def execute_bytes_sandbox(
                 "details": f"Execution finished in {round(elapsed_ms / 1000.0, 2)}s",
                 "severity": "malicious" if exit_code != 0 and exit_code != 127 else "info",
             })
+            await _emit({
+                "type": "stage",
+                "stage": "carving",
+                "exit_code": exit_code,
+                "message": f"Process exited with code {exit_code}. Carving dropped artifacts...",
+            })
+            await _emit({
+                "type": "log",
+                "line": f"[OutPost Dynamic Sandbox] Execution completed with exit code: {exit_code}",
+            })
+            if stdout_data:
+                for line in stdout_data.splitlines()[:50]:
+                    await _emit({"type": "log", "line": line})
         except Exception as exc:
             stderr_data += f"\n[OutPost Sandbox] Execution error ({active_driver}): {exc}"
             exit_code = 127
@@ -357,6 +402,8 @@ async def execute_bytes_sandbox(
         # Extract persistent dropped artifacts before cleaning up
         dropped_artifacts = sandbox_forensics.extract_dropped_artifacts(sandbox_dir, target_file, run_id)
         for art in dropped_artifacts:
+            await _emit({"type": "artifact", "data": art})
+            await _emit({"type": "log", "line": f"[OutPost Artifact Extractor] Captured dropped file: {art['name']} ({art['size_bytes']} B)"})
             timeline_events.append({
                 "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 "elapsed_ms": int((time.monotonic() - start_mono) * 1000),

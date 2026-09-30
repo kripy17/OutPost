@@ -436,12 +436,17 @@ export interface PeSection {
   virtual_size: number;
   raw_size: number;
   flags: string[];
+  entropy?: number;
+  permissions?: string;
+  is_rwx?: boolean;
 }
 
 export interface PeMetadata {
   machine: string;
   bits: number | null;
   entry_point_rva: number | null;
+  image_base?: string | null;
+  subsystem?: string | null;
   sections: PeSection[];
   imports: string[];
   imphash?: string | null;
@@ -463,6 +468,7 @@ export interface ElfSection {
   name: string;
   type: number;
   size: number;
+  entropy?: number;
 }
 
 export interface ElfMetadata {
@@ -477,6 +483,9 @@ export interface ElfMetadata {
 export interface SampleStatic {
   sample_id: string;
   sha256: string;
+  md5?: string;
+  sha1?: string;
+  hex_preview?: Array<{ offset: string; hex: string; ascii: string }>;
   /** false when the sample's bytes were never stored (pre-persistence
    *  uploads) — the detail panel renders its re-upload state from this flag
    *  instead of a 404. */
