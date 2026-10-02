@@ -3206,3 +3206,71 @@ def backtest_rule(conn: sqlite3.Connection, rule_id: str, max_events: int = 2000
         "estimated_fp_risk": fp_risk,
     }
 
+
+def backtest_rule_yaml(conn: sqlite3.Connection, rule_def: dict, max_events: int = 2000) -> dict[str, Any]:
+    """Evaluate an arbitrary Sigma rule definition against historical events in SQLite."""
+    event_rows = conn.execute(
+        "SELECT id, run_id, platform, event_type, timestamp, pid, ppid, process_name, "
+        "command_line, exe_path, dest_ip, dest_port, protocol, file_path, registry_key, host_id "
+        "FROM events ORDER BY id DESC LIMIT ?",
+        (max_events,),
+    ).fetchall()
+    events = [dict(r) for r in event_rows]
+
+    rule_id = rule_def.get("rule_id", "ad-hoc-rule")
+    rule_name = rule_def.get("title", rule_id)
+    tactic = rule_def.get("tactic", "Detection")
+
+    if not events:
+        return {
+            "rule_id": rule_id,
+            "rule_name": rule_name,
+            "tactic": tactic,
+            "events_scanned": 0,
+            "matches_count": 0,
+            "match_rate_pct": 0.0,
+            "affected_runs_count": 0,
+            "sample_matches": [],
+            "estimated_fp_risk": "low",
+        }
+
+    matching_events = []
+    affected_runs = set()
+
+    rule_copy = dict(rule_def)
+    rule_copy["enabled"] = True
+    test_dict = {rule_id: rule_copy}
+
+    for ev in events:
+        alerts = check_custom_sigma_rules(test_dict, ev)
+        if alerts:
+            matching_events.append({
+                "timestamp": ev.get("timestamp"),
+                "event_type": ev.get("event_type"),
+                "process_name": ev.get("process_name"),
+                "command_line": ev.get("command_line"),
+                "dest_ip": ev.get("dest_ip"),
+                "file_path": ev.get("file_path"),
+                "pid": ev.get("pid"),
+                "host_id": ev.get("host_id"),
+                "match_reason": alerts[0].details,
+            })
+            if ev.get("run_id"):
+                affected_runs.add(ev["run_id"])
+
+    match_count = len(matching_events)
+    match_rate = round((match_count / len(events)) * 100, 2)
+    fp_risk = "high" if match_rate > 5.0 else "medium" if match_rate > 1.0 else "low"
+
+    return {
+        "rule_id": rule_id,
+        "rule_name": rule_name,
+        "tactic": tactic,
+        "events_scanned": len(events),
+        "matches_count": match_count,
+        "match_rate_pct": match_rate,
+        "affected_runs_count": len(affected_runs),
+        "sample_matches": matching_events[:25],
+        "estimated_fp_risk": fp_risk,
+    }
+

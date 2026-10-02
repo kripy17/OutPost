@@ -838,6 +838,10 @@ export async function getFootprint(sampleId: string, mock = false): Promise<Foot
   return get<Footprint>(`/footprint/${sampleId}${mock ? "?mock=1" : ""}`);
 }
 
+export async function getTargetFootprint(target: string, mock = false): Promise<Footprint> {
+  return get<Footprint>(`/footprint/target/query?target=${encodeURIComponent(target)}${mock ? "&mock=1" : ""}`);
+}
+
 /** Cross-sample infra topology — IPs shared by ≥2 samples (campaign clusters). */
 export async function getFootprintTopology(): Promise<TopologyResponse> {
   return get<TopologyResponse>("/footprint/topology");
@@ -1276,6 +1280,34 @@ export async function getCommunitySigmaRules(): Promise<Array<{
 export async function importSigmaRule(sigmaYaml: string, enabled: boolean = true): Promise<{ status: string; rule: any }> {
   return post<any>("/rules/sigma/import", { sigma_yaml: sigmaYaml, enabled });
 }
+
+/** Get custom/operator-authored Sigma rules stored in settings (GET /rules/sigma/custom). */
+export async function getCustomSigmaRules(): Promise<any[]> {
+  return get<any[]>("/rules/sigma/custom");
+}
+
+/** Toggle or update a custom Sigma rule (PATCH /rules/sigma/custom/{rule_id}). */
+export async function patchCustomSigmaRule(
+  ruleId: string,
+  payload: { enabled?: boolean; level?: string; sigma_yaml?: string }
+): Promise<{ status: string; rule: any }> {
+  return patch<{ status: string; rule: any }>(`/rules/sigma/custom/${encodeURIComponent(ruleId)}`, payload);
+}
+
+/** Delete a custom Sigma rule (DELETE /rules/sigma/custom/{rule_id}). */
+export async function deleteCustomSigmaRule(ruleId: string): Promise<void> {
+  return del(`/rules/sigma/custom/${encodeURIComponent(ruleId)}`);
+}
+
+/** Evaluate ad-hoc Sigma YAML or rule definition against historical events (POST /rules/backtest/custom). */
+export async function backtestCustomRule(payload: {
+  sigma_yaml?: string;
+  rule_def?: any;
+  max_events?: number;
+}): Promise<RuleBacktestResult> {
+  return post<RuleBacktestResult>("/rules/backtest/custom", payload);
+}
+
 
 /** Get full live host X-Ray snapshot (metrics, active processes, open sockets). */
 export async function getHostXRaySnapshot(): Promise<HostXRaySnapshotData> {

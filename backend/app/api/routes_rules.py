@@ -784,6 +784,115 @@ def post_sigma_import(body: SigmaImportIn, request: Request) -> dict:
     return {"status": "imported", "rule": rule_def}
 
 
+class SigmaCustomPatchIn(BaseModel):
+    enabled: bool | None = None
+    level: str | None = None
+    sigma_yaml: str | None = None
+
+
+@router.get("/rules/sigma/custom", response_model=None)
+def get_custom_sigma_rules() -> list[dict]:
+    """List operator-authored / imported custom Sigma rules stored in settings."""
+    with db_session() as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key = 'custom_sigma_rules'").fetchone()
+        if not row or not row["value"]:
+            return []
+        try:
+            rules_dict = json.loads(row["value"])
+            return list(rules_dict.values())
+        except Exception:
+            return []
+
+
+@router.patch("/rules/sigma/custom/{rule_id}", response_model=None)
+def patch_custom_sigma_rule(rule_id: str, body: SigmaCustomPatchIn, request: Request) -> dict:
+    """Toggle enabled status or update a custom Sigma rule."""
+    with db_session() as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key = 'custom_sigma_rules'").fetchone()
+        current_rules = json.loads(row["value"]) if row and row["value"] else {}
+        if rule_id not in current_rules:
+            raise HTTPException(status_code=404, detail=f"Custom Sigma rule not found: {rule_id}")
+
+        target_rule = current_rules[rule_id]
+        if body.sigma_yaml:
+            from ..services.rule_generator import transpile_sigma_yaml
+            try:
+                updated = transpile_sigma_yaml(body.sigma_yaml)
+                target_rule.update(updated)
+            except Exception as exc:
+                raise HTTPException(status_code=422, detail=f"Invalid Sigma YAML: {exc}")
+
+        if body.enabled is not None:
+            target_rule["enabled"] = body.enabled
+        if body.level is not None:
+            target_rule["level"] = body.level
+        target_rule["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+        current_rules[rule_id] = target_rule
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('custom_sigma_rules', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (json.dumps(current_rules),),
+        )
+        actor = auth.role_from_request(request)
+        audit.log(
+            conn, actor, "rules.sigma.update",
+            target_type="rules", target_id=rule_id,
+            detail=f"Updated custom Sigma rule '{rule_id}' (enabled={target_rule.get('enabled')})",
+        )
+        return {"status": "updated", "rule": target_rule}
+
+
+@router.delete("/rules/sigma/custom/{rule_id}", response_model=None)
+def delete_custom_sigma_rule(rule_id: str, request: Request) -> dict:
+    """Delete a custom Sigma rule."""
+    with db_session() as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key = 'custom_sigma_rules'").fetchone()
+        current_rules = json.loads(row["value"]) if row and row["value"] else {}
+        if rule_id not in current_rules:
+            raise HTTPException(status_code=404, detail=f"Custom Sigma rule not found: {rule_id}")
+
+        current_rules.pop(rule_id)
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('custom_sigma_rules', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (json.dumps(current_rules),),
+        )
+        actor = auth.role_from_request(request)
+        audit.log(
+            conn, actor, "rules.sigma.delete",
+            target_type="rules", target_id=rule_id,
+            detail=f"Deleted custom Sigma rule '{rule_id}'",
+        )
+        return {"status": "deleted", "rule_id": rule_id}
+
+
+class CustomBacktestIn(BaseModel):
+    sigma_yaml: str | None = None
+    rule_def: dict | None = None
+    max_events: int = Field(2000, ge=10, le=10000)
+
+
+@router.post("/rules/backtest/custom", response_model=None)
+def post_custom_rule_backtest(body: CustomBacktestIn) -> dict:
+    """Evaluate raw Sigma YAML or rule definition against historical events in SQLite."""
+    from ..services.detection import backtest_rule_yaml
+    from ..services.rule_generator import transpile_sigma_yaml
+
+    rule_def = body.rule_def
+    if not rule_def and body.sigma_yaml:
+        try:
+            rule_def = transpile_sigma_yaml(body.sigma_yaml)
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail=f"Failed to transpile Sigma rule YAML: {exc}")
+
+    if not rule_def:
+        raise HTTPException(status_code=422, detail="Either sigma_yaml or rule_def is required.")
+
+    with db_session() as conn:
+        return backtest_rule_yaml(conn, rule_def=rule_def, max_events=body.max_events)
+
+
 @router.get("/coverage/navigator/download", response_model=None)
 def download_navigator_layer():
     """Download official MITRE ATT&CK Navigator JSON layer representing OutPost rule coverage."""

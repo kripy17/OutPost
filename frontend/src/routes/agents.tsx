@@ -12,6 +12,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { platformIconName } from "../components/iconMeta";
 import { PageHeader, Panel } from "../components/ui";
+import { IocFleetHuntModal } from "../components/IocFleetHuntModal";
 import { getAgentBootstrapCommands, getAgents, getHostBaseline, getHostContainment, getHostSnapshot, isolateHost, killHostProcess, resetHostBaseline } from "../lib/api";
 import { useEventStream } from "../lib/useEventStream";
 import type { AgentInfo, HostBaseline } from "../types";
@@ -728,6 +729,13 @@ export default function AgentsPage() {
   const [containmentHost, setContainmentHost] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [platformFilter, setPlatformFilter] = useState<string>("all");
+  const [huntIoc, setHuntIoc] = useState<string | null>(null);
+  const [huntInput, setHuntInput] = useState<string>("");
+
+  const { data: bootstrapData } = useQuery({
+    queryKey: ["agent-bootstrap-commands"],
+    queryFn: getAgentBootstrapCommands,
+  });
 
   const agents = data?.agents ?? [];
   const totalEvents = agents.reduce((n, a) => n + a.event_count, 0);
@@ -763,15 +771,18 @@ export default function AgentsPage() {
       {containmentHost && (
         <ContainmentModal hostId={containmentHost} onClose={() => setContainmentHost(null)} />
       )}
+      {huntIoc && (
+        <IocFleetHuntModal iocId={huntIoc} onClose={() => setHuntIoc(null)} />
+      )}
 
       <PageHeader
-        kicker="Operations · fleet"
+        kicker="Operations · EDR Command Console"
         title={
           <>
-            Fleet &amp; Hosts <span className="font-normal text-text-muted">— host status &amp; activity profiles</span>
+            EDR Fleet &amp; Hosts <span className="font-normal text-text-muted">— endpoint telemetry &amp; active response</span>
           </>
         }
-        lede="Enrolled fleet agents, live heartbeat health, event ingestion volumes, and behavioral anomaly baselines. Select any host to inspect its aggregate timeline and security posture."
+        lede="Unified endpoint operations console: monitor real-time sensor liveness, execute fleet-wide IOC compromise hunts, isolate compromised hosts via kernel firewall rules, and inspect behavioral anomaly baselines."
         actions={
           <div className="flex items-center gap-2">
             <button
@@ -787,7 +798,7 @@ export default function AgentsPage() {
               className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/10 px-3 py-2 font-mono text-xs font-semibold text-accent transition-colors duration-150 hover:bg-accent/20"
             >
               <Icon name="terminal" size={14} />
-              Enroll Host / Bootstrap
+              Deploy Sensor / Bootstrap
             </button>
             <button
               onClick={() => window.location.reload()}
@@ -799,6 +810,117 @@ export default function AgentsPage() {
           </div>
         }
       />
+
+      {/* Fleet Threat Hunt Bar */}
+      <div className="mb-6 rounded-2xl border border-accent/40 bg-bg-surface p-4 shadow-sm">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-2.5">
+            <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-accent/50 bg-accent/15 text-accent">
+              <Icon name="search" size={15} />
+            </span>
+            <div>
+              <h2 className="font-mono text-xs font-bold text-text-primary">Cross-Fleet Threat Hunting (Compromise Assessment)</h2>
+              <p className="text-[11px] text-text-muted">Search for any IOC (IP, domain, hash, or process) across all enrolled endpoints simultaneously.</p>
+            </div>
+          </div>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (huntInput.trim()) setHuntIoc(huntInput.trim());
+            }}
+            className="flex items-center gap-2"
+          >
+            <input
+              type="text"
+              value={huntInput}
+              onChange={(e) => setHuntInput(e.target.value)}
+              placeholder="Enter IOC (e.g. 198.51.100.44, cmd.exe, SHA256)..."
+              className="w-64 sm:w-80 rounded-xl border border-border-subtle bg-bg-base px-3 py-1.5 font-mono text-xs text-text-primary placeholder:text-text-faint focus:border-accent/60 focus:outline-none"
+            />
+            <button
+              type="submit"
+              disabled={!huntInput.trim()}
+              className="press inline-flex items-center gap-1.5 rounded-xl border border-accent/60 bg-accent/15 px-3 py-1.5 font-mono text-xs font-bold text-accent transition hover:bg-accent/25 disabled:opacity-40"
+            >
+              <Icon name="play" size={12} />
+              <span>Hunt Fleet</span>
+            </button>
+          </form>
+        </div>
+      </div>
+
+      {/* Operational Capabilities Card Grid */}
+      <div className="mb-6 grid gap-3 sm:grid-cols-3 font-mono text-xs">
+        <div className="rounded-xl border border-border-subtle bg-bg-surface/70 p-3.5 space-y-1">
+          <div className="flex items-center gap-1.5 text-accent font-semibold">
+            <Icon name="shield" size={13} />
+            <span>Active Containment &amp; Isolation</span>
+          </div>
+          <p className="text-[11px] text-text-muted leading-relaxed font-sans">
+            Instantly isolate compromised endpoints using kernel firewall rules (<code className="text-accent font-mono text-[10px]">iptables</code> / <code className="text-accent font-mono text-[10px]">netsh</code>) and terminate rogue process trees remotely.
+          </p>
+        </div>
+        <div className="rounded-xl border border-border-subtle bg-bg-surface/70 p-3.5 space-y-1">
+          <div className="flex items-center gap-1.5 text-signal font-semibold">
+            <Icon name="terminal" size={13} />
+            <span>Multi-Channel Sensor Telemetry</span>
+          </div>
+          <p className="text-[11px] text-text-muted leading-relaxed font-sans">
+            Streaming from native OS probes: Linux <code className="text-signal font-mono text-[10px]">eBPF/auditd</code>, Windows <code className="text-signal font-mono text-[10px]">Sysmon</code>, and macOS <code className="text-signal font-mono text-[10px]">EndpointSecurity</code> with live process snapshots.
+          </p>
+        </div>
+        <div className="rounded-xl border border-border-subtle bg-bg-surface/70 p-3.5 space-y-1">
+          <div className="flex items-center gap-1.5 text-text-primary font-semibold">
+            <Icon name="activity" size={13} />
+            <span>Behavioral Baseline Profiling</span>
+          </div>
+          <p className="text-[11px] text-text-muted leading-relaxed font-sans">
+            Calculates per-host normal process and network baselines. Automatically alerts on first-time anomalous process binaries and rare egress destinations.
+          </p>
+        </div>
+      </div>
+
+      {/* Sensor Deployment Quickstart when only local is present */}
+      {agents.length <= 1 && (
+        <div className="mb-6 rounded-2xl border border-accent/40 bg-bg-surface p-5 shadow-sm space-y-4">
+          <div className="flex items-center justify-between border-b border-border-subtle/60 pb-3">
+            <div className="flex items-center gap-2">
+              <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-accent/40 bg-accent/15 text-accent font-mono text-xs font-bold">
+                🚀
+              </span>
+              <div>
+                <h3 className="font-mono text-xs font-bold text-text-primary">Deploy Endpoint Sensor Agent</h3>
+                <p className="text-[11px] text-text-muted">Enroll real Linux, Windows, or macOS endpoints in 60 seconds with copy-paste commands</p>
+              </div>
+            </div>
+            <button
+              onClick={() => setShowBootstrap(true)}
+              className="press inline-flex items-center gap-1 rounded-lg border border-accent/60 bg-accent/10 px-3 py-1 font-mono text-xs font-semibold text-accent hover:bg-accent/20"
+            >
+              <span>Full Setup Guide</span>
+              <Icon name="arrowRight" size={12} />
+            </button>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="rounded-xl border border-border-subtle bg-bg-base/70 p-3 space-y-1.5">
+              <span className="font-mono text-[11px] font-semibold text-text-primary flex items-center gap-1">
+                <Icon name="linux" size={12} className="text-accent" /> Linux (Ubuntu / Debian / RHEL eBPF &amp; auditd)
+              </span>
+              <pre className="rounded-lg bg-bg-elevated/70 p-2 font-mono text-[11px] text-accent select-all overflow-x-auto">
+                {bootstrapData?.linux_command || "curl -sSL http://localhost:8000/install.sh | sudo bash"}
+              </pre>
+            </div>
+            <div className="rounded-xl border border-border-subtle bg-bg-base/70 p-3 space-y-1.5">
+              <span className="font-mono text-[11px] font-semibold text-text-primary flex items-center gap-1">
+                <Icon name="windows" size={12} className="text-accent" /> Windows (PowerShell + Sysmon)
+              </span>
+              <pre className="rounded-lg bg-bg-elevated/70 p-2 font-mono text-[11px] text-accent select-all overflow-x-auto">
+                {bootstrapData?.windows_command || "irm http://localhost:8000/install.ps1 | iex"}
+              </pre>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Identity, Status & Platform filters */}
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">

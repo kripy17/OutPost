@@ -28,6 +28,10 @@ import {
   backtestRule,
   getCommunitySigmaRules,
   importSigmaRule,
+  getCustomSigmaRules,
+  patchCustomSigmaRule,
+  deleteCustomSigmaRule,
+  backtestCustomRule,
 } from "../lib/api";
 import { clearEnumDrafts, clearLogDrafts, clearYaraDraft, readEnumDrafts, readLogDrafts, readYaraDraft, writeEnumDrafts, writeLogDrafts, writeYaraDraft } from "./rulesDrafts";
 import type { CustomYaraRule, EnumPatternRow, FpDayPoint, LogPatternKind, RuleBacktestResult, RuleFpEntry, RulePack, TuningKnob, YaraTestResponse } from "../types";
@@ -888,7 +892,12 @@ function FactoryResetPanel() {
 }
 
 
-function SigmaTranspilePanel() {
+function SigmaDetectionStudio({
+  onOpenBacktest,
+}: {
+  onOpenBacktest: (rule: { id?: string; name: string; customYaml?: string }) => void;
+}) {
+  const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
   const [yaml, setYaml] = useState("");
   const [result, setResult] = useState<any | null>(null);
@@ -896,17 +905,47 @@ function SigmaTranspilePanel() {
   const [busy, setBusy] = useState(false);
   const [imported, setImported] = useState(false);
   const [showCatalog, setShowCatalog] = useState(false);
+  const [actionNotice, setActionNotice] = useState<string | null>(null);
 
   const { data: communityRules } = useQuery({
     queryKey: ["sigma-community"],
     queryFn: getCommunitySigmaRules,
   });
 
+  const { data: customRules, refetch: refetchCustom } = useQuery({
+    queryKey: ["sigma-custom"],
+    queryFn: getCustomSigmaRules,
+  });
+
   const importMutation = useMutation({
     mutationFn: (ruleYaml: string) => importSigmaRule(ruleYaml, true),
     onSuccess: () => {
       setImported(true);
-      setTimeout(() => setImported(false), 3000);
+      void queryClient.invalidateQueries({ queryKey: ["sigma-custom"] });
+      setActionNotice("Rule successfully deployed into live engine!");
+      setTimeout(() => {
+        setImported(false);
+        setActionNotice(null);
+      }, 3500);
+    },
+  });
+
+  const toggleMutation = useMutation({
+    mutationFn: ({ ruleId, enabled }: { ruleId: string; enabled: boolean }) =>
+      patchCustomSigmaRule(ruleId, { enabled }),
+    onSuccess: () => {
+      void refetchCustom();
+      setActionNotice("Rule status updated");
+      setTimeout(() => setActionNotice(null), 2500);
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (ruleId: string) => deleteCustomSigmaRule(ruleId),
+    onSuccess: () => {
+      void refetchCustom();
+      setActionNotice("Rule deleted from engine");
+      setTimeout(() => setActionNotice(null), 2500);
     },
   });
 
@@ -931,7 +970,7 @@ detection:
     }
   }, [searchParams]);
 
-  const loadExample = (type: "windows" | "linux" | "macos" = "windows") => {
+  const loadExample = (type: "windows" | "linux" | "macos" | "c2" | "ransomware" = "windows") => {
     if (type === "linux") {
       setYaml(`title: Linux Base64 Pipe Execution
 id: e2b08fa1-0002-4000-8000-000000000002
@@ -963,6 +1002,39 @@ detection:
     TargetFilename|startswith:
       - '/Library/LaunchDaemons/'
       - '/Library/LaunchAgents/'
+  condition: selection
+`);
+    } else if (type === "c2") {
+      setYaml(`title: Direct External IP Socket Connection
+id: e2b08fa1-0004-4000-8000-000000000004
+status: experimental
+description: Detects processes initiating direct outbound connections to suspicious external C2 IPs
+level: high
+tags:
+  - attack.command_and_control
+  - attack.t1071
+detection:
+  selection:
+    dest_ip|contains:
+      - '198.51.100.'
+      - '203.0.113.'
+  condition: selection
+`);
+    } else if (type === "ransomware") {
+      setYaml(`title: Ransomware Shadow Copy Invalidation
+id: e2b08fa1-0005-4000-8000-000000000005
+status: experimental
+description: Detects attempts to delete volume shadow copies using vssadmin or wmic
+level: critical
+tags:
+  - attack.impact
+  - attack.t1490
+detection:
+  selection:
+    CommandLine|contains:
+      - 'vssadmin delete shadows'
+      - 'resize shadowstorage'
+      - 'shadowcopy delete'
   condition: selection
 `);
     } else {
@@ -1011,7 +1083,14 @@ detection:
   };
 
   return (
-    <div className="mt-8">
+    <div className="mt-8 space-y-6">
+      {actionNotice && (
+        <div className="flex items-center justify-between rounded-xl border border-signal/50 bg-signal/15 px-4 py-2.5 font-mono text-xs text-signal animate-fade-in">
+          <span>✓ {actionNotice}</span>
+          <button onClick={() => setActionNotice(null)} className="text-text-muted hover:text-text-primary">✕</button>
+        </div>
+      )}
+
       {showCatalog && (
         <div
           role="dialog"
@@ -1090,116 +1169,254 @@ detection:
         </div>
       )}
 
-      <div className="mb-2 flex items-center justify-between">
-        <div>
-          <p className="kicker">Sigma HQ · Community Engine</p>
-          <h2 className="mt-1 text-base font-semibold text-text-primary">Import &amp; Transpile Sigma Rules</h2>
-        </div>
-        <div className="flex flex-wrap items-center gap-1.5 font-mono text-[11px]">
-          <button
-            onClick={() => setShowCatalog(true)}
-            className="press inline-flex items-center gap-1 rounded-lg border border-accent/50 bg-accent/10 px-2.5 py-1 font-semibold text-accent hover:bg-accent/20"
-          >
-            <Icon name="grid" size={12} />
-            <span>Browse Catalog</span>
-          </button>
-          <span className="text-text-faint">|</span>
-          <span className="text-text-muted text-[10px]">Presets:</span>
-          <button
-            onClick={() => loadExample("windows")}
-            className="press rounded border border-border-subtle bg-bg-surface px-2 py-0.5 text-text-muted hover:border-accent/50 hover:text-accent"
-          >
-            Win Sysmon
-          </button>
-          <button
-            onClick={() => loadExample("linux")}
-            className="press rounded border border-border-subtle bg-bg-surface px-2 py-0.5 text-text-muted hover:border-accent/50 hover:text-accent"
-          >
-            Linux eBPF
-          </button>
-          <button
-            onClick={() => loadExample("macos")}
-            className="press rounded border border-border-subtle bg-bg-surface px-2 py-0.5 text-text-muted hover:border-accent/50 hover:text-accent"
-          >
-            macOS ES
-          </button>
-        </div>
-      </div>
-      <Panel title="Sigma YAML to OutPost Detection Filter">
-        <textarea
-          rows={6}
-          value={yaml}
-          onChange={(e) => setYaml(e.target.value)}
-          placeholder="Paste Sigma YAML rule here (detection criteria, tags, level)..."
-          className="w-full rounded-lg border border-border-subtle bg-bg-base p-3 font-mono text-xs text-text-primary focus:border-accent/60 focus:outline-none"
-        />
-        <div className="mt-3 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleTranspile}
-              disabled={busy || !yaml.trim()}
-              className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/10 px-4 py-2 font-mono text-xs text-accent transition-colors hover:bg-accent/20 disabled:opacity-50"
-            >
-              <Icon name="terminal" size={14} />
-              {busy ? "Transpiling…" : "Transpile Sigma Rule"}
-            </button>
-            {result && (
-              <button
-                onClick={() => importMutation.mutate(yaml)}
-                disabled={importMutation.isPending}
-                className="press inline-flex items-center gap-1.5 rounded-lg border border-signal/60 bg-signal/15 px-4 py-2 font-mono text-xs font-bold text-signal transition hover:bg-signal/25 disabled:opacity-50"
-              >
-                <Icon name="check" size={14} />
-                <span>{importMutation.isPending ? "Activating…" : imported ? "✓ Rule Active in Engine" : "Activate in Live Engine"}</span>
-              </button>
-            )}
+      {/* Section 1: Active Custom / Imported Rules Inventory */}
+      <Panel
+        kicker="Engine Registry · Operator Rules"
+        title={`Deployed Custom Sigma Rules (${(customRules ?? []).length})`}
+        right={
+          <span className="font-mono text-[10px] text-text-faint">
+            Evaluated on all ingested events
+          </span>
+        }
+      >
+        {(!customRules || customRules.length === 0) ? (
+          <div className="py-6 text-center text-xs text-text-muted">
+            <p>No operator Sigma rules deployed yet. Author a custom rule below or browse the SigmaHQ Community Catalog.</p>
           </div>
-          {result && (
-            <span className="font-mono text-xs text-risk-clean">
-              ✓ Successfully transpiled {result.transpiled_filter_count} criteria
-            </span>
-          )}
-        </div>
-        {error && <p className="mt-3 font-mono text-xs text-risk-malicious">{error}</p>}
-        {result && (
-          <div className="mt-4 space-y-3 rounded-lg border border-border-subtle bg-bg-elevated/40 p-4">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="font-mono text-xs font-bold text-text-primary">{result.title}</span>
-              <span className="rounded bg-accent/15 px-2 py-0.5 font-mono text-[10px] text-accent">
-                {result.rule_id}
-              </span>
-              <span className="rounded bg-risk-malicious/15 px-2 py-0.5 font-mono text-[10px] uppercase text-risk-malicious">
-                {result.severity}
-              </span>
-            </div>
-            <p className="text-xs text-text-muted">{result.description}</p>
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="font-mono text-[10px] text-text-faint">Tactics &amp; Techniques:</span>
-              {result.mitre_tactics.map((t: string) => (
-                <span key={t} className="rounded border border-border-subtle bg-bg-base px-1.5 py-0.5 font-mono text-[10px] text-text-muted">
-                  {t}
-                </span>
-              ))}
-              {result.mitre_techniques.map((t: string) => (
-                <span key={t} className="rounded border border-accent/40 bg-accent/10 px-1.5 py-0.5 font-mono text-[10px] text-accent">
-                  {t}
-                </span>
-              ))}
-            </div>
-            <div className="mt-2 space-y-1 font-mono text-[11px]">
-              <span className="text-[10px] uppercase text-text-faint">Mapped Evaluation Criteria:</span>
-              {result.criteria.map((c: any, i: number) => (
-                <div key={i} className="flex items-center gap-2 rounded bg-bg-base px-2 py-1 text-text-primary">
-                  <span className="text-accent">{c.target_field}</span>
-                  <span className="text-text-faint">{c.modifier}</span>
-                  <span className="text-risk-clean">&quot;{c.value}&quot;</span>
-                  <span className="ml-auto text-[10px] text-text-faint">(from {c.original_field})</span>
+        ) : (
+          <div className="space-y-3">
+            {customRules.map((rule: any) => (
+              <div
+                key={rule.rule_id}
+                className={`rounded-xl border p-4 transition ${
+                  rule.enabled
+                    ? "border-border-subtle bg-bg-surface hover:border-accent/40"
+                    : "border-border-subtle/50 bg-bg-surface/50 opacity-70"
+                }`}
+              >
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5">
+                    <button
+                      onClick={() => toggleMutation.mutate({ ruleId: rule.rule_id, enabled: !rule.enabled })}
+                      className={`press flex h-5 w-5 items-center justify-center rounded-md border font-mono text-[10px] font-bold transition ${
+                        rule.enabled
+                          ? "border-signal/60 bg-signal/20 text-signal"
+                          : "border-border-subtle bg-bg-base text-text-faint"
+                      }`}
+                      title={rule.enabled ? "Rule is Active (Click to Disable)" : "Rule is Disabled (Click to Enable)"}
+                    >
+                      {rule.enabled ? "✓" : "○"}
+                    </button>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-xs font-bold text-text-primary">{rule.title}</span>
+                        <span className={`rounded px-1.5 py-0.5 font-mono text-[9px] uppercase font-bold ${
+                          rule.level === "critical"
+                            ? "bg-risk-malicious/20 text-risk-malicious"
+                            : rule.level === "high"
+                              ? "bg-risk-suspicious/20 text-risk-suspicious"
+                              : "bg-accent/15 text-accent"
+                        }`}>
+                          {rule.level || "medium"}
+                        </span>
+                        <span className="font-mono text-[10px] text-text-faint">{rule.rule_id}</span>
+                      </div>
+                      <p className="mt-0.5 text-xs text-text-muted">{rule.description || "Operator detection rule."}</p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => onOpenBacktest({ id: rule.rule_id, name: rule.title, customYaml: rule.sigma_yaml })}
+                      className="press inline-flex items-center gap-1 rounded-lg border border-accent/60 bg-accent/10 px-2.5 py-1 font-mono text-xs font-semibold text-accent hover:bg-accent/20"
+                      title="Backtest this rule against historical event store"
+                    >
+                      <Icon name="play" size={11} />
+                      Backtest
+                    </button>
+                    {rule.sigma_yaml && (
+                      <button
+                        onClick={() => {
+                          setYaml(rule.sigma_yaml);
+                          setResult(null);
+                          setError(null);
+                        }}
+                        className="press inline-flex items-center gap-1 rounded-lg border border-border-subtle bg-bg-base px-2.5 py-1 font-mono text-xs text-text-muted hover:border-accent/40 hover:text-text-primary"
+                        title="Load rule into editor"
+                      >
+                        Edit YAML
+                      </button>
+                    )}
+                    <button
+                      onClick={() => {
+                        if (window.confirm(`Delete custom rule "${rule.title}"?`)) {
+                          deleteMutation.mutate(rule.rule_id);
+                        }
+                      }}
+                      className="press inline-flex items-center gap-1 rounded-lg border border-border-subtle px-2 py-1 font-mono text-xs text-text-faint hover:border-risk-malicious/60 hover:text-risk-malicious"
+                      title="Delete rule"
+                    >
+                      <Icon name="x" size={11} />
+                    </button>
+                  </div>
                 </div>
-              ))}
-            </div>
+
+                <div className="mt-3 flex flex-wrap items-center gap-1.5 font-mono text-[10px]">
+                  <span className="text-text-faint">Tactics:</span>
+                  {(rule.mitre_tactics || []).map((t: string) => (
+                    <span key={t} className="rounded border border-border-subtle bg-bg-base px-1.5 py-0.5 text-text-muted">
+                      {t}
+                    </span>
+                  ))}
+                  {(rule.mitre_techniques || []).map((t: string) => (
+                    <span key={t} className="rounded border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-accent">
+                      {t}
+                    </span>
+                  ))}
+                  <span className="ml-auto text-text-faint">
+                    {rule.criteria ? `${rule.criteria.length} criteria mapped` : ""}
+                  </span>
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </Panel>
+
+      {/* Section 2: Authoring Studio & Live Validator */}
+      <div>
+        <div className="mb-2 flex items-center justify-between">
+          <div>
+            <p className="kicker">Detection Engineering Studio</p>
+            <h2 className="mt-1 text-base font-semibold text-text-primary">Author, Transpile &amp; Backtest Sigma Rules</h2>
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5 font-mono text-[11px]">
+            <button
+              onClick={() => setShowCatalog(true)}
+              className="press inline-flex items-center gap-1 rounded-lg border border-accent/50 bg-accent/10 px-2.5 py-1 font-semibold text-accent hover:bg-accent/20"
+            >
+              <Icon name="grid" size={12} />
+              <span>Browse SigmaHQ Catalog</span>
+            </button>
+            <span className="text-text-faint">|</span>
+            <span className="text-text-muted text-[10px]">Templates:</span>
+            <button
+              onClick={() => loadExample("windows")}
+              className="press rounded border border-border-subtle bg-bg-surface px-2 py-0.5 text-text-muted hover:border-accent/50 hover:text-accent"
+            >
+              Win Sysmon
+            </button>
+            <button
+              onClick={() => loadExample("linux")}
+              className="press rounded border border-border-subtle bg-bg-surface px-2 py-0.5 text-text-muted hover:border-accent/50 hover:text-accent"
+            >
+              Linux eBPF
+            </button>
+            <button
+              onClick={() => loadExample("macos")}
+              className="press rounded border border-border-subtle bg-bg-surface px-2 py-0.5 text-text-muted hover:border-accent/50 hover:text-accent"
+            >
+              macOS ES
+            </button>
+            <button
+              onClick={() => loadExample("c2")}
+              className="press rounded border border-border-subtle bg-bg-surface px-2 py-0.5 text-text-muted hover:border-accent/50 hover:text-accent"
+            >
+              C2 Beacon
+            </button>
+            <button
+              onClick={() => loadExample("ransomware")}
+              className="press rounded border border-border-subtle bg-bg-surface px-2 py-0.5 text-text-muted hover:border-accent/50 hover:text-accent"
+            >
+              Ransomware
+            </button>
+          </div>
+        </div>
+
+        <Panel title="Sigma YAML Definition (Specification v2.1)">
+          <textarea
+            rows={8}
+            value={yaml}
+            onChange={(e) => setYaml(e.target.value)}
+            placeholder="Paste or author Sigma YAML rule here (detection selection, modifiers, level, MITRE tags)..."
+            className="w-full rounded-lg border border-border-subtle bg-bg-base p-3 font-mono text-xs text-text-primary focus:border-accent/60 focus:outline-none"
+          />
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={handleTranspile}
+                disabled={busy || !yaml.trim()}
+                className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/10 px-4 py-2 font-mono text-xs text-accent transition-colors hover:bg-accent/20 disabled:opacity-50"
+              >
+                <Icon name="terminal" size={14} />
+                {busy ? "Transpiling…" : "Transpile & Validate Filter"}
+              </button>
+              <button
+                onClick={() => onOpenBacktest({ name: result?.title || "Custom Sigma Draft", customYaml: yaml })}
+                disabled={!yaml.trim()}
+                className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/15 px-4 py-2 font-mono text-xs font-bold text-accent transition-colors hover:bg-accent/25 disabled:opacity-50"
+              >
+                <Icon name="play" size={14} />
+                <span>Test Against Event Store (Backtest)</span>
+              </button>
+              {result && (
+                <button
+                  onClick={() => importMutation.mutate(yaml)}
+                  disabled={importMutation.isPending}
+                  className="press inline-flex items-center gap-1.5 rounded-lg border border-signal/60 bg-signal/15 px-4 py-2 font-mono text-xs font-bold text-signal transition hover:bg-signal/25 disabled:opacity-50"
+                >
+                  <Icon name="check" size={14} />
+                  <span>{importMutation.isPending ? "Deploying…" : imported ? "✓ Rule Active in Engine" : "Deploy into Live Engine"}</span>
+                </button>
+              )}
+            </div>
+            {result && (
+              <span className="font-mono text-xs text-risk-clean">
+                ✓ Validated {result.transpiled_filter_count} criteria
+              </span>
+            )}
+          </div>
+          {error && <p className="mt-3 font-mono text-xs text-risk-malicious">{error}</p>}
+          {result && (
+            <div className="mt-4 space-y-3 rounded-lg border border-border-subtle bg-bg-elevated/40 p-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-mono text-xs font-bold text-text-primary">{result.title}</span>
+                <span className="rounded bg-accent/15 px-2 py-0.5 font-mono text-[10px] text-accent">
+                  {result.rule_id}
+                </span>
+                <span className="rounded bg-risk-malicious/15 px-2 py-0.5 font-mono text-[10px] uppercase text-risk-malicious">
+                  {result.severity}
+                </span>
+              </div>
+              <p className="text-xs text-text-muted">{result.description}</p>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="font-mono text-[10px] text-text-faint">Tactics &amp; Techniques:</span>
+                {result.mitre_tactics.map((t: string) => (
+                  <span key={t} className="rounded border border-border-subtle bg-bg-base px-1.5 py-0.5 font-mono text-[10px] text-text-muted">
+                    {t}
+                  </span>
+                ))}
+                {result.mitre_techniques.map((t: string) => (
+                  <span key={t} className="rounded border border-accent/40 bg-accent/10 px-1.5 py-0.5 font-mono text-[10px] text-accent">
+                    {t}
+                  </span>
+                ))}
+              </div>
+              <div className="mt-2 space-y-1 font-mono text-[11px]">
+                <span className="text-[10px] uppercase text-text-faint">Mapped Evaluation Criteria:</span>
+                {result.criteria.map((c: any, i: number) => (
+                  <div key={i} className="flex items-center gap-2 rounded bg-bg-base px-2 py-1 text-text-primary">
+                    <span className="text-accent">{c.target_field}</span>
+                    <span className="text-text-faint">{c.modifier}</span>
+                    <span className="text-risk-clean">&quot;{c.value}&quot;</span>
+                    <span className="ml-auto text-[10px] text-text-faint">(from {c.original_field})</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </Panel>
+      </div>
     </div>
   );
 }
@@ -1208,10 +1425,12 @@ detection:
 function RuleBacktestModal({
   ruleId,
   ruleName,
+  customYaml,
   onClose,
 }: {
-  ruleId: string;
+  ruleId?: string;
   ruleName: string;
+  customYaml?: string;
   onClose: () => void;
 }) {
   const [maxEvents, setMaxEvents] = useState(2000);
@@ -1223,8 +1442,13 @@ function RuleBacktestModal({
     setRunning(true);
     setError(null);
     try {
-      const res = await backtestRule(ruleId, maxEvents);
-      setResult(res);
+      if (customYaml) {
+        const res = await backtestCustomRule({ sigma_yaml: customYaml, max_events: maxEvents });
+        setResult(res);
+      } else if (ruleId) {
+        const res = await backtestRule(ruleId, maxEvents);
+        setResult(res);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Backtest evaluation failed");
     } finally {
@@ -1234,14 +1458,14 @@ function RuleBacktestModal({
 
   useEffect(() => {
     void runBacktest();
-  }, [ruleId]);
+  }, [ruleId, customYaml]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
       <div className="w-full max-w-2xl rounded-2xl border border-border-subtle bg-bg-surface p-6 shadow-2xl space-y-4 max-h-[85vh] overflow-y-auto">
         <div className="flex items-center justify-between border-b border-border-subtle pb-3">
           <div>
-            <span className="font-mono text-[10px] uppercase tracking-wide text-text-faint">Detection Validation</span>
+            <span className="font-mono text-[10px] uppercase tracking-wide text-text-faint">Detection Validation &amp; Backtesting</span>
             <h3 className="font-mono text-sm font-bold text-text-primary">
               Historical Rule Backtest — <span className="text-accent">{ruleName}</span>
             </h3>
@@ -1300,17 +1524,17 @@ function RuleBacktestModal({
             <div className="space-y-2">
               <span className="text-[10px] uppercase font-bold text-text-faint">Matched Historical Events ({result.sample_matches.length}):</span>
               {result.sample_matches.length === 0 ? (
-                <p className="text-xs text-text-muted py-2">Zero matching events triggered across the historical sample.</p>
+                <p className="text-xs text-text-muted py-2">Zero matching events triggered across the historical sample window.</p>
               ) : (
-                <div className="max-h-60 overflow-y-auto space-y-1.5">
-                  {result.sample_matches.map((m) => (
-                    <div key={m.event_id} className="rounded-lg border border-border-subtle bg-bg-base/80 p-2.5 text-[11px]">
+                <div className="max-h-60 overflow-y-auto space-y-1.5 pr-1">
+                  {result.sample_matches.map((m: any, idx: number) => (
+                    <div key={idx} className="rounded-lg border border-border-subtle bg-bg-base/80 p-2.5 text-[11px]">
                       <div className="flex items-center justify-between text-text-muted">
                         <span className="font-bold text-accent">{m.process_name || m.event_type}</span>
                         <span className="text-[9px] text-text-faint">{m.timestamp?.slice(0, 19).replace("T", " ")}</span>
                       </div>
                       <p className="mt-1 truncate text-text-primary" title={m.command_line || m.match_reason}>
-                        {m.match_reason}
+                        {m.match_reason || m.command_line}
                       </p>
                     </div>
                   ))}
@@ -1327,15 +1551,18 @@ function RuleBacktestModal({
 
 export default function RulesPage() {
   const queryClient = useQueryClient();
+  const [searchParams] = useSearchParams();
   const { data, isLoading, isError } = useQuery({ queryKey: ["tuning"], queryFn: getTuning });
   const { data: fp } = useQuery({ queryKey: ["rule-fp"], queryFn: getRuleFp });
   const [activeTab, setActiveTab] = useState<"rules" | "coverage">("rules");
-  const [subDeck, setSubDeck] = useState<"knobs" | "sigma" | "yara" | "patterns" | "packs">("knobs");
+  const [subDeck, setSubDeck] = useState<"knobs" | "sigma" | "yara" | "patterns" | "packs">(() =>
+    searchParams.get("create") === "1" ? "sigma" : "knobs"
+  );
   const [knobFilter, setKnobFilter] = useState("");
   const [showOverriddenOnly, setShowOverriddenOnly] = useState(false);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [fpDraft, setFpDraft] = useState<string>("");
-  const [backtestingRule, setBacktestingRule] = useState<{ id: string; name: string } | null>(null);
+  const [backtestingRule, setBacktestingRule] = useState<{ id?: string; name: string; customYaml?: string } | null>(null);
 
   useEffect(() => {
     if (fp) setFpDraft((d) => (d === "" ? String(fp.threshold) : d));
@@ -1480,7 +1707,7 @@ export default function RulesPage() {
             </button>
           </div>
 
-          {subDeck === "sigma" && <SigmaTranspilePanel />}
+          {subDeck === "sigma" && <SigmaDetectionStudio onOpenBacktest={(rule) => setBacktestingRule(rule)} />}
 
           {subDeck === "yara" && <YaraLab />}
 
@@ -1681,6 +1908,7 @@ export default function RulesPage() {
         <RuleBacktestModal
           ruleId={backtestingRule.id}
           ruleName={backtestingRule.name}
+          customYaml={backtestingRule.customYaml}
           onClose={() => setBacktestingRule(null)}
         />
       )}

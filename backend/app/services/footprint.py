@@ -1076,6 +1076,41 @@ async def _passive_layer(seeds: list[dict], mock: bool) -> dict:
 # Public entrypoint
 # ---------------------------------------------------------------------------
 
+def _mock_sample_seeds(sample_name: str) -> list[dict]:
+    """Provide realistic synthetic seed IPs deterministic for the sample name when no egress was captured."""
+    digest = hashlib.sha256(sample_name.encode()).hexdigest()
+    octet3_a = (int(digest[:2], 16) % 150) + 10
+    octet4_a = (int(digest[2:4], 16) % 200) + 10
+    octet3_b = (int(digest[4:6], 16) % 150) + 10
+    octet4_b = (int(digest[6:8], 16) % 200) + 10
+    ip_a = f"198.51.{octet3_a}.{octet4_a}"
+    ip_b = f"203.0.{octet3_b}.{octet4_b}"
+    return [
+        {
+            "ip": ip_a,
+            "hits": 18,
+            "first_seen": "2026-08-01T12:00:00Z",
+            "last_seen": "2026-08-01T12:05:00Z",
+            "run_count": 2,
+            "reputation": "malicious",
+            "abuse_score": 85,
+            "vt_malicious_count": 14,
+            "checked_at": "2026-08-01T12:00:00Z",
+        },
+        {
+            "ip": ip_b,
+            "hits": 5,
+            "first_seen": "2026-08-01T12:02:00Z",
+            "last_seen": "2026-08-01T12:04:00Z",
+            "run_count": 1,
+            "reputation": "suspicious",
+            "abuse_score": 42,
+            "vt_malicious_count": 3,
+            "checked_at": "2026-08-01T12:00:00Z",
+        },
+    ]
+
+
 async def build_footprint(conn, sample_id: str, mock: bool = False) -> dict | None:
     """Build the footprint for an uploaded sample, or None if unknown."""
     sample = samples_store.get_sample(conn, sample_id)
@@ -1083,6 +1118,8 @@ async def build_footprint(conn, sample_id: str, mock: bool = False) -> dict | No
         return None
 
     seeds = _seed_ips(conn, sample["original_name"])
+    if not seeds and mock:
+        seeds = _mock_sample_seeds(sample["original_name"])
     passive = await _passive_layer(seeds, mock)
     breach = await _breach_layer(sample["sample_id"], mock)
 
@@ -1104,6 +1141,88 @@ async def build_footprint(conn, sample_id: str, mock: bool = False) -> dict | No
         "seed_ips": seeds,
         "passive": passive,
         "breach": breach,
+        "status": {
+            "roadmap": passive["source"] != "live",
+            "generated": "mock" if mock else None,
+        },
+    }
+
+
+async def build_indicator_footprint(conn, indicator: str, mock: bool = False) -> dict:
+    """Build passive footprint for an arbitrary IP address or domain indicator."""
+    from datetime import datetime, timezone
+
+    raw = indicator.strip()
+    is_ip = False
+    try:
+        ipaddress.ip_address(raw)
+        is_ip = True
+    except ValueError:
+        is_ip = False
+
+    if is_ip:
+        cached = conn.execute(
+            "SELECT abuse_score, vt_malicious_count, reputation, checked_at FROM enrichment_cache WHERE ip = ?",
+            (raw,),
+        ).fetchone()
+        local_events = conn.execute(
+            "SELECT e.run_id, e.timestamp, e.event_type, r.sample_name FROM events e LEFT JOIN runs r ON r.run_id = e.run_id WHERE e.dest_ip = ? ORDER BY e.timestamp DESC LIMIT 20",
+            (raw,),
+        ).fetchall()
+        seeds = [
+            {
+                "ip": raw,
+                "hits": len(local_events) or 1,
+                "first_seen": local_events[-1]["timestamp"] if local_events else datetime.now(timezone.utc).isoformat(),
+                "last_seen": local_events[0]["timestamp"] if local_events else datetime.now(timezone.utc).isoformat(),
+                "run_count": len(set(e["run_id"] for e in local_events)) or 1,
+                "reputation": cached["reputation"] if cached else "suspicious",
+                "abuse_score": cached["abuse_score"] if cached else None,
+                "vt_malicious_count": cached["vt_malicious_count"] if cached else None,
+                "checked_at": cached["checked_at"] if cached else None,
+            }
+        ]
+        target_name = raw
+        target_type = "ip"
+    else:
+        target_name = raw
+        target_type = "domain"
+        resolved_ip = None
+        try:
+            resolved_ip = socket.gethostbyname(raw)
+        except Exception:
+            resolved_ip = None
+        if resolved_ip:
+            seeds = [
+                {
+                    "ip": resolved_ip,
+                    "hits": 1,
+                    "first_seen": datetime.now(timezone.utc).isoformat(),
+                    "last_seen": datetime.now(timezone.utc).isoformat(),
+                    "run_count": 1,
+                    "reputation": "suspicious",
+                    "abuse_score": None,
+                    "vt_malicious_count": None,
+                    "checked_at": None,
+                }
+            ]
+        else:
+            seeds = _mock_sample_seeds(raw) if mock else []
+
+    passive = await _passive_layer(seeds, mock)
+
+    return {
+        "sample": {
+            "sample_id": f"target-{hashlib.sha256(raw.encode()).hexdigest()[:8]}",
+            "name": target_name,
+            "sha256": None,
+            "platform": target_type,
+            "family": None,
+        },
+        "runs": [],
+        "seed_ips": seeds,
+        "passive": passive,
+        "breach": {"sample_id": None, "breaches": []},
         "status": {
             "roadmap": passive["source"] != "live",
             "generated": "mock" if mock else None,

@@ -147,8 +147,8 @@ export function getNavigationGroups(
       links: [
         {
           to: "/agents",
-          label: "Sensor Agents",
-          iconName: "terminal",
+          label: "EDR Fleet & Hosts",
+          iconName: "shield",
           badge: onlineAgents > 0 ? `${onlineAgents} on` : null,
           badgeTone: "clean",
         },

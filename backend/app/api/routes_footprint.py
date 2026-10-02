@@ -36,6 +36,16 @@ async def get_footprint_topology():
         return footprint_service.cross_sample_topology(conn)
 
 
+@router.get("/footprint/target/query", response_model=None)
+async def get_target_footprint(
+    target: str = Query(..., min_length=1, description="Target IP or domain indicator"),
+    mock: int = Query(0, ge=0, le=1, description="Force clearly-labeled synthetic data"),
+):
+    """Passive infrastructure expansion for an arbitrary IP or domain indicator."""
+    with db_session() as conn:
+        return await footprint_service.build_indicator_footprint(conn, target, mock=bool(mock))
+
+
 @router.get("/footprint/{sample_id}", response_model=None)
 async def get_footprint(
     sample_id: str,
