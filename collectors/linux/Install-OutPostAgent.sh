@@ -171,6 +171,31 @@ exec "${PY}" -m collectors.linux.collector_linux --backend-url "\$OUTPOST_API_UR
 LAUNCHER
 $SUDO_CMD chmod +x "$INSTALL_DIR/start-agent.sh"
 
+# 6. Deploy systemd unit file
+if command -v systemctl >/dev/null 2>&1; then
+    say "Registering outpost-agent.service systemd unit..."
+    cat << SERVICE | $SUDO_CMD tee /etc/systemd/system/outpost-agent.service >/dev/null
+[Unit]
+Description=OutPost Security Sensor Agent
+After=network.target auditd.service
+Wants=auditd.service
+
+[Service]
+Type=simple
+ExecStart=${INSTALL_DIR}/start-agent.sh
+Restart=always
+RestartSec=5s
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
+SERVICE
+    $SUDO_CMD systemctl daemon-reload 2>/dev/null || true
+    if [ "$AUTO_CONFIRM" -eq 1 ]; then
+        $SUDO_CMD systemctl enable --now outpost-agent.service 2>/dev/null || true
+    fi
+fi
+
 echo
 printf '%s========================================================================%s\n' "$C_GREEN" "$C_RESET"
 printf '%s  ✔ OutPost Linux Sensor Agent Successfully Configured!                 %s\n' "$C_BOLD" "$C_RESET"
@@ -178,6 +203,8 @@ printf '%s  Telemetry Source: Linux Kernel Audit (auditd / auditctl)            
 printf '%s  Target Backend:   %s                                                 %s\n' "$C_RESET" "$BACKEND_URL" "$C_RESET"
 printf '%s========================================================================%s\n' "$C_GREEN" "$C_RESET"
 echo
-echo "To start live event streaming immediately, run:"
+echo "To start live event streaming via systemd, run:"
+echo "  sudo systemctl enable --now outpost-agent.service"
+echo "Or start in foreground:"
 echo "  sudo bash $INSTALL_DIR/start-agent.sh"
 echo
