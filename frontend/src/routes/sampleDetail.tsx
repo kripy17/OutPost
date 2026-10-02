@@ -2947,7 +2947,7 @@ export default function SampleDetailPage() {
   const platIcon = sample.detected_platform === "macos" || sample.detected_platform === "windows" || sample.detected_platform === "linux" ? platformIconName(sample.detected_platform) : "terminal";
 
   return (
-    <div className="mx-auto max-w-5xl px-6 py-8 lg:px-10">
+    <div className="mx-auto max-w-[1440px] px-6 py-8 lg:px-8">
       <nav className="mb-6 flex items-center gap-2 font-mono text-xs text-text-muted">
         <Link to="/" className="transition-colors hover:text-accent">
           Overview

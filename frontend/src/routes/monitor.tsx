@@ -651,7 +651,7 @@ export default function MonitorPage() {
   };
 
   return (
-    <div className="mx-auto max-w-7xl px-4 py-8 space-y-8">
+    <div className="mx-auto max-w-[1440px] px-6 py-8 lg:px-8 space-y-8">
       {/* ── Page Header & Architecture Status Strip ───────────────────────── */}
       <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
         <PageHeader

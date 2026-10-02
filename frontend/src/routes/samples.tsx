@@ -237,7 +237,7 @@ export default function SamplesPage() {
   });
 
   return (
-    <div className="mx-auto max-w-[1400px] px-5 py-8 lg:px-8">
+    <div className="mx-auto max-w-[1440px] px-6 py-8 lg:px-8">
       <PageHeader
         kicker="Sandbox & Lab · Samples"
         title={

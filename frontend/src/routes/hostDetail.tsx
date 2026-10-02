@@ -307,7 +307,7 @@ export default function HostDetailPage() {
   const moreAvailable = shown < total;
 
   return (
-    <div className="mx-auto max-w-5xl px-5 py-8 lg:px-8">
+    <div className="mx-auto max-w-[1440px] px-6 py-8 lg:px-8">
       <PageHeader
         kicker="Host investigation"
         title={hostId ?? ""}

@@ -1,5 +1,5 @@
 // EDR Fleet & Host Operations — Enterprise endpoint sensor telemetry, active containment & triage.
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
@@ -33,6 +33,14 @@ function HostInspectorDrawer({
   const [procFilter, setProcFilter] = useState("");
   const [killMsg, setKillMsg] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
 
   const { data: containment } = useQuery({
     queryKey: ["host-containment", hostId],
@@ -497,7 +505,7 @@ export default function AgentsPage() {
   };
 
   return (
-    <div className="mx-auto max-w-[1340px] px-6 py-8">
+    <div className="mx-auto max-w-[1440px] px-6 py-8 lg:px-8">
       {selectedHostId && (
         <HostInspectorDrawer
           hostId={selectedHostId}
