@@ -136,6 +136,7 @@ async def execute_bytes_sandbox(
     custom_args: list[str] | None = None,
     isolation_driver: str = "auto",
     on_telemetry_event: Any = None,
+    network_mode: str = "sinkhole",
 ) -> tuple[list[dict[str, Any]], str, str, int, str, list[dict[str, Any]], list[dict[str, Any]]]:
     """Execute raw sample bytes in an isolated sandbox workspace and collect genuine execution events."""
     sample_plat = platform_hint or platform.system().lower()
@@ -216,8 +217,13 @@ async def execute_bytes_sandbox(
                 "--unshare-pid",
                 "--unshare-ipc",
                 "--unshare-uts",
-                "--die-with-parent",
+                "--unshare-cgroup",
+                "--new-session",
+                "--cap-drop", "ALL",
             ])
+            if network_mode in ("airgap", "isolated", "zero_egress"):
+                bwrap_prefix.append("--unshare-net")
+            bwrap_prefix.append("--die-with-parent")
             exec_cmd = bwrap_prefix + exec_cmd
 
         child_env = {
@@ -1384,6 +1390,8 @@ async def execute_sample_detonation(
     platform_hint: str = "linux",
     timeout_seconds: int = 15,
     isolation_driver: str = "auto",
+    on_telemetry_event: Any = None,
+    network_mode: str = "sinkhole",
 ) -> dict[str, Any]:
     """Execute uploaded malware sample bytes in an isolated dynamic sandbox, collect telemetry, and evaluate alerts."""
     run_id = f"dyn_{uuid.uuid4().hex[:12]}"
@@ -1413,6 +1421,8 @@ async def execute_sample_detonation(
         raw_bytes=raw_bytes,
         timeout_seconds=timeout_seconds,
         isolation_driver=isolation_driver,
+        on_telemetry_event=on_telemetry_event,
+        network_mode=network_mode,
     )
 
     # Compute post-detonation differential delta

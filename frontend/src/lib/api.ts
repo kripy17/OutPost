@@ -681,11 +681,15 @@ export async function getSampleForecast(sampleId: string): Promise<BehavioralFor
   return get<BehavioralForecast>(`/samples/${encodeURIComponent(sampleId)}/forecast`);
 }
 
-export async function detonateSample(sampleId: string, timeout = 15, isolationDriver = "auto"): Promise<SampleDetonationResult> {
+export async function detonateSample(sampleId: string, timeout = 15, isolationDriver = "auto", networkMode = "sinkhole"): Promise<SampleDetonationResult> {
   return post<SampleDetonationResult>(
-    `/samples/${encodeURIComponent(sampleId)}/detonate?timeout=${timeout}&isolation_driver=${encodeURIComponent(isolationDriver)}`,
+    `/samples/${encodeURIComponent(sampleId)}/detonate?timeout=${timeout}&isolation_driver=${encodeURIComponent(isolationDriver)}&network_mode=${encodeURIComponent(networkMode)}`,
     {},
   );
+}
+
+export function getDetonateSampleStreamUrl(sampleId: string, timeout = 15, isolationDriver = "auto", networkMode = "sinkhole"): string {
+  return `${BASE_URL}/samples/${encodeURIComponent(sampleId)}/detonate/stream?timeout=${timeout}&isolation_driver=${encodeURIComponent(isolationDriver)}&network_mode=${encodeURIComponent(networkMode)}`;
 }
 
 export async function downloadSample(sampleId: string, name: string): Promise<void> {

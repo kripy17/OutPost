@@ -4,7 +4,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { platformIconName } from "../components/iconMeta";
 import { Chip, PageHeader, Panel } from "../components/ui";
-import { deleteSample, detonateDynamic, detonateSample, downloadSample, getRuns, getSample, getSampleForecast, getSampleStatic, getSandboxArtifactUrl, getSandboxProviders, getSandboxTask, getSimilarSamples, sandboxDetonate, watchlistAdd } from "../lib/api";
+import { deleteSample, detonateDynamic, detonateSample, downloadSample, getDetonateSampleStreamUrl, getRuns, getSample, getSampleForecast, getSampleStatic, getSandboxArtifactUrl, getSandboxProviders, getSandboxTask, getSimilarSamples, sandboxDetonate, watchlistAdd } from "../lib/api";
 import { ProcessCausalityTree } from "../components/ProcessCausalityTree";
 import { NetworkProtocolInspector } from "../components/NetworkProtocolInspector";
 import { ArtifactHexViewerModal } from "../components/ArtifactHexViewerModal";
@@ -1073,6 +1073,7 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
   const queryClient = useQueryClient();
   const [detonating, setDetonating] = useState(false);
   const [isolationDriver, setIsolationDriver] = useState<string>("auto");
+  const [networkMode, setNetworkMode] = useState<string>("sinkhole");
   const [timeoutSeconds, setTimeoutSeconds] = useState<number>(15);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<SampleDetonationResult | null>(null);
@@ -1136,27 +1137,137 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
       setExecutionTimer(elapsed);
     }, 500);
 
-    try {
-      const res = await detonateSample(sample.sample_id, timeoutSeconds, isolationDriver);
-      setResult(res);
-      if ((res.alerts || []).length > 0) {
-        setInspectorTab("detections");
-      } else if ((res.dropped_artifacts || []).length > 0) {
-        setInspectorTab("files");
-      } else {
-        setInspectorTab("timeline");
+    const isJsDom = typeof window !== "undefined" && (window.navigator?.userAgent?.includes("jsdom") || "__vitest__" in window);
+    let sseActive = false;
+    let es: EventSource | null = null;
+
+    if (typeof EventSource !== "undefined" && !isJsDom) {
+      try {
+        const streamUrl = getDetonateSampleStreamUrl(sample.sample_id, timeoutSeconds, isolationDriver, networkMode);
+        es = new EventSource(streamUrl);
+        sseActive = true;
+
+        es.addEventListener("log", (e: MessageEvent) => {
+          try {
+            const data = JSON.parse(e.data);
+            if (data?.line) {
+              setLiveLogs((prev) => [...prev, data.line]);
+            }
+          } catch {
+            // ignore
+          }
+        });
+
+        es.addEventListener("stage", (e: MessageEvent) => {
+          try {
+            const data = JSON.parse(e.data);
+            if (data?.message) {
+              setLiveLogs((prev) => [...prev, `[*] [${data.stage?.toUpperCase() || "STAGE"}] ${data.message}`]);
+            }
+          } catch {
+            // ignore
+          }
+        });
+
+        es.addEventListener("artifact", (e: MessageEvent) => {
+          try {
+            const data = JSON.parse(e.data);
+            if (data?.data?.name) {
+              setLiveLogs((prev) => [...prev, `[+] [ARTIFACT] Captured dropped payload: ${data.data.name}`]);
+            }
+          } catch {
+            // ignore
+          }
+        });
+
+        es.addEventListener("complete", (e: MessageEvent) => {
+          try {
+            const data = JSON.parse(e.data);
+            if (data?.result) {
+              setResult(data.result);
+              if ((data.result.alerts || []).length > 0) {
+                setInspectorTab("detections");
+              } else if ((data.result.dropped_artifacts || []).length > 0) {
+                setInspectorTab("files");
+              } else {
+                setInspectorTab("timeline");
+              }
+              void queryClient.invalidateQueries({ queryKey: ["runs"] });
+              void queryClient.invalidateQueries({ queryKey: ["events"] });
+              void queryClient.invalidateQueries({ queryKey: ["alerts"] });
+            }
+          } catch {
+            // ignore
+          } finally {
+            es?.close();
+            if (timerIntervalRef.current) {
+              clearInterval(timerIntervalRef.current);
+              timerIntervalRef.current = null;
+            }
+            setDetonating(false);
+          }
+        });
+
+        es.addEventListener("error", () => {
+          es?.close();
+          const detonatePromise = networkMode && networkMode !== "sinkhole"
+            ? detonateSample(sample.sample_id, timeoutSeconds, isolationDriver, networkMode)
+            : detonateSample(sample.sample_id, timeoutSeconds, isolationDriver);
+          void detonatePromise
+            .then((res) => {
+              setResult(res);
+              if ((res.alerts || []).length > 0) {
+                setInspectorTab("detections");
+              } else if ((res.dropped_artifacts || []).length > 0) {
+                setInspectorTab("files");
+              } else {
+                setInspectorTab("timeline");
+              }
+              void queryClient.invalidateQueries({ queryKey: ["runs"] });
+              void queryClient.invalidateQueries({ queryKey: ["events"] });
+              void queryClient.invalidateQueries({ queryKey: ["alerts"] });
+            })
+            .catch((err) => {
+              setError(err instanceof Error ? err.message : "Detonation failed");
+            })
+            .finally(() => {
+              if (timerIntervalRef.current) {
+                clearInterval(timerIntervalRef.current);
+                timerIntervalRef.current = null;
+              }
+              setDetonating(false);
+            });
+        });
+      } catch {
+        sseActive = false;
       }
-      void queryClient.invalidateQueries({ queryKey: ["runs"] });
-      void queryClient.invalidateQueries({ queryKey: ["events"] });
-      void queryClient.invalidateQueries({ queryKey: ["alerts"] });
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Detonation failed");
-    } finally {
-      if (timerIntervalRef.current) {
-        clearInterval(timerIntervalRef.current);
-        timerIntervalRef.current = null;
+    }
+
+    if (!sseActive) {
+      try {
+        const res = networkMode && networkMode !== "sinkhole"
+          ? await detonateSample(sample.sample_id, timeoutSeconds, isolationDriver, networkMode)
+          : await detonateSample(sample.sample_id, timeoutSeconds, isolationDriver);
+        setResult(res);
+        if ((res.alerts || []).length > 0) {
+          setInspectorTab("detections");
+        } else if ((res.dropped_artifacts || []).length > 0) {
+          setInspectorTab("files");
+        } else {
+          setInspectorTab("timeline");
+        }
+        void queryClient.invalidateQueries({ queryKey: ["runs"] });
+        void queryClient.invalidateQueries({ queryKey: ["events"] });
+        void queryClient.invalidateQueries({ queryKey: ["alerts"] });
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Detonation failed");
+      } finally {
+        if (timerIntervalRef.current) {
+          clearInterval(timerIntervalRef.current);
+          timerIntervalRef.current = null;
+        }
+        setDetonating(false);
       }
-      setDetonating(false);
     }
   };
 
@@ -1393,6 +1504,20 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
                       <option value={15}>15s</option>
                       <option value={30}>30s</option>
                       <option value={60}>60s</option>
+                    </select>
+                  </div>
+
+                  {/* Network Containment Dropdown */}
+                  <div className="flex items-center gap-1.5 text-[11px] text-text-muted">
+                    <label className="text-[10px] text-text-faint">Network:</label>
+                    <select
+                      value={networkMode}
+                      onChange={(e) => setNetworkMode(e.target.value)}
+                      disabled={detonating}
+                      className="rounded border border-white/15 bg-bg-surface px-2 py-1 text-[11px] text-text-primary outline-none focus:border-accent"
+                    >
+                      <option value="sinkhole">Sinkhole (Local Sockets)</option>
+                      <option value="airgap">Air-gapped (--unshare-net)</option>
                     </select>
                   </div>
 
