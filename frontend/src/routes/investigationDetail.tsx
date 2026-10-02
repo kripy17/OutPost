@@ -157,12 +157,13 @@ export default function InvestigationDetailPage() {
 
   const sev = inv.severity;
 
-  const handleExportIncidentReport = (format: "markdown" | "json" = "markdown") => {
+  const handleExportIncidentReport = (format: "markdown" | "json" | "stix" = "markdown") => {
     if (!inv) return;
     const downloadUrl = getInvestigationExportUrl(inv.id, format);
     const a = document.createElement("a");
     a.href = downloadUrl;
-    a.download = `outpost-incident-brief-${inv.id}.${format === "markdown" ? "md" : "json"}`;
+    const ext = format === "markdown" ? "md" : format === "stix" ? "stix.json" : "json";
+    a.download = `outpost-incident-${inv.id}.${ext}`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -212,6 +213,14 @@ export default function InvestigationDetailPage() {
                 title="Download Structured Case Dossier (.json)"
               >
                 JSON
+              </button>
+              <div className="w-[1px] bg-border-subtle" />
+              <button
+                className="px-2.5 py-1.5 text-xs font-semibold text-emerald-400 hover:text-emerald-300 hover:bg-bg-elevated transition"
+                onClick={() => handleExportIncidentReport("stix")}
+                title="Download OASIS STIX 2.1 Threat Intel Bundle (.stix.json)"
+              >
+                STIX 2.1
               </button>
             </div>
             <div className="inline-flex rounded-lg border border-border-subtle bg-bg-surface overflow-hidden">

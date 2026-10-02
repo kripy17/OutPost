@@ -276,3 +276,114 @@ def build_campaign_stix_bundle(campaign_key: str) -> dict:
         "spec_version": "2.1",
         "objects": objects,
     }
+
+
+def build_investigation_stix_bundle(investigation_id: str) -> dict:
+    """Return a STIX 2.1 Bundle dict representing an entire Incident Investigation Case."""
+    from datetime import datetime, timezone
+    from ..core.db import db_session
+    from ..models import investigation as inv_store
+
+    from ..models import iocs as ioc_store
+
+    with db_session() as conn:
+        inv = inv_store.get(conn, investigation_id)
+        if not inv:
+            return {"error": f"Unknown investigation_id: {investigation_id}"}
+        refs = inv_store.list_refs(conn, investigation_id)
+        notes = inv_store.list_notes(conn, investigation_id)
+        tasks = inv_store.list_tasks(conn, investigation_id)
+        ioc_lookup: dict[str, dict] = {}
+        for r in refs:
+            if r.get("ref_type") == "ioc" and r.get("ref_id"):
+                row = ioc_store.get_ioc(conn, r["ref_id"])
+                if row:
+                    ioc_lookup[r["ref_id"]] = row
+
+    objects: list[dict] = []
+    created = inv.get("created_at") or datetime.now(timezone.utc).isoformat()
+    modified = datetime.now(timezone.utc).isoformat()
+
+    incident_id = _stix_id("incident", f"investigation:{investigation_id}")
+    objects.append({
+        "type": "incident",
+        "id": incident_id,
+        "spec_version": "2.1",
+        "created": created,
+        "modified": modified,
+        "name": inv["title"],
+        "description": inv.get("conclusion") or inv.get("summary") or f"Incident Investigation {investigation_id}",
+        "labels": ["investigation", inv.get("status", "open"), inv.get("severity", "medium")],
+    })
+
+    objects.append({
+        "type": "x-outpost-investigation",
+        "id": _stix_id("x-outpost-investigation", investigation_id),
+        "spec_version": "2.1",
+        "created": created,
+        "modified": modified,
+        "investigation_id": investigation_id,
+        "title": inv["title"],
+        "status": inv.get("status", "open"),
+        "severity": inv.get("severity", "medium"),
+        "assigned_to": inv.get("assigned_to"),
+        "tasks_count": len(tasks),
+        "notes_count": len(notes),
+        "refs_count": len(refs),
+    })
+
+    seen_indicators: set[str] = set()
+
+    for r in refs:
+        ref_type = r.get("ref_type")
+        ref_id = r.get("ref_id")
+        if ref_type == "run" and ref_id:
+            run_bundle = build_stix_bundle(ref_id)
+            if "objects" in run_bundle:
+                for obj in run_bundle["objects"]:
+                    obj_id = obj.get("id")
+                    if obj_id not in seen_indicators:
+                        seen_indicators.add(obj_id)
+                        objects.append(obj)
+                        if obj.get("type") in ("indicator", "x-outpost-run"):
+                            objects.append({
+                                "type": "relationship",
+                                "id": _stix_id("relationship", f"{obj_id}->{incident_id}"),
+                                "spec_version": "2.1",
+                                "relationship_type": "related-to" if obj.get("type") == "x-outpost-run" else "indicates",
+                                "source_ref": obj_id,
+                                "target_ref": incident_id,
+                                "created": created,
+                                "modified": modified,
+                            })
+        elif ref_type == "ioc" and ref_id:
+            ioc_row = ioc_lookup.get(ref_id)
+            if ioc_row:
+                val = ioc_row["value"]
+                itype = ioc_row["type"]
+                disp = ioc_row.get("disposition") or "suspicious"
+            else:
+                val = ref_id
+                itype = "ip" if any(c.isdigit() for c in val) and "." in val else "domain"
+                disp = "suspicious"
+            ind_obj = _indicator(itype, val, disp, _indicator_pattern(itype, val), investigation_id, created, modified)
+            if ind_obj["id"] not in seen_indicators:
+                seen_indicators.add(ind_obj["id"])
+                objects.append(ind_obj)
+                objects.append({
+                    "type": "relationship",
+                    "id": _stix_id("relationship", f"{ind_obj['id']}->{incident_id}"),
+                    "spec_version": "2.1",
+                    "relationship_type": "indicates",
+                    "source_ref": ind_obj["id"],
+                    "target_ref": incident_id,
+                    "created": created,
+                    "modified": modified,
+                })
+
+    return {
+        "type": "bundle",
+        "id": _stix_id("bundle", f"investigation:{investigation_id}"),
+        "spec_version": "2.1",
+        "objects": objects,
+    }

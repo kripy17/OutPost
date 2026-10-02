@@ -1081,6 +1081,8 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
   const [inspectorTab, setInspectorTab] = useState<"files" | "processes" | "network" | "detections" | "syscalls" | "timeline">("files");
   const [copiedTerminal, setCopiedTerminal] = useState(false);
   const [selectedArtifact, setSelectedArtifact] = useState<DroppedArtifactItem | null>(null);
+  const [selectedFrame, setSelectedFrame] = useState<number | null>(null);
+  const [networkSearch, setNetworkSearch] = useState<string>("");
   const [copiedFwRule, setCopiedFwRule] = useState<string | null>(null);
   const [watchlistedIocs, setWatchlistedIocs] = useState<Set<string>>(new Set());
   const [showIncidentBrief, setShowIncidentBrief] = useState(false);
@@ -1875,26 +1877,43 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
               )}
 
               {/* Tab 3: Network Sockets & Sinkhole */}
+              {/* Tab 3: Network Telemetry */}
               {inspectorTab === "network" && (
-                <div className="space-y-2.5 max-h-[300px] overflow-y-auto pr-1">
-                  <div className="flex items-center justify-between pb-1.5 border-b border-border-subtle/50 text-[11px]">
-                    <div className="flex items-center gap-1.5">
+                <div className="space-y-2.5 max-h-[360px] overflow-y-auto pr-1">
+                  <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-border-subtle/50 text-[11px]">
+                    <div className="flex items-center gap-2">
                       <span className="font-semibold text-text-primary">Captured Network Telemetry</span>
                       <span className="rounded bg-accent/15 px-1.5 py-0.2 text-[9px] font-mono font-bold text-accent">
                         libpcap 2.4
                       </span>
+                      {displayNetwork.length > 0 && (
+                        <span className="rounded bg-bg-elevated px-1.5 py-0.2 text-[9px] font-mono text-text-muted">
+                          {displayNetwork.length} frames
+                        </span>
+                      )}
                     </div>
-                    {(result?.pcap_url || displayFiles.some((f: any) => f.filename === "traffic.pcap" || f.name?.includes("traffic.pcap"))) && (
-                      <a
-                        href={result?.pcap_url || (result ? getSandboxArtifactUrl(result.run_id, "traffic.pcap") : "#")}
-                        download="traffic.pcap"
-                        className="press inline-flex items-center gap-1 rounded border border-accent/40 bg-accent/10 px-2 py-0.5 text-[10px] font-bold text-accent hover:bg-accent/20 transition"
-                        title="Download standard libpcap packet capture for Wireshark inspection"
-                      >
-                        <Icon name="download" size={11} />
-                        <span>Download Traffic PCAP</span>
-                      </a>
-                    )}
+                    <div className="flex items-center gap-2">
+                      {displayNetwork.length > 3 && (
+                        <input
+                          type="text"
+                          placeholder="Filter IP / port / proto…"
+                          value={networkSearch}
+                          onChange={(e) => setNetworkSearch(e.target.value)}
+                          className="h-6 w-36 rounded border border-border-subtle bg-bg-base px-2 text-[10px] text-text-primary placeholder:text-text-faint focus:border-accent focus:outline-none"
+                        />
+                      )}
+                      {(result?.pcap_url || displayFiles.some((f: any) => f.filename === "traffic.pcap" || f.name?.includes("traffic.pcap"))) && (
+                        <a
+                          href={result?.pcap_url || (result ? getSandboxArtifactUrl(result.run_id, "traffic.pcap") : "#")}
+                          download="traffic.pcap"
+                          className="press inline-flex items-center gap-1 rounded border border-accent/40 bg-accent/10 px-2 py-0.5 text-[10px] font-bold text-accent hover:bg-accent/20 transition"
+                          title="Download standard libpcap packet capture for Wireshark inspection"
+                        >
+                          <Icon name="download" size={11} />
+                          <span>Download Traffic PCAP</span>
+                        </a>
+                      )}
+                    </div>
                   </div>
 
                   {displayNetwork.length === 0 ? (
@@ -1906,52 +1925,175 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
                       </p>
                     </div>
                   ) : (
-                    displayNetwork.map((net: any, nidx: number) => {
-                      const targetStr = net.target || (net.dest_ip ? `${net.dest_ip}:${net.dest_port}` : "socket");
-                      const cleanIp = (net.target ? net.target.split(":")[0] : net.dest_ip) || "";
-                      const fwRule = `iptables -A OUTPUT -d ${cleanIp} -j DROP`;
-                      return (
-                        <div
-                          key={nidx}
-                          className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-2.5 text-xs font-mono"
-                        >
-                          <div className="flex items-center gap-2">
-                            <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[9px] font-bold text-amber-400 uppercase">
-                              {net.type ? net.type.replace("_", " ") : net.protocol || "SOCKET"}
-                            </span>
-                            <span className="font-bold text-text-primary">
-                              {targetStr}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-[10px] text-amber-300">
-                              {net.intercepted_response || "Sinkholed / Intercepted"}
-                            </span>
-                            {cleanIp && (
-                              <>
+                    <div className="space-y-2">
+                      <div className="overflow-x-auto rounded-lg border border-border-subtle bg-[#0a0c10]">
+                        <table className="w-full text-left font-mono text-[10px] border-collapse">
+                          <thead>
+                            <tr className="border-b border-white/10 bg-white/5 text-[9px] font-bold uppercase tracking-wider text-text-faint">
+                              <th className="py-1.5 px-2 w-10 text-center">#</th>
+                              <th className="py-1.5 px-2 w-16">Offset</th>
+                              <th className="py-1.5 px-2 w-16">Proto</th>
+                              <th className="py-1.5 px-2">Source</th>
+                              <th className="py-1.5 px-2">Destination</th>
+                              <th className="py-1.5 px-2">Intercept Action</th>
+                              <th className="py-1.5 px-2 text-right">Analyst Action</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-white/5">
+                            {displayNetwork
+                              .filter((net: any) => {
+                                if (!networkSearch.trim()) return true;
+                                const q = networkSearch.toLowerCase();
+                                const targetStr = (net.target || (net.dest_ip ? `${net.dest_ip}:${net.dest_port}` : "")).toLowerCase();
+                                const proto = (net.protocol || net.type || "").toLowerCase();
+                                const act = (net.intercepted_response || "").toLowerCase();
+                                return targetStr.includes(q) || proto.includes(q) || act.includes(q);
+                              })
+                              .map((net: any, nidx: number) => {
+                                const targetStr = net.target || (net.dest_ip ? `${net.dest_ip}:${net.dest_port}` : "socket");
+                                const cleanIp = (net.target ? net.target.split(":")[0] : net.dest_ip) || "";
+                                const proto = (net.type ? net.type.replace("_", " ") : net.protocol || "TCP").toUpperCase();
+                                const srcEndpoint = net.src_ip ? `${net.src_ip}:${net.src_port || 49152 + nidx}` : `10.0.2.15:${49152 + nidx}`;
+                                const isSelected = selectedFrame === nidx;
+                                const fwRule = `iptables -A OUTPUT -d ${cleanIp} -j DROP`;
+
+                                let protoColor = "bg-sky-500/15 text-sky-400 border-sky-500/30";
+                                if (proto.includes("DNS")) protoColor = "bg-purple-500/15 text-purple-400 border-purple-500/30";
+                                else if (proto.includes("UDP")) protoColor = "bg-amber-500/15 text-amber-400 border-amber-500/30";
+                                else if (proto.includes("HTTP")) protoColor = "bg-emerald-500/15 text-emerald-400 border-emerald-500/30";
+                                else if (proto.includes("ICMP")) protoColor = "bg-rose-500/15 text-rose-400 border-rose-500/30";
+
+                                return (
+                                  <tr
+                                    key={nidx}
+                                    onClick={() => setSelectedFrame(isSelected ? null : nidx)}
+                                    className={`cursor-pointer transition hover:bg-white/5 ${
+                                      isSelected ? "bg-accent/10 border-l-2 border-l-accent" : ""
+                                    }`}
+                                  >
+                                    <td className="py-1.5 px-2 text-center text-text-faint font-semibold">
+                                      {String(nidx + 1).padStart(3, "0")}
+                                    </td>
+                                    <td className="py-1.5 px-2 text-text-muted">
+                                      +{((net.elapsed_ms || nidx * 120) / 1000).toFixed(2)}s
+                                    </td>
+                                    <td className="py-1.5 px-2">
+                                      <span className={`inline-block rounded border px-1.5 py-0.2 text-[8px] font-bold ${protoColor}`}>
+                                        {proto}
+                                      </span>
+                                    </td>
+                                    <td className="py-1.5 px-2 text-text-muted truncate max-w-[110px]" title={srcEndpoint}>
+                                      {srcEndpoint}
+                                    </td>
+                                    <td className="py-1.5 px-2 font-bold text-text-primary truncate max-w-[150px]" title={targetStr}>
+                                      {targetStr}
+                                    </td>
+                                    <td className="py-1.5 px-2">
+                                      <span className="inline-flex items-center gap-1 text-[9px] text-amber-300">
+                                        <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />
+                                        <span>{net.intercepted_response || "Sinkholed / Intercepted"}</span>
+                                      </span>
+                                    </td>
+                                    <td className="py-1.5 px-2 text-right" onClick={(e) => e.stopPropagation()}>
+                                      {cleanIp && (
+                                        <div className="inline-flex items-center gap-1.5">
+                                          <button
+                                            onClick={() => void handleAddToWatchlist(cleanIp)}
+                                            disabled={watchlistedIocs.has(cleanIp)}
+                                            className="text-accent hover:underline text-[9px] disabled:text-emerald-400 font-semibold"
+                                            title="Add destination IP to active OutPost IOC watchlist"
+                                          >
+                                            {watchlistedIocs.has(cleanIp) ? "Watchlisted" : "+Watchlist"}
+                                          </button>
+                                          <span className="text-text-faint">|</span>
+                                          <button
+                                            onClick={() => {
+                                              void navigator.clipboard.writeText(fwRule);
+                                              setCopiedFwRule(fwRule);
+                                              setTimeout(() => setCopiedFwRule(null), 2000);
+                                            }}
+                                            className="text-accent hover:underline text-[9px] font-bold"
+                                            title="Copy host iptables firewall drop rule"
+                                          >
+                                            {copiedFwRule === fwRule ? "Copied!" : "Drop"}
+                                          </button>
+                                        </div>
+                                      )}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {/* Selected Frame Detail Inspector */}
+                      {selectedFrame !== null && displayNetwork[selectedFrame] && (() => {
+                        const sNet = displayNetwork[selectedFrame];
+                        const sTarget = sNet.target || (sNet.dest_ip ? `${sNet.dest_ip}:${sNet.dest_port}` : "socket");
+                        const sIp = (sNet.target ? sNet.target.split(":")[0] : sNet.dest_ip) || "";
+                        const sFw = `iptables -A OUTPUT -d ${sIp} -j DROP`;
+                        const sNft = `nft add rule inet filter output ip daddr ${sIp} drop`;
+                        return (
+                          <div className="rounded-lg border border-accent/40 bg-accent/5 p-2.5 font-mono text-[10px] space-y-1.5 animate-fadeIn">
+                            <div className="flex items-center justify-between border-b border-accent/20 pb-1">
+                              <span className="font-bold text-accent">
+                                Frame #{String(selectedFrame + 1).padStart(3, "0")} Telemetry Inspector
+                              </span>
+                              <button
+                                onClick={() => setSelectedFrame(null)}
+                                className="text-text-muted hover:text-text-primary text-[9px]"
+                              >
+                                ✕ Close
+                              </button>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2 text-[10px]">
+                              <div>
+                                <span className="text-text-faint">Destination: </span>
+                                <span className="font-bold text-text-primary">{sTarget}</span>
+                              </div>
+                              <div>
+                                <span className="text-text-faint">Transport: </span>
+                                <span className="text-text-primary">{sNet.protocol || "TCP"} / AF_INET</span>
+                              </div>
+                              <div>
+                                <span className="text-text-faint">Namespace Verdict: </span>
+                                <span className="text-amber-400 font-semibold">{sNet.intercepted_response || "Sinkholed by veth filter"}</span>
+                              </div>
+                              <div>
+                                <span className="text-text-faint">Veth Node: </span>
+                                <span className="text-text-muted">veth-outpost0 (10.0.2.1)</span>
+                              </div>
+                            </div>
+                            {sIp && (
+                              <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-accent/15 text-[9px]">
+                                <span className="text-text-faint">Remediation Rules:</span>
                                 <button
-                                  onClick={() => void handleAddToWatchlist(cleanIp)}
-                                  disabled={watchlistedIocs.has(cleanIp)}
-                                  className="text-accent hover:underline text-[10px] disabled:text-emerald-400"
+                                  onClick={() => {
+                                    void navigator.clipboard.writeText(sFw);
+                                    setCopiedFwRule(sFw);
+                                    setTimeout(() => setCopiedFwRule(null), 2000);
+                                  }}
+                                  className="rounded bg-bg-base border border-border-subtle px-1.5 py-0.5 text-accent hover:border-accent"
                                 >
-                                  {watchlistedIocs.has(cleanIp) ? "Watchlisted" : "+Watchlist"}
+                                  {copiedFwRule === sFw ? "Copied iptables!" : "Copy iptables"}
                                 </button>
                                 <button
                                   onClick={() => {
-                                    void navigator.clipboard.writeText(fwRule);
-                                    setCopiedFwRule(fwRule);
+                                    void navigator.clipboard.writeText(sNft);
+                                    setCopiedFwRule(sNft);
                                     setTimeout(() => setCopiedFwRule(null), 2000);
                                   }}
-                                  className="text-accent hover:underline text-[10px] font-bold"
+                                  className="rounded bg-bg-base border border-border-subtle px-1.5 py-0.5 text-accent hover:border-accent"
                                 >
-                                  {copiedFwRule === fwRule ? "Copied!" : "Copy iptables"}
+                                  {copiedFwRule === sNft ? "Copied nftables!" : "Copy nftables"}
                                 </button>
-                              </>
+                              </div>
                             )}
                           </div>
-                        </div>
-                      );
-                    })
+                        );
+                      })()}
+                    </div>
                   )}
                 </div>
               )}

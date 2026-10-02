@@ -312,18 +312,22 @@ def synthesize_case_narrative(investigation_id: str) -> dict:
 @router.get("/investigations/{investigation_id}/export")
 def export_investigation(
     investigation_id: str,
-    format: str = Query("markdown", description="markdown | json"),
+    format: str = Query("markdown", description="markdown | json | stix"),
 ):
-    """Export an executive Incident Response Case Brief in Markdown or full JSON format."""
+    """Export an executive Incident Response Case Brief in Markdown, JSON, or OASIS STIX 2.1 Bundle format."""
     from fastapi.responses import PlainTextResponse
     from ..services.report import (
         build_investigation_json_export,
         build_investigation_markdown_export,
     )
+    from ..services import stix as stix_service
 
     with db_session() as conn:
         _require_investigation(conn, investigation_id)
-        if format.lower() == "json":
+        fmt = format.lower()
+        if fmt == "stix":
+            return stix_service.build_investigation_stix_bundle(investigation_id)
+        elif fmt == "json":
             return build_investigation_json_export(conn, investigation_id)
         else:
             md_text = build_investigation_markdown_export(conn, investigation_id)
