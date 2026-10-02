@@ -5,6 +5,7 @@ import { Icon } from "../components/Icon";
 import { LiveTriageModal } from "../components/LiveTriageModal";
 import {
   controlProcessXRay,
+  exportEventsCsv,
   getBehavioralExplanations,
   getEvents,
   getForensicCapsule,
@@ -13,7 +14,8 @@ import {
   getProcessTree,
   getXRayFullTargetDossier,
 } from "../lib/api";
-import type { HostPulseMetrics, XRayProcessItem, XRaySocketItem } from "../types";
+import { copyToClipboard } from "../lib/clipboard";
+import type { EventFeedEvent, HostPulseMetrics, XRayProcessItem, XRaySocketItem } from "../types";
 import { parsePids } from "./eventsHelpers";
 import { useEventStream } from "../lib/useEventStream";
 import { playSocAlertSound } from "../lib/sound";
@@ -37,6 +39,10 @@ function platformIcon(platformName?: string): "linux" | "mac" | "windows" | "box
 }
 
 type SortField = "cpu" | "memory" | "pid" | "name" | "user";
+
+function eventSeverity(ev: EventFeedEvent): string | null {
+  return (ev as { severity?: string }).severity || ev.run_severity || null;
+}
 
 export default function EventsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -79,6 +85,14 @@ export default function EventsPage() {
   const [dossierLoading, setDossierLoading] = useState(false);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
 
+  // EDR Telemetry Lake filters & inspector state
+  const [telemetryFilterType, setTelemetryFilterType] = useState<string>("");
+  const [telemetryFilterSev, setTelemetryFilterSev] = useState<string>("");
+  const [telemetryLakeQuery, setTelemetryLakeQuery] = useState<string>("");
+  const [inspectTelemetryEvent, setInspectTelemetryEvent] = useState<EventFeedEvent | null>(null);
+  const [copiedPayload, setCopiedPayload] = useState(false);
+  const [isExportingCsv, setIsExportingCsv] = useState(false);
+
   // Fetch real Host X-Ray snapshot (metrics, processes, sockets)
   const {
     data: snapshot,
@@ -116,12 +130,46 @@ export default function EventsPage() {
     refetchInterval: isLive ? pollInterval * 3 : false,
   });
 
-  // Optional fleet event telemetry stream for multi-host correlation
-  const { data: fleetEventsData } = useQuery({
-    queryKey: ["events", "fleet_summary"],
-    queryFn: () => getEvents({ limit: 10 }),
+  // EDR Telemetry Lake stream for multi-host event correlation and log analysis
+  const {
+    data: fleetEventsData,
+    isFetching: isEventsFetching,
+    refetch: refetchEvents,
+  } = useQuery({
+    queryKey: ["events", "lake", telemetryFilterType, telemetryFilterSev, telemetryLakeQuery],
+    queryFn: () =>
+      getEvents({
+        limit: 50,
+        event_type: (telemetryFilterType || undefined) as any,
+        severity: (telemetryFilterSev || undefined) as any,
+        q: telemetryLakeQuery || undefined,
+      }),
     retry: false,
+    refetchInterval: isLive ? pollInterval * 2 : false,
   });
+
+  const handleExportEventsCsv = async () => {
+    try {
+      setIsExportingCsv(true);
+      const blob = await exportEventsCsv({
+        event_type: (telemetryFilterType || undefined) as any,
+        severity: (telemetryFilterSev || undefined) as any,
+        q: telemetryLakeQuery || undefined,
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `outpost-telemetry-events-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      setActionMessage(`CSV export failed: ${err?.message || "Unknown error"}`);
+    } finally {
+      setIsExportingCsv(false);
+    }
+  };
 
   // Load detailed target dossier when inspectPid is set
   useEffect(() => {
@@ -485,38 +533,215 @@ export default function EventsPage() {
         </div>
       </section>
 
-      {/* ── Correlated Fleet & Ingested Events (Telemetry Linkage) ────────── */}
-      {fleetEventsData?.events && fleetEventsData.events.length > 0 && (
-        <section className="rounded-2xl border border-border-subtle bg-bg-surface/70 p-4 font-mono text-xs backdrop-blur-sm space-y-2.5">
-          <div className="flex items-center justify-between text-[11px] text-text-faint uppercase">
-            <span className="font-bold text-text-primary flex items-center gap-1.5">
-              <Icon name="activity" size={13} className="text-accent" />
-              <span>Correlated Fleet Events ({fleetEventsData.total})</span>
+      {/* ── Enterprise EDR Telemetry Lake & Event Ingest Explorer ────────── */}
+      <section className="rounded-2xl border border-border-subtle bg-bg-surface/80 p-4 font-mono text-xs backdrop-blur-sm space-y-3 shadow-sm">
+        {/* Lake Header & Telemetry Scope */}
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border-subtle pb-3">
+          <div className="flex items-center gap-2">
+            <span className="flex h-2 w-2 rounded-full bg-cyan-400 animate-pulse" />
+            <span className="font-bold text-text-primary uppercase tracking-wider text-[11px] flex items-center gap-2">
+              <Icon name="activity" size={14} className="text-cyan-400" />
+              <span>EDR Telemetry Lake</span>
             </span>
-            <span>Historical Ingest Stream</span>
+            <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2 py-0.5 text-[10px] font-semibold text-cyan-400">
+              {fleetEventsData?.total ?? 0} Ingested
+            </span>
+            {isEventsFetching && (
+              <span className="text-[10px] text-text-faint animate-pulse">Syncing...</span>
+            )}
           </div>
+
           <div className="flex flex-wrap items-center gap-2">
-            {fleetEventsData.events.map((ev) => (
-              <span
-                key={ev.id}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-base/90 px-2.5 py-1 text-[11px]"
+            {/* Quick CSV Export */}
+            <button
+              onClick={handleExportEventsCsv}
+              disabled={isExportingCsv || !fleetEventsData?.events?.length}
+              className="press flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-base/80 px-2.5 py-1 text-[11px] font-semibold text-text-secondary hover:text-text-primary hover:border-accent/40 transition disabled:opacity-40"
+              title="Export filtered telemetry events to CSV"
+            >
+              <Icon name="download" size={12} className={isExportingCsv ? "animate-spin" : ""} />
+              <span>{isExportingCsv ? "Exporting..." : "Export CSV"}</span>
+            </button>
+
+            {/* Refresh Lake Button */}
+            <button
+              onClick={() => void refetchEvents()}
+              disabled={isEventsFetching}
+              className="press flex items-center gap-1 rounded-lg border border-border-subtle bg-bg-base/80 px-2 py-1 text-[11px] text-text-muted hover:text-text-primary transition"
+              title="Refresh telemetry lake"
+            >
+              <Icon name="refresh" size={11} className={isEventsFetching ? "animate-spin text-accent" : ""} />
+            </button>
+          </div>
+        </div>
+
+        {/* Telemetry Query Ribbon & Filters */}
+        <div className="flex flex-wrap items-center justify-between gap-2.5 pt-1">
+          {/* Quick Search across telemetry */}
+          <div className="relative flex-1 min-w-[220px]">
+            <Icon name="search" size={12} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-text-faint" />
+            <input
+              type="text"
+              placeholder="Search telemetry (cmdline, process, destination IP, file)..."
+              value={telemetryLakeQuery}
+              onChange={(e) => setTelemetryLakeQuery(e.target.value)}
+              className="w-full rounded-lg border border-border-subtle bg-bg-base/90 py-1.5 pl-7 pr-7 text-[11px] text-text-primary placeholder:text-text-faint focus:border-accent focus:outline-hidden"
+            />
+            {telemetryLakeQuery && (
+              <button
+                onClick={() => setTelemetryLakeQuery("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-text-faint hover:text-text-primary"
               >
-                <span className="text-text-muted">{ev.event_type}</span>
-                {ev.host_id ? (
-                  <Link
-                    to={`/hosts/${encodeURIComponent(ev.host_id)}`}
-                    className="font-bold text-accent hover:underline"
-                  >
-                    {ev.host_id}
-                  </Link>
-                ) : (
-                  <span className="text-text-faint">local</span>
-                )}
-              </span>
+                ✕
+              </button>
+            )}
+          </div>
+
+          {/* Event Type Filter Pills */}
+          <div className="flex flex-wrap items-center gap-1 text-[10px]">
+            {[
+              { id: "", label: "All Types" },
+              { id: "process_create", label: "process_create" },
+              { id: "network_connection", label: "network" },
+              { id: "file_write", label: "file_write" },
+              { id: "registry_write", label: "registry" },
+            ].map((t) => (
+              <button
+                key={t.id}
+                onClick={() => setTelemetryFilterType(t.id)}
+                className={`press rounded-md px-2 py-1 transition ${
+                  telemetryFilterType === t.id
+                    ? "bg-accent/20 text-accent font-bold border border-accent/40"
+                    : "bg-bg-base/60 text-text-muted hover:text-text-primary border border-border-subtle"
+                }`}
+              >
+                {t.label}
+              </button>
             ))}
           </div>
-        </section>
-      )}
+
+          {/* Severity Filter Pills */}
+          <div className="flex items-center gap-1 text-[10px]">
+            {[
+              { id: "", label: "All" },
+              { id: "malicious", label: "Crit/Mal" },
+              { id: "suspicious", label: "Susp" },
+            ].map((s) => (
+              <button
+                key={s.id}
+                onClick={() => setTelemetryFilterSev(s.id)}
+                className={`press rounded-md px-2 py-1 transition ${
+                  telemetryFilterSev === s.id
+                    ? "bg-accent/20 text-accent font-bold border border-accent/40"
+                    : "bg-bg-base/60 text-text-muted hover:text-text-primary border border-border-subtle"
+                }`}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Telemetry Events Stream Table */}
+        <div className="overflow-x-auto rounded-xl border border-border-subtle bg-bg-base/90">
+          <table className="w-full text-left font-mono text-[11px] divide-y divide-border-subtle">
+            <thead>
+              <tr className="bg-bg-surface/90 text-text-faint text-[10px] uppercase tracking-wider">
+                <th className="px-3 py-2">Timestamp (UTC)</th>
+                <th className="px-3 py-2">Host / Sensor</th>
+                <th className="px-3 py-2">Severity</th>
+                <th className="px-3 py-2">Event Type</th>
+                <th className="px-3 py-2">Process / Actor</th>
+                <th className="px-3 py-2">Telemetry Payload / Target</th>
+                <th className="px-3 py-2 text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border-subtle/50">
+              {(!fleetEventsData?.events || fleetEventsData.events.length === 0) ? (
+                <tr>
+                  <td colSpan={7} className="px-4 py-8 text-center text-text-faint">
+                    <p>No telemetry events matching active filters in the ingest lake.</p>
+                  </td>
+                </tr>
+              ) : (
+                fleetEventsData.events.map((ev) => (
+                  <tr
+                    key={ev.id}
+                    className="hover:bg-bg-elevated/40 transition cursor-pointer"
+                    onClick={() => setInspectTelemetryEvent(ev)}
+                  >
+                    {/* Timestamp */}
+                    <td className="px-3 py-2 text-text-faint whitespace-nowrap tabular-nums">
+                      {ev.timestamp ? ev.timestamp.replace("T", " ").replace("Z", "") : "—"}
+                    </td>
+
+                    {/* Host Link or local */}
+                    <td className="px-3 py-2 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                      {ev.host_id ? (
+                        <Link
+                          to={`/hosts/${encodeURIComponent(ev.host_id)}`}
+                          className="font-bold text-accent hover:underline inline-flex items-center gap-1"
+                          title="Open host workspace"
+                        >
+                          <Icon name="box" size={11} className="text-accent/80 shrink-0" />
+                          <span className="truncate max-w-[130px]">{ev.host_id}</span>
+                        </Link>
+                      ) : (
+                        <span className="text-text-faint">local</span>
+                      )}
+                    </td>
+
+                    {/* Severity */}
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      {eventSeverity(ev) === "malicious" ? (
+                        <span className="inline-flex items-center gap-1 rounded border border-red-500/30 bg-red-500/10 px-1.5 py-0.2 text-[10px] font-bold text-red-400">
+                          <span className="h-1.5 w-1.5 rounded-full bg-red-400" />
+                          <span>malicious</span>
+                        </span>
+                      ) : eventSeverity(ev) === "suspicious" ? (
+                        <span className="inline-flex items-center gap-1 rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.2 text-[10px] font-semibold text-amber-400">
+                          <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+                          <span>suspicious</span>
+                        </span>
+                      ) : (
+                        <span className="rounded border border-border-subtle bg-bg-surface px-1.5 py-0.2 text-[10px] text-text-faint">
+                          info
+                        </span>
+                      )}
+                    </td>
+
+                    {/* Event Type */}
+                    <td className="px-3 py-2 whitespace-nowrap font-semibold text-text-primary">
+                      {ev.event_type}
+                    </td>
+
+                    {/* Process / Actor */}
+                    <td className="px-3 py-2 text-text-secondary whitespace-nowrap">
+                      <span className="text-text-primary font-medium">{ev.process_name || ev.sample_name || "—"}</span>
+                      {ev.pid ? <span className="ml-1 text-[10px] text-text-faint">[{ev.pid}]</span> : null}
+                    </td>
+
+                    {/* Telemetry Payload */}
+                    <td className="px-3 py-2 text-text-muted truncate max-w-[280px]" title={ev.command_line || ev.dest_ip || ev.file_path || ""}>
+                      {ev.command_line || (ev.dest_ip ? `${ev.dest_ip}:${ev.dest_port ?? ""}` : null) || ev.file_path || "—"}
+                    </td>
+
+                    {/* Action */}
+                    <td className="px-3 py-2 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        onClick={() => setInspectTelemetryEvent(ev)}
+                        className="press rounded-md border border-border-subtle bg-bg-surface px-2 py-0.5 text-[10px] font-medium text-text-secondary hover:text-text-primary hover:border-accent/40"
+                      >
+                        Inspect
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
 
       {/* ── Sub-View Tab Switcher & Universal Filter Ribbon ─────────── */}
       <section className="space-y-3">
@@ -1157,6 +1382,167 @@ export default function EventsPage() {
                 className="press rounded-lg border border-white/15 bg-white/5 px-4 py-2 text-xs font-semibold text-text-primary hover:bg-white/10"
               >
                 Close Dossier
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Slide-Over EDR Telemetry Inspector Drawer ───────────────── */}
+      {inspectTelemetryEvent && (
+        <div
+          className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-xs transition-opacity"
+          onClick={() => setInspectTelemetryEvent(null)}
+        >
+          <div
+            className="h-full w-full max-w-lg bg-[#0B0E14] border-l border-border-subtle p-6 overflow-y-auto space-y-5 font-mono text-xs shadow-2xl animate-in slide-in-from-right duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-start justify-between border-b border-border-subtle pb-4">
+              <div>
+                <div className="flex items-center gap-2 text-text-faint text-[10px] uppercase">
+                  <span>Event ID #{inspectTelemetryEvent.id}</span>
+                  <span>·</span>
+                  <span>{inspectTelemetryEvent.source || "EDR Sensor"}</span>
+                </div>
+                <h3 className="mt-1 text-base font-bold text-text-primary flex items-center gap-2">
+                  <span>{inspectTelemetryEvent.event_type}</span>
+                  {eventSeverity(inspectTelemetryEvent) && (
+                    <span
+                      className={`rounded px-2 py-0.2 text-[10px] font-bold ${
+                        eventSeverity(inspectTelemetryEvent) === "malicious"
+                          ? "bg-red-500/15 text-red-400 border border-red-500/30"
+                          : eventSeverity(inspectTelemetryEvent) === "suspicious"
+                            ? "bg-amber-500/15 text-amber-400 border border-amber-500/30"
+                            : "bg-slate-500/15 text-text-muted border border-border-subtle"
+                      }`}
+                    >
+                      {eventSeverity(inspectTelemetryEvent)}
+                    </span>
+                  )}
+                </h3>
+              </div>
+              <button
+                onClick={() => setInspectTelemetryEvent(null)}
+                className="press rounded-lg p-1.5 text-text-faint hover:text-text-primary hover:bg-bg-elevated"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Quick Metadata Grid */}
+            <div className="grid grid-cols-2 gap-2 text-[11px]">
+              <div className="rounded-lg border border-border-subtle bg-bg-surface p-2.5">
+                <span className="text-[10px] text-text-faint uppercase block">Sensor / Host</span>
+                {inspectTelemetryEvent.host_id ? (
+                  <Link
+                    to={`/hosts/${encodeURIComponent(inspectTelemetryEvent.host_id)}`}
+                    className="font-bold text-accent hover:underline mt-0.5 block truncate"
+                  >
+                    {inspectTelemetryEvent.host_id}
+                  </Link>
+                ) : (
+                  <span className="font-bold text-text-primary mt-0.5 block">local</span>
+                )}
+              </div>
+              <div className="rounded-lg border border-border-subtle bg-bg-surface p-2.5">
+                <span className="text-[10px] text-text-faint uppercase block">UTC Timestamp</span>
+                <span className="font-bold text-text-primary mt-0.5 block truncate tabular-nums">
+                  {inspectTelemetryEvent.timestamp ? inspectTelemetryEvent.timestamp.replace("T", " ") : "—"}
+                </span>
+              </div>
+            </div>
+
+            {/* Process Execution Details */}
+            <div className="space-y-1.5 rounded-lg border border-border-subtle bg-bg-surface p-3 text-[11px]">
+              <div className="flex items-center justify-between text-text-faint text-[10px] uppercase">
+                <span>Process Lineage</span>
+                {inspectTelemetryEvent.pid && (
+                  <button
+                    onClick={() => {
+                      const targetPid = inspectTelemetryEvent.pid!;
+                      setInspectTelemetryEvent(null);
+                      setInspectPid(targetPid);
+                      setActiveDeck("processes");
+                    }}
+                    className="text-accent hover:underline font-bold"
+                  >
+                    Inspect in Host X-Ray →
+                  </button>
+                )}
+              </div>
+              <div className="grid grid-cols-2 gap-2 pt-1">
+                <div>
+                  <span className="text-[10px] text-text-faint">Name:</span>
+                  <p className="font-semibold text-text-primary truncate">{inspectTelemetryEvent.process_name || inspectTelemetryEvent.sample_name || "—"}</p>
+                </div>
+                <div>
+                  <span className="text-[10px] text-text-faint">PID / PPID:</span>
+                  <p className="text-text-primary tabular-nums">
+                    {inspectTelemetryEvent.pid ?? "—"} / {inspectTelemetryEvent.ppid ?? "—"}
+                  </p>
+                </div>
+              </div>
+              {inspectTelemetryEvent.command_line && (
+                <div className="pt-2">
+                  <div className="flex items-center justify-between text-[10px] text-text-faint">
+                    <span>Command Line</span>
+                    <button
+                      onClick={() => {
+                        void copyToClipboard(inspectTelemetryEvent.command_line || "");
+                        setCopiedPayload(true);
+                        setTimeout(() => setCopiedPayload(false), 2000);
+                      }}
+                      className="text-accent hover:underline text-[10px]"
+                    >
+                      {copiedPayload ? "Copied!" : "Copy"}
+                    </button>
+                  </div>
+                  <pre className="mt-1 rounded border border-border-subtle bg-bg-base p-2 text-[10px] text-text-primary whitespace-pre-wrap break-all select-all">
+                    {inspectTelemetryEvent.command_line}
+                  </pre>
+                </div>
+              )}
+            </div>
+
+            {/* Network / Socket Details if present */}
+            {inspectTelemetryEvent.dest_ip && (
+              <div className="space-y-1 rounded-lg border border-border-subtle bg-bg-surface p-3 text-[11px]">
+                <span className="text-[10px] text-text-faint uppercase block">Network Socket Target</span>
+                <p className="text-text-primary font-bold">
+                  {inspectTelemetryEvent.dest_ip}:{inspectTelemetryEvent.dest_port ?? ""}
+                </p>
+              </div>
+            )}
+
+            {/* Raw Event JSON Dossier */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-[10px] text-text-faint uppercase">
+                <span>Raw EDR Event JSON</span>
+                <button
+                  onClick={() => {
+                    void copyToClipboard(JSON.stringify(inspectTelemetryEvent, null, 2));
+                    setCopiedPayload(true);
+                    setTimeout(() => setCopiedPayload(false), 2000);
+                  }}
+                  className="text-accent hover:underline"
+                >
+                  {copiedPayload ? "Copied JSON!" : "Copy JSON"}
+                </button>
+              </div>
+              <pre className="max-h-56 overflow-y-auto rounded-lg border border-border-subtle bg-bg-base p-3 text-[10px] text-text-secondary select-all">
+                {JSON.stringify(inspectTelemetryEvent, null, 2)}
+              </pre>
+            </div>
+
+            {/* Close footer */}
+            <div className="border-t border-border-subtle pt-3 flex justify-end">
+              <button
+                onClick={() => setInspectTelemetryEvent(null)}
+                className="press rounded-lg border border-border-subtle bg-bg-surface px-4 py-1.5 text-xs text-text-primary hover:bg-bg-elevated"
+              >
+                Close Drawer
               </button>
             </div>
           </div>

@@ -1,11 +1,19 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import TopCommandBar from "../components/TopCommandBar";
+
+function renderWithClient(ui: React.ReactElement) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>);
+}
 
 describe("TopCommandBar", () => {
   it("renders breadcrumbs for top-level operational routes", () => {
-    render(
+    renderWithClient(
       <MemoryRouter initialEntries={["/findings"]}>
         <TopCommandBar />
       </MemoryRouter>,
@@ -18,7 +26,7 @@ describe("TopCommandBar", () => {
   });
 
   it("renders hierarchical breadcrumbs with links for detail pages", () => {
-    render(
+    renderWithClient(
       <MemoryRouter initialEntries={["/investigations/inv-12345678"]}>
         <TopCommandBar />
       </MemoryRouter>,
@@ -33,7 +41,7 @@ describe("TopCommandBar", () => {
   it("dispatches keyboard events on shortcut triggers", () => {
     const dispatchSpy = vi.spyOn(window, "dispatchEvent");
 
-    render(
+    renderWithClient(
       <MemoryRouter initialEntries={["/events"]}>
         <TopCommandBar />
       </MemoryRouter>,

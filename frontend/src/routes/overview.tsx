@@ -1,1933 +1,684 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Deferred } from "../components/Deferred/Deferred";
 import { Icon } from "../components/Icon";
-import { platformIconName } from "../components/iconMeta";
-import { PageHeader, Panel } from "../components/ui";
-import LiveTelemetryRadar from "../components/LiveTelemetryRadar";
-import {
-  ageBucket,
-  collapseFindings,
-  intelFreshness,
-  intelKeyHealth,
-  openSince,
-  overviewRunParams,
-  sortFindingsRiskFirst,
-} from "./overviewHelpers";
 import { copyToClipboard } from "../lib/clipboard";
-import { SEVERITY_BG } from "../lib/constants";
+import { useSocTimeRange } from "../lib/useSocTimeRange";
 import {
-  BASE_URL,
   bulkUpdateAlertStatus,
   getAgents,
-  getCampaigns,
-  getHealth,
-  getHostXRaySnapshot,
-  getIntelFreshness,
-  getIntelKeys,
-  getMeta,
-  getPlatform,
-  getProcessSummary,
+  getAlertQueue,
+  getEvents,
   getRecentAlerts,
   getRuleMeta,
-  getRuns,
-  getTechniqueValidationMatrix,
-  getXRayTargetCatalog,
-  listAllInvestigationTasks,
   listInvestigations,
-  patchInvestigationTask,
-  resetStore,
   runLiveSimulation,
 } from "../lib/api";
 import { useEventStream } from "../lib/useEventStream";
-import { isSocAudioEnabled, setSocAudioEnabled, playSocAlertSound } from "../lib/sound";
+import type { GlobalAlert, QueueAlert } from "../types";
 
-// Compact relative time for the host panel's auth-context tooltips (the
-// Agents page keeps its own copy — same convention).
-function _rel(iso: string): string {
-  const s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
-  if (s < 60) return "just now";
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
-  return `${Math.floor(s / 86400)}d ago`;
-}
-import type { ProcessSummary, RunSummary, Severity, TechniqueValidationScorecard } from "../types";
-
-/* ──────────────────────────────────────────────────────────────────────── */
-// Threat posture — the console header. Three visual primitives instead of a
-// stat strip: a risk gauge, a severity donut, and a risk-over-time trend.
-// The trend is aggregated by sample (one bar per binary, sized by peak) so
-// the console reads which samples are worst at a glance; per-session detail
-// lives on History (click a bar to jump there pre-filtered). The primitives
-// live in components/Posture/Posture.tsx.
-/* ──────────────────────────────────────────────────────────────────────── */
-
-function PostureHeader({
-  runs,
-  campaigns,
-  totalAlerts,
-}: {
-  runs: RunSummary[];
-  campaigns: number;
-  totalAlerts: number;
-}) {
-  const { data: fleet } = useQuery({ queryKey: ["agents"], queryFn: () => getAgents(), staleTime: 15_000 });
-  const { data: invData } = useQuery({
-    queryKey: ["investigations", "count"],
-    queryFn: () => listInvestigations({ limit: 100 }),
-    staleTime: 30_000,
-  });
-  const { data: matrixScorecard } = useQuery<TechniqueValidationScorecard>({
-    queryKey: ["technique-validation-matrix"],
-    queryFn: getTechniqueValidationMatrix,
-    staleTime: 30_000,
-  });
-  const { data: fleetTasks = [] } = useQuery({
-    queryKey: ["fleet-tasks"],
-    queryFn: () => listAllInvestigationTasks({ limit: 100 }),
-    staleTime: 15_000,
-  });
-  const { data: campaignsList = [] } = useQuery({
-    queryKey: ["campaigns"],
-    queryFn: () => getCampaigns(),
-    staleTime: 30_000,
-  });
-  const { data: intelKeys } = useQuery({ queryKey: ["intel", "keys"], queryFn: getIntelKeys, staleTime: 60_000 });
-
-  const onlineAgents = (fleet?.agents ?? []).filter((a) => a.online).length;
-  const malicious = runs.filter((r) => r.highest_severity === "malicious").length;
-  const suspicious = runs.filter((r) => r.highest_severity === "suspicious").length;
-  const openCases = (invData?.investigations ?? []).filter((i) => i.status !== "closed" && i.status !== "resolved").length;
-
-  const totalTasks = fleetTasks.length;
-  const completedTasks = fleetTasks.filter((t) => t.status === "completed").length;
-  const taskCompletionPct = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 100;
-
-  // Lateral movement indicator count
-  const lateralEdgesCount = campaignsList.reduce((acc, c) => acc + (c.propagation_graph?.edges?.length || 0), 0);
-
-  // Global DEFCON & Threat Posture Calculation
-  const defconLevel = malicious > 0 || (invData?.investigations ?? []).some((i) => i.severity === "malicious" && i.status !== "closed")
-    ? 1
-    : suspicious > 0 || openCases > 0
-      ? 3
-      : 5;
-
-  const defconMeta = {
-    1: { name: "DEFCON 1 // CRITICAL", level: "ELEVATED", tone: "text-rose-400", bg: "bg-rose-500/10", border: "border-rose-500/30", dot: "bg-rose-500", desc: `${malicious} critical threat runs require immediate operator containment` },
-    2: { name: "DEFCON 2 // HIGH", level: "HIGH", tone: "text-orange-400", bg: "bg-orange-500/10", border: "border-orange-500/30", dot: "bg-orange-500", desc: "Active lateral movement or privilege escalation identified" },
-    3: { name: "DEFCON 3 // GUARDED", level: "GUARDED", tone: "text-amber-400", bg: "bg-amber-500/10", border: "border-amber-500/30", dot: "bg-amber-500", desc: "Suspicious behavioral anomalies flagged across fleet sensors" },
-    4: { name: "DEFCON 4 // LOW", level: "LOW", tone: "text-blue-400", bg: "bg-blue-500/10", border: "border-blue-500/30", dot: "bg-blue-500", desc: "Minor anomalous telemetry detected, under automated baseline analysis" },
-    5: { name: "DEFCON 5 // NOMINAL", level: "NOMINAL", tone: "text-emerald-400", bg: "bg-emerald-500/10", border: "border-emerald-500/30", dot: "bg-emerald-500", desc: "Endpoint sensors operating strictly within baseline behavioral parameters" },
-  }[defconLevel]!;
-
-  return (
-    <section className="mb-6 space-y-4" aria-label="Operational telemetry summary">
-      {/* Tactical DEFCON Threat Posture Strip */}
-      <div className={`hud-card hud-corner flex flex-wrap items-center justify-between gap-4 border ${defconMeta.border} ${defconMeta.bg} p-4.5 transition-all duration-200 shadow-[0_4px_24px_rgba(0,0,0,0.5)]`}>
-        <div className="flex flex-wrap items-center gap-4">
-          <div className="flex items-center gap-2.5">
-            <span className="relative flex h-3 w-3">
-              <span className={`absolute inline-flex h-full w-full animate-ping rounded-full ${defconMeta.dot} opacity-75`} />
-              <span className={`relative inline-flex h-3 w-3 rounded-full ${defconMeta.dot}`} />
-            </span>
-            <div className="flex items-center gap-2">
-              <span className="font-mono text-xs font-bold uppercase tracking-wider text-text-muted">
-                Fleet Threat Posture:
-              </span>
-              <span className={`font-mono text-xs font-black uppercase tracking-widest ${defconMeta.tone}`}>
-                {defconMeta.level}
-              </span>
-            </div>
-          </div>
-
-          {/* 5-Stage Segmented DEFCON Gauge */}
-          <div className="hidden md:flex items-center gap-1 font-mono text-[10px] font-bold">
-            {[5, 4, 3, 2, 1].map((lvl) => {
-              const active = lvl === defconLevel;
-              const color =
-                lvl === 1 ? "text-rose-400 border-rose-500/40" :
-                lvl === 2 ? "text-orange-400 border-orange-500/40" :
-                lvl === 3 ? "text-amber-400 border-amber-500/40" :
-                lvl === 4 ? "text-blue-400 border-blue-500/40" :
-                "text-emerald-400 border-emerald-500/40";
-              const bg =
-                lvl === 1 ? "bg-rose-500/25" :
-                lvl === 2 ? "bg-orange-500/25" :
-                lvl === 3 ? "bg-amber-500/25" :
-                lvl === 4 ? "bg-blue-500/25" :
-                "bg-emerald-500/25";
-
-              return (
-                <span
-                  key={lvl}
-                  className={`rounded px-1.5 py-0.5 border ${
-                    active
-                      ? `${color} ${bg} ring-1 ring-white/20 shadow-sm font-black`
-                      : "border-border-subtle/50 text-text-faint/40 bg-bg-base/40"
-                  }`}
-                  title={`DEFCON ${lvl}`}
-                >
-                  DEF-{lvl}
-                </span>
-              );
-            })}
-          </div>
-
-          <span className="hidden lg:inline text-text-faint">·</span>
-          <span className="font-mono text-[11px] text-text-muted">
-            {defconMeta.desc}
-          </span>
-        </div>
-
-        <div className="flex items-center gap-3 font-mono text-[11px]">
-          <span className="flex items-center gap-1.5 text-signal font-semibold">
-            <span className="h-2 w-2 rounded-full bg-signal animate-pulse" />
-            Telemetry Stream Live
-          </span>
-          <span className="text-text-faint">|</span>
-          <span className="text-text-muted">
-            {fleet?.agents?.length ?? 1} host{(fleet?.agents?.length ?? 1) === 1 ? "" : "s"} tracked
-          </span>
-        </div>
-      </div>
-
-      {/* 6 Strategic KPI Command Tiles */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-        {/* Tile 1: Fleet Sensor Health */}
-        <div className="hud-card flex flex-col justify-between p-4 transition-all duration-200 hover:border-accent/40">
-          <div className="flex items-center justify-between">
-            <span className="tactical-header">Fleet Telemetry</span>
-            <span className="flex items-center gap-1.5 font-mono text-[10px] text-risk-clean font-semibold">
-              <span className="h-1.5 w-1.5 rounded-full bg-risk-clean animate-pulse" />
-              sensors active
-            </span>
-          </div>
-          <div className="my-2.5 flex items-baseline gap-2.5">
-            <span className="font-mono text-2xl font-bold tracking-tight text-text-primary tabular-nums">{runs.length}</span>
-            <span className="text-xs text-text-muted">monitored sessions</span>
-          </div>
-          <div className="flex flex-wrap items-center justify-between border-t border-border-subtle/60 pt-2 font-mono text-[11px] text-text-muted">
-            <span>{fleet?.agents?.length ?? 1} host{(fleet?.agents?.length ?? 1) === 1 ? "" : "s"} enrolled</span>
-            <span className="text-risk-clean font-semibold">{onlineAgents || (runs.length > 0 ? 1 : 0)} online</span>
-          </div>
-        </div>
-
-        {/* Tile 2: Detection Queue */}
-        <div className="hud-card flex flex-col justify-between p-4 transition-all duration-200 hover:border-risk-suspicious/40">
-          <div className="flex items-center justify-between">
-            <span className="tactical-header">Detection Queue</span>
-            <Link to="/findings" className="font-mono text-[10px] text-accent hover:underline flex items-center gap-0.5">
-              <span>triage</span>
-              <Icon name="arrowRight" size={10} />
-            </Link>
-          </div>
-          <div className="my-2.5 flex items-baseline gap-2.5">
-            <span className="font-mono text-2xl font-bold tracking-tight text-text-primary tabular-nums">{totalAlerts}</span>
-            <span className="text-xs text-text-muted">active findings</span>
-          </div>
-          <div className="flex items-center gap-1.5 border-t border-border-subtle/60 pt-2 font-mono text-[10px]">
-            <span className="inline-flex items-center gap-1 rounded bg-risk-malicious/15 px-1.5 py-0.5 font-bold text-risk-malicious border border-risk-malicious/30">
-              {malicious} critical
-            </span>
-            <span className="inline-flex items-center gap-1 rounded bg-risk-suspicious/15 px-1.5 py-0.5 font-bold text-risk-suspicious border border-risk-suspicious/30">
-              {suspicious} susp
-            </span>
-          </div>
-        </div>
-
-        {/* Tile 3: Incident Response Cases */}
-        <div className="hud-card flex flex-col justify-between p-4 transition-all duration-200 hover:border-accent/40">
-          <div className="flex items-center justify-between">
-            <span className="tactical-header">Incident Command</span>
-            <Link to="/investigations" className="font-mono text-[10px] text-accent hover:underline flex items-center gap-0.5">
-              <span>dossiers</span>
-              <Icon name="arrowRight" size={10} />
-            </Link>
-          </div>
-          <div className="my-2.5 flex items-baseline gap-2.5">
-            <span className="font-mono text-2xl font-bold tracking-tight text-text-primary tabular-nums">{openCases || campaigns}</span>
-            <span className="text-xs text-text-muted">active dossiers</span>
-          </div>
-          <div className="border-t border-border-subtle/60 pt-2">
-            <div className="flex items-center justify-between font-mono text-[10px] text-text-muted mb-1">
-              <span>Tasks</span>
-              <span className="font-bold text-text-primary">{taskCompletionPct}%</span>
-            </div>
-            <div className="h-1.5 w-full bg-border-subtle rounded-full overflow-hidden">
-              <div
-                className="h-full bg-accent transition-all duration-300"
-                style={{ width: `${Math.max(6, taskCompletionPct)}%` }}
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* Tile 4: Detection Efficacy & Canaries */}
-        <div className="hud-card flex flex-col justify-between p-4 transition-all duration-200 hover:border-emerald-500/40">
-          <div className="flex items-center justify-between">
-            <span className="tactical-header">Detection Efficacy</span>
-            <Link to="/coverage" className="font-mono text-[10px] text-accent hover:underline flex items-center gap-0.5">
-              <span>matrix</span>
-              <Icon name="arrowRight" size={10} />
-            </Link>
-          </div>
-          <div className="my-2.5 flex items-baseline gap-2.5">
-            <span className="font-mono text-2xl font-bold tracking-tight text-emerald-400 tabular-nums">
-              {matrixScorecard?.summary.detection_rate_pct ?? 0}%
-            </span>
-            <span className="text-xs text-text-muted">rules validated</span>
-          </div>
-          <div className="flex items-center justify-between border-t border-border-subtle/60 pt-2 font-mono text-[11px] text-text-muted">
-            <span>{matrixScorecard?.summary.tested_count ?? 0} canaries</span>
-            <span className="text-text-primary font-semibold">
-              {matrixScorecard?.summary.avg_mttd_ms ? `${matrixScorecard.summary.avg_mttd_ms}ms MTTD` : "—"}
-            </span>
-          </div>
-        </div>
-
-        {/* Tile 5: Lateral Campaigns & Propagation */}
-        <div className="hud-card flex flex-col justify-between p-4 transition-all duration-200 hover:border-cyan-500/40">
-          <div className="flex items-center justify-between">
-            <span className="tactical-header">Lateral Vectors</span>
-            <Link to="/campaigns" className="font-mono text-[10px] text-accent hover:underline flex items-center gap-0.5">
-              <span>graph</span>
-              <Icon name="arrowRight" size={10} />
-            </Link>
-          </div>
-          <div className="my-2.5 flex items-baseline gap-2.5">
-            <span className="font-mono text-2xl font-bold tracking-tight text-signal tabular-nums">
-              {campaignsList.length}
-            </span>
-            <span className="text-xs text-text-muted">campaign clusters</span>
-          </div>
-          <div className="flex items-center justify-between border-t border-border-subtle/60 pt-2 font-mono text-[11px] text-text-muted">
-            <span>{lateralEdgesCount} lateral hops</span>
-            <span className="text-text-primary font-semibold">SSH / SMB / RDP</span>
-          </div>
-        </div>
-
-        {/* Tile 6: Threat Intel & Air-Gap */}
-        <div className="hud-card flex flex-col justify-between p-4 transition-all duration-200 hover:border-purple-500/40">
-          <div className="flex items-center justify-between">
-            <span className="tactical-header">Threat Intel</span>
-            <Link to="/settings" className="font-mono text-[10px] text-accent hover:underline flex items-center gap-0.5">
-              <span>vault</span>
-              <Icon name="arrowRight" size={10} />
-            </Link>
-          </div>
-          <div className="my-2.5 flex items-baseline gap-2.5">
-            <span className="font-mono text-2xl font-bold tracking-tight text-text-primary tabular-nums">
-              {intelKeys ? Object.values(intelKeys).filter(Boolean).length : 0} / 4
-            </span>
-            <span className="text-xs text-text-muted">feeds primed</span>
-          </div>
-          <div className="flex items-center justify-between border-t border-border-subtle/60 pt-2 font-mono text-[11px] text-text-muted">
-            <span className="text-risk-clean font-semibold">Air-Gap Ready</span>
-            <span className="text-text-faint">Local Cache</span>
-          </div>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-/* ──────────────────────────────────────────────────────────────────────── */
-// Live findings feed — SSE push + duplicate collapse
-/* ──────────────────────────────────────────────────────────────────────── */
-
-function FindingsFeed() {
-  const queryClient = useQueryClient();
-  const [sevFilter, setSevFilter] = useState<Severity | "all">("all");
-  // Process-jump hover preview: a fixed-position card next to the link showing
-  // the process's identity (name + command line), platform, activity and alert
-  // counts, and its run — fetched lazily on hover with a short debounce.
-  const [preview, setPreview] = useState<{ x: number; y: number; data: ProcessSummary } | null>(null);
-  const previewTimer = useRef<number | null>(null);
-  const showPreview = (e: ReactMouseEvent<HTMLAnchorElement>, pid: number) => {
-    if (previewTimer.current !== null) window.clearTimeout(previewTimer.current);
-    const r = e.currentTarget.getBoundingClientRect();
-    previewTimer.current = window.setTimeout(() => {
-      void getProcessSummary(pid)
-        .then((data) =>
-          setPreview({
-            x: Math.max(8, Math.min(r.left, window.innerWidth - 336)),
-            y: Math.max(8, Math.min(r.bottom + 8, window.innerHeight - 180)),
-            data,
-          }),
-        )
-        .catch(() => setPreview(null));
-    }, 250);
-  };
-  const hidePreview = () => {
-    if (previewTimer.current !== null) window.clearTimeout(previewTimer.current);
-    setPreview(null);
-  };
-  const { data: alerts = [], isLoading, isError } = useQuery({
-    queryKey: ["alerts", "recent"],
-    queryFn: () => getRecentAlerts(24, "real"),
-    refetchInterval: 10_000,
-  });
-  const { data: meta } = useQuery({ queryKey: ["rules-meta"], queryFn: getRuleMeta, staleTime: Infinity });
-  const byRule = useMemo(() => new Map((meta ?? []).map((m) => [m.rule_id, m])), [meta]);
-  const [audioEnabled, setAudioEnabled] = useState(isSocAudioEnabled);
-
-  // Live push: a fired alert refetches the feed immediately (SSE carries no
-  // sample_name, so the query stays the single source of truth). The poll is
-  // the fallback; push just makes it instant.
-  useEventStream((alert) => {
-    void queryClient.invalidateQueries({ queryKey: ["alerts", "recent"] });
-    if (alert && alert.severity === "malicious") {
-      playSocAlertSound("malicious");
-    } else if (alert && alert.severity === "suspicious") {
-      playSocAlertSound("suspicious");
-    }
-  });
-
-  // Flash rows that weren't in the previous snapshot (new findings ring in).
-  const prevKeys = useRef<Set<string>>(new Set());
-  const [freshKeys, setFreshKeys] = useState<Set<string>>(new Set());
-  useEffect(() => {
-    const keys = new Set(collapseFindings(alerts).map((g) => g.key));
-    const fresh = new Set<string>();
-    for (const k of keys) if (!prevKeys.current.has(k)) fresh.add(k);
-    prevKeys.current = keys;
-    if (fresh.size === 0) return;
-    setFreshKeys(fresh);
-    const t = setTimeout(() => setFreshKeys(new Set()), 2500);
-    return () => clearTimeout(t);
-  }, [alerts]);
-
-  const [searchFilter, setSearchFilter] = useState("");
-
-  const groups = useMemo(() => {
-    const collapsed = collapseFindings(alerts);
-    let filtered = sevFilter === "all" ? collapsed : collapsed.filter((g) => g.first.severity === sevFilter);
-    if (searchFilter.trim()) {
-      const q = searchFilter.toLowerCase().trim();
-      filtered = filtered.filter(
-        (g) =>
-          g.sample_name.toLowerCase().includes(q) ||
-          g.rule_id.toLowerCase().includes(q) ||
-          (g.first.rule_name && g.first.rule_name.toLowerCase().includes(q)) ||
-          (g.first.details && g.first.details.toLowerCase().includes(q)),
-      );
-    }
-    return sortFindingsRiskFirst(filtered, byRule);
-  }, [alerts, sevFilter, searchFilter, byRule]);
-
-  const now = Date.now();
-
-  return (
-    <Panel
-      kicker="Live Detection Stream"
-      title="Prioritized SOC Findings"
-      right={
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={() => {
-              const next = !audioEnabled;
-              setSocAudioEnabled(next);
-              setAudioEnabled(next);
-              if (next) playSocAlertSound("suspicious");
-            }}
-            title={audioEnabled ? "Disable SOC audio alerts" : "Enable SOC audio chimes on detections"}
-            className={`inline-flex items-center gap-1.5 rounded-lg border px-2 py-0.5 font-mono text-[10px] transition-colors ${
-              audioEnabled
-                ? "border-accent/40 bg-accent/15 text-accent font-semibold"
-                : "border-border-subtle bg-bg-surface text-text-faint hover:text-text-muted"
-            }`}
-          >
-            <Icon name="bell" size={11} />
-            <span>{audioEnabled ? "Chime: ON" : "Chime: OFF"}</span>
-          </button>
-          <span className="inline-flex items-center gap-1.5 font-mono text-[10px] text-signal font-semibold">
-            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-signal" aria-hidden />
-            live · SSE
-          </span>
-        </div>
-      }
-    >
-      {/* Search & Severity Filter Bar */}
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-2.5 border-b border-border-subtle/80 pb-3">
-        <div className="flex overflow-hidden rounded-lg border border-border-subtle font-mono text-[10px]">
-          {(["all", "malicious", "suspicious"] as const).map((s) => (
-            <button
-              key={s}
-              onClick={() => setSevFilter(s)}
-              className={`px-3 py-1 font-semibold transition-colors ${
-                sevFilter === s
-                  ? s === "malicious"
-                    ? "bg-risk-malicious/20 text-risk-malicious"
-                    : s === "suspicious"
-                      ? "bg-risk-suspicious/20 text-risk-suspicious"
-                      : "bg-accent/20 text-accent font-bold"
-                  : "text-text-faint hover:text-text-muted hover:bg-bg-elevated"
-              }`}
-            >
-              {s === "all" ? "All Severities" : s.toUpperCase()}
-            </button>
-          ))}
-        </div>
-
-        <div className="relative min-w-[190px]">
-          <Icon name="search" size={11} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-text-faint" />
-          <input
-            type="text"
-            placeholder="Filter by rule, sample, details..."
-            value={searchFilter}
-            onChange={(e) => setSearchFilter(e.target.value)}
-            className="w-full rounded-lg border border-border-subtle bg-bg-surface py-1 pl-7 pr-2 font-mono text-[11px] text-text-primary placeholder:text-text-faint focus:border-accent/50 focus:outline-none"
-          />
-        </div>
-      </div>
-
-      {isLoading && <SkeletonList rows={4} />}
-      {isError && (
-        <p className="rounded-md border border-risk-malicious/40 px-3 py-2 text-xs text-risk-malicious">
-          Backend unreachable — is it running?
-        </p>
-      )}
-      {!isLoading && !isError && groups.length === 0 && (
-        <div className="py-10 text-center font-mono text-sm text-text-muted">
-          <span className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-400 mb-2">
-            <Icon name="shield" size={18} />
-          </span>
-          <p className="font-semibold text-text-primary">Monitoring Active — 0 Findings Detected</p>
-          <p className="mt-1 text-xs text-text-faint">No security heuristics or IOC alerts have triggered across ingested host telemetry.</p>
-        </div>
-      )}
-
-      <ol className="space-y-2">
-        {groups.map((g) => {
-          const a = g.first;
-          const rule = byRule.get(a.rule_id);
-          const isFresh = freshKeys.has(g.key);
-          return (
-            <li
-              key={g.key}
-              className={`group relative overflow-hidden rounded-lg border border-border-subtle bg-bg-elevated/40 pl-3 transition-all duration-150 hover:border-accent/40 hover:shadow-[var(--shadow-raised)] ${
-                isFresh ? "animate-outpost-pulse border-accent/50" : ""
-              }`}
-            >
-              <span className={`absolute inset-y-0 left-0 w-1 ${SEVERITY_BG[a.severity]}`} aria-hidden />
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3.5 py-3">
-                {/* Clicking the sample jumps to the process-centric view when
-                    the alert names a process (Event-Manager parity): everything
-                    that PID did, filtered live. A recon sweep lists every
-                    enumerating PID at once. Alerts without a process keep
-                    linking to the run. */}
-                {(() => {
-                  const pids = a.related_pids ?? [];
-                  const pid = a.related_pid ?? pids[0] ?? null;
-                  if (a.rule_id === "enumeration-burst" && pids.length > 1) {
-                    return (
-                      <Link
-                        to={`/events?pid=${pids.join(",")}`}
-                        onMouseEnter={(e) => showPreview(e, pids[0])}
-                        onMouseLeave={hidePreview}
-                        className="press inline-flex items-center gap-1.5 font-mono text-xs font-medium text-risk-suspicious hover:underline"
-                        title={`Recon sweep — ${pids.length} enumerating processes (${a.sample_name}) — jump to the process view`}
-                      >
-                        {a.sample_name}
-                        <Icon name="process" size={11} className="opacity-80" />
-                        <span className="rounded border border-risk-suspicious/50 bg-risk-suspicious/10 px-1 py-px text-[9px] uppercase tracking-wide">
-                          recon · {pids.length}
-                        </span>
-                      </Link>
-                    );
-                  }
-                  return pid ? (
-                    <Link
-                      to={`/events?pid=${pid}`}
-                      onMouseEnter={(e) => showPreview(e, pid)}
-                      onMouseLeave={hidePreview}
-                      className="press inline-flex items-center gap-1.5 font-mono text-xs font-medium text-text-primary hover:text-accent"
-                      title={`Everything process ${pid} did (${a.sample_name}) — jump to the process view`}
-                    >
-                      {a.sample_name}
-                      <Icon name="process" size={11} className="text-text-faint transition-colors group-hover:text-accent" />
-                    </Link>
-                  ) : (
-                    <Link to={`/runs/${a.run_id}`} className="press font-mono text-xs font-medium text-text-primary hover:text-accent">
-                      {a.sample_name}
-                    </Link>
-                  );
-                })()}
-                {g.count > 1 && (
-                  <span
-                    className="rounded-full border border-border-subtle bg-bg-elevated/70 px-1.5 py-px font-mono text-[10px] tabular-nums text-text-muted"
-                    title={`${g.count} identical findings across ${g.runs.size} run${g.runs.size === 1 ? "" : "s"} in the last 5 minutes`}
-                  >
-                    ×{g.count}
-                  </span>
-                )}
-                <span className="text-xs text-text-muted">{a.rule_name}</span>
-                {rule && (
-                  <span
-                    className="rounded border border-border-subtle px-1.5 py-0.5 font-mono text-[10px] text-text-faint"
-                    title={`MITRE ATT&CK ${rule.tactic}`}
-                  >
-                    {rule.technique} · {rule.tactic}
-                  </span>
-                )}
-                <div className="ml-auto flex items-center gap-2 font-mono text-[10px] tabular-nums">
-                  {a.status === "open" && (
-                    <div className="flex items-center gap-1.5">
-                      {a.id != null && (
-                        <button
-                          onClick={async (e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            if (a.id != null) {
-                              await bulkUpdateAlertStatus([a.id], "acknowledged", "Acknowledged from live dashboard");
-                              void queryClient.invalidateQueries({ queryKey: ["alerts"] });
-                            }
-                          }}
-                          className="press inline-flex items-center gap-1 rounded border border-border-subtle bg-bg-surface px-1.5 py-0.5 text-[10px] text-text-muted hover:border-signal/50 hover:text-signal transition"
-                          title="Acknowledge alert from dashboard"
-                        >
-                          <Icon name="check" size={9} />
-                          <span>ack</span>
-                        </button>
-                      )}
-                      <span
-                        className={`rounded-full border px-1.5 py-px ${
-                          ageBucket(a, now) === 2
-                            ? "border-risk-malicious/40 bg-risk-malicious/10 text-risk-malicious"
-                            : ageBucket(a, now) === 1
-                              ? "border-risk-suspicious/40 bg-risk-suspicious/10 text-risk-suspicious"
-                              : "border-border-subtle text-text-faint"
-                        }`}
-                        title={a.status_at ? `Open since ${a.triggered_at}` : "Open — awaiting triage"}
-                      >
-                        {openSince(a, now)}
-                      </span>
-                    </div>
-                  )}
-                  {a.status !== "open" && (
-                    <span className="text-text-faint uppercase font-bold text-[9px] px-1.5 py-0.5 rounded bg-bg-base border border-border-subtle">{a.status}</span>
-                  )}
-                  <span className="flex items-center gap-1 text-text-faint">
-                    <Icon name={a.severity === "malicious" ? "alert" : "zap"} size={11} className={a.severity === "malicious" ? "text-risk-malicious" : "text-risk-suspicious"} />
-                    {a.triggered_at.slice(11, 19)} UTC
-                  </span>
-                </div>
-              </div>
-              <p className="truncate px-3.5 pb-3 font-mono text-[11px] text-text-muted" title={a.details}>
-                {a.details}
-              </p>
-            </li>
-          );
-        })}
-      </ol>
-
-      {/* Process-jump hover preview — fixed-position card at the link's spot. */}
-      {preview && (
-        <div
-          role="tooltip"
-          className="pointer-events-none fixed z-50 w-80 overflow-hidden rounded-xl border border-border-subtle bg-bg-surface shadow-[var(--shadow-raised)]"
-          style={{ left: preview.x, top: preview.y }}
-        >
-          <div className="flex items-center gap-2 border-b border-border-subtle bg-bg-elevated/40 px-3 py-2">
-            <Icon name="process" size={13} className="shrink-0 text-accent" />
-            <span className="truncate font-mono text-xs font-semibold text-text-primary">
-              {preview.data.process_name ?? `pid ${preview.data.pid}`}
-            </span>
-            <span className="ml-auto shrink-0 font-mono text-[10px] text-text-faint">pid {preview.data.pid}</span>
-          </div>
-          <div className="space-y-2 px-3 py-2.5">
-            {preview.data.command_line && (
-              <p className="truncate font-mono text-[10px] text-text-muted" title={preview.data.command_line}>
-                {preview.data.command_line}
-              </p>
-            )}
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[10px] text-text-faint">
-              <span className="inline-flex items-center gap-1">
-                <Icon name={platformIconName(preview.data.platform)} size={10} />
-                {preview.data.platform}
-              </span>
-              <span>
-                {preview.data.event_count} event{preview.data.event_count === 1 ? "" : "s"}
-              </span>
-              {(preview.data.children?.length ?? 0) > 0 && (
-                <span>
-                  {preview.data.children!.length} child{preview.data.children!.length === 1 ? "" : "ren"}
-                </span>
-              )}
-              {(preview.data.network_connections?.length ?? 0) > 0 && (
-                <span>
-                  {preview.data.network_connections!.length} socket{preview.data.network_connections!.length === 1 ? "" : "s"}
-                </span>
-              )}
-              <span className={preview.data.alert_count > 0 ? "text-risk-suspicious font-semibold" : ""}>
-                {preview.data.alert_count} alert{preview.data.alert_count === 1 ? "" : "s"}
-              </span>
-            </div>
-            <Link
-              to={`/runs/${preview.data.run_id}`}
-              className="press inline-flex items-center gap-1 font-mono text-[10px] text-accent hover:underline"
-            >
-              {preview.data.sample_name}
-              <Icon name="external" size={9} className="opacity-60" />
-            </Link>
-          </div>
-        </div>
-      )}
-    </Panel>
-  );
-}
-
-function SkeletonList({ rows }: { rows: number }) {
-  return (
-    <div className="space-y-2">
-      {Array.from({ length: rows }).map((_, i) => (
-        <div key={i} className="flex items-center gap-3 rounded-lg border border-border-subtle p-3">
-          <span className="skeleton h-2 w-2 rounded-full" />
-          <span className="skeleton h-3 w-36" />
-          <span className="skeleton h-3 w-48" />
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function ActiveInvestigationsPanel() {
-  const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState<"cases" | "tasks">("cases");
-
-  const {
-    data: invData,
-    isLoading: isCasesLoading,
-    isError: isCasesError,
-  } = useQuery({
-    queryKey: ["investigations", "active"],
-    queryFn: () => listInvestigations({ limit: 6 }),
-  });
-
-  const {
-    data: tasks = [],
-    isLoading: isTasksLoading,
-    isError: isTasksError,
-  } = useQuery({
-    queryKey: ["fleet-tasks"],
-    queryFn: () => listAllInvestigationTasks({ limit: 12 }),
-  });
-
-  const toggleTaskMutation = useMutation({
-    mutationFn: async ({
-      investigationId,
-      taskId,
-      nextStatus,
-    }: {
-      investigationId: string;
-      taskId: number;
-      nextStatus: "completed" | "todo";
-    }) => {
-      return patchInvestigationTask(investigationId, taskId, { status: nextStatus });
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["fleet-tasks"] });
-      void queryClient.invalidateQueries({ queryKey: ["investigations"] });
-    },
-  });
-
-  const investigations = invData?.investigations ?? [];
-  const openCases = investigations.filter((i) => i.status !== "closed" && i.status !== "resolved");
-  const pendingTasks = tasks.filter((t) => t.status !== "completed");
-
-  return (
-    <Panel
-      kicker="Incident Command Deck"
-      title="Cases & Containment"
-      right={
-        <Link
-          to="/investigations"
-          className="press inline-flex items-center gap-1 font-mono text-[10px] text-accent hover:underline"
-        >
-          case workspace <Icon name="arrowRight" size={11} />
-        </Link>
-      }
-    >
-      {/* Tab Switcher */}
-      <div className="mb-3 flex items-center gap-2 border-b border-border-subtle pb-2.5">
-        <button
-          type="button"
-          onClick={() => setActiveTab("cases")}
-          className={`press inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 font-mono text-xs transition-colors ${
-            activeTab === "cases"
-              ? "bg-accent/15 text-accent font-semibold border border-accent/40"
-              : "text-text-muted hover:text-text-primary hover:bg-bg-elevated border border-transparent"
-          }`}
-        >
-          <Icon name="box" size={12} />
-          <span>Active Cases</span>
-          <span className="rounded-full bg-bg-surface px-1.5 py-px text-[10px] font-mono">
-            {openCases.length}
-          </span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab("tasks")}
-          className={`press inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 font-mono text-xs transition-colors ${
-            activeTab === "tasks"
-              ? "bg-accent/15 text-accent font-semibold border border-accent/40"
-              : "text-text-muted hover:text-text-primary hover:bg-bg-elevated border border-transparent"
-          }`}
-        >
-          <Icon name="check" size={12} />
-          <span>Containment Tasks</span>
-          <span className="rounded-full bg-bg-surface px-1.5 py-px text-[10px] font-mono">
-            {pendingTasks.length}
-          </span>
-        </button>
-      </div>
-
-      {/* Tab 1: Cases View */}
-      {activeTab === "cases" && (
-        <>
-          {isCasesLoading ? (
-            <SkeletonList rows={3} />
-          ) : isCasesError ? (
-            <p className="text-xs text-risk-malicious">Couldn't load investigations.</p>
-          ) : investigations.length === 0 ? (
-            <div className="py-6 text-center">
-              <p className="font-mono text-xs text-text-muted">No open investigation cases.</p>
-              <p className="mt-1 text-[11px] text-text-faint">
-                Create an investigation from the findings queue or investigate suspicious telemetry.
-              </p>
-              <Link
-                to="/investigations"
-                className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-elevated px-3 py-1.5 font-mono text-xs text-text-muted hover:border-accent/40 hover:text-accent"
-              >
-                <Icon name="plus" size={12} />
-                New investigation
-              </Link>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {investigations.map((inv) => (
-                <Link
-                  key={inv.id}
-                  to={`/investigations/${inv.id}`}
-                  className="group block rounded-xl border border-border-subtle/70 bg-bg-elevated/40 p-3 transition-colors hover:border-accent/50 hover:bg-bg-elevated"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="truncate font-sans text-xs font-semibold text-text-primary group-hover:text-accent">
-                      {inv.title}
-                    </span>
-                    <span
-                      className={`shrink-0 rounded border px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wide ${
-                        inv.status === "active" || inv.status === "triage"
-                          ? "border-risk-suspicious/40 text-risk-suspicious bg-risk-suspicious/10"
-                          : inv.status === "created"
-                            ? "border-accent/40 text-accent bg-accent/10"
-                            : "border-border-subtle text-text-faint"
-                      }`}
-                    >
-                      {inv.status}
-                    </span>
-                  </div>
-                  <div className="mt-1.5 flex flex-wrap items-center gap-2 font-mono text-[10px] text-text-faint">
-                    <span>{inv.id}</span>
-                    <span>·</span>
-                    <span>updated {inv.updated_at ? _rel(inv.updated_at) : "recently"}</span>
-                    {inv.severity && (
-                      <span
-                        className={`rounded px-1.5 py-0.5 text-[9px] font-bold uppercase ${
-                          inv.severity === "malicious"
-                            ? "bg-risk-malicious/15 text-risk-malicious"
-                            : "bg-risk-suspicious/15 text-risk-suspicious"
-                        }`}
-                      >
-                        {inv.severity}
-                      </span>
-                    )}
-                    {inv.tags && inv.tags.length > 0 && (
-                      <div className="flex gap-1 ml-auto">
-                        {inv.tags.slice(0, 2).map((t) => (
-                          <span key={t} className="rounded bg-bg-surface px-1 text-[9px] text-text-muted">
-                            #{t}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </Link>
-              ))}
-            </div>
-          )}
-        </>
-      )}
-
-      {/* Tab 2: Tasks View */}
-      {activeTab === "tasks" && (
-        <>
-          {isTasksLoading ? (
-            <SkeletonList rows={3} />
-          ) : isTasksError ? (
-            <p className="text-xs text-risk-malicious">Couldn't load containment tasks.</p>
-          ) : tasks.length === 0 ? (
-            <div className="py-6 text-center">
-              <p className="font-mono text-xs text-text-muted">No containment tasks registered.</p>
-              <p className="mt-1 text-[11px] text-text-faint">
-                Add mitigation and containment steps to active investigations to dispatch response tasks.
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {tasks.map((task) => {
-                const isCompleted = task.status === "completed";
-                const priorityCls =
-                  task.priority === "critical"
-                    ? "border-risk-malicious/40 bg-risk-malicious/10 text-risk-malicious"
-                    : task.priority === "high"
-                      ? "border-risk-suspicious/40 bg-risk-suspicious/10 text-risk-suspicious"
-                      : task.priority === "medium"
-                        ? "border-accent/40 bg-accent/10 text-accent"
-                        : "border-border-subtle text-text-faint";
-
-                return (
-                  <div
-                    key={task.id}
-                    className={`flex items-start gap-2.5 rounded-xl border p-2.5 transition-all ${
-                      isCompleted
-                        ? "border-border-subtle/40 bg-bg-elevated/20 opacity-60"
-                        : "border-border-subtle/80 bg-bg-elevated/40 hover:border-accent/40"
-                    }`}
-                  >
-                    <button
-                      type="button"
-                      onClick={() =>
-                        toggleTaskMutation.mutate({
-                          investigationId: task.investigation_id,
-                          taskId: task.id,
-                          nextStatus: isCompleted ? "todo" : "completed",
-                        })
-                      }
-                      className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors ${
-                        isCompleted
-                          ? "border-risk-clean bg-risk-clean/20 text-risk-clean"
-                          : "border-border-subtle hover:border-accent text-transparent hover:text-accent/50"
-                      }`}
-                      title={isCompleted ? "Mark task as incomplete" : "Mark task as completed"}
-                      aria-label={isCompleted ? "Mark task as incomplete" : "Mark task as completed"}
-                    >
-                      <Icon name="check" size={10} />
-                    </button>
-
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={`truncate font-sans text-xs ${
-                            isCompleted ? "line-through text-text-muted" : "font-medium text-text-primary"
-                          }`}
-                        >
-                          {task.title}
-                        </span>
-                      </div>
-
-                      <div className="mt-1 flex flex-wrap items-center gap-1.5 font-mono text-[10px] text-text-faint">
-                        <span className={`rounded border px-1 py-px uppercase font-semibold text-[9px] ${priorityCls}`}>
-                          {task.priority}
-                        </span>
-                        <span className="rounded bg-bg-surface px-1 py-px text-text-muted text-[9px]">
-                          {task.category}
-                        </span>
-                        {task.investigation_title && (
-                          <Link
-                            to={`/investigations/${task.investigation_id}`}
-                            className="truncate text-accent hover:underline max-w-[160px]"
-                            title={`Case: ${task.investigation_title}`}
-                          >
-                            ↳ {task.investigation_title}
-                          </Link>
-                        )}
-                        {task.assignee && (
-                          <span className="text-text-muted">@{task.assignee}</span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </>
-      )}
-    </Panel>
-  );
-}
-
-/* ──────────────────────────────────────────────────────────────────────── */
-// Action strip — quick actions + host system, one compact bar at the bottom
-/* ──────────────────────────────────────────────────────────────────────── */
-
-const ACTIONS: { to: string; label: string; desc: string; icon: ReactNode }[] = [
-  { to: "/monitor", label: "Detonate sample", desc: "Dynamic analysis on the auto-detected host OS", icon: <Icon name="play" size={14} /> },
-  { to: "/events", label: "Event log", desc: "Browse every activity like a system log viewer", icon: <Icon name="list" size={14} /> },
-  { to: "/history", label: "Compare sessions", desc: "Pick two runs from History and diff them", icon: <Icon name="compare" size={14} /> },
-  { to: "/watchlist", label: "Watchlist", desc: "Track known-bad infrastructure", icon: <Icon name="star" size={14} /> },
+const ATTACK_TACTICS = [
+  { id: "initial-access", label: "Initial Access" },
+  { id: "execution", label: "Execution" },
+  { id: "persistence", label: "Persistence" },
+  { id: "privilege-escalation", label: "Priv Escalation" },
+  { id: "defense-evasion", label: "Defense Evasion" },
+  { id: "credential-access", label: "Cred Access" },
+  { id: "discovery", label: "Discovery" },
+  { id: "lateral-movement", label: "Lateral Move" },
+  { id: "command-and-control", label: "Command & Control" },
+  { id: "exfiltration", label: "Exfiltration" },
+  { id: "impact", label: "Impact" },
 ];
 
-function ActionStrip() {
-  const { data: plat } = useQuery({ queryKey: ["platform"], queryFn: getPlatform, staleTime: Infinity });
-  const { data: alive } = useQuery({ queryKey: ["health"], queryFn: getHealth, refetchInterval: 10_000 });
-
-  const glyph = plat ? (plat.os === "windows" ? "windows" : plat.os === "macos" ? "mac" : "linux") : "terminal";
-  const label = plat ? plat.name || plat.os : "detecting…";
-
-  return (
-    <section className="panel mt-6" aria-label="Actions and environment">
-      <div className="flex flex-col gap-4 p-4 lg:flex-row lg:items-center lg:gap-6">
-        {/* Quick actions — compact inline buttons, descriptions on hover */}
-        <div className="flex flex-wrap items-center gap-2">
-          {ACTIONS.map((a) => (
-            <Link
-              key={a.to}
-              to={a.to}
-              title={a.desc}
-              className="press group inline-flex items-center gap-2 rounded-lg border border-border-subtle bg-bg-elevated/40 px-3 py-2 text-xs font-medium text-text-muted transition-all duration-150 hover:border-accent/40 hover:text-text-primary hover:shadow-[var(--shadow-raised)]"
-            >
-              <span className="text-accent">{a.icon}</span>
-              {a.label}
-              <Icon
-                name="arrowRight"
-                size={11}
-                className="text-text-faint transition-all duration-150 group-hover:translate-x-0.5 group-hover:text-accent"
-              />
-            </Link>
-          ))}
-        </div>
-
-        {/* Host system — one compact readout, auto-detected */}
-        <div className="flex items-center gap-3 border-t border-border-subtle pt-4 lg:ml-auto lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent">
-            <Icon name={glyph} size={15} />
-          </span>
-          <div className="min-w-0">
-            <p className="truncate text-xs font-semibold text-text-primary">{label}</p>
-            <p className="truncate font-mono text-[10px] text-text-faint">
-              {plat ? `${plat.os} ${plat.release} · ${plat.machine}` : "detecting…"}
-            </p>
-          </div>
-          <span className="rounded border border-accent/40 bg-bg-elevated/50 px-1.5 py-0.5 font-mono text-[10px] text-accent">
-            {plat?.collector ?? "—"}
-          </span>
-          <span
-            className={`flex items-center gap-1.5 text-[10px] font-medium ${alive ? "text-risk-clean" : "text-risk-malicious"}`}
-          >
-            <span className={`h-1.5 w-1.5 rounded-full ${alive ? "animate-pulse bg-risk-clean" : "bg-risk-malicious"}`} />
-            {alive ? "online" : "offline"}
-          </span>
-        </div>
-      </div>
-    </section>
-  );
+function relativeTime(iso: string): string {
+  const diff = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+  if (diff < 60) return "just now";
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
 }
 
-/* ──────────────────────────────────────────────────────────────────────── */
-// Auto-OS front door — the vision's first question: "is THIS host being
-// monitored?" The backend detects its own OS (no picker anywhere); this
-// panel compares its hostname to the fleet and, when no agent is attached,
-// leads with the one-command agent bootstrap instead of the detonation lab.
-// macOS hosts get nothing (Windows/Linux focus).
-/* ──────────────────────────────────────────────────────────────────────── */
-
-function IntelKeyHealth() {
-  const { data } = useQuery({ queryKey: ["intel-keys"], queryFn: getIntelKeys, staleTime: 60_000, refetchInterval: 120_000 });
-  const keys = data?.keys ?? [];
-  const health = intelKeyHealth(keys);
-  if (health.tone === "none") return null;
-  const cls =
-    health.tone === "stale"
-      ? "border-risk-suspicious/40 bg-risk-suspicious/10 text-risk-suspicious"
-      : "border-risk-clean/40 bg-risk-clean/10 text-risk-clean";
-  return (
-    <Link
-      to="/settings"
-      className={`mb-5 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border px-3 py-2 font-mono text-[10px] transition-colors duration-150 hover:brightness-110 ${cls}`}
-      title="Threat-intel keys — configure, test, and rotate in Settings"
-    >
-      <Icon name="shield" size={11} />
-      {health.items.join(" · ")}
-      <span className="ml-auto inline-flex items-center gap-1 text-text-faint">
-        intel keys <Icon name="arrowRight" size={10} />
-      </span>
-    </Link>
-  );
+interface AlertDrawerState {
+  alert: QueueAlert | GlobalAlert;
+  ruleMeta?: { tactic: string; technique: string; weight: number };
 }
 
-function HostForensicsRadarPanel() {
-  const { data: snapshot } = useQuery({
-    queryKey: ["xray", "snapshot"],
-    queryFn: getHostXRaySnapshot,
-    refetchInterval: 10_000,
-  });
-  const { data: catalog } = useQuery({
-    queryKey: ["xray", "catalog"],
-    queryFn: getXRayTargetCatalog,
-    refetchInterval: 15_000,
-  });
-
-  const procCount = snapshot?.process_count ?? 0;
-  const socketCount = snapshot?.socket_count ?? 0;
-  const cpuPct = Math.min(100, Math.max(0, snapshot?.metrics?.cpu_percent ?? 0));
-  const memMb = snapshot?.metrics?.memory_used_mb ?? 0;
-  const memTotal = snapshot?.metrics?.memory_total_mb ?? 1;
-  const memPct = Math.min(100, Math.round((memMb / memTotal) * 100));
-
-  return (
-    <section className="panel mb-6 hud-card hud-corner p-5" aria-label="Host Forensics Real-Time Radar">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle pb-3">
-        <div className="flex items-center gap-2.5">
-          <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-accent/15 text-accent shadow-[var(--glow-accent)]">
-            <Icon name="box" size={16} />
-          </span>
-          <div>
-            <h3 className="font-mono text-xs font-bold uppercase tracking-wider text-text-primary">
-              Host Forensics & Live Network Topology
-            </h3>
-            <p className="text-[11px] text-text-muted">
-              Live kernel procfs observation & real-time socket topology across host network interfaces
-            </p>
-          </div>
-        </div>
-        <Link
-          to="/events"
-          className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/40 bg-accent/10 px-3 py-1.5 font-mono text-xs font-semibold text-accent hover:bg-accent/20 transition"
-        >
-          <span>Open Host Forensics</span>
-          <Icon name="arrowRight" size={11} />
-        </Link>
-      </div>
-
-      <div className="mt-4 grid grid-cols-1 lg:grid-cols-12 gap-5">
-        {/* Left: 6 Host Telemetry Metric Blocks */}
-        <div className="lg:col-span-7 flex flex-col justify-between space-y-4">
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-            <div className="rounded-xl border border-border-subtle bg-bg-elevated/40 p-3.5 text-center flex flex-col justify-between">
-              <span className="tactical-header">Host CPU Load</span>
-              <div className="my-1.5 font-mono text-2xl font-bold text-text-primary tabular-nums">{cpuPct}%</div>
-              <div className="h-1.5 w-full bg-border-subtle rounded-full overflow-hidden">
-                <div className="h-full bg-accent transition-all duration-300" style={{ width: `${Math.max(4, cpuPct)}%` }} />
-              </div>
-            </div>
-
-            <div className="rounded-xl border border-border-subtle bg-bg-elevated/40 p-3.5 text-center flex flex-col justify-between">
-              <span className="tactical-header">Memory Active</span>
-              <div className="my-1.5 font-mono text-2xl font-bold text-text-primary tabular-nums">{memMb} MB</div>
-              <div className="h-1.5 w-full bg-border-subtle rounded-full overflow-hidden">
-                <div className="h-full bg-signal transition-all duration-300" style={{ width: `${Math.max(4, memPct)}%` }} />
-              </div>
-            </div>
-
-            <div className="rounded-xl border border-border-subtle bg-bg-elevated/40 p-3.5 text-center flex flex-col justify-between">
-              <span className="tactical-header">Live Processes</span>
-              <div className="my-1.5 font-mono text-2xl font-bold text-accent tabular-nums">{procCount}</div>
-              <span className="text-[10px] text-text-muted font-mono">procfs tracks</span>
-            </div>
-
-            <div className="rounded-xl border border-border-subtle bg-bg-elevated/40 p-3.5 text-center flex flex-col justify-between">
-              <span className="tactical-header">Listening Sockets</span>
-              <div className="my-1.5 font-mono text-2xl font-bold text-emerald-400 tabular-nums">{socketCount}</div>
-              <span className="text-[10px] text-text-muted font-mono">IP bindings</span>
-            </div>
-
-            <div className="rounded-xl border border-border-subtle bg-bg-elevated/40 p-3.5 text-center flex flex-col justify-between">
-              <span className="tactical-header">GPU Render Nodes</span>
-              <div className="my-1.5 font-mono text-2xl font-bold text-purple-400 tabular-nums">{catalog?.quick_inspect?.gpu ?? 0}</div>
-              <span className="text-[10px] text-text-muted font-mono">accelerators</span>
-            </div>
-
-            <div className="rounded-xl border border-border-subtle bg-bg-elevated/40 p-3.5 text-center flex flex-col justify-between">
-              <span className="tactical-header">Hardware Sensors</span>
-              <div className="my-1.5 font-mono text-2xl font-bold text-amber-400 tabular-nums">
-                {(catalog?.quick_inspect?.microphone ?? 0) + (catalog?.quick_inspect?.audio ?? 0)}
-              </div>
-              <span className="text-[10px] text-text-muted font-mono">audio streams</span>
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between rounded-lg border border-border-subtle bg-bg-base/50 p-3 font-mono text-[11px] text-text-muted">
-            <span className="flex items-center gap-2">
-              <span className="h-2 w-2 rounded-full bg-risk-clean animate-pulse" />
-              <span>KERNEL HOOKS: EBPF / PROCFS ENGINE ACTIVE</span>
-            </span>
-            <span className="text-text-faint">LATENCY: 12ms</span>
-          </div>
-        </div>
-
-        {/* Right: Bespoke Live Telemetry Radar Sweep Canvas */}
-        <div className="lg:col-span-5 flex items-center justify-center">
-          <LiveTelemetryRadar className="w-full" />
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function MitreTacticalProgressionPanel() {
-  const { data: meta = [] } = useQuery({ queryKey: ["rules-meta"], queryFn: getRuleMeta, staleTime: Infinity });
-  const { data: alerts = [] } = useQuery({ queryKey: ["alerts", "recent"], queryFn: () => getRecentAlerts(100, "real"), staleTime: 10_000 });
-
-  const CANONICAL_TACTICS = [
-    { id: "TA0001", slug: "initial-access", name: "Initial Access", color: "bg-blue-500/15 text-blue-300 border-blue-500/30" },
-    { id: "TA0002", slug: "execution", name: "Execution", color: "bg-amber-500/15 text-amber-300 border-amber-500/30" },
-    { id: "TA0003", slug: "persistence", name: "Persistence", color: "bg-orange-500/15 text-orange-300 border-orange-500/30" },
-    { id: "TA0004", slug: "privilege-escalation", name: "Priv Escalation", color: "bg-red-500/15 text-red-300 border-red-500/30" },
-    { id: "TA0005", slug: "defense-evasion", name: "Defense Evasion", color: "bg-rose-500/15 text-rose-300 border-rose-500/30" },
-    { id: "TA0006", slug: "credential-access", name: "Credential Access", color: "bg-purple-500/15 text-purple-300 border-purple-500/30" },
-    { id: "TA0011", slug: "command-and-control", name: "Command & Control", color: "bg-indigo-500/15 text-indigo-300 border-indigo-500/30" },
-  ];
-
-  const ruleMap = useMemo(() => {
-    const counts: Record<string, { rules: number; activeAlerts: number }> = {};
-    for (const t of CANONICAL_TACTICS) {
-      counts[t.slug] = { rules: 0, activeAlerts: 0 };
-    }
-    for (const r of meta) {
-      const slug = (r.tactic || "").toLowerCase().replace(/[\s_]+/g, "-");
-      if (counts[slug]) {
-        counts[slug].rules += 1;
-      }
-    }
-    const ruleTacticMap = new Map(meta.map((m) => [m.rule_id, (m.tactic || "").toLowerCase().replace(/[\s_]+/g, "-")]));
-    for (const a of alerts) {
-      const slug = ruleTacticMap.get(a.rule_id);
-      if (slug && counts[slug]) {
-        counts[slug].activeAlerts += 1;
-      }
-    }
-    return counts;
-  }, [meta, alerts]);
-
-  return (
-    <section className="panel mb-6 border border-border-subtle bg-bg-surface/80 backdrop-blur-md p-5 rounded-2xl" aria-label="MITRE Kill Chain Progression">
-      <div className="flex items-center justify-between border-b border-border-subtle pb-3">
-        <div className="flex items-center gap-2">
-          <Icon name="target" size={15} className="text-accent" />
-          <h3 className="font-mono text-xs font-bold uppercase tracking-wider text-text-primary">
-            MITRE ATT&CK Kill-Chain Tactical Distribution
-          </h3>
-        </div>
-        <Link to="/coverage" className="font-mono text-[11px] text-accent hover:underline flex items-center gap-1">
-          <span>Enterprise Heatmap ({meta.length} active rules)</span>
-          <Icon name="arrowRight" size={11} />
-        </Link>
-      </div>
-
-      <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
-        {CANONICAL_TACTICS.map((t) => {
-          const stats = ruleMap[t.slug] || { rules: 0, activeAlerts: 0 };
-          const hasActive = stats.activeAlerts > 0;
-          return (
-            <Link
-              key={t.id}
-              to={`/coverage?tactic=${t.slug}`}
-              className={`rounded-xl border p-3 text-center transition hover:brightness-125 cursor-pointer ${
-                hasActive ? "ring-1 ring-risk-malicious/50 " + t.color : t.color
-              }`}
-            >
-              <div className="flex items-center justify-between font-mono text-[10px] opacity-75">
-                <span>{t.id}</span>
-                {hasActive && (
-                  <span className="flex items-center gap-1 rounded bg-risk-malicious px-1 py-px text-[9px] font-bold text-white uppercase">
-                    {stats.activeAlerts} live
-                  </span>
-                )}
-              </div>
-              <div className="mt-1 font-bold text-xs truncate text-text-primary">{t.name}</div>
-              <div className="mt-2 font-mono text-[11px] font-semibold text-text-muted">
-                {stats.rules} rule{stats.rules === 1 ? "" : "s"}
-              </div>
-            </Link>
-          );
-        })}
-      </div>
-    </section>
-  );
-}
-
-// Intel cache freshness — the one-line sibling of IntelKeyHealth: oldest
-// verdict age + stale count fleet-wide, amber when any verdict is past the
-// TTL. Links to Settings (where the stale-only sweep lives). Cheap: one
-// aggregate query, no external calls.
-function IntelFreshness() {
-  const { data } = useQuery({
-    queryKey: ["intel-freshness"],
-    queryFn: getIntelFreshness,
-    staleTime: 60_000,
-    refetchInterval: 120_000,
-  });
-  if (!data) return null;
-  const h = intelFreshness(data);
-  if (h.tone === "none" || !h.line) return null;
-  const cls =
-    h.tone === "stale"
-      ? "border-risk-suspicious/40 bg-risk-suspicious/10 text-risk-suspicious"
-      : "border-border-subtle text-text-faint";
-      return (
-    <Link
-      to="/settings"
-      className={`mb-5 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border px-3 py-2 font-mono text-[10px] transition-colors duration-150 hover:brightness-110 ${cls}`}
-      title="Enrichment cache age across the fleet — refresh stale verdicts in Settings (stale-only sweep)"
-    >
-      <Icon name="refresh" size={11} />
-      {h.line}
-      <span className="ml-auto inline-flex items-center gap-1 text-text-faint">
-        intel cache <Icon name="arrowRight" size={10} />
-      </span>
-    </Link>
-  );
-}
-
-function HostMonitorPanel() {
-  const queryClient = useQueryClient();
-  const { data: plat } = useQuery({ queryKey: ["platform"], queryFn: getPlatform, staleTime: Infinity });
-  const { data: fleet } = useQuery({
-    queryKey: ["agents"],
-    queryFn: () => getAgents(),
-    staleTime: 15_000,
-    refetchInterval: 30_000,
-  });
-  const [copied, setCopied] = useState(false);
-
-  useEventStream(
-    () => undefined,
-    undefined,
-    undefined,
-    (f) => {
-      if (f.host_id === plat?.hostname) {
-        void queryClient.invalidateQueries({ queryKey: ["agents"] });
-      }
-    },
-  );
-
-  if (!plat) return null;
-
-  const agent = (fleet?.agents ?? []).find((a) => a.host_id === plat.hostname);
-  const monitored = agent !== undefined;
-  const collector =
-    plat.os === "windows"
-      ? "collectors\\windows\\collector_win.py"
-      : plat.os === "macos"
-        ? "collectors/macos/collector_macos.py"
-        : "collectors/linux/collector_linux.py";
-  const agentCmd = `python ${collector} --backend-url ${BASE_URL} --mode live`;
-  const glyph = plat.os === "windows" ? "windows" : plat.os === "macos" ? "mac" : "linux";
+function AlertInspectorDrawer({
+  data,
+  onClose,
+  onAcknowledge,
+}: {
+  data: AlertDrawerState;
+  onClose: () => void;
+  onAcknowledge: (id: number | null) => void;
+}) {
+  const { alert, ruleMeta } = data;
+  const isMalicious = alert.severity === "malicious";
 
   return (
     <div
-      className={`mb-6 relative overflow-hidden rounded-2xl border p-4 backdrop-blur-xl transition-all duration-200 ${
-        monitored
-          ? "border-risk-clean/30 bg-gradient-to-r from-risk-clean/10 via-bg-surface/90 to-bg-surface/90 shadow-[0_4px_24px_-4px_rgba(63,167,150,0.15)]"
-          : "border-risk-suspicious/30 bg-gradient-to-r from-risk-suspicious/10 via-bg-surface/90 to-bg-surface/90 shadow-[0_4px_24px_-4px_rgba(217,164,65,0.15)]"
-      }`}
-      aria-label="This host's monitor status"
+      role="dialog"
+      aria-modal="true"
+      className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-xs animate-fade-in font-mono"
+      onClick={onClose}
     >
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-3.5">
-          <span
-            className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border ${
-              monitored
-                ? "border-risk-clean/40 bg-risk-clean/15 text-risk-clean shadow-[var(--glow-clean)]"
-                : "border-risk-suspicious/40 bg-risk-suspicious/15 text-risk-suspicious shadow-[var(--glow-amber)]"
-            }`}
+      <div
+        className="w-full max-w-lg bg-bg-surface border-l border-border-subtle shadow-2xl h-full flex flex-col text-xs animate-slide-left"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="p-4 border-b border-border-subtle bg-bg-elevated/40 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span
+              className={`rounded px-1.5 py-0.5 text-[10px] uppercase font-bold ${
+                isMalicious
+                  ? "bg-risk-malicious/20 text-risk-malicious border border-risk-malicious/40"
+                  : "bg-risk-suspicious/20 text-risk-suspicious border border-risk-suspicious/40"
+              }`}
+            >
+              {alert.severity}
+            </span>
+            <span className="font-bold text-text-primary text-sm truncate max-w-[280px]" title={alert.rule_name}>
+              {alert.rule_name}
+            </span>
+          </div>
+          <button
+            onClick={onClose}
+            className="rounded p-1 text-text-muted hover:bg-bg-base hover:text-text-primary"
+            title="Close Drawer"
           >
-            <Icon name={glyph} size={20} />
-          </span>
-          <div className="min-w-0">
-            <div className="flex items-center gap-2.5">
-              <span className="relative flex h-2.5 w-2.5">
-                <span
-                  className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-75 ${
-                    monitored ? "bg-risk-clean" : "bg-risk-suspicious"
-                  }`}
-                />
-                <span
-                  className={`relative inline-flex h-2.5 w-2.5 rounded-full ${
-                    monitored ? "bg-risk-clean" : "bg-risk-suspicious"
-                  }`}
-                />
-              </span>
-              <p className="font-sans text-sm font-semibold tracking-tight text-text-primary">
-                {monitored ? `Host Monitored — ${agent?.online ? "Agent Active" : "Agent Standby"}` : "Host Not Monitored Yet"}
-              </p>
-            </div>
-            <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 font-mono text-[11px] text-text-muted">
-              <span className="font-medium text-text-primary">{plat.hostname}</span>
-              <span className="text-text-faint">·</span>
-              <span>{plat.os} {plat.release}</span>
-              <span className="text-text-faint">·</span>
-              <span className="rounded bg-bg-elevated/70 px-1.5 py-0.5 text-text-faint">{plat.collector}</span>
-              {monitored && agent && (
+            <Icon name="x" size={14} />
+          </button>
+        </div>
+
+        {/* Action Ribbon */}
+        <div className="p-3 border-b border-border-subtle bg-bg-base/60 flex flex-wrap items-center gap-1.5">
+          {alert.id && alert.status === "open" && (
+            <button
+              onClick={() => onAcknowledge(alert.id)}
+              className="press inline-flex items-center gap-1 rounded border border-signal/60 bg-signal/15 px-2.5 py-1 text-[11px] font-bold text-signal hover:bg-signal/25"
+            >
+              <Icon name="check" size={11} />
+              <span>Acknowledge Alert</span>
+            </button>
+          )}
+
+          <Link
+            to={`/findings?alert_id=${alert.id || ""}`}
+            className="press inline-flex items-center gap-1 rounded border border-border-subtle bg-bg-surface px-2.5 py-1 text-[11px] text-text-muted hover:border-accent/40 hover:text-text-primary"
+          >
+            <Icon name="shield" size={11} />
+            <span>Triage in Queue</span>
+          </Link>
+
+          {alert.related_ip && (
+            <Link
+              to={`/footprint?target=${encodeURIComponent(alert.related_ip)}`}
+              className="press inline-flex items-center gap-1 rounded border border-border-subtle bg-bg-surface px-2.5 py-1 text-[11px] text-text-muted hover:border-accent/40 hover:text-text-primary"
+            >
+              <Icon name="globe" size={11} />
+              <span>Pivot IP</span>
+            </Link>
+          )}
+
+          <button
+            onClick={() => void copyToClipboard(JSON.stringify(alert, null, 2))}
+            className="press inline-flex items-center gap-1 rounded border border-border-subtle bg-bg-surface px-2.5 py-1 text-[11px] text-text-muted hover:text-text-primary ml-auto"
+          >
+            <Icon name="copy" size={11} />
+            <span>Copy JSON</span>
+          </button>
+        </div>
+
+        {/* Content Body */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {/* Metadata Grid */}
+          <div className="rounded-lg border border-border-subtle bg-bg-elevated/30 p-3 space-y-2">
+            <span className="text-[10px] uppercase font-bold text-text-faint tracking-wider">Detection Context</span>
+            <div className="grid grid-cols-2 gap-2 text-[11px]">
+              <div>
+                <span className="text-text-faint">Rule ID:</span>
+                <p className="font-bold text-accent mt-0.5">{alert.rule_id}</p>
+              </div>
+              <div>
+                <span className="text-text-faint">Triggered Timestamp:</span>
+                <p className="text-text-primary mt-0.5">{alert.triggered_at?.slice(0, 19).replace("T", " ")} UTC</p>
+              </div>
+              {ruleMeta && (
                 <>
-                  <span className="text-text-faint">·</span>
-                  {agent.identity === "collector" ? (
-                    <Link
-                      to="/agents?identity=collector"
-                      className="inline-flex items-center gap-1 rounded border border-risk-clean/40 bg-risk-clean/10 px-1.5 py-0.5 text-[10px] font-medium text-risk-clean transition-colors hover:bg-risk-clean/20"
-                      title={`Real host agent · channels: ${agent.channels?.join(", ") || "—"}`}
-                    >
-                      <Icon name="activity" size={10} />
-                      collector
-                    </Link>
-                  ) : (
-                    <Link
-                      to="/agents?identity=webapp"
-                      className="inline-flex items-center gap-1 rounded border border-border-subtle bg-bg-elevated/60 px-1.5 py-0.5 text-[10px] text-text-muted hover:text-text-primary"
-                    >
-                      <Icon name="terminal" size={10} />
-                      webapp
-                    </Link>
-                  )}
-                  {agent.channels?.map((c) => (
-                    <span
-                      key={c}
-                      className="rounded border border-border-subtle bg-bg-elevated/60 px-1.5 py-0.5 text-[10px] text-text-muted"
-                    >
-                      {c}
-                    </span>
-                  ))}
-                  {agent.last_auth_role && (
-                    <span
-                      className="rounded border border-border-subtle bg-bg-elevated/60 px-1.5 py-0.5 text-[10px] text-text-muted"
-                      title={`Authenticated as ${agent.last_auth_role}${agent.last_auth_at ? ` (${_rel(agent.last_auth_at)})` : ""}`}
-                    >
-                      auth: {agent.last_auth_role === "agent" ? "agent token" : agent.last_auth_role}
-                    </span>
-                  )}
+                  <div>
+                    <span className="text-text-faint">ATT&amp;CK Technique:</span>
+                    <p className="font-bold text-text-primary mt-0.5">{ruleMeta.technique}</p>
+                  </div>
+                  <div>
+                    <span className="text-text-faint">ATT&amp;CK Tactic:</span>
+                    <p className="text-text-primary mt-0.5 capitalize">{ruleMeta.tactic}</p>
+                  </div>
                 </>
+              )}
+              {alert.related_ip && (
+                <div>
+                  <span className="text-text-faint">Related Socket IP:</span>
+                  <p className="font-bold text-risk-malicious mt-0.5">{alert.related_ip}</p>
+                </div>
+              )}
+              {alert.related_pid && (
+                <div>
+                  <span className="text-text-faint">Related PID:</span>
+                  <p className="text-text-primary mt-0.5">{alert.related_pid}</p>
+                </div>
               )}
             </div>
           </div>
-        </div>
 
-        <div className="flex items-center gap-2">
-          {!monitored && (
-            <button
-              onClick={() => {
-                void copyToClipboard(agentCmd);
-                setCopied(true);
-                setTimeout(() => setCopied(false), 2000);
-              }}
-              className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-elevated/60 px-3 py-2 font-mono text-xs text-text-muted transition-colors hover:border-accent/60 hover:text-accent"
-              title="Copy collector command"
-            >
-              <Icon name={copied ? "check" : "copy"} size={12} />
-              {copied ? "copied" : "copy agent cmd"}
-            </button>
-          )}
-          <Link
-            to="/events"
-            className="press inline-flex items-center gap-2 rounded-lg border border-accent/60 bg-accent/15 px-4 py-2 font-mono text-xs font-semibold text-accent shadow-[var(--glow-accent)] transition-all hover:bg-accent/25"
-          >
-            <Icon name="activity" size={13} />
-            Watch live stream
-          </Link>
+          {/* Details / Message */}
+          <div className="rounded-lg border border-border-subtle bg-bg-base/70 p-3 space-y-1.5">
+            <span className="text-[10px] uppercase font-bold text-text-faint tracking-wider">Detection Telemetry Details</span>
+            <p className="text-[11px] leading-relaxed text-text-primary whitespace-pre-wrap">
+              {alert.details || "Behavioral anomaly matched signature criteria."}
+            </p>
+          </div>
+
+          {/* Raw Payload Block */}
+          <div className="rounded-lg border border-border-subtle bg-bg-base p-3 space-y-1.5">
+            <span className="text-[10px] uppercase font-bold text-text-faint tracking-wider">Raw Finding JSON</span>
+            <pre className="max-h-48 overflow-y-auto text-[10px] text-text-muted leading-tight">
+              {JSON.stringify(alert, null, 2)}
+            </pre>
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
-/* ──────────────────────────────────────────────────────────────────────── */
-// Demo-mode banner — seeded data labeled honestly, never masquerading as
-// real host telemetry. Dismissed per-browser (localStorage).
-/* ──────────────────────────────────────────────────────────────────────── */
-
-const DEMO_DISMISS_KEY = "outpost-demo-dismissed";
-
-function DemoBanner() {
+export default function OverviewPage() {
   const queryClient = useQueryClient();
-  const { data: meta } = useQuery({ queryKey: ["meta"], queryFn: getMeta, staleTime: 30_000 });
-  const [dismissed, setDismissed] = useState(() => {
-    try {
-      return localStorage.getItem(DEMO_DISMISS_KEY) === "1";
-    } catch {
-      return false;
-    }
-  });
-  const [purging, setPurging] = useState(false);
+  const { preset } = useSocTimeRange();
 
-  if (!meta?.demo_mode || dismissed) return null;
+  const [inspectAlert, setInspectAlert] = useState<AlertDrawerState | null>(null);
+  const [simulationRunning, setSimulationRunning] = useState(false);
+  const [actionNotice, setActionNotice] = useState<string | null>(null);
 
-  return (
-    <div className="mb-5 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-xl border border-risk-suspicious/40 bg-risk-suspicious/10 px-4 py-3">
-      <div className="flex min-w-0 flex-1 items-center gap-2">
-        <span className="inline-flex items-center gap-1.5 font-mono text-xs font-semibold text-risk-suspicious">
-          <Icon name="zap" size={13} />
-          Demo data
-        </span>
-        <p className="min-w-0 flex-1 text-xs leading-relaxed text-text-muted">
-          These sessions are seeded demo samples. Ship real telemetry with{" "}
-          <code className="font-mono text-text-primary">outpost agent run</code> or purge demo data to work with a clean store.
-        </p>
-      </div>
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          disabled={purging}
-          onClick={async () => {
-            setPurging(true);
-            try {
-              await resetStore();
-              await queryClient.invalidateQueries();
-            } finally {
-              setPurging(false);
-            }
-          }}
-          className="press inline-flex items-center gap-1 rounded-md border border-risk-malicious/50 bg-risk-malicious/15 px-2.5 py-1 font-mono text-xs font-semibold text-risk-malicious transition-colors hover:bg-risk-malicious/25 disabled:opacity-50"
-          title="Wipe seeded demo data from the database"
-        >
-          <Icon name="x" size={11} />
-          {purging ? "Purging..." : "Purge demo data"}
-        </button>
-        <button
-          onClick={() => {
-            try {
-              localStorage.setItem(DEMO_DISMISS_KEY, "1");
-            } catch {
-              /* ignore */
-            }
-            setDismissed(true);
-          }}
-          className="press inline-flex items-center gap-1 rounded border border-border-subtle px-2 py-1 font-mono text-[10px] text-text-muted transition-colors hover:border-risk-suspicious/60 hover:text-risk-suspicious"
-          aria-label="Dismiss demo banner"
-        >
-          <Icon name="x" size={10} />
-          dismiss
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function WorkflowQuickstartPanel() {
-  const [dismissed, setDismissed] = useState(() => {
-    try {
-      return localStorage.getItem("outpost-workflow-quickstart-dismissed") === "1";
-    } catch {
-      return false;
-    }
+  // Real-time Event Stream Listener
+  useEventStream(() => {
+    void queryClient.invalidateQueries({ queryKey: ["alerts"] });
+    void queryClient.invalidateQueries({ queryKey: ["events"] });
+    void queryClient.invalidateQueries({ queryKey: ["runs"] });
   });
 
-  if (dismissed) return null;
+  // Data Queries
+  const { data: alertQueue } = useQuery({
+    queryKey: ["alerts", "queue"],
+    queryFn: () => getAlertQueue({ status: "open", limit: 50 }),
+    refetchInterval: 10_000,
+  });
 
-  return (
-    <div className="mb-6 rounded-2xl border border-accent/40 bg-gradient-to-r from-accent/10 via-bg-surface/95 to-bg-surface/95 p-5 shadow-sm backdrop-blur-md">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border-subtle/80 pb-3">
-        <div className="flex items-center gap-2.5">
-          <span className="flex h-8 w-8 items-center justify-center rounded-xl border border-accent/50 bg-accent/20 text-accent shadow-[var(--glow-accent)]">
-            <Icon name="shield" size={16} />
-          </span>
-          <div>
-            <h3 className="font-mono text-xs font-bold uppercase tracking-wider text-text-primary">
-              Interactive Operational Workflow
-            </h3>
-            <p className="text-[11px] text-text-muted">
-              Get started with OutPost in four core operational steps
-            </p>
-          </div>
-        </div>
-        <button
-          onClick={() => {
-            try {
-              localStorage.setItem("outpost-workflow-quickstart-dismissed", "1");
-            } catch {
-              /* ignore */
-            }
-            setDismissed(true);
-          }}
-          className="press text-text-faint hover:text-text-primary text-[11px] font-mono"
-        >
-          Dismiss guide ✕
-        </button>
-      </div>
+  const { data: recentAlerts = [] } = useQuery({
+    queryKey: ["alerts", "recent", 15],
+    queryFn: () => getRecentAlerts(15),
+    refetchInterval: 10_000,
+  });
 
-      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Link
-          to="/monitor"
-          className="group flex flex-col justify-between rounded-xl border border-border-subtle bg-bg-base/70 p-4 transition-all duration-200 hover:border-accent/60 hover:bg-bg-elevated/80"
-        >
-          <div>
-            <div className="flex items-center justify-between">
-              <span className="font-mono text-[10px] font-bold text-accent">STEP 01</span>
-              <Icon name="activity" size={14} className="text-text-faint group-hover:text-accent transition" />
-            </div>
-            <h4 className="mt-2 font-mono text-xs font-bold text-text-primary group-hover:text-accent transition">
-              Launch Simulation
-            </h4>
-            <p className="mt-1 text-[11px] leading-relaxed text-text-muted">
-              Execute a live multi-stage adversary scenario in the sandbox.
-            </p>
-          </div>
-          <span className="mt-3 inline-flex items-center gap-1 font-mono text-[10px] text-accent">
-            Run scenario →
-          </span>
-        </Link>
+  const { data: fleet } = useQuery({
+    queryKey: ["agents"],
+    queryFn: () => getAgents(),
+    refetchInterval: 15_000,
+  });
 
-        <Link
-          to="/events"
-          className="group flex flex-col justify-between rounded-xl border border-border-subtle bg-bg-base/70 p-4 transition-all duration-200 hover:border-accent/60 hover:bg-bg-elevated/80"
-        >
-          <div>
-            <div className="flex items-center justify-between">
-              <span className="font-mono text-[10px] font-bold text-signal">STEP 02</span>
-              <Icon name="terminal" size={14} className="text-text-faint group-hover:text-signal transition" />
-            </div>
-            <h4 className="mt-2 font-mono text-xs font-bold text-text-primary group-hover:text-signal transition">
-              Live Host Telemetry
-            </h4>
-            <p className="mt-1 text-[11px] leading-relaxed text-text-muted">
-              Stream live procfs and socket events from your local host.
-            </p>
-          </div>
-          <span className="mt-3 inline-flex items-center gap-1 font-mono text-[10px] text-signal">
-            Open live feed →
-          </span>
-        </Link>
+  const { data: telemetryEvents } = useQuery({
+    queryKey: ["events", "recent", 8],
+    queryFn: () => getEvents({ limit: 8 }),
+    refetchInterval: 5_000,
+  });
 
-        <Link
-          to="/events?tab=forensics"
-          className="group flex flex-col justify-between rounded-xl border border-border-subtle bg-bg-base/70 p-4 transition-all duration-200 hover:border-accent/60 hover:bg-bg-elevated/80"
-        >
-          <div>
-            <div className="flex items-center justify-between">
-              <span className="font-mono text-[10px] font-bold text-purple-400">STEP 03</span>
-              <Icon name="process" size={14} className="text-text-faint group-hover:text-purple-400 transition" />
-            </div>
-            <h4 className="mt-2 font-mono text-xs font-bold text-text-primary group-hover:text-purple-400 transition">
-              Process Causality
-            </h4>
-            <p className="mt-1 text-[11px] leading-relaxed text-text-muted">
-              Inspect parent-child trees, unlinked inodes &amp; hardware sensors.
-            </p>
-          </div>
-          <span className="mt-3 inline-flex items-center gap-1 font-mono text-[10px] text-purple-400">
-            Inspect forensics →
-          </span>
-        </Link>
+  const { data: investigations } = useQuery({
+    queryKey: ["investigations", "count"],
+    queryFn: () => listInvestigations({ limit: 100 }),
+    refetchInterval: 30_000,
+  });
 
-        <Link
-          to="/findings"
-          className="group flex flex-col justify-between rounded-xl border border-border-subtle bg-bg-base/70 p-4 transition-all duration-200 hover:border-accent/60 hover:bg-bg-elevated/80"
-        >
-          <div>
-            <div className="flex items-center justify-between">
-              <span className="font-mono text-[10px] font-bold text-risk-malicious">STEP 04</span>
-              <Icon name="alert" size={14} className="text-text-faint group-hover:text-risk-malicious transition" />
-            </div>
-            <h4 className="mt-2 font-mono text-xs font-bold text-text-primary group-hover:text-risk-malicious transition">
-              Triage &amp; Case Files
-            </h4>
-            <p className="mt-1 text-[11px] leading-relaxed text-text-muted">
-              Review behavioral alerts and escalate to incident dossiers.
-            </p>
-          </div>
-          <span className="mt-3 inline-flex items-center gap-1 font-mono text-[10px] text-risk-malicious">
-            Triage queue →
-          </span>
-        </Link>
-      </div>
-    </div>
-  );
-}
+  const { data: ruleMetaList = [] } = useQuery({
+    queryKey: ["rules", "meta"],
+    queryFn: getRuleMeta,
+    staleTime: 60_000,
+  });
 
-function LiveDetonationPlayground() {
-  const queryClient = useQueryClient();
-  const [runningId, setRunningId] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState(false);
-  const [lastResult, setLastResult] = useState<{
-    run_id: string;
-    scenario_id: string;
-    name: string;
-    platform: string;
-    terminal_output: string;
-    terminal_lines: string[];
-    stages: Array<{ stage: number; name: string; cmd: string; exit_code: number; status: string }>;
-    events_count: number;
-    alerts_count: number;
-    alerts: any[];
-    risk_score: number;
-  } | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const ruleMap = useMemo(() => {
+    const map = new Map<string, { tactic: string; technique: string; weight: number }>();
+    for (const r of ruleMetaList) {
+      map.set(r.rule_id, { tactic: r.tactic, technique: r.technique, weight: r.weight });
+    }
+    return map;
+  }, [ruleMetaList]);
 
-  const SCENARIOS = [
-    {
-      id: "apt29-cloud-intrusion",
-      name: "APT-29 / Midnight Blizzard",
-      icon: "shield" as const,
-      desc: "Multi-stage intrusion: discovery, in-memory stager, credential hunt & C2",
-    },
-    {
-      id: "lockbit-ransomware",
-      name: "LockBit 3.0 Ransomware",
-      icon: "alert" as const,
-      desc: "Canary traversal, recovery inhibit, high-entropy encryption & ransom note",
-    },
-    {
-      id: "lotl-privilege-escalation",
-      name: "LotL PrivEsc Campaign",
-      icon: "terminal" as const,
-      desc: "SUID discovery, sudoers check, GTFOBins emulation & root backdoor",
-    },
-    {
-      id: "cryptominer-worm",
-      name: "Cryptomining Worm",
-      icon: "zap" as const,
-      desc: "Subnet scan, in-memory miner drop in /dev/shm & stratum pool handshake",
-    },
-  ];
-
-  const handleDetonate = async (scenarioId: string) => {
-    setRunningId(scenarioId);
-    setExpanded(true);
-    setError(null);
-    try {
-      const res = await runLiveSimulation(scenarioId);
-      setLastResult(res);
-      void queryClient.invalidateQueries({ queryKey: ["events"] });
+  // Mutations
+  const ackMutation = useMutation({
+    mutationFn: (id: number) => bulkUpdateAlertStatus([id], "acknowledged", "Acknowledged in Operations Cockpit"),
+    onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["alerts"] });
+      if (inspectAlert && inspectAlert.alert.id) {
+        setInspectAlert(null);
+      }
+      setActionNotice("Alert acknowledged");
+      setTimeout(() => setActionNotice(null), 2500);
+    },
+  });
+
+  const handleLaunchSimulation = async () => {
+    setSimulationRunning(true);
+    try {
+      await runLiveSimulation("win_c2_beacon");
+      setActionNotice("Simulated adversary beacon scenario executed in lab");
+      void queryClient.invalidateQueries({ queryKey: ["alerts"] });
+      void queryClient.invalidateQueries({ queryKey: ["events"] });
       void queryClient.invalidateQueries({ queryKey: ["runs"] });
-      void queryClient.invalidateQueries({ queryKey: ["statusbar"] });
-      void queryClient.invalidateQueries({ queryKey: ["forensics"] });
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : "Check backend status";
-      setError("Detonation execution failed: " + msg);
+    } catch {
+      setActionNotice("Simulation execution failed — check lab status");
     } finally {
-      setRunningId(null);
+      setSimulationRunning(false);
+      setTimeout(() => setActionNotice(null), 3500);
     }
   };
 
+  // KPI Calculations
+  const rawAlerts = Array.isArray(alertQueue) ? alertQueue : (alertQueue?.alerts ?? []);
+  const openAlerts = rawAlerts.filter((a) => a.status === "open" || !a.status);
+  const criticalCount = openAlerts.filter((a) => a.severity === "malicious").length;
+  const highCount = openAlerts.filter((a) => a.severity === "suspicious").length;
+
+  const totalAgents = (fleet?.agents ?? []).length;
+  const onlineAgents = (fleet?.agents ?? []).filter((a) => a.online).length;
+  const coveragePct = totalAgents > 0 ? Math.round((onlineAgents / totalAgents) * 100) : 100;
+
+  const activeCases = (investigations?.investigations ?? []).filter((i) => i.status !== "closed" && i.status !== "resolved").length;
+  const totalEventsIngested = (fleet?.agents ?? []).reduce((acc, a) => acc + (a.event_count || 0), 0);
+
+  // Active ATT&CK Tactics Map
+  const activeTactics = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const a of recentAlerts) {
+      const meta = ruleMap.get(a.rule_id);
+      if (meta && meta.tactic) {
+        const norm = meta.tactic.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+        counts.set(norm, (counts.get(norm) || 0) + 1);
+      }
+    }
+    return counts;
+  }, [recentAlerts, ruleMap]);
+
   return (
-    <div className="rounded-2xl border border-accent/40 bg-bg-surface/90 p-5 shadow-sm">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2.5">
-          <span className="flex h-8 w-8 items-center justify-center rounded-xl border border-accent/40 bg-accent/15 text-accent shadow-[var(--glow-accent)]">
-            <Icon name="zap" size={15} />
+    <div className="mx-auto max-w-7xl px-6 py-6 lg:px-10 space-y-6 font-mono text-xs">
+      {/* Header Bar */}
+      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-border-subtle pb-4">
+        <div>
+          <span className="text-[10px] uppercase font-bold tracking-wider text-text-faint">
+            Operations Cockpit · Telemetry Window: {preset.label}
           </span>
-          <div>
-            <h3 className="font-mono text-xs font-bold uppercase tracking-wider text-text-primary">
-              Live Adversary Detonation Playground
-            </h3>
-            <p className="text-[11px] text-text-muted">
-              Trigger real-time attack scenarios in the sandbox to observe live telemetry and detection heuristics
-            </p>
-          </div>
+          <h1 className="text-lg font-bold text-text-primary tracking-tight">
+            Security Operations Center
+          </h1>
+          <p className="text-xs text-text-muted mt-0.5">
+            Enterprise threat monitoring, fleet posture, and real-time alert triage.
+          </p>
         </div>
+
         <div className="flex items-center gap-2">
           <button
-            onClick={() => setExpanded(!expanded)}
-            className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/40 bg-accent/10 px-3 py-1.5 font-mono text-xs font-semibold text-accent hover:bg-accent/20 transition"
+            onClick={handleLaunchSimulation}
+            disabled={simulationRunning}
+            className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/15 px-3 py-1.5 font-bold text-accent hover:bg-accent/25 disabled:opacity-50 transition"
+            title="Detonate a realistic benign or adversary scenario to verify detection pipelines"
           >
-            <span>{expanded ? "Collapse Playground ▴" : "Open Detonation Playground ▾"}</span>
+            <Icon name={simulationRunning ? "refresh" : "play"} size={12} className={simulationRunning ? "animate-spin" : ""} />
+            <span>{simulationRunning ? "Detonating Scenario…" : "Simulate Scenario"}</span>
           </button>
-          <Link to="/monitor" className="press inline-flex items-center gap-1 font-mono text-xs text-accent hover:underline">
-            Advanced Simulation Lab <Icon name="external" size={10} />
+
+          <Link
+            to="/findings"
+            className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-surface px-3 py-1.5 text-text-muted hover:border-accent/40 hover:text-text-primary transition"
+          >
+            <span>Triage Queue</span>
+            <Icon name="arrowRight" size={11} />
           </Link>
         </div>
       </div>
 
-      {(expanded || lastResult !== null) && (
-        <>
-          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        {SCENARIOS.map((s) => (
-          <div
-            key={s.id}
-            className="flex flex-col justify-between rounded-xl border border-border-subtle bg-bg-base/60 p-3.5 transition-all duration-150 hover:border-accent/50"
-          >
-            <div>
-              <div className="flex items-center justify-between">
-                <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-border-subtle bg-bg-elevated text-accent">
-                  <Icon name={s.icon} size={13} />
-                </span>
-                {runningId === s.id && (
-                  <span className="flex items-center gap-1 font-mono text-[10px] text-accent animate-pulse">
-                    <Icon name="refresh" size={10} className="animate-spin" /> executing...
-                  </span>
-                )}
-              </div>
-              <h4 className="mt-2 font-mono text-xs font-bold text-text-primary">{s.name}</h4>
-              <p className="mt-1 text-[11px] leading-relaxed text-text-muted">{s.desc}</p>
-            </div>
+      {/* Action Notification Toast */}
+      {actionNotice && (
+        <div className="flex items-center justify-between rounded-xl border border-signal/50 bg-signal/15 px-4 py-2 font-mono text-xs text-signal animate-fade-in">
+          <span>✓ {actionNotice}</span>
+          <button onClick={() => setActionNotice(null)} className="text-text-muted hover:text-text-primary">✕</button>
+        </div>
+      )}
 
-            <button
-              onClick={() => void handleDetonate(s.id)}
-              disabled={runningId !== null}
-              className="press mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-accent/60 bg-accent/10 py-1.5 font-mono text-xs font-semibold text-accent transition-colors hover:bg-accent/20 disabled:opacity-50"
-            >
-              <Icon name="zap" size={11} />
-              <span>{runningId === s.id ? "Detonating..." : "Detonate Live"}</span>
-            </button>
-          </div>
-        ))}
+      {/* Executive KPI HUD Strip (5 Cards) */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+        <div className="rounded-xl border border-border-subtle bg-bg-surface p-3.5 shadow-xs">
+          <span className="text-[10px] uppercase font-bold text-text-faint tracking-wider">Active Incident Cases</span>
+          <p className="mt-1 text-lg font-bold text-text-primary">{activeCases}</p>
+          <span className="text-[10px] text-text-faint">
+            {activeCases === 0 ? "Zero open escalations" : "Requires incident lead review"}
+          </span>
+        </div>
+
+        <div className="rounded-xl border border-border-subtle bg-bg-surface p-3.5 shadow-xs">
+          <span className="text-[10px] uppercase font-bold text-text-faint tracking-wider">Unresolved Findings</span>
+          <p className="mt-1 text-lg font-bold">
+            <span className={criticalCount > 0 ? "text-risk-malicious" : "text-text-primary"}>
+              {openAlerts.length}
+            </span>
+            <span className="text-[11px] text-text-faint font-normal ml-1.5">
+              ({criticalCount} crit · {highCount} high)
+            </span>
+          </p>
+          <span className="text-[10px] text-text-faint">Awaiting analyst triage</span>
+        </div>
+
+        <div className="rounded-xl border border-border-subtle bg-bg-surface p-3.5 shadow-xs">
+          <span className="text-[10px] uppercase font-bold text-text-faint tracking-wider">Sensor Fleet Health</span>
+          <p className="mt-1 text-lg font-bold text-risk-clean">
+            {coveragePct}%
+            <span className="text-[11px] text-text-faint font-normal ml-1.5">
+              ({onlineAgents}/{totalAgents} online)
+            </span>
+          </p>
+          <span className="text-[10px] text-text-faint">Linux, Windows, macOS</span>
+        </div>
+
+        <div className="rounded-xl border border-border-subtle bg-bg-surface p-3.5 shadow-xs">
+          <span className="text-[10px] uppercase font-bold text-text-faint tracking-wider">Telemetry Ingested</span>
+          <p className="mt-1 text-lg font-bold text-accent">
+            {totalEventsIngested.toLocaleString()}
+          </p>
+          <span className="text-[10px] text-text-faint">Events evaluated by engine</span>
+        </div>
+
+        <div className="rounded-xl border border-border-subtle bg-bg-surface p-3.5 shadow-xs">
+          <span className="text-[10px] uppercase font-bold text-text-faint tracking-wider">ATT&amp;CK Techniques</span>
+          <p className="mt-1 text-lg font-bold text-text-primary">
+            {ruleMetaList.length}
+          </p>
+          <span className="text-[10px] text-text-faint">Active Sigma/engine rules</span>
+        </div>
       </div>
 
-      {error && <p className="mt-3 font-mono text-xs text-risk-malicious">{error}</p>}
-
-      {lastResult && (
-        <div className="mt-4 rounded-xl border border-accent/40 bg-accent/10 p-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
+      {/* 4-Quadrant Operations Workspace */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+        {/* Quadrant 1: Priority Threat Alert Feed (7 cols) */}
+        <div className="lg:col-span-7 rounded-xl border border-border-subtle bg-bg-surface overflow-hidden shadow-xs flex flex-col">
+          <div className="p-3.5 border-b border-border-subtle bg-bg-elevated/40 flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <span className="h-2 w-2 rounded-full bg-signal animate-ping" />
-              <span className="font-mono text-xs font-bold text-text-primary">
-                Detonation Complete: {lastResult.name}
-              </span>
-              <span className="rounded bg-accent/20 px-2 py-0.5 font-mono text-[10px] font-semibold text-accent">
-                Risk Score: {lastResult.risk_score}/100
+              <span className="font-bold text-text-primary text-xs">High-Priority Alert Feed</span>
+              <span className="rounded-full bg-bg-base border border-border-subtle px-2 py-0.2 text-[10px] text-text-muted">
+                {recentAlerts.length} Recorded
               </span>
             </div>
-            <div className="flex items-center gap-3 font-mono text-xs">
-              <Link
-                to={`/runs/${lastResult.run_id}`}
-                className="font-semibold text-accent underline hover:text-accent/80"
-              >
-                Inspect Run Dossier →
-              </Link>
-              <Link to="/events" className="font-semibold text-signal underline hover:text-signal/80">
-                View in Event Stream ({lastResult.events_count} events) →
-              </Link>
-            </div>
+            <Link
+              to="/findings"
+              className="press text-[11px] text-accent hover:underline inline-flex items-center gap-1"
+            >
+              <span>Full Queue</span>
+              <Icon name="arrowRight" size={10} />
+            </Link>
           </div>
-          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4 font-mono text-[11px]">
-            <div className="rounded bg-bg-surface/80 p-2 border border-border-subtle">
-              <span className="text-text-faint text-[10px] uppercase">Telemetry</span>
-              <p className="font-bold text-text-primary">{lastResult.events_count} events generated</p>
-            </div>
-            <div className="rounded bg-bg-surface/80 p-2 border border-border-subtle">
-              <span className="text-text-faint text-[10px] uppercase">Detections</span>
-              <p className="font-bold text-risk-malicious">{lastResult.alerts_count} alerts triggered</p>
-            </div>
-            <div className="rounded bg-bg-surface/80 p-2 border border-border-subtle">
-              <span className="text-text-faint text-[10px] uppercase">Stages Executed</span>
-              <p className="font-bold text-text-primary">{(lastResult.stages || []).length} attack phases</p>
-            </div>
-            <div className="rounded bg-bg-surface/80 p-2 border border-border-subtle">
-              <span className="text-text-faint text-[10px] uppercase">Platform Sandbox</span>
-              <p className="font-bold text-text-primary capitalize">{lastResult.platform || "linux"}</p>
-            </div>
+
+          <div className="flex-1 overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-bg-elevated/60 border-b border-border-subtle text-[10px] uppercase text-text-faint">
+                <tr>
+                  <th className="px-4 py-2">Sev</th>
+                  <th className="px-4 py-2">Rule Signature / Technique</th>
+                  <th className="px-4 py-2">Host</th>
+                  <th className="px-4 py-2">Observed</th>
+                  <th className="px-4 py-2 text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border-subtle/40">
+                {recentAlerts.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="px-4 py-10 text-center text-text-muted">
+                      No security alerts triggered in the selected time window.
+                    </td>
+                  </tr>
+                ) : (
+                  recentAlerts.slice(0, 6).map((a, idx) => {
+                    const meta = ruleMap.get(a.rule_id);
+                    const isMalicious = a.severity === "malicious";
+                    return (
+                      <tr
+                        key={idx}
+                        onClick={() => setInspectAlert({ alert: a, ruleMeta: meta })}
+                        className="cursor-pointer hover:bg-bg-elevated/40 transition group"
+                      >
+                        <td className="px-4 py-2.5">
+                          <span
+                            className={`rounded px-1.5 py-0.2 text-[9px] uppercase font-bold ${
+                              isMalicious
+                                ? "bg-risk-malicious/20 text-risk-malicious"
+                                : "bg-risk-suspicious/20 text-risk-suspicious"
+                            }`}
+                          >
+                            {a.severity.slice(0, 4)}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5 min-w-48">
+                          <div className="font-bold text-text-primary group-hover:text-accent transition truncate" title={a.rule_name}>
+                            {a.rule_name}
+                          </div>
+                          {meta && (
+                            <div className="text-[10px] text-text-faint mt-0.5">
+                              {meta.technique} · {meta.tactic}
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-4 py-2.5 text-text-muted text-[11px]">
+                          {a.related_ip || "fleet-host"}
+                        </td>
+                        <td className="px-4 py-2.5 text-text-faint text-[11px] whitespace-nowrap">
+                          {relativeTime(a.triggered_at)}
+                        </td>
+                        <td className="px-4 py-2.5 text-right" onClick={(e) => e.stopPropagation()}>
+                          <button
+                            onClick={() => setInspectAlert({ alert: a, ruleMeta: meta })}
+                            className="press rounded border border-border-subtle bg-bg-base px-2 py-0.5 text-[10px] text-text-muted hover:border-accent/40 hover:text-accent"
+                          >
+                            Inspect
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
-      )}
-        </>
-      )}
-    </div>
-  );
-}
 
-/* ──────────────────────────────────────────────────────────────────────── */
-// Page
-/* ──────────────────────────────────────────────────────────────────────── */
-
-export default function OverviewPage() {
-  // Archive parity: soak-named collector baselines (soak-…) are hidden so
-  // the dashboard's trend, session count, and severity mix read as real
-  // telemetry first — same default as the History page (see overviewRunParams).
-  const { data: runs = [], isLoading, isError } = useQuery({ queryKey: ["runs"], queryFn: () => getRuns(overviewRunParams()) });
-  const { data: campaigns = [] } = useQuery({ queryKey: ["campaigns"], queryFn: () => getCampaigns() });
-
-  const totalAlerts = runs.reduce((n, r) => n + r.alert_count, 0);
-
-  return (
-    <div className="mx-auto max-w-[1400px] px-5 py-8 lg:px-8 space-y-6">
-      <PageHeader
-        kicker="SOC Workspace · Command Deck"
-        title={
-          <>
-            OutPost <span className="font-normal text-text-muted">— Unified Defense & Operations</span>
-          </>
-        }
-        lede="Unified behavioral security telemetry, live fleet threat posture, MITRE ATT&CK kill-chain progression, and automated containment task dispatch."
-        actions={
-          <div className="flex items-center gap-2.5">
-            <div className="hidden sm:flex items-center gap-2 rounded-lg border border-border-subtle bg-bg-surface px-3 py-1.5 font-mono text-[11px] text-text-muted">
-              <span className="h-2 w-2 rounded-full bg-risk-clean animate-pulse" />
-              <span>STATION ONLINE</span>
+        {/* Quadrant 2: MITRE ATT&CK Kill-Chain Progression (5 cols) */}
+        <div className="lg:col-span-5 rounded-xl border border-border-subtle bg-bg-surface p-4 shadow-xs flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between border-b border-border-subtle/60 pb-2.5 mb-3">
+              <div>
+                <span className="text-[10px] uppercase font-bold text-text-faint tracking-wider">
+                  Threat Progression
+                </span>
+                <h3 className="font-bold text-text-primary text-xs">
+                  MITRE ATT&amp;CK Active Kill-Chain
+                </h3>
+              </div>
+              <Link to="/coverage" className="text-[11px] text-accent hover:underline">
+                Matrix →
+              </Link>
             </div>
-            <Link
-              to="/events"
-              className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/15 px-3.5 py-1.5 font-mono text-xs font-semibold text-accent transition-all duration-150 hover:bg-accent/25 hover:shadow-[var(--glow-accent)]"
-            >
-              <Icon name="list" size={13} />
-              Event Manager
-            </Link>
-            <Link
-              to="/monitor"
-              className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-elevated px-3.5 py-1.5 font-mono text-xs font-medium text-text-muted transition-all duration-150 hover:border-accent/40 hover:text-text-primary"
-            >
-              <Icon name="activity" size={13} />
-              Simulation Lab
-            </Link>
-          </div>
-        }
-      />
 
-      <DemoBanner />
-
-      {!isLoading && !isError && runs.length === 0 && (
-        <Panel kicker="Telemetry status" title="No telemetry received">
-          <div className="py-8 text-center font-mono text-sm text-text-muted">
-            <p className="font-semibold text-text-primary">0 monitored sessions active</p>
-            <p className="mt-1 text-xs text-text-faint">
-              Connect a Linux, Windows, or macOS agent collector, or launch the Simulation Lab to generate security events.
+            <p className="text-[11px] text-text-muted leading-relaxed mb-3">
+              Tactics actively triggered by correlated detections in the current observation window:
             </p>
-            <div className="mt-4 flex justify-center gap-3">
-              <Link to="/events" className="btn btn-primary text-xs">
-                Open Event Manager
-              </Link>
-              <Link to="/monitor" className="btn text-xs">
-                Open Simulation Lab
-              </Link>
+
+            <div className="grid grid-cols-2 gap-1.5">
+              {ATTACK_TACTICS.map((t) => {
+                const count = activeTactics.get(t.id) || 0;
+                const isActive = count > 0;
+                return (
+                  <Link
+                    key={t.id}
+                    to={`/coverage?tactic=${t.id}`}
+                    className={`rounded-lg border p-2 flex items-center justify-between transition ${
+                      isActive
+                        ? "border-risk-malicious/50 bg-risk-malicious/10 text-risk-malicious font-bold"
+                        : "border-border-subtle/60 bg-bg-base/50 text-text-muted hover:border-border-strong hover:text-text-primary"
+                    }`}
+                  >
+                    <span className="text-[11px] truncate">{t.label}</span>
+                    {isActive && (
+                      <span className="rounded bg-risk-malicious/20 px-1.5 py-0.2 text-[9px] text-risk-malicious">
+                        {count} hits
+                      </span>
+                    )}
+                  </Link>
+                );
+              })}
             </div>
           </div>
-        </Panel>
-      )}
 
-      {!isLoading && !isError && runs.length > 0 && (
-        <PostureHeader runs={runs} campaigns={campaigns.length} totalAlerts={totalAlerts} />
-      )}
-
-      <Deferred>
-        <HostMonitorPanel />
-        {/* Intel posture: configured keys + rotation age, and cache freshness. */}
-        <IntelKeyHealth />
-        <IntelFreshness />
-      </Deferred>
-
-      {/* Host Forensics Real-time Telemetry Radar & MITRE Kill Chain Progression */}
-      <Deferred>
-        <HostForensicsRadarPanel />
-        <MitreTacticalProgressionPanel />
-      </Deferred>
-      {isLoading && (
-        <div className="space-y-4">
-          <div className="skeleton h-40 w-full" />
+          <div className="mt-4 pt-3 border-t border-border-subtle/50 flex items-center justify-between text-[10px] text-text-faint">
+            <span>Red indicates active adversarial technique detections</span>
+            <Link to="/rules" className="text-accent hover:underline">
+              Rule IDE →
+            </Link>
+          </div>
         </div>
-      )}
 
-      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[1.6fr_1fr]">
-        <Deferred>
-          <FindingsFeed />
-        </Deferred>
-        <Deferred>
-          <ActiveInvestigationsPanel />
-        </Deferred>
+        {/* Quadrant 3: Live EDR Telemetry Event Stream (7 cols) */}
+        <div className="lg:col-span-7 rounded-xl border border-border-subtle bg-bg-surface overflow-hidden shadow-xs">
+          <div className="p-3.5 border-b border-border-subtle bg-bg-elevated/40 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="h-2 w-2 rounded-full bg-signal animate-outpost-pulse" />
+              <span className="font-bold text-text-primary text-xs">Live Telemetry Event Stream</span>
+            </div>
+            <Link to="/events" className="press text-[11px] text-accent hover:underline inline-flex items-center gap-1">
+              <span>Telemetry Lake</span>
+              <Icon name="arrowRight" size={10} />
+            </Link>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-bg-elevated/60 border-b border-border-subtle text-[10px] uppercase text-text-faint">
+                <tr>
+                  <th className="px-4 py-2">Timestamp</th>
+                  <th className="px-4 py-2">Host</th>
+                  <th className="px-4 py-2">Event Action</th>
+                  <th className="px-4 py-2">Process / Context</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border-subtle/40">
+                {(!telemetryEvents || !telemetryEvents.events || telemetryEvents.events.length === 0) ? (
+                  <tr>
+                    <td colSpan={4} className="px-4 py-8 text-center text-text-muted">
+                      No raw telemetry ingested yet. Run a simulation or enroll an agent sensor.
+                    </td>
+                  </tr>
+                ) : (
+                  telemetryEvents.events.slice(0, 5).map((e: any, idx: number) => (
+                    <tr key={idx} className="hover:bg-bg-elevated/30 transition">
+                      <td className="px-4 py-2.5 text-text-faint text-[10px] whitespace-nowrap">
+                        {e.timestamp ? e.timestamp.slice(11, 19) : "just now"}
+                      </td>
+                      <td className="px-4 py-2.5 text-text-muted text-[11px] whitespace-nowrap">
+                        {e.host_id || "endpoint-01"}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <span className="rounded bg-bg-base border border-border-subtle px-1.5 py-0.5 text-[10px] text-accent">
+                          {e.event_type || e.type || "process_create"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2.5 text-text-primary text-[11px] truncate max-w-xs" title={e.command_line || e.process_name || e.details}>
+                        {e.process_name || e.command_line || e.details || "Telemetry record"}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Quadrant 4: Fleet Sensor Distribution & Telemetry Posture (5 cols) */}
+        <div className="lg:col-span-5 rounded-xl border border-border-subtle bg-bg-surface p-4 shadow-xs space-y-4">
+          <div className="flex items-center justify-between border-b border-border-subtle/60 pb-2.5">
+            <div>
+              <span className="text-[10px] uppercase font-bold text-text-faint tracking-wider">
+                Fleet Posture
+              </span>
+              <h3 className="font-bold text-text-primary text-xs">
+                Sensor Fleet Distribution
+              </h3>
+            </div>
+            <Link to="/agents" className="text-[11px] text-accent hover:underline">
+              Manage Fleet →
+            </Link>
+          </div>
+
+          {/* Active Sensor Hosts */}
+          <div className="space-y-2">
+            <span className="text-[10px] uppercase font-bold text-text-faint">Enrolled Endpoint Hosts:</span>
+            {(!fleet || fleet.agents.length === 0) ? (
+              <p className="py-4 text-center text-text-muted text-[11px]">
+                No sensor endpoints enrolled yet.
+              </p>
+            ) : (
+              <div className="space-y-1.5">
+                {fleet.agents.slice(0, 4).map((a) => (
+                  <Link
+                    key={a.host_id}
+                    to={`/hosts/${encodeURIComponent(a.host_id)}`}
+                    className="flex items-center justify-between rounded-lg border border-border-subtle bg-bg-base p-2.5 hover:border-accent/40 transition group"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`h-2 w-2 rounded-full ${
+                          a.online ? "bg-signal" : a.silent ? "bg-risk-malicious" : "bg-text-faint"
+                        }`}
+                      />
+                      <div>
+                        <span className="font-bold text-text-primary group-hover:text-accent transition">
+                          {a.host_id}
+                        </span>
+                        <div className="flex items-center gap-1 mt-0.5">
+                          {a.platforms.map((p) => (
+                            <span key={p} className="text-[10px] text-text-faint capitalize">
+                              {p}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="text-right text-[11px]">
+                      <span className="text-text-primary font-bold">{a.event_count.toLocaleString()}</span>
+                      <span className="text-text-faint block text-[9px]">events</span>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
-      <LiveDetonationPlayground />
-      <WorkflowQuickstartPanel />
-
-      {/* Actions + environment, one compact strip. The dashboard is exactly:
-          posture, live findings (+ hunt), and this action bar. */}
-      <Deferred>
-        <ActionStrip />
-      </Deferred>
+      {/* Slide-over Alert Inspector Drawer */}
+      {inspectAlert && (
+        <AlertInspectorDrawer
+          data={inspectAlert}
+          onClose={() => setInspectAlert(null)}
+          onAcknowledge={(id) => {
+            if (id) ackMutation.mutate(id);
+          }}
+        />
+      )}
     </div>
   );
 }

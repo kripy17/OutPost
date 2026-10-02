@@ -4,11 +4,12 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { DataProvenanceBadge } from "../components/DataProvenanceBadge";
 import { PageHeader, Panel } from "../components/ui";
+import { copyToClipboard } from "../lib/clipboard";
 import { addInvestigationRef, addSuppression, bulkUpdateAlertStatus, createInvestigation, getAlertQueue, getRuleMeta } from "../lib/api";
 import { useEventStream } from "../lib/useEventStream";
 import { SEVERITY_COLORS, SEVERITY_LABEL } from "../lib/constants";
 import { toneFill, toneForSeverity } from "../lib/fillPatterns";
-import type { AlertStatus, QueueAlert, Severity } from "../types";
+import type { AlertStatus, QueueAlert, RuleMeta, Severity } from "../types";
 import ProcessContextModal from "../components/ProcessContextModal";
 import NetworkContextModal from "../components/NetworkContextModal";
 import InvestigationsPage from "./investigations";
@@ -23,6 +24,220 @@ import {
   writeSavedProvenance,
 } from "./findingsHelpers";
 
+function AlertDetailDrawer({
+  alert,
+  onClose,
+  ruleMeta,
+  onStatusChange,
+  onSuppress,
+  onEscalate,
+}: {
+  alert: QueueAlert;
+  onClose: () => void;
+  ruleMeta?: RuleMeta;
+  onStatusChange: (id: number, status: AlertStatus) => void;
+  onSuppress: (alert: QueueAlert) => void;
+  onEscalate: (alert: QueueAlert) => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  const sev = alert.severity as Severity;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-xs transition-opacity"
+      onClick={onClose}
+    >
+      <div
+        className="h-full w-full max-w-lg bg-[#0B0E14] border-l border-border-subtle p-6 overflow-y-auto space-y-5 font-mono text-xs shadow-2xl animate-in slide-in-from-right duration-200"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-start justify-between border-b border-border-subtle pb-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2 text-text-faint text-[10px] uppercase">
+              <span>Alert #{alert.id}</span>
+              <span>·</span>
+              <span>{ageLabel(alert.triggered_at)} ago</span>
+              <span>·</span>
+              <DataProvenanceBadge source={alert.run_source || alert.source || "live"} />
+            </div>
+            <h3 className="text-base font-bold text-text-primary flex items-center gap-2">
+              <span className={SEVERITY_COLORS[sev]}>{alert.rule_name}</span>
+            </h3>
+            <p className="text-[11px] text-text-muted">{alert.rule_id}</p>
+          </div>
+          <button
+            onClick={onClose}
+            className="press rounded-lg p-1.5 text-text-faint hover:text-text-primary hover:bg-bg-elevated"
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* 1-Click Triage Actions */}
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border-subtle bg-bg-surface p-3">
+          {alert.status === "open" && (
+            <button
+              onClick={() => onStatusChange(alert.id, "acknowledged")}
+              className="press flex-1 rounded-lg border border-accent/40 bg-accent/15 py-1.5 text-center font-bold text-accent hover:bg-accent/25 transition"
+            >
+              Acknowledge Alert
+            </button>
+          )}
+          {alert.status !== "resolved" && (
+            <button
+              onClick={() => onStatusChange(alert.id, "resolved")}
+              className="press flex-1 rounded-lg border border-risk-clean/40 bg-risk-clean/15 py-1.5 text-center font-bold text-risk-clean hover:bg-risk-clean/25 transition"
+            >
+              Resolve Alert
+            </button>
+          )}
+          <button
+            onClick={() => onEscalate(alert)}
+            className="press rounded-lg border border-border-subtle bg-bg-base px-3 py-1.5 text-center font-semibold text-text-secondary hover:text-text-primary hover:border-accent/40 transition"
+          >
+            Escalate to Case
+          </button>
+          {(alert.sample_name || alert.related_ip) && (
+            <button
+              onClick={() => onSuppress(alert)}
+              className="press rounded-lg border border-border-subtle bg-bg-base px-3 py-1.5 text-center font-semibold text-text-muted hover:text-risk-malicious hover:border-risk-malicious/40 transition"
+              title="Suppress this rule scope"
+            >
+              Suppress Scope
+            </button>
+          )}
+        </div>
+
+        {/* MITRE ATT&CK Matrix Mapping */}
+        {ruleMeta && (
+          <div className="rounded-xl border border-border-subtle bg-bg-surface p-3.5 space-y-2">
+            <div className="flex items-center justify-between text-[10px] text-text-faint uppercase font-bold">
+              <span>MITRE ATT&CK Alignment</span>
+              <span className="rounded bg-bg-elevated px-1.5 py-0.5 text-text-primary font-mono">{ruleMeta.technique}</span>
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-[11px]">
+              <div>
+                <span className="text-[10px] text-text-faint block">Tactic</span>
+                <span className="text-text-primary font-semibold capitalize">{ruleMeta.tactic}</span>
+              </div>
+              <div>
+                <span className="text-[10px] text-text-faint block">Rule Weight</span>
+                <span className="text-text-primary font-semibold">{ruleMeta.weight} / 100</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Forensic Entities & Context */}
+        <div className="rounded-xl border border-border-subtle bg-bg-surface p-3.5 space-y-3">
+          <span className="text-[10px] text-text-faint uppercase font-bold block">Correlated Entities</span>
+          <div className="space-y-2 text-[11px]">
+            {/* Host */}
+            {alert.host_ids.filter(Boolean).length > 0 && (
+              <div className="flex items-center justify-between">
+                <span className="text-text-muted">Target Host:</span>
+                <div className="flex items-center gap-1">
+                  {alert.host_ids.filter(Boolean).map((h) => (
+                    <Link
+                      key={h}
+                      to={`/hosts/${encodeURIComponent(h)}`}
+                      className="font-bold text-accent hover:underline flex items-center gap-1"
+                      title={`The aggregate timeline — everything OutPost knows about ${h}`}
+                    >
+                      <Icon name="box" size={11} />
+                      <span>{h}</span>
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            )}
+            {/* Run */}
+            {alert.run_id && (
+              <div className="flex items-center justify-between">
+                <span className="text-text-muted">Sample Run:</span>
+                <Link to={`/runs/${alert.run_id}`} className="font-bold text-accent hover:underline flex items-center gap-1">
+                  <span>{alert.sample_name || alert.run_id}</span>
+                  <Icon name="external" size={10} />
+                </Link>
+              </div>
+            )}
+            {/* Network IP */}
+            {alert.related_ip && (
+              <div className="flex items-center justify-between">
+                <span className="text-text-muted">Network Indicator:</span>
+                <Link to={`/search?q=${encodeURIComponent(alert.related_ip)}`} className="font-bold text-accent hover:underline">
+                  {alert.related_ip}
+                </Link>
+              </div>
+            )}
+            {/* Process PID */}
+            {alert.related_pids && alert.related_pids.length > 0 && (
+              <div className="flex items-center justify-between">
+                <span className="text-text-muted">Process PID:</span>
+                <Link to={`/events?pid=${alert.related_pids.join(",")}`} className="font-bold text-accent hover:underline">
+                  PID {alert.related_pids.join(", ")}
+                </Link>
+              </div>
+            )}
+            {/* Case Link */}
+            {alert.investigation_id && (
+              <div className="flex items-center justify-between">
+                <span className="text-text-muted">Active Case:</span>
+                <Link to={`/investigations/${encodeURIComponent(alert.investigation_id)}`} className="font-bold text-accent hover:underline">
+                  case {alert.investigation_id}
+                </Link>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Remediation Playbook Guidance */}
+        {ruleMeta?.remediation && ruleMeta.remediation.length > 0 && (
+          <div className="rounded-xl border border-border-subtle bg-bg-surface p-3.5 space-y-2">
+            <span className="text-[10px] text-text-faint uppercase font-bold block">SOC Remediation Playbook</span>
+            <ul className="space-y-1.5 text-[11px] text-text-secondary list-disc pl-4">
+              {ruleMeta.remediation.map((step, idx) => (
+                <li key={idx} className="leading-relaxed">{step}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {/* Alert Details Message */}
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between text-[10px] text-text-faint uppercase">
+            <span>Detection Details</span>
+            <button
+              onClick={() => {
+                void copyToClipboard(alert.details);
+                setCopied(true);
+                setTimeout(() => setCopied(false), 2000);
+              }}
+              className="text-accent hover:underline"
+            >
+              {copied ? "Copied!" : "Copy"}
+            </button>
+          </div>
+          <pre className="rounded-xl border border-border-subtle bg-bg-base p-3 text-[11px] text-text-primary whitespace-pre-wrap break-all select-all">
+            {alert.details}
+          </pre>
+        </div>
+
+        {/* Footer */}
+        <div className="border-t border-border-subtle pt-3 flex justify-end">
+          <button
+            onClick={onClose}
+            className="press rounded-lg border border-border-subtle bg-bg-surface px-4 py-1.5 text-xs text-text-primary hover:bg-bg-elevated"
+          >
+            Close Inspector
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function FindingRow({
   a,
   selected,
@@ -34,6 +249,7 @@ function FindingRow({
   onStatusChange,
   onInspectIp,
   onInspectPid,
+  onInspect,
 }: {
   a: QueueAlert;
   selected: boolean;
@@ -45,6 +261,7 @@ function FindingRow({
   onStatusChange?: (id: number, status: AlertStatus) => void;
   onInspectIp?: (ip: string) => void;
   onInspectPid?: (pid: number) => void;
+  onInspect?: (a: QueueAlert) => void;
 }) {
   const sev = a.severity as Severity;
   const mitre = ruleMap?.get(a.rule_id);
@@ -161,6 +378,16 @@ function FindingRow({
 
           {/* Quick inline triage actions */}
           <div className="ml-auto flex items-center gap-1.5 font-mono text-[10px]">
+            {onInspect && (
+              <button
+                onClick={() => onInspect(a)}
+                className="press inline-flex items-center gap-1 rounded border border-border-subtle bg-bg-surface px-1.5 py-0.5 text-text-muted hover:border-accent/50 hover:text-accent transition"
+                title="Inspect finding in detail drawer"
+              >
+                <Icon name="eye" size={9} />
+                <span>inspect</span>
+              </button>
+            )}
             {a.status === "open" && onStatusChange && (
               <button
                 onClick={() => onStatusChange(a.id, "acknowledged")}
@@ -229,6 +456,7 @@ export default function FindingsPage() {
   const [busy, setBusy] = useState(false);
   const [inspectIp, setInspectIp] = useState<string | null>(null);
   const [inspectPid, setInspectPid] = useState<number | null>(null);
+  const [inspectFinding, setInspectFinding] = useState<QueueAlert | null>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   const setParam = (k: string, v: string) => {
@@ -299,6 +527,12 @@ export default function FindingsPage() {
   const ruleMap = useMemo(() => {
     const m = new Map<string, { tactic: string; technique: string }>();
     for (const r of ruleMeta ?? []) m.set(r.rule_id, { tactic: r.tactic, technique: r.technique });
+    return m;
+  }, [ruleMeta]);
+
+  const ruleMetaMap = useMemo(() => {
+    const m = new Map<string, RuleMeta>();
+    for (const r of ruleMeta ?? []) m.set(r.rule_id, r);
     return m;
   }, [ruleMeta]);
 
@@ -504,6 +738,53 @@ export default function FindingsPage() {
         <InvestigationsPage />
       ) : (
         <>
+      {/* ── Executive Triage KPI Ribbon ─────────────────────────────── */}
+      <section className="mb-4 grid grid-cols-2 sm:grid-cols-4 gap-3 font-mono text-xs">
+        <div className="rounded-xl border border-border-subtle bg-bg-surface/80 p-3 shadow-xs">
+          <div className="flex items-center justify-between text-text-faint text-[10px] uppercase">
+            <span>Open Findings</span>
+            <span className="h-2 w-2 rounded-full bg-red-400" />
+          </div>
+          <div className="mt-1 flex items-baseline gap-2">
+            <span className="text-xl font-bold text-text-primary tabular-nums">{data?.open ?? 0}</span>
+            <span className="text-[10px] text-text-muted">active in triage</span>
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-border-subtle bg-bg-surface/80 p-3 shadow-xs">
+          <div className="flex items-center justify-between text-text-faint text-[10px] uppercase">
+            <span>Acknowledged</span>
+            <span className="h-2 w-2 rounded-full bg-amber-400" />
+          </div>
+          <div className="mt-1 flex items-baseline gap-2">
+            <span className="text-xl font-bold text-amber-400 tabular-nums">{data?.acknowledged ?? 0}</span>
+            <span className="text-[10px] text-text-muted">in progress</span>
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-border-subtle bg-bg-surface/80 p-3 shadow-xs">
+          <div className="flex items-center justify-between text-text-faint text-[10px] uppercase">
+            <span>Resolved</span>
+            <span className="h-2 w-2 rounded-full bg-emerald-400" />
+          </div>
+          <div className="mt-1 flex items-baseline gap-2">
+            <span className="text-xl font-bold text-emerald-400 tabular-nums">{data?.resolved ?? 0}</span>
+            <span className="text-[10px] text-text-muted">closed</span>
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-border-subtle bg-bg-surface/80 p-3 shadow-xs">
+          <div className="flex items-center justify-between text-text-faint text-[10px] uppercase">
+            <span>Queue Total</span>
+            <Icon name="activity" size={12} className="text-accent" />
+          </div>
+          <div className="mt-1 flex items-baseline gap-2">
+            <span className="text-xl font-bold text-accent tabular-nums">{data?.total ?? 0}</span>
+            <span className="text-[10px] text-text-muted">scope findings</span>
+          </div>
+        </div>
+      </section>
+
       {/* Status tabs with live counts */}
       <div className="mb-4 flex flex-wrap items-center gap-2">
         {STATUS_TABS.map((t) => {
@@ -733,6 +1014,7 @@ export default function FindingsPage() {
                   suppressing={suppressingId === a.id}
                   onInspectIp={setInspectIp}
                   onInspectPid={setInspectPid}
+                  onInspect={setInspectFinding}
                 />
               ))}
             </ul>
@@ -761,6 +1043,23 @@ export default function FindingsPage() {
         )}
       </Panel>
         </>
+      )}
+
+      {inspectFinding && (
+        <AlertDetailDrawer
+          alert={inspectFinding}
+          onClose={() => setInspectFinding(null)}
+          ruleMeta={ruleMetaMap.get(inspectFinding.rule_id)}
+          onStatusChange={handleSingleStatus}
+          onSuppress={(target) => {
+            setSuppressingId(target.id);
+            void suppress([target]);
+          }}
+          onEscalate={(target) => {
+            setSelected(new Set([target.id]));
+            void handleEscalateToCase();
+          }}
+        />
       )}
 
       {inspectIp !== null && (
