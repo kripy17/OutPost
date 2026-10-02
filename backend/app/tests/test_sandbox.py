@@ -662,3 +662,60 @@ def test_dynamic_detonation_isolation_driver(client):
     assert "isolation_driver" in res
     assert res["isolation_driver"] in ("tempdir", "bubblewrap", "wine")
 
+
+def test_pcap_capture_generation_and_download(client):
+    from ..services import sandbox_forensics
+    from ..core import config
+    import struct
+    import shutil
+    import subprocess
+
+    run_id = "test_pcap_run_01"
+    events = [
+        {
+            "event_type": "network_connection",
+            "protocol": "tcp",
+            "src_ip": "192.168.1.50",
+            "src_port": 49200,
+            "dest_ip": "198.51.100.25",
+            "dest_port": 443,
+            "timestamp": "2026-10-02T04:00:00Z",
+        },
+        {
+            "event_type": "socket_listen",
+            "protocol": "tcp",
+            "src_ip": "0.0.0.0",
+            "src_port": 8888,
+            "timestamp": "2026-10-02T04:00:01Z",
+        },
+    ]
+    sinkhole = [
+        {"type": "dns_query", "target": "c2.evil.com", "intercepted_response": "127.0.0.1"},
+    ]
+
+    art = sandbox_forensics.generate_pcap_capture(events, sinkhole, run_id)
+    assert art is not None
+    assert art["name"] == "traffic.pcap"
+    assert art["packet_count"] >= 3
+    assert art["flow_count"] >= 2
+    assert art["size_bytes"] > 100
+
+    pcap_path = config.DATA_DIR / "sandbox_artifacts" / run_id / "traffic.pcap"
+    assert pcap_path.exists()
+    pcap_bytes = pcap_path.read_bytes()
+    # Check libpcap magic header (0xa1b2c3d4)
+    magic = struct.unpack("<I", pcap_bytes[:4])[0]
+    assert magic == 0xa1b2c3d4
+
+    # Test download endpoint
+    resp = client.get(f"/sandbox/artifacts/{run_id}/traffic.pcap")
+    assert resp.status_code == 200
+    assert resp.headers.get("content-type") == "application/vnd.tcpdump.pcap"
+    assert len(resp.content) == len(pcap_bytes)
+
+    # If tshark is installed on this test machine, assert that tshark parses it cleanly
+    if shutil.which("tshark"):
+        proc = subprocess.run(["tshark", "-r", str(pcap_path)], capture_output=True, text=True)
+        assert proc.returncode == 0
+        assert "198.51.100.25" in proc.stdout or "443" in proc.stdout
+

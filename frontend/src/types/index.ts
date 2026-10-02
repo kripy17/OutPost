@@ -630,6 +630,9 @@ export interface SampleDetonationResult {
   dropped_artifacts?: DroppedArtifactItem[];
   isolation_driver?: string;
   network_connections?: any[];
+  pcap_url?: string | null;
+  pcap_available?: boolean;
+  pcap_summary?: any;
   forecast?: BehavioralForecast;
   reconciliation?: ForecastReconciliation;
   threat_verdict?: "MALICIOUS" | "SUSPICIOUS" | "BENIGN";

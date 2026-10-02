@@ -9,6 +9,7 @@ import { ProcessCausalityTree } from "../components/ProcessCausalityTree";
 import { NetworkProtocolInspector } from "../components/NetworkProtocolInspector";
 import { ArtifactHexViewerModal } from "../components/ArtifactHexViewerModal";
 import { IncidentBriefModal } from "../components/IncidentBriefModal";
+import { Tier3MicroVmModal } from "../components/Tier3MicroVmModal";
 import type { BehavioralForecast, DroppedArtifactItem, ForecastReconciliation, PeMetadata, Platform, RunSummary, SampleDetonationResult, SampleStatic, SandboxTask } from "../types";
 import { filterStrings, formatBytes, getVirusTotalFileUrl, getVirusTotalIocUrl, iocTotal } from "./samplesHelpers";
 
@@ -1083,6 +1084,7 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
   const [copiedFwRule, setCopiedFwRule] = useState<string | null>(null);
   const [watchlistedIocs, setWatchlistedIocs] = useState<Set<string>>(new Set());
   const [showIncidentBrief, setShowIncidentBrief] = useState(false);
+  const [showTier3Modal, setShowTier3Modal] = useState(false);
   const [executionTimer, setExecutionTimer] = useState<number>(0);
   const [liveLogs, setLiveLogs] = useState<string[]>([]);
   const timerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -1532,6 +1534,21 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
                 </div>
               </div>
 
+              {sample.detected_platform === "windows" && (
+                <div className="mb-2.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-[11px] text-amber-300 flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <Icon name="alert" size={12} className="shrink-0 text-amber-400" />
+                    <span><strong>Tier 2 Emulation (Wine64):</strong> User-mode NT translation layer active. Packed malware &amp; kernel drivers require Tier 3 Guest VM.</span>
+                  </div>
+                  <button
+                    onClick={() => setShowTier3Modal(true)}
+                    className="shrink-0 ml-2 font-bold text-accent hover:underline text-[10px]"
+                  >
+                    Tier 3 Setup
+                  </button>
+                </div>
+              )}
+
               {/* Terminal Screen Console */}
               <div className="rounded-xl border border-white/10 bg-[#06080d] p-4 font-mono text-[11px] leading-relaxed max-h-[420px] overflow-y-auto shadow-inner selection:bg-accent selection:text-black">
                 {detonating ? (
@@ -1620,7 +1637,27 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
                 <span className={`h-2 w-2 rounded-full ${result ? "bg-emerald-400" : detonating ? "bg-amber-400 animate-pulse" : "bg-text-faint"}`} />
                 <span>Target: {sample.original_name} ({sample.detected_platform})</span>
               </span>
-              <span>Isolation: {result?.isolation_driver || isolationDriver}</span>
+              <span className="flex items-center gap-1.5">
+                <span>Isolation:</span>
+                {(result?.isolation_driver === "bubblewrap" || isolationDriver === "bubblewrap") ? (
+                  <span className="rounded bg-emerald-500/15 text-emerald-400 px-1.5 py-0.2 font-semibold">Tier 1: Bubblewrap Micro-Sandbox</span>
+                ) : (result?.isolation_driver === "wine" || isolationDriver === "wine" || (sample.detected_platform === "windows" && (result?.isolation_driver || isolationDriver) === "auto")) ? (
+                  <span className="rounded bg-amber-500/15 text-amber-400 px-1.5 py-0.2 font-semibold" title="Headless Wine64 user-mode subsystem">Tier 2: Emulated Subsystem (Wine64)</span>
+                ) : (result?.isolation_driver === "guest_vm" || isolationDriver === "guest_vm") ? (
+                  <span className="rounded bg-cyan-500/15 text-cyan-400 px-1.5 py-0.2 font-semibold">Tier 3: Dedicated Windows MicroVM</span>
+                ) : (
+                  <span className="font-semibold text-text-muted">{result?.isolation_driver || isolationDriver}</span>
+                )}
+                {sample.detected_platform === "windows" && (
+                  <button
+                    onClick={() => setShowTier3Modal(true)}
+                    className="text-accent underline text-[10px] hover:text-accent/80 font-medium ml-1"
+                    title="Learn about OutPost Tier 3 MicroVM Guest Agent setup"
+                  >
+                    Tier 3 VM
+                  </button>
+                )}
+              </span>
             </div>
           </div>
 
@@ -1839,7 +1876,27 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
 
               {/* Tab 3: Network Sockets & Sinkhole */}
               {inspectorTab === "network" && (
-                <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
+                <div className="space-y-2.5 max-h-[300px] overflow-y-auto pr-1">
+                  <div className="flex items-center justify-between pb-1.5 border-b border-border-subtle/50 text-[11px]">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-semibold text-text-primary">Captured Network Telemetry</span>
+                      <span className="rounded bg-accent/15 px-1.5 py-0.2 text-[9px] font-mono font-bold text-accent">
+                        libpcap 2.4
+                      </span>
+                    </div>
+                    {(result?.pcap_url || displayFiles.some((f: any) => f.filename === "traffic.pcap" || f.name?.includes("traffic.pcap"))) && (
+                      <a
+                        href={result?.pcap_url || (result ? getSandboxArtifactUrl(result.run_id, "traffic.pcap") : "#")}
+                        download="traffic.pcap"
+                        className="press inline-flex items-center gap-1 rounded border border-accent/40 bg-accent/10 px-2 py-0.5 text-[10px] font-bold text-accent hover:bg-accent/20 transition"
+                        title="Download standard libpcap packet capture for Wireshark inspection"
+                      >
+                        <Icon name="download" size={11} />
+                        <span>Download Traffic PCAP</span>
+                      </a>
+                    )}
+                  </div>
+
                   {displayNetwork.length === 0 ? (
                     <div className="rounded-xl border border-dashed border-border-subtle p-6 text-center text-text-muted">
                       <Icon name="network" size={20} className="mx-auto text-text-faint mb-2" />
@@ -2035,6 +2092,11 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
           artifact={selectedArtifact}
           onClose={() => setSelectedArtifact(null)}
         />
+      )}
+
+      {/* Tier 3 MicroVM & Guest Agent Setup Modal */}
+      {showTier3Modal && (
+        <Tier3MicroVmModal onClose={() => setShowTier3Modal(false)} />
       )}
 
       {/* SOC Incident Brief & Executive Dossier Modal */}

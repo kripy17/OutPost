@@ -86,43 +86,59 @@ def detect_runner(data: bytes, filename: str) -> list[str] | None:
 
 def get_available_isolation_drivers() -> list[dict[str, Any]]:
     """Inspect host system and return supported sandbox isolation drivers and capabilities."""
+    has_bwrap = bool(shutil.which("bwrap"))
+    has_wine = bool(shutil.which("wine64") or shutil.which("wine"))
+    has_podman = bool(shutil.which("podman"))
+    has_docker = bool(shutil.which("docker"))
+    has_guest_vm = bool(os.environ.get("OUTPOST_GUEST_VM_URL", "").strip())
+
     drivers = [
         {
+            "id": "bubblewrap",
+            "name": "Bubblewrap Micro-Sandbox (bwrap)",
+            "tier": 1,
+            "tier_label": "Tier 1: Linux Native",
+            "available": has_bwrap,
+            "description": "Kernel unshared namespaces (PID, IPC, UTS, read-only system rootfs, air-gap or sinkhole)",
+            "type": "micro_sandbox",
+        },
+        {
             "id": "tempdir",
-            "name": "Standard Isolation (TempDir)",
+            "name": "Standard Ephemeral Isolation",
+            "tier": 1,
+            "tier_label": "Tier 1: Linux Native",
             "available": True,
             "description": "Unprivileged ephemeral directory execution with process timeout monitoring",
             "type": "native",
-        }
+        },
+        {
+            "id": "wine",
+            "name": "Emulated Subsystem (Wine64)",
+            "tier": 2,
+            "tier_label": "Tier 2: Emulated Windows",
+            "available": has_wine,
+            "description": "Wine64 user-mode translation layer. For non-packed scripts; kernel drivers and anti-sandbox malware require Tier 3.",
+            "type": "emulation",
+        },
+        {
+            "id": "guest_vm",
+            "name": "Isolated MicroVM / Guest Agent",
+            "tier": 3,
+            "tier_label": "Tier 3: Dedicated Windows VM",
+            "available": has_guest_vm,
+            "description": "Dedicated Windows guest VM with native Sysmon, EVTX event log subscription, and full kernel telemetry via outpost-guest-agent.",
+            "type": "micro_vm",
+        },
+        {
+            "id": "container",
+            "name": "Container Isolation (Podman / Docker)",
+            "tier": 1,
+            "tier_label": "Tier 1: Linux Container",
+            "available": has_podman or has_docker,
+            "description": "Isolated container runtime sandbox execution",
+            "type": "container",
+        },
     ]
-
-    has_bwrap = bool(shutil.which("bwrap"))
-    drivers.append({
-        "id": "bubblewrap",
-        "name": "Bubblewrap Micro-Sandbox (bwrap)",
-        "available": has_bwrap,
-        "description": "Kernel unshared namespaces (PID, IPC, UTS, read-only system rootfs, isolated /tmp)",
-        "type": "micro_sandbox",
-    })
-
-    has_wine = bool(shutil.which("wine64") or shutil.which("wine"))
-    drivers.append({
-        "id": "wine",
-        "name": "Headless Wine Emulation",
-        "available": has_wine,
-        "description": "Emulated Windows subsystem environment for PE executables and DLLs",
-        "type": "emulation",
-    })
-
-    has_podman = bool(shutil.which("podman"))
-    has_docker = bool(shutil.which("docker"))
-    drivers.append({
-        "id": "container",
-        "name": "Container Isolation (Podman / Docker)",
-        "available": has_podman or has_docker,
-        "description": "Isolated container runtime sandbox execution",
-        "type": "container",
-    })
 
     return drivers
 
@@ -407,9 +423,15 @@ async def execute_bytes_sandbox(
 
         # Extract persistent dropped artifacts before cleaning up
         dropped_artifacts = sandbox_forensics.extract_dropped_artifacts(sandbox_dir, target_file, run_id)
+        pcap_art = sandbox_forensics.generate_pcap_capture(events_batch, None, run_id)
+        if pcap_art:
+            dropped_artifacts.append(pcap_art)
+            await _emit({"type": "artifact", "data": pcap_art})
+            await _emit({"type": "log", "line": f"[OutPost Traffic Recorder] Captured {pcap_art['packet_count']} network packet(s) -> traffic.pcap ({pcap_art['size_bytes']} B)"})
         for art in dropped_artifacts:
-            await _emit({"type": "artifact", "data": art})
-            await _emit({"type": "log", "line": f"[OutPost Artifact Extractor] Captured dropped file: {art['name']} ({art['size_bytes']} B)"})
+            if art.get("filename") != "traffic.pcap":
+                await _emit({"type": "artifact", "data": art})
+                await _emit({"type": "log", "line": f"[OutPost Artifact Extractor] Captured dropped file: {art['name']} ({art['size_bytes']} B)"})
             timeline_events.append({
                 "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 "elapsed_ms": int((time.monotonic() - start_mono) * 1000),
@@ -1482,6 +1504,10 @@ async def execute_sample_detonation(
                     "action": "sinkholed",
                 })
 
+    pcap_artifact = sandbox_forensics.generate_pcap_capture(events, sinkhole_traffic, run_id)
+    if pcap_artifact and not any(a.get("filename") == "traffic.pcap" for a in dropped_artifacts):
+        dropped_artifacts.append(pcap_artifact)
+
     terminal_logs: list[str] = [
         f"[OutPost Dynamic Sandbox] Detonating sample '{sample_name}' (ID: {sample_id})",
         f"[OutPost Dynamic Sandbox] Isolation Driver: {active_driver.upper()} · Platform: {plat.upper()} · Timeout: {timeout_seconds}s",
@@ -1499,6 +1525,8 @@ async def execute_sample_detonation(
         terminal_logs.append(f"[OutPost Artifact Extractor] Captured {len(dropped_artifacts)} dropped file(s).")
     if sinkhole_traffic:
         terminal_logs.append(f"[OutPost C2 Sinkhole] Intercepted {len(sinkhole_traffic)} network beacon/DNS requests.")
+    if pcap_artifact:
+        terminal_logs.append(f"[OutPost Traffic Recorder] Captured {pcap_artifact['packet_count']} network packet(s) -> traffic.pcap ({pcap_artifact['size_bytes']} B)")
 
     with db_session() as conn:
         for ev in events:
@@ -1570,6 +1598,9 @@ async def execute_sample_detonation(
         "detonation_delta": detonation_delta,
         "syscalls": syscalls,
         "sinkhole_traffic": sinkhole_traffic,
+        "pcap_url": f"/sandbox/artifacts/{run_id}/traffic.pcap" if pcap_artifact else None,
+        "pcap_available": bool(pcap_artifact),
+        "pcap_summary": pcap_artifact,
         "timeline": timeline_events,
         "dropped_artifacts": dropped_artifacts,
         "actionable_iocs": actionable_iocs,

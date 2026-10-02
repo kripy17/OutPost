@@ -337,6 +337,7 @@ async def validate_matrix_endpoint(body: ValidateMatrixIn | None = None) -> dict
 
 
 @router.get("/sandbox/artifacts/{run_id}", response_model=None)
+@router.get("/api/sandbox/artifacts/{run_id}", response_model=None)
 def list_sandbox_artifacts(run_id: str) -> list[dict]:
     """List all persisted artifacts for a sandbox run."""
     if "/" in run_id or "\\" in run_id or ".." in run_id:
@@ -357,6 +358,7 @@ def list_sandbox_artifacts(run_id: str) -> list[dict]:
 
 
 @router.get("/sandbox/artifacts/{run_id}/{filename}")
+@router.get("/api/sandbox/artifacts/{run_id}/{filename}")
 def get_sandbox_artifact(run_id: str, filename: str):
     """Download or view a dropped artifact from a dynamic sandbox or simulation run."""
     if "/" in run_id or "\\" in run_id or ".." in run_id:
@@ -369,8 +371,9 @@ def get_sandbox_artifact(run_id: str, filename: str):
     if not str(artifact_path).startswith(str(base_dir)) or not artifact_path.is_file():
         raise HTTPException(status_code=404, detail="Artifact not found")
 
+    m_type = "application/vnd.tcpdump.pcap" if filename.endswith(".pcap") else "application/octet-stream"
     return FileResponse(
         path=str(artifact_path),
-        filename=filename.split("_", 1)[-1] if "_" in filename else filename,
-        media_type="application/octet-stream",
+        filename=filename.split("_", 1)[-1] if ("_" in filename and not filename.endswith(".pcap")) else filename,
+        media_type=m_type,
     )
