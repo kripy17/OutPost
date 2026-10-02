@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { getRunDetectionSuite } from "../lib/api";
@@ -15,6 +15,14 @@ interface DetectionStudioModalProps {
 export function DetectionStudioModal({ runId, isOpen, onClose }: DetectionStudioModalProps) {
   const [activeTab, setActiveTab] = useState<"sigma" | "suricata" | "yara" | "all">("sigma");
   const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    if (isOpen) window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, onClose]);
 
   const { data: suite, isLoading } = useQuery<DetectionSuite>({
     queryKey: ["detection-suite", runId],
@@ -75,8 +83,13 @@ export function DetectionStudioModal({ runId, isOpen, onClose }: DetectionStudio
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-md">
-      <div className="relative flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-border-strong bg-bg-surface shadow-2xl">
+    <div className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-xs transition-opacity" onClick={onClose}>
+      <div
+        className="relative flex h-full w-full max-w-3xl flex-col overflow-hidden border-l border-border-subtle bg-bg-surface shadow-2xl animate-slide-in"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+      >
         {/* Header */}
         <div className="flex items-center justify-between border-b border-border-subtle px-6 py-4">
           <div className="flex items-center gap-3">

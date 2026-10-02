@@ -176,19 +176,20 @@ function Layout() {
           is unfocused (spec). Opt-in via Settings → Browser notifications. */}
       <BrowserNotifications />
 
-      {/* Keyboard Shortcuts Help Modal */}
+      {/* Keyboard Shortcuts Help Drawer */}
       {showHelp && (
         <div
           role="dialog"
           aria-modal="true"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in"
+          aria-label="Global SOC Deck Shortcuts"
+          className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-xs transition-opacity animate-fade-in"
           onClick={() => setShowHelp(false)}
         >
           <div
-            className="w-full max-w-md rounded-2xl border border-border-subtle bg-bg-surface p-6 shadow-2xl"
+            className="flex h-full w-full max-w-sm flex-col border-l border-border-subtle bg-bg-surface shadow-2xl animate-slide-in overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between border-b border-border-subtle pb-3 mb-4">
+            <div className="flex items-center justify-between border-b border-border-subtle px-6 py-4 bg-bg-base/70">
               <div className="flex items-center gap-2">
                 <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-accent/40 bg-accent/15 text-accent font-mono text-xs font-bold">
                   ⌨
@@ -197,45 +198,46 @@ function Layout() {
               </div>
               <button
                 onClick={() => setShowHelp(false)}
-                className="text-text-muted hover:text-text-primary text-sm font-mono"
+                className="text-text-muted hover:text-text-primary text-sm font-mono p-1 rounded hover:bg-bg-elevated"
+                aria-label="Close shortcuts drawer"
               >
                 ✕
               </button>
             </div>
-            <div className="space-y-2.5 font-mono text-xs text-text-muted">
-              <div className="flex justify-between items-center py-1 border-b border-border-subtle/50">
+            <div className="flex-1 overflow-y-auto p-6 space-y-2.5 font-mono text-xs text-text-muted">
+              <div className="flex justify-between items-center py-2 border-b border-border-subtle/50">
                 <span>Go to Overview</span>
                 <kbd className="rounded border border-border-subtle bg-bg-elevated px-2 py-0.5 text-text-primary">g o</kbd>
               </div>
-              <div className="flex justify-between items-center py-1 border-b border-border-subtle/50">
+              <div className="flex justify-between items-center py-2 border-b border-border-subtle/50">
                 <span>Go to Event Feed</span>
                 <kbd className="rounded border border-border-subtle bg-bg-elevated px-2 py-0.5 text-text-primary">g e</kbd>
               </div>
-              <div className="flex justify-between items-center py-1 border-b border-border-subtle/50">
+              <div className="flex justify-between items-center py-2 border-b border-border-subtle/50">
                 <span>Go to Fleet Agents</span>
                 <kbd className="rounded border border-border-subtle bg-bg-elevated px-2 py-0.5 text-text-primary">g a</kbd>
               </div>
-              <div className="flex justify-between items-center py-1 border-b border-border-subtle/50">
+              <div className="flex justify-between items-center py-2 border-b border-border-subtle/50">
                 <span>Go to Sample Vault</span>
                 <kbd className="rounded border border-border-subtle bg-bg-elevated px-2 py-0.5 text-text-primary">g s</kbd>
               </div>
-              <div className="flex justify-between items-center py-1 border-b border-border-subtle/50">
+              <div className="flex justify-between items-center py-2 border-b border-border-subtle/50">
                 <span>Go to Detection Rules</span>
                 <kbd className="rounded border border-border-subtle bg-bg-elevated px-2 py-0.5 text-text-primary">g r</kbd>
               </div>
-              <div className="flex justify-between items-center py-1 border-b border-border-subtle/50">
+              <div className="flex justify-between items-center py-2 border-b border-border-subtle/50">
                 <span>Go to SOC Findings</span>
                 <kbd className="rounded border border-border-subtle bg-bg-elevated px-2 py-0.5 text-text-primary">g f</kbd>
               </div>
-              <div className="flex justify-between items-center py-1 border-b border-border-subtle/50">
+              <div className="flex justify-between items-center py-2 border-b border-border-subtle/50">
                 <span>Go to Live Monitor</span>
                 <kbd className="rounded border border-border-subtle bg-bg-elevated px-2 py-0.5 text-text-primary">g m</kbd>
               </div>
-              <div className="flex justify-between items-center py-1 border-b border-border-subtle/50">
+              <div className="flex justify-between items-center py-2 border-b border-border-subtle/50">
                 <span>Go to Campaigns</span>
                 <kbd className="rounded border border-border-subtle bg-bg-elevated px-2 py-0.5 text-text-primary">g c</kbd>
               </div>
-              <div className="flex justify-between items-center py-1">
+              <div className="flex justify-between items-center py-2">
                 <span>Toggle Shortcuts Help</span>
                 <kbd className="rounded border border-border-subtle bg-bg-elevated px-2 py-0.5 text-text-primary">?</kbd>
               </div>

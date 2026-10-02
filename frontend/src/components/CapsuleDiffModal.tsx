@@ -1,4 +1,4 @@
-import { useState, type ChangeEvent } from "react";
+import { useEffect, useState, type ChangeEvent } from "react";
 import { compareForensicCapsules } from "../lib/api";
 
 interface CapsuleDiffModalProps {
@@ -12,6 +12,14 @@ export function CapsuleDiffModal({ isOpen, onClose }: CapsuleDiffModalProps) {
   const [loading, setLoading] = useState(false);
   const [diffResult, setDiffResult] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    if (isOpen) window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
@@ -56,8 +64,17 @@ export function CapsuleDiffModal({ isOpen, onClose }: CapsuleDiffModalProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4">
-      <div className="bg-panel-bg border border-panel-border rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Forensic Capsule Differential Comparison"
+      className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-xs transition-opacity"
+      onClick={onClose}
+    >
+      <div
+        className="flex h-full w-full max-w-4xl flex-col border-l border-border-subtle bg-bg-surface shadow-2xl animate-slide-in overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Modal Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-panel-border">
           <div className="flex items-center gap-2">

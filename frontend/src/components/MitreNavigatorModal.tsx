@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Icon } from "./Icon";
 
 export interface MitreTechniqueEvaluation {
@@ -41,6 +41,14 @@ export function MitreNavigatorModal({
     techniques[0] || null
   );
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
   const detectedCount = techniques.filter((t) => t.detected).length;
   const efficacyPct = techniques.length > 0 ? Math.round((detectedCount / techniques.length) * 100) : 100;
 
@@ -65,11 +73,11 @@ export function MitreNavigatorModal({
       role="dialog"
       aria-modal="true"
       aria-label="MITRE ATT&CK Technique Matrix"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-md animate-fade-in font-mono"
+      className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-xs transition-opacity font-mono"
       onClick={onClose}
     >
       <div
-        className="flex max-h-[90vh] w-full max-w-6xl flex-col rounded-2xl border border-border-subtle bg-bg-surface shadow-2xl"
+        className="flex h-full w-full max-w-5xl flex-col border-l border-border-subtle bg-bg-surface shadow-2xl animate-slide-in overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}

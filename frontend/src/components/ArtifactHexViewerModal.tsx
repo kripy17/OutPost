@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Icon } from "./Icon";
 import type { DroppedArtifactItem } from "../types";
 
@@ -42,6 +42,14 @@ export function ArtifactHexViewerModal({ artifact, onClose }: ArtifactHexViewerM
   const [viewMode, setViewMode] = useState<"hex" | "text">("hex");
   const [copiedSha, setCopiedSha] = useState(false);
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
   const previewLines = artifact.preview || [
     `# OutPost Carved Artifact: ${artifact.filename || artifact.name}`,
     `# Size: ${artifact.size_bytes} bytes`,
@@ -67,11 +75,11 @@ export function ArtifactHexViewerModal({ artifact, onClose }: ArtifactHexViewerM
       role="dialog"
       aria-modal="true"
       aria-label={`Forensic Artifact Viewer: ${artifact.filename || artifact.name}`}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm animate-fade-in"
+      className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-xs transition-opacity"
       onClick={onClose}
     >
       <div
-        className="flex max-h-[85vh] w-full max-w-4xl flex-col rounded-2xl border border-border-subtle bg-bg-surface shadow-2xl"
+        className="flex h-full w-full max-w-3xl flex-col border-l border-border-subtle bg-bg-surface shadow-2xl animate-slide-in overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}

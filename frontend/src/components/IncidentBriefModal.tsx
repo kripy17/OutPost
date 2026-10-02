@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Icon } from "./Icon";
 import type { DroppedArtifactItem } from "../types";
 
@@ -33,6 +33,14 @@ interface IncidentBriefModalProps {
 export function IncidentBriefModal({ data, onClose }: IncidentBriefModalProps) {
   const [copiedMd, setCopiedMd] = useState(false);
   const [copiedJson, setCopiedJson] = useState(false);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
 
   const generateMarkdown = (): string => {
     const timestamp = new Date().toISOString();
@@ -122,11 +130,11 @@ ${data.syscalls.length > 0 ? data.syscalls.slice(0, 10).map((s) => `[PID ${s.pid
       role="dialog"
       aria-modal="true"
       aria-label="SOC Incident Brief & Forensic Dossier"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-md animate-fade-in font-mono"
+      className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-xs transition-opacity font-mono"
       onClick={onClose}
     >
       <div
-        className="flex max-h-[90vh] w-full max-w-5xl flex-col rounded-2xl border border-border-subtle bg-bg-surface shadow-2xl"
+        className="flex h-full w-full max-w-4xl flex-col border-l border-border-subtle bg-bg-surface shadow-2xl animate-slide-in overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}

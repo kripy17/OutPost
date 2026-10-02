@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Icon } from "./Icon";
 import { acquireHostTriagePack } from "../lib/api";
@@ -12,6 +12,14 @@ export const LiveTriageModal: React.FC<LiveTriageModalProps> = ({ onClose, hostI
   const [includeYara, setIncludeYara] = useState(true);
   const [triageData, setTriageData] = useState<any | null>(null);
   const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
 
   const triageMutation = useMutation({
     mutationFn: async () => {
@@ -37,8 +45,13 @@ export const LiveTriageModal: React.FC<LiveTriageModalProps> = ({ onClose, hostI
   const sev = summary.severity || "clean";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
-      <div className="flex max-h-[90vh] w-full max-w-4xl flex-col rounded-2xl border border-border-subtle bg-bg-surface shadow-2xl overflow-hidden">
+    <div className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-xs transition-opacity" onClick={onClose}>
+      <div
+        className="flex h-full w-full max-w-3xl flex-col border-l border-border-subtle bg-bg-surface shadow-2xl animate-slide-in overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+      >
         {/* Modal Header */}
         <div className="flex items-center justify-between border-b border-border-subtle px-6 py-4 bg-bg-elevated/40">
           <div className="flex items-center gap-3">

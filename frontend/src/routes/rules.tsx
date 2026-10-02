@@ -908,6 +908,14 @@ function SigmaDetectionStudio({
   const [showCatalog, setShowCatalog] = useState(false);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setShowCatalog(false);
+    };
+    if (showCatalog) window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [showCatalog]);
+
   // Search and filter state for left catalog rail
   const [searchFilter, setSearchFilter] = useState("");
   const [tacticFilter, setTacticFilter] = useState("all");
@@ -1166,19 +1174,20 @@ detection:
         </div>
       )}
 
-      {/* SigmaHQ Catalog Modal */}
+      {/* SigmaHQ Catalog Drawer */}
       {showCatalog && (
         <div
           role="dialog"
           aria-modal="true"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-fade-in"
+          aria-label="SigmaHQ Community Rule Catalog"
+          className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-xs transition-opacity animate-fade-in"
           onClick={() => setShowCatalog(false)}
         >
           <div
-            className="w-full max-w-2xl max-h-[85vh] flex flex-col rounded-2xl border border-border-subtle bg-bg-surface p-5 shadow-2xl"
+            className="flex h-full w-full max-w-2xl flex-col border-l border-border-subtle bg-bg-surface shadow-2xl animate-slide-in overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between border-b border-border-subtle pb-3 mb-3">
+            <div className="flex items-center justify-between border-b border-border-subtle px-6 py-4 bg-bg-base/70">
               <div>
                 <h3 className="font-bold text-text-primary text-sm">SigmaHQ Community Rule Catalog</h3>
                 <p className="text-[11px] text-text-muted">Pre-validated detection signatures for Windows, Linux, and macOS</p>
@@ -1191,7 +1200,7 @@ detection:
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto space-y-2.5 pr-1">
+            <div className="flex-1 overflow-y-auto p-6 space-y-2.5">
               {(communityRules ?? []).map((r) => (
                 <div
                   key={r.id}
@@ -1686,6 +1695,14 @@ function RuleBacktestModal({
   const [result, setResult] = useState<RuleBacktestResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
   const runBacktest = async () => {
     setRunning(true);
     setError(null);
@@ -1709,9 +1726,18 @@ function RuleBacktestModal({
   }, [ruleId, customYaml]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-2xl rounded-2xl border border-border-subtle bg-bg-surface p-6 shadow-2xl space-y-4 max-h-[85vh] overflow-y-auto">
-        <div className="flex items-center justify-between border-b border-border-subtle pb-3">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Historical Rule Backtest — ${ruleName}`}
+      className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-xs transition-opacity"
+      onClick={onClose}
+    >
+      <div
+        className="flex h-full w-full max-w-2xl flex-col border-l border-border-subtle bg-bg-surface shadow-2xl animate-slide-in overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-border-subtle px-6 py-4 bg-bg-base/70">
           <div>
             <span className="font-mono text-[10px] uppercase tracking-wide text-text-faint">Detection Validation &amp; Backtesting</span>
             <h3 className="font-mono text-sm font-bold text-text-primary">
@@ -1723,74 +1749,76 @@ function RuleBacktestModal({
           </button>
         </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-3 font-mono text-xs">
-          <div className="flex items-center gap-2">
-            <span className="text-text-faint">Scanned Window:</span>
-            <select
-              value={maxEvents}
-              onChange={(e) => setMaxEvents(Number(e.target.value))}
+        <div className="flex-1 overflow-y-auto p-6 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 font-mono text-xs">
+            <div className="flex items-center gap-2">
+              <span className="text-text-faint">Scanned Window:</span>
+              <select
+                value={maxEvents}
+                onChange={(e) => setMaxEvents(Number(e.target.value))}
+                disabled={running}
+                className="rounded border border-border-subtle bg-bg-base px-2 py-1 text-text-primary outline-none focus:border-accent"
+              >
+                <option value={500}>Last 500 Events</option>
+                <option value={1000}>Last 1,000 Events</option>
+                <option value={2000}>Last 2,000 Events</option>
+                <option value={5000}>Last 5,000 Events</option>
+              </select>
+            </div>
+            <button
+              onClick={() => void runBacktest()}
               disabled={running}
-              className="rounded border border-border-subtle bg-bg-base px-2 py-1 text-text-primary outline-none focus:border-accent"
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/15 px-3 py-1.5 font-bold text-accent hover:bg-accent/25 disabled:opacity-50"
             >
-              <option value={500}>Last 500 Events</option>
-              <option value={1000}>Last 1,000 Events</option>
-              <option value={2000}>Last 2,000 Events</option>
-              <option value={5000}>Last 5,000 Events</option>
-            </select>
+              <Icon name={running ? "refresh" : "play"} size={12} className={running ? "animate-spin" : ""} />
+              {running ? "Scanning History…" : "Re-run Backtest"}
+            </button>
           </div>
-          <button
-            onClick={() => void runBacktest()}
-            disabled={running}
-            className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/15 px-3 py-1.5 font-bold text-accent hover:bg-accent/25 disabled:opacity-50"
-          >
-            <Icon name={running ? "refresh" : "play"} size={12} className={running ? "animate-spin" : ""} />
-            {running ? "Scanning History…" : "Re-run Backtest"}
-          </button>
-        </div>
 
-        {error && <p className="font-mono text-xs text-risk-malicious">{error}</p>}
+          {error && <p className="font-mono text-xs text-risk-malicious">{error}</p>}
 
-        {result && (
-          <div className="space-y-3 font-mono">
-            <div className="grid grid-cols-3 gap-3">
-              <div className="rounded-xl border border-border-subtle bg-bg-base/60 p-3">
-                <span className="text-[10px] text-text-faint uppercase">Events Evaluated</span>
-                <p className="text-base font-bold text-text-primary mt-1">{result.events_scanned}</p>
-              </div>
-              <div className="rounded-xl border border-border-subtle bg-bg-base/60 p-3">
-                <span className="text-[10px] text-text-faint uppercase">Rule Trigger Hits</span>
-                <p className="text-base font-bold text-accent mt-1">{result.matches_count} ({result.match_rate_pct}%)</p>
-              </div>
-              <div className="rounded-xl border border-border-subtle bg-bg-base/60 p-3">
-                <span className="text-[10px] text-text-faint uppercase">Est. False Positive Risk</span>
-                <p className={`text-base font-bold mt-1 uppercase ${result.estimated_fp_risk === "low" ? "text-emerald-400" : result.estimated_fp_risk === "medium" ? "text-amber-400" : "text-rose-500"}`}>
-                  {result.estimated_fp_risk}
-                </p>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <span className="text-[10px] uppercase font-bold text-text-faint">Matched Historical Events ({result.sample_matches.length}):</span>
-              {result.sample_matches.length === 0 ? (
-                <p className="text-xs text-text-muted py-2">Zero matching events triggered across the historical sample window.</p>
-              ) : (
-                <div className="max-h-60 overflow-y-auto space-y-1.5 pr-1">
-                  {result.sample_matches.map((m: any, idx: number) => (
-                    <div key={idx} className="rounded-lg border border-border-subtle bg-bg-base/80 p-2.5 text-[11px]">
-                      <div className="flex items-center justify-between text-text-muted">
-                        <span className="font-bold text-accent">{m.process_name || m.event_type}</span>
-                        <span className="text-[9px] text-text-faint">{m.timestamp?.slice(0, 19).replace("T", " ")}</span>
-                      </div>
-                      <p className="mt-1 truncate text-text-primary" title={m.command_line || m.match_reason}>
-                        {m.match_reason || m.command_line}
-                      </p>
-                    </div>
-                  ))}
+          {result && (
+            <div className="space-y-3 font-mono">
+              <div className="grid grid-cols-3 gap-3">
+                <div className="rounded-xl border border-border-subtle bg-bg-base/60 p-3">
+                  <span className="text-[10px] text-text-faint uppercase">Events Evaluated</span>
+                  <p className="text-base font-bold text-text-primary mt-1">{result.events_scanned}</p>
                 </div>
-              )}
+                <div className="rounded-xl border border-border-subtle bg-bg-base/60 p-3">
+                  <span className="text-[10px] text-text-faint uppercase">Rule Trigger Hits</span>
+                  <p className="text-base font-bold text-accent mt-1">{result.matches_count} ({result.match_rate_pct}%)</p>
+                </div>
+                <div className="rounded-xl border border-border-subtle bg-bg-base/60 p-3">
+                  <span className="text-[10px] text-text-faint uppercase">Est. False Positive Risk</span>
+                  <p className={`text-base font-bold mt-1 uppercase ${result.estimated_fp_risk === "low" ? "text-emerald-400" : result.estimated_fp_risk === "medium" ? "text-amber-400" : "text-rose-500"}`}>
+                    {result.estimated_fp_risk}
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <span className="text-[10px] uppercase font-bold text-text-faint">Matched Historical Events ({result.sample_matches.length}):</span>
+                {result.sample_matches.length === 0 ? (
+                  <p className="text-xs text-text-muted py-2">Zero matching events triggered across the historical sample window.</p>
+                ) : (
+                  <div className="max-h-60 overflow-y-auto space-y-1.5 pr-1">
+                    {result.sample_matches.map((m: any, idx: number) => (
+                      <div key={idx} className="rounded-lg border border-border-subtle bg-bg-base/80 p-2.5 text-[11px]">
+                        <div className="flex items-center justify-between text-text-muted">
+                          <span className="font-bold text-accent">{m.process_name || m.event_type}</span>
+                          <span className="text-[9px] text-text-faint">{m.timestamp?.slice(0, 19).replace("T", " ")}</span>
+                        </div>
+                        <p className="mt-1 truncate text-text-primary" title={m.command_line || m.match_reason}>
+                          {m.match_reason || m.command_line}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
     </div>
   );
