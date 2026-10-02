@@ -1,338 +1,60 @@
-// Agent fleet — which hosts are streaming telemetry into this console.
-//
-// Every event carries a host_id: webapp detonations and sandbox runs are
-// attributed to 'local', while hosts running `outpost agent run` (or the
-// collectors directly) ship under their own host label. The fleet page makes
-// multi-host monitoring visible: heartbeat status, event/alert volume per
-// host, and a one-line reminder of how to bring a new host online.
-
+// EDR Fleet & Host Operations — Enterprise endpoint sensor telemetry, active containment & triage.
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { platformIconName } from "../components/iconMeta";
-import { PageHeader, Panel } from "../components/ui";
 import { IocFleetHuntModal } from "../components/IocFleetHuntModal";
-import { getAgentBootstrapCommands, getAgents, getHostBaseline, getHostContainment, getHostSnapshot, isolateHost, killHostProcess, resetHostBaseline } from "../lib/api";
+import {
+  getAgentBootstrapCommands,
+  getAgents,
+  getHostBaseline,
+  getHostContainment,
+  getHostSnapshot,
+  isolateHost,
+  killHostProcess,
+  resetHostBaseline,
+} from "../lib/api";
 import { useEventStream } from "../lib/useEventStream";
-import type { AgentInfo, HostBaseline } from "../types";
-import { channelMix, channelTone, relativeTime } from "./agentsHelpers";
+import type { AgentInfo } from "../types";
+import { relativeTime } from "./agentsHelpers";
 
-function AgentRow({
+function HostInspectorDrawer({
+  hostId,
   agent,
-  onOpenContainment,
+  onClose,
 }: {
-  agent: AgentInfo;
-  onOpenContainment: (hostId: string) => void;
+  hostId: string;
+  agent?: AgentInfo;
+  onClose: () => void;
 }) {
-  const recent = agent.recent_run_ids ?? [];
-  const status: "online" | "offline" | "silent" = agent.silent ? "silent" : agent.online ? "online" : "offline";
-  const statusTone =
-    status === "online"
-      ? "border-signal/40 bg-signal/10 text-signal"
-      : status === "silent"
-        ? "border-risk-malicious/50 bg-risk-malicious/10 text-risk-malicious"
-        : "border-border-subtle text-text-faint";
-  const dotTone =
-    status === "online"
-      ? "animate-outpost-pulse bg-signal"
-      : status === "silent"
-        ? "animate-outpost-pulse bg-risk-malicious"
-        : "bg-text-faint";
-  return (
-    <li className="group relative overflow-hidden rounded-xl border border-border-subtle bg-bg-surface transition-all duration-150 hover:border-accent/40 hover:shadow-[var(--shadow-panel)]">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-3 px-5 py-4">
-        <span
-          className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border ${
-            status === "online"
-              ? "border-signal/40 bg-signal/10 text-signal"
-              : status === "silent"
-                ? "border-risk-malicious/50 bg-risk-malicious/10 text-risk-malicious"
-                : "border-border-subtle bg-bg-elevated/60 text-text-faint"
-          }`}
-        >
-          <Icon name="terminal" size={18} />
-        </span>
+  const queryClient = useQueryClient();
+  const [activeTab, setActiveTab] = useState<"snapshot" | "sockets" | "baseline" | "deploy">("snapshot");
+  const [procFilter, setProcFilter] = useState("");
+  const [killMsg, setKillMsg] = useState<string | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
 
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-mono text-sm font-semibold text-text-primary">{agent.host_id}</span>
-            <span
-              className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-px font-mono text-[10px] ${statusTone}`}
-              title={
-                status === "silent"
-                  ? "Heartbeated before but quiet for over the silent window — the collector may be down"
-                  : undefined
-              }
-            >
-              <span className={`h-1.5 w-1.5 rounded-full ${dotTone}`} aria-hidden />
-              {status}
-            </span>
-            {agent.identity === "collector" && (
-              <span
-                className="inline-flex items-center gap-1 rounded-full border border-signal/40 bg-signal/10 px-2 py-px font-mono text-[10px] text-signal"
-                title={`Real host agent${agent.heartbeat_version ? ` · ${agent.heartbeat_version}` : ""} · channels: ${agent.channels?.join(", ") || "—"} · last auth: ${agent.last_auth_role ?? "—"}${agent.last_auth_at ? ` ${relativeTime(agent.last_auth_at)}` : ""}`}
-              >
-                <Icon name="terminal" size={10} />
-                collector
-              </span>
-            )}
-            {agent.identity === "webapp" && (
-              <span
-                className="rounded-full border border-border-subtle bg-bg-elevated/60 px-2 py-px font-mono text-[10px] text-text-muted"
-                title="No agent heartbeat — events came from this machine (webapp detonations, sandbox runs)"
-              >
-                webapp detonation
-              </span>
-            )}
-            {agent.last_auth_role && (
-              <span
-                className={`inline-flex items-center gap-1 rounded-full border px-2 py-px font-mono text-[10px] ${
-                  agent.last_auth_role === "agent"
-                    ? "border-accent/40 bg-accent/10 text-accent"
-                    : agent.last_auth_role === "local"
-                      ? "border-border-subtle bg-bg-elevated/60 text-text-faint"
-                      : "border-border-subtle bg-bg-elevated/60 text-text-muted"
-                }`}
-                title={`Authenticated ${agent.last_auth_role === "agent" ? "via the shared OUTPOST_AGENT_TOKEN" : agent.last_auth_role === "local" ? "without a credential (auth off / open mode)" : `as the ${agent.last_auth_role} role`}${agent.last_auth_at ? ` · ${relativeTime(agent.last_auth_at)}` : ""}`}
-              >
-                auth: {agent.last_auth_role === "agent" ? "agent token" : agent.last_auth_role}
-              </span>
-            )}
-          </div>
-          <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-[11px] text-text-faint">
-            <span>
-              {agent.event_count} event{agent.event_count === 1 ? "" : "s"} · {agent.run_count} run{agent.run_count === 1 ? "" : "s"} · {agent.alert_count} alert{agent.alert_count === 1 ? "" : "s"}
-            </span>
-            <span className="inline-flex items-center gap-1">
-              {agent.platforms.map((p) => (
-                <span key={p} className="inline-flex items-center gap-1 capitalize">
-                  <Icon name={platformIconName(p)} size={11} />
-                  {p}
-                </span>
-              ))}
-            </span>
-            <span>last event {relativeTime(agent.last_seen)}</span>
-            {agent.last_heartbeat && (
-              <span className={agent.silent ? "font-semibold text-risk-malicious" : undefined}>
-                heartbeat {relativeTime(agent.last_heartbeat)}
-                {agent.silent && " · went silent"}
-              </span>
-            )}
-            {agent.heartbeat_version && !agent.silent && (
-              <span className="text-text-faint">{agent.heartbeat_version}</span>
-            )}
-          </p>
-          {/* Channel mix */}
-          {agent.channel_counts && Object.keys(agent.channel_counts).length > 0 && (
-            <div
-              className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1"
-              aria-label={`channel mix: ${Object.entries(agent.channel_counts)
-                .map(([c, n]) => `${c} ${n}`)
-                .join(", ")}`}
-            >
-              <span className="font-mono text-[10px] uppercase tracking-wider text-text-faint">channel mix</span>
-              {channelMix(agent.channel_counts).map(({ channel, count, pct }) => (
-                <span
-                  key={channel}
-                  className="flex items-center gap-1.5"
-                  title={`${count.toLocaleString()} ${channel} event${count === 1 ? "" : "s"} — ${pct}% of this host's telemetry`}
-                >
-                  <span className={`h-1.5 w-1.5 rounded-full ${channelTone(channel)}`} aria-hidden />
-                  <span className="font-mono text-[10px] text-text-muted">{channel}</span>
-                  <span className="font-mono text-[10px] tabular-nums text-text-primary">{count.toLocaleString()}</span>
-                  <span className="hidden h-1 w-10 overflow-hidden rounded-full bg-bg-elevated sm:block" aria-hidden>
-                    <span className={`block h-full ${channelTone(channel)}`} style={{ width: `${pct}%` }} />
-                  </span>
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
+  const { data: containment } = useQuery({
+    queryKey: ["host-containment", hostId],
+    queryFn: () => getHostContainment(hostId),
+    refetchInterval: 10_000,
+  });
 
-        <div className="flex shrink-0 flex-wrap items-center gap-2">
-          <button
-            onClick={() => onOpenContainment(agent.host_id)}
-            className="press inline-flex items-center gap-1.5 rounded-lg border border-risk-malicious/50 bg-risk-malicious/10 px-3 py-1.5 font-mono text-[11px] font-semibold text-risk-malicious transition-colors duration-150 hover:bg-risk-malicious/20"
-            title="Quarantine host or kill malicious processes"
-          >
-            <Icon name="alert" size={12} />
-            Containment
-          </button>
-          {recent.length > 0 && (
-            <div className="flex items-center gap-1">
-              {recent.map((rid) => (
-                <Link
-                  key={rid}
-                  to={`/runs/${rid}`}
-                  className="rounded border border-border-subtle bg-bg-elevated/50 px-1.5 py-0.5 font-mono text-[10px] text-text-faint transition-colors hover:border-accent/50 hover:text-accent"
-                  title={`Open run ${rid.slice(0, 12)}`}
-                >
-                  {rid.slice(0, 6)}
-                </Link>
-              ))}
-            </div>
-          )}
-          <Link
-            to={`/history?host=${encodeURIComponent(agent.host_id)}`}
-            className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-1.5 font-mono text-[11px] text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
-            title={`Every run that ${agent.host_id} contributed events to`}
-          >
-            <Icon name="clock" size={12} />
-            Runs
-          </Link>
-          <Link
-            to={`/events?q=${encodeURIComponent(agent.host_id)}`}
-            className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-1.5 font-mono text-[11px] text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
-            title={`All events from ${agent.host_id}`}
-          >
-            <Icon name="list" size={12} />
-            Events
-          </Link>
-          <Link
-            to={`/hosts/${encodeURIComponent(agent.host_id)}`}
-            className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-1.5 font-mono text-[11px] text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
-            title={`The aggregate timeline — everything OutPost knows about ${agent.host_id}`}
-          >
-            <Icon name="activity" size={12} />
-            Timeline
-          </Link>
-        </div>
-      </div>
-    </li>
-  );
-}
+  const { data: snapshot, isLoading: snapLoading } = useQuery({
+    queryKey: ["snapshot", hostId],
+    queryFn: () => getHostSnapshot(hostId),
+    refetchInterval: 10_000,
+  });
 
+  const { data: baseline } = useQuery({
+    queryKey: ["baseline", hostId],
+    queryFn: () => getHostBaseline(hostId),
+  });
 
-function BootstrapModal({ onClose }: { onClose: () => void }) {
-  const { data, isLoading } = useQuery({
+  const { data: bootstrapData } = useQuery({
     queryKey: ["agent-bootstrap-commands"],
     queryFn: getAgentBootstrapCommands,
   });
-  const [copied, setCopied] = useState<string | null>(null);
-
-  const copyToClipboard = (text: string, key: string) => {
-    void navigator.clipboard.writeText(text);
-    setCopied(key);
-    setTimeout(() => setCopied(null), 2000);
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-2xl rounded-2xl border border-border-subtle bg-bg-surface p-6 shadow-2xl">
-        <div className="flex items-center justify-between pb-4 border-b border-border-subtle">
-          <div className="flex items-center gap-2">
-            <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-accent/40 bg-accent/10 text-accent">
-              <Icon name="terminal" size={16} />
-            </span>
-            <div>
-              <h3 className="font-mono text-sm font-bold text-text-primary">1-Click Agent Bootstrap</h3>
-              <p className="text-xs text-text-muted">Enroll any Linux, macOS, or Windows host into live monitoring</p>
-            </div>
-          </div>
-          <button onClick={onClose} className="press rounded-lg p-1.5 text-text-muted hover:text-text-primary">
-            <Icon name="x" size={16} />
-          </button>
-        </div>
-
-        {isLoading ? (
-          <p className="py-8 text-center text-xs text-text-muted font-mono">Generating bootstrap commands…</p>
-        ) : (
-          <div className="mt-4 space-y-4">
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <span className="font-mono text-xs font-semibold text-text-primary flex items-center gap-1.5">
-                  <Icon name="terminal" size={13} className="text-accent" />
-                  Linux (Kernel Auditd / eBPF)
-                </span>
-                <button
-                  onClick={() => copyToClipboard(data?.linux_command || "", "linux")}
-                  className="press inline-flex items-center gap-1 rounded border border-border-subtle px-2 py-0.5 font-mono text-[10px] text-text-muted hover:text-accent"
-                >
-                  <Icon name="copy" size={10} />
-                  {copied === "linux" ? "Copied!" : "Copy"}
-                </button>
-              </div>
-              <pre className="rounded-lg border border-border-subtle bg-bg-base p-3 font-mono text-xs text-accent overflow-x-auto select-all">
-                {data?.linux_command}
-              </pre>
-            </div>
-
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <span className="font-mono text-xs font-semibold text-text-primary flex items-center gap-1.5">
-                  <Icon name="terminal" size={13} className="text-accent" />
-                  macOS (Apple EndpointSecurity Framework)
-                </span>
-                <button
-                  onClick={() => copyToClipboard(data?.macos_command || data?.linux_command || "", "macos")}
-                  className="press inline-flex items-center gap-1 rounded border border-border-subtle px-2 py-0.5 font-mono text-[10px] text-text-muted hover:text-accent"
-                >
-                  <Icon name="copy" size={10} />
-                  {copied === "macos" ? "Copied!" : "Copy"}
-                </button>
-              </div>
-              <pre className="rounded-lg border border-border-subtle bg-bg-base p-3 font-mono text-xs text-accent overflow-x-auto select-all">
-                {data?.macos_command || data?.linux_command}
-              </pre>
-            </div>
-
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <span className="font-mono text-xs font-semibold text-text-primary flex items-center gap-1.5">
-                  <Icon name="terminal" size={13} className="text-accent" />
-                  Windows (PowerShell + SwiftOnSecurity Sysmon)
-                </span>
-                <button
-                  onClick={() => copyToClipboard(data?.windows_command || "", "windows")}
-                  className="press inline-flex items-center gap-1 rounded border border-border-subtle px-2 py-0.5 font-mono text-[10px] text-text-muted hover:text-accent"
-                >
-                  <Icon name="copy" size={10} />
-                  {copied === "windows" ? "Copied!" : "Copy"}
-                </button>
-              </div>
-              <pre className="rounded-lg border border-border-subtle bg-bg-base p-3 font-mono text-xs text-accent overflow-x-auto select-all">
-                {data?.windows_command}
-              </pre>
-            </div>
-
-            <div className="rounded-lg border border-border-subtle bg-bg-elevated/30 p-3 text-[11px] text-text-muted">
-              <p className="font-medium text-text-primary mb-1">Automated Setup Capabilities:</p>
-              <ul className="list-disc list-inside space-y-0.5 text-text-faint">
-                <li><strong className="text-text-primary">Windows:</strong> Automatically provisions Microsoft Sysmon and applies the industry-standard <strong>SwiftOnSecurity</strong> configuration profile.</li>
-                <li><strong className="text-text-primary">Linux:</strong> Hooks native kernel <code className="text-text-primary">auditd</code> / <code className="text-text-primary">auditctl</code> rules and <code className="text-text-primary">eBPF</code> tracepoints.</li>
-                <li><strong className="text-text-primary">macOS:</strong> Streams live JSON telemetry from Apple's native <code className="text-text-primary">EndpointSecurity</code> framework.</li>
-                <li>Pings collector liveness heartbeats every 60s and streams real-time process, network, and registry events to <code className="text-text-primary">{data?.server}</code>.</li>
-                <li>Enables active network isolation &amp; process kill containment directly from the SOC console.</li>
-              </ul>
-            </div>
-          </div>
-        )}
-
-        <div className="mt-6 flex justify-end">
-          <button
-            onClick={onClose}
-            className="press rounded-lg border border-border-subtle px-4 py-1.5 font-mono text-xs text-text-muted hover:text-text-primary"
-          >
-            Close
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-
-function ContainmentModal({ hostId, onClose }: { hostId: string; onClose: () => void }) {
-  const queryClient = useQueryClient();
-  const { data, isLoading } = useQuery({
-    queryKey: ["host-containment", hostId],
-    queryFn: () => getHostContainment(hostId),
-  });
-
-  const [killPid, setKillPid] = useState("");
-  const [killProcessName, setKillProcessName] = useState("");
-  const [killMsg, setKillMsg] = useState<string | null>(null);
 
   const toggleIsolation = useMutation({
     mutationFn: (isolated: boolean) => isolateHost(hostId, { isolated, reason: "Operator console action" }),
@@ -343,117 +65,362 @@ function ContainmentModal({ hostId, onClose }: { hostId: string; onClose: () => 
   });
 
   const queueKill = useMutation({
-    mutationFn: () => killHostProcess(hostId, { pid: killPid ? parseInt(killPid, 10) : undefined, process_name: killProcessName || undefined }),
-    onSuccess: () => {
-      setKillMsg("Process kill instruction queued for next agent heartbeat.");
-      setKillPid("");
-      setKillProcessName("");
+    mutationFn: (pid: number) => killHostProcess(hostId, { pid }),
+    onSuccess: (_, pid) => {
+      setKillMsg(`Kill instruction for PID ${pid} queued for next agent heartbeat.`);
       void queryClient.invalidateQueries({ queryKey: ["host-containment", hostId] });
       setTimeout(() => setKillMsg(null), 3000);
     },
   });
 
-  const isIsolated = data?.isolated ?? false;
+  const resetBase = useMutation({
+    mutationFn: () => resetHostBaseline(hostId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["baseline", hostId] });
+      void queryClient.invalidateQueries({ queryKey: ["agents"] });
+    },
+  });
+
+  const isIsolated = containment?.isolated ?? false;
+
+  const copyCmd = (text: string, label: string) => {
+    void navigator.clipboard.writeText(text);
+    setCopied(label);
+    setTimeout(() => setCopied(null), 2000);
+  };
+
+  const filteredProcesses = (snapshot?.processes || []).filter((p) => {
+    if (!procFilter.trim()) return true;
+    const q = procFilter.toLowerCase();
+    return (
+      p.name.toLowerCase().includes(q) ||
+      String(p.pid).includes(q) ||
+      (p.user || "").toLowerCase().includes(q) ||
+      (p.cmdline || "").toLowerCase().includes(q)
+    );
+  });
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-lg rounded-2xl border border-border-subtle bg-bg-surface p-6 shadow-2xl">
-        <div className="flex items-center justify-between pb-4 border-b border-border-subtle">
-          <div className="flex items-center gap-2">
-            <span className={`flex h-8 w-8 items-center justify-center rounded-lg border ${isIsolated ? "border-risk-malicious bg-risk-malicious/10 text-risk-malicious" : "border-accent/40 bg-accent/10 text-accent"}`}>
-              <Icon name="alert" size={16} />
-            </span>
-            <div>
-              <h3 className="font-mono text-sm font-bold text-text-primary">Active Host Containment &amp; Remediation</h3>
-              <p className="text-xs text-text-muted">Target host: <code className="text-accent">{hostId}</code></p>
+    <div
+      role="dialog"
+      aria-modal="true"
+      className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-xs animate-fade-in"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-2xl bg-bg-surface border-l border-border-subtle flex flex-col h-full shadow-2xl overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Drawer Header */}
+        <div className="p-5 border-b border-border-subtle bg-bg-elevated/40">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border ${
+                isIsolated
+                  ? "border-risk-malicious/60 bg-risk-malicious/15 text-risk-malicious"
+                  : agent?.online
+                    ? "border-signal/60 bg-signal/15 text-signal"
+                    : "border-border-subtle bg-bg-surface text-text-faint"
+              }`}>
+                <Icon name={agent?.platforms[0] ? platformIconName(agent.platforms[0]) : "terminal"} size={16} />
+              </span>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <h2 className="font-mono text-sm font-bold text-text-primary truncate">{hostId}</h2>
+                  <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.2 font-mono text-[10px] border ${
+                    agent?.online ? "border-signal/50 bg-signal/10 text-signal" : "border-border-subtle text-text-faint"
+                  }`}>
+                    <span className={`h-1.5 w-1.5 rounded-full ${agent?.online ? "bg-signal animate-outpost-pulse" : "bg-text-faint"}`} />
+                    {agent?.online ? "online" : "offline"}
+                  </span>
+                  {isIsolated && (
+                    <span className="rounded bg-risk-malicious/20 border border-risk-malicious/50 px-1.5 py-0.2 font-mono text-[9px] font-bold text-risk-malicious uppercase">
+                      ISOLATED
+                    </span>
+                  )}
+                </div>
+                <p className="font-mono text-[11px] text-text-faint truncate mt-0.5">
+                  {agent?.platforms.join(", ") || "os"} · {agent?.identity || "agent"} · last seen {agent?.last_seen ? relativeTime(agent.last_seen) : "never"}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              {isIsolated ? (
+                <button
+                  onClick={() => toggleIsolation.mutate(false)}
+                  disabled={toggleIsolation.isPending}
+                  className="press inline-flex items-center gap-1 rounded-lg border border-signal/60 bg-signal/15 px-3 py-1.5 font-mono text-xs font-bold text-signal hover:bg-signal/25 disabled:opacity-50"
+                  title="Lift network containment and restore normal traffic"
+                >
+                  <Icon name="check" size={12} />
+                  <span>Restore Network</span>
+                </button>
+              ) : (
+                <button
+                  onClick={() => toggleIsolation.mutate(true)}
+                  disabled={toggleIsolation.isPending}
+                  className="press inline-flex items-center gap-1 rounded-lg border border-risk-malicious/60 bg-risk-malicious/15 px-3 py-1.5 font-mono text-xs font-bold text-risk-malicious hover:bg-risk-malicious/25 disabled:opacity-50"
+                  title="Isolate host from network using kernel firewall rules"
+                >
+                  <Icon name="alert" size={12} />
+                  <span>Isolate Host</span>
+                </button>
+              )}
+              <button
+                onClick={onClose}
+                className="press rounded-lg p-1.5 text-text-muted hover:text-text-primary hover:bg-bg-elevated"
+              >
+                <Icon name="x" size={16} />
+              </button>
             </div>
           </div>
-          <button onClick={onClose} className="press rounded-lg p-1.5 text-text-muted hover:text-text-primary">
-            <Icon name="x" size={16} />
-          </button>
+
+          {/* Quick Tab Strip */}
+          <div className="mt-4 flex rounded-lg border border-border-subtle bg-bg-base/80 p-1 font-mono text-xs">
+            <button
+              onClick={() => setActiveTab("snapshot")}
+              className={`flex-1 py-1.5 text-center rounded-md font-medium transition ${
+                activeTab === "snapshot" ? "bg-accent/20 text-accent font-bold" : "text-text-muted hover:text-text-primary"
+              }`}
+            >
+              Processes ({snapshot?.processes.length ?? 0})
+            </button>
+            <button
+              onClick={() => setActiveTab("sockets")}
+              className={`flex-1 py-1.5 text-center rounded-md font-medium transition ${
+                activeTab === "sockets" ? "bg-accent/20 text-accent font-bold" : "text-text-muted hover:text-text-primary"
+              }`}
+            >
+              Sockets ({snapshot?.listening.length ?? 0})
+            </button>
+            <button
+              onClick={() => setActiveTab("baseline")}
+              className={`flex-1 py-1.5 text-center rounded-md font-medium transition ${
+                activeTab === "baseline" ? "bg-accent/20 text-accent font-bold" : "text-text-muted hover:text-text-primary"
+              }`}
+            >
+              Baselines
+            </button>
+            <button
+              onClick={() => setActiveTab("deploy")}
+              className={`flex-1 py-1.5 text-center rounded-md font-medium transition ${
+                activeTab === "deploy" ? "bg-accent/20 text-accent font-bold" : "text-text-muted hover:text-text-primary"
+              }`}
+            >
+              Sensor Setup
+            </button>
+          </div>
         </div>
 
-        {isLoading ? (
-          <p className="py-8 text-center text-xs text-text-muted font-mono">Loading containment status…</p>
-        ) : (
-          <div className="mt-4 space-y-5">
-            <div className="rounded-xl border border-border-subtle bg-bg-elevated/30 p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <span className="font-mono text-xs font-semibold text-text-primary">Network Isolation Status</span>
-                  <p className="text-[11px] text-text-muted">Quarantine host to block outbound lateral movement</p>
-                </div>
-                <span className={`rounded-full border px-2.5 py-0.5 font-mono text-[10px] font-bold uppercase ${isIsolated ? "border-risk-malicious/60 bg-risk-malicious/15 text-risk-malicious" : "border-signal/60 bg-signal/15 text-signal"}`}>
-                  {isIsolated ? "ISOLATED" : "NORMAL"}
-                </span>
-              </div>
-              <div className="pt-1">
-                {isIsolated ? (
-                  <button
-                    onClick={() => toggleIsolation.mutate(false)}
-                    disabled={toggleIsolation.isPending}
-                    className="press w-full rounded-lg border border-signal/60 bg-signal/10 py-2 font-mono text-xs font-semibold text-signal hover:bg-signal/20"
-                  >
-                    {toggleIsolation.isPending ? "Lifting Isolation…" : "Lift Isolation / Restore Host"}
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => toggleIsolation.mutate(true)}
-                    disabled={toggleIsolation.isPending}
-                    className="press w-full rounded-lg border border-risk-malicious/60 bg-risk-malicious/10 py-2 font-mono text-xs font-semibold text-risk-malicious hover:bg-risk-malicious/20"
-                  >
-                    {toggleIsolation.isPending ? "Isolating Host…" : "Enforce Network Isolation (Contain Host)"}
-                  </button>
-                )}
-              </div>
-            </div>
-
-            <div className="rounded-xl border border-border-subtle bg-bg-elevated/30 p-4 space-y-3">
-              <div>
-                <span className="font-mono text-xs font-semibold text-text-primary">Terminate Host Process</span>
-                <p className="text-[11px] text-text-muted">Instruct collector to kill an active PID or executable name</p>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <input
-                  type="number"
-                  placeholder="Target PID (e.g. 4812)"
-                  value={killPid}
-                  onChange={(e) => setKillPid(e.target.value)}
-                  className="rounded-lg border border-border-subtle bg-bg-base px-3 py-1.5 font-mono text-xs text-text-primary focus:border-accent/60 focus:outline-none"
-                />
-                <input
-                  type="text"
-                  placeholder="Process Name (e.g. malware.exe)"
-                  value={killProcessName}
-                  onChange={(e) => setKillProcessName(e.target.value)}
-                  className="rounded-lg border border-border-subtle bg-bg-base px-3 py-1.5 font-mono text-xs text-text-primary focus:border-accent/60 focus:outline-none"
-                />
-              </div>
-              <button
-                onClick={() => queueKill.mutate()}
-                disabled={queueKill.isPending || (!killPid && !killProcessName)}
-                className="press w-full rounded-lg border border-accent/60 bg-accent/10 py-1.5 font-mono text-xs text-accent hover:bg-accent/20 disabled:opacity-50"
-              >
-                {queueKill.isPending ? "Queuing Kill…" : "Queue Process Termination"}
-              </button>
-              {killMsg && <p className="font-mono text-[10px] text-risk-clean">{killMsg}</p>}
-            </div>
-
-            {data?.pending_actions && data.pending_actions.length > 0 && (
-              <div className="space-y-1.5 font-mono text-[10px]">
-                <span className="uppercase text-text-faint">Pending Remediation Queue ({data.pending_actions.length}):</span>
-                {data.pending_actions.map((act: any, idx: number) => (
-                  <div key={idx} className="flex items-center justify-between rounded bg-bg-base p-2 text-text-muted border border-border-subtle">
-                    <span>Kill {act.process_name || `PID ${act.pid}`}</span>
-                    <span className="text-text-faint">{act.requested_at?.slice(11, 19)}</span>
-                  </div>
-                ))}
-              </div>
-            )}
+        {killMsg && (
+          <div className="bg-signal/15 border-b border-signal/40 px-5 py-2 font-mono text-xs text-signal">
+            ✓ {killMsg}
           </div>
         )}
 
-        <div className="mt-6 flex justify-end">
+        {/* Drawer Body */}
+        <div className="flex-1 overflow-y-auto p-5 space-y-4">
+          {activeTab === "snapshot" && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <input
+                  type="text"
+                  placeholder="Filter processes by name, PID, user, cmdline..."
+                  value={procFilter}
+                  onChange={(e) => setProcFilter(e.target.value)}
+                  className="w-full rounded-lg border border-border-subtle bg-bg-base px-3 py-1.5 font-mono text-xs text-text-primary focus:border-accent/60 focus:outline-none"
+                />
+              </div>
+
+              {snapLoading ? (
+                <p className="py-10 text-center font-mono text-xs text-text-muted">Loading live process telemetry…</p>
+              ) : !snapshot || snapshot.processes.length === 0 ? (
+                <p className="py-10 text-center font-mono text-xs text-text-muted">
+                  No live process telemetry received from this endpoint yet.
+                </p>
+              ) : (
+                <div className="rounded-xl border border-border-subtle overflow-hidden">
+                  <table className="w-full text-left font-mono text-[11px]">
+                    <thead className="bg-bg-elevated/80 border-b border-border-subtle text-[10px] uppercase text-text-faint">
+                      <tr>
+                        <th className="px-3 py-2">PID</th>
+                        <th className="px-3 py-2">Process</th>
+                        <th className="px-3 py-2">User</th>
+                        <th className="px-3 py-2 text-right">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border-subtle/50">
+                      {filteredProcesses.map((p) => (
+                        <tr key={p.pid} className="hover:bg-bg-elevated/40 transition">
+                          <td className="px-3 py-2 text-text-muted tabular-nums">{p.pid}</td>
+                          <td className="px-3 py-2">
+                            <span className="font-semibold text-text-primary">{p.name}</span>
+                            {p.cmdline && (
+                              <p className="text-[10px] text-text-faint truncate max-w-xs" title={p.cmdline}>
+                                {p.cmdline}
+                              </p>
+                            )}
+                          </td>
+                          <td className="px-3 py-2 text-text-muted">{p.user || "—"}</td>
+                          <td className="px-3 py-2 text-right">
+                            <button
+                              onClick={() => {
+                                if (window.confirm(`Queue process termination for ${p.name} (PID ${p.pid})?`)) {
+                                  queueKill.mutate(p.pid);
+                                }
+                              }}
+                              className="press rounded border border-border-subtle bg-bg-base px-2 py-0.5 text-[10px] text-text-faint hover:border-risk-malicious/60 hover:text-risk-malicious"
+                              title="Terminate process"
+                            >
+                              Kill
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeTab === "sockets" && (
+            <div className="space-y-3">
+              {!snapshot || snapshot.listening.length === 0 ? (
+                <p className="py-10 text-center font-mono text-xs text-text-muted">
+                  No open listening ports recorded on this endpoint.
+                </p>
+              ) : (
+                <div className="rounded-xl border border-border-subtle overflow-hidden">
+                  <table className="w-full text-left font-mono text-[11px]">
+                    <thead className="bg-bg-elevated/80 border-b border-border-subtle text-[10px] uppercase text-text-faint">
+                      <tr>
+                        <th className="px-3 py-2">Proto</th>
+                        <th className="px-3 py-2">Address</th>
+                        <th className="px-3 py-2">Port</th>
+                        <th className="px-3 py-2">PID</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border-subtle/50">
+                      {snapshot.listening.map((s, idx) => (
+                        <tr key={idx} className="hover:bg-bg-elevated/40 transition">
+                          <td className="px-3 py-2 uppercase font-semibold text-accent">{s.proto}</td>
+                          <td className="px-3 py-2 text-text-primary">{s.addr}</td>
+                          <td className="px-3 py-2 text-signal tabular-nums font-bold">{s.port}</td>
+                          <td className="px-3 py-2 text-text-muted">{s.pid ?? "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeTab === "baseline" && (
+            <div className="space-y-4 font-mono text-xs">
+              <div className="grid grid-cols-3 gap-3">
+                <div className="rounded-xl border border-border-subtle bg-bg-base/60 p-3">
+                  <span className="text-[10px] text-text-faint uppercase">Observations</span>
+                  <p className="text-base font-bold text-text-primary mt-1">{baseline?.total_observations ?? 0}</p>
+                </div>
+                <div className="rounded-xl border border-border-subtle bg-bg-base/60 p-3">
+                  <span className="text-[10px] text-text-faint uppercase">Processes Learned</span>
+                  <p className="text-base font-bold text-accent mt-1">{baseline?.processes.length ?? 0}</p>
+                </div>
+                <div className="rounded-xl border border-border-subtle bg-bg-base/60 p-3">
+                  <span className="text-[10px] text-text-faint uppercase">Anomalies Fired</span>
+                  <p className="text-base font-bold text-risk-suspicious mt-1">{baseline?.anomaly_count ?? 0}</p>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between pt-2">
+                <span className="text-xs text-text-muted">Behavioral Profiling Active</span>
+                <button
+                  onClick={() => resetBase.mutate()}
+                  disabled={resetBase.isPending}
+                  className="press rounded border border-border-subtle px-2.5 py-1 text-[11px] text-text-faint hover:border-risk-malicious/60 hover:text-risk-malicious"
+                >
+                  Reset Learned Baseline
+                </button>
+              </div>
+
+              {baseline && baseline.processes.length > 0 && (
+                <div className="space-y-2">
+                  <span className="text-[10px] text-text-faint uppercase">Top Observed Binaries:</span>
+                  <div className="max-h-48 overflow-y-auto space-y-1 pr-1">
+                    {baseline.processes.slice(0, 15).map((p) => (
+                      <div key={p.value} className="flex items-center justify-between rounded bg-bg-base p-1.5 text-[11px]">
+                        <span className="text-text-primary truncate">{p.value}</span>
+                        <span className="text-text-faint tabular-nums">×{p.count}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeTab === "deploy" && (
+            <div className="space-y-4 font-mono text-xs">
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-text-primary flex items-center gap-1.5">
+                    <Icon name="linux" size={13} className="text-accent" />
+                    Linux Sensor (eBPF / auditd)
+                  </span>
+                  <button
+                    onClick={() => copyCmd(bootstrapData?.linux_command || "curl -sSL http://localhost:8000/install.sh | sudo bash", "linux")}
+                    className="press rounded border border-border-subtle px-2 py-0.5 text-[10px] text-text-muted hover:text-accent"
+                  >
+                    {copied === "linux" ? "Copied ✓" : "Copy"}
+                  </button>
+                </div>
+                <pre className="rounded-lg bg-bg-base p-2.5 text-[11px] text-accent select-all overflow-x-auto border border-border-subtle">
+                  {bootstrapData?.linux_command || "curl -sSL http://localhost:8000/install.sh | sudo bash"}
+                </pre>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-text-primary flex items-center gap-1.5">
+                    <Icon name="windows" size={13} className="text-accent" />
+                    Windows Sensor (PowerShell + Sysmon)
+                  </span>
+                  <button
+                    onClick={() => copyCmd(bootstrapData?.windows_command || "irm http://localhost:8000/install.ps1 | iex", "win")}
+                    className="press rounded border border-border-subtle px-2 py-0.5 text-[10px] text-text-muted hover:text-accent"
+                  >
+                    {copied === "win" ? "Copied ✓" : "Copy"}
+                  </button>
+                </div>
+                <pre className="rounded-lg bg-bg-base p-2.5 text-[11px] text-accent select-all overflow-x-auto border border-border-subtle">
+                  {bootstrapData?.windows_command || "irm http://localhost:8000/install.ps1 | iex"}
+                </pre>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Drawer Footer */}
+        <div className="p-4 border-t border-border-subtle bg-bg-elevated/40 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Link
+              to={`/hosts/${encodeURIComponent(hostId)}`}
+              className="press inline-flex items-center gap-1 rounded-lg border border-border-subtle bg-bg-surface px-3 py-1.5 font-mono text-xs text-text-primary hover:border-accent/60"
+            >
+              <Icon name="activity" size={12} />
+              <span>Full Host Timeline</span>
+            </Link>
+            <Link
+              to={`/events?host_id=${encodeURIComponent(hostId)}`}
+              className="press inline-flex items-center gap-1 rounded-lg border border-border-subtle bg-bg-surface px-3 py-1.5 font-mono text-xs text-text-primary hover:border-accent/60"
+            >
+              <Icon name="list" size={12} />
+              <span>View All Events</span>
+            </Link>
+          </div>
           <button
             onClick={onClose}
             className="press rounded-lg border border-border-subtle px-4 py-1.5 font-mono text-xs text-text-muted hover:text-text-primary"
@@ -466,256 +433,22 @@ function ContainmentModal({ hostId, onClose }: { hostId: string; onClose: () => 
   );
 }
 
-/** Live system snapshot — the "what's running right now" view. Picks the
- *  newest snapshot host by default and polls every 10s so the process/port
- *  tables track the live host while it's streaming. */
-function SnapshotPanel({ agents }: { agents: AgentInfo[] }) {
-  const withSnap = agents.filter((a) => a.last_snapshot_at);
-  const [host, setHost] = useState<string | null>(null);
-  const selected =
-    host !== null && withSnap.some((a) => a.host_id === host)
-      ? host
-      : withSnap.length > 0
-        ? (withSnap[0].host_id ?? null)
-        : null;
-  const { data: snap, isError } = useQuery({
-    queryKey: ["snapshot", selected],
-    queryFn: () => getHostSnapshot(selected as string),
-    enabled: selected !== null,
-    refetchInterval: 10_000,
-  });
-
-  return (
-    <Panel
-      kicker="Live system snapshot"
-      title={
-        <>
-          Running now{" "}
-          {snap && (
-            <span className="font-normal text-text-faint">— {snap.platform} · {snap.processes.length} processes · {snap.listening.length} listening</span>
-          )}
-        </>
-      }
-      right={
-        selected !== null ? (
-          <div className="flex flex-wrap items-center gap-1.5">
-            {withSnap.map((a) => (
-              <button
-                key={a.host_id}
-                onClick={() => setHost(a.host_id)}
-                aria-pressed={selected === a.host_id}
-                className={`press rounded-lg border px-2.5 py-1 font-mono text-[11px] transition-colors duration-150 ${
-                  selected === a.host_id
-                    ? "border-accent/60 bg-accent/10 text-accent"
-                    : "border-border-subtle text-text-muted hover:text-text-primary"
-                }`}
-              >
-                {a.host_id}
-              </button>
-            ))}
-          </div>
-        ) : undefined
-      }
-    >
-      {withSnap.length === 0 && (
-        <div className="py-4 text-center">
-          <p className="text-sm text-text-muted">
-            No host has shipped a live snapshot yet. Run{" "}
-            <code className="rounded bg-bg-elevated px-1.5 py-0.5 font-mono text-[11px] text-text-primary">outpost agent run</code>{" "}
-            on a machine and its process + listening-port table appears here.
-          </p>
-        </div>
-      )}
-      {selected !== null && isError && (
-        <div className="py-4 text-center">
-          <Icon name="terminal" size={22} className="mx-auto text-text-faint" />
-          <p className="mt-2 text-sm text-text-muted">
-            No live snapshot for <span className="font-mono text-text-primary">{selected}</span> — its agent may be offline.
-          </p>
-        </div>
-      )}
-      {snap && (
-        <div className="grid gap-4 lg:grid-cols-2">
-          <div>
-            <p className="kicker mb-1.5">Processes</p>
-            <div className="max-h-[340px] overflow-auto rounded-lg border border-border-subtle">
-              <table className="w-full text-left font-mono text-[11px]">
-                <thead className="sticky top-0 bg-bg-elevated text-[10px] uppercase tracking-wide text-text-faint">
-                  <tr>
-                    <th className="px-2.5 py-1.5">PID</th>
-                    <th className="px-2.5 py-1.5">Name</th>
-                    <th className="px-2.5 py-1.5">User</th>
-                    <th className="px-2.5 py-1.5">Cmdline</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {snap.processes.map((p) => (
-                    <tr key={`${p.pid}-${p.name}`} className="border-t border-border-subtle/60 odd:bg-bg-surface">
-                      <td className="px-2.5 py-1 tabular-nums text-text-muted">{p.pid}</td>
-                      <td className="px-2.5 py-1 font-semibold text-text-primary">{p.name}</td>
-                      <td className="px-2.5 py-1 text-text-muted">{p.user ?? "—"}</td>
-                      <td className="max-w-[240px] truncate px-2.5 py-1 text-text-faint" title={p.cmdline}>
-                        {p.cmdline ?? "—"}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-          <div>
-            <p className="kicker mb-1.5">Listening ports</p>
-            <div className="max-h-[340px] overflow-auto rounded-lg border border-border-subtle">
-              <table className="w-full text-left font-mono text-[11px]">
-                <thead className="sticky top-0 bg-bg-elevated text-[10px] uppercase tracking-wide text-text-faint">
-                  <tr>
-                    <th className="px-2.5 py-1.5">Proto</th>
-                    <th className="px-2.5 py-1.5">Address</th>
-                    <th className="px-2.5 py-1.5">Port</th>
-                    <th className="px-2.5 py-1.5">PID</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {snap.listening.map((l, i) => (
-                    <tr key={`${l.proto}-${l.addr}-${l.port}-${i}`} className="border-t border-border-subtle/60 odd:bg-bg-surface">
-                      <td className="px-2.5 py-1 uppercase text-text-muted">{l.proto}</td>
-                      <td className="px-2.5 py-1 text-text-primary">{l.addr}</td>
-                      <td className="px-2.5 py-1 tabular-nums text-text-muted">{l.port}</td>
-                      <td className="px-2.5 py-1 tabular-nums text-text-faint">{l.pid ?? "—"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
-    </Panel>
-  );
-}
-
-/** Host behavioral baselines — what each host normally executes / talks to,
- *  learned from its own telemetry. The anomaly layer flags first-times; this
- *  panel makes the learned profile visible and lets an operator reset it
- *  (e.g. after deliberately changing what a host should do). */
-function BaselinePanel({ agents }: { agents: AgentInfo[] }) {
-  const queryClient = useQueryClient();
-  const hosts = agents.map((a) => a.host_id);
-  const { data: baselines, isLoading } = useQuery({
-    queryKey: ["baselines", hosts.join(",")],
-    queryFn: async (): Promise<HostBaseline[]> => {
-      const out: HostBaseline[] = [];
-      for (const h of hosts) {
-        try {
-          out.push(await getHostBaseline(h));
-        } catch {
-          // 404/empty — host never shipped events; skip.
-        }
-      }
-      return out;
-    },
-    enabled: hosts.length > 0,
-  });
-  const reset = useMutation({
-    mutationFn: (hostId: string) => resetHostBaseline(hostId),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["baselines"] }),
-  });
-  const rows = (baselines ?? []).filter((b) => b.total_observations > 0 || b.anomaly_count > 0);
-
-  return (
-    <Panel
-      kicker="Behavioral baselines"
-      title="Host profiles"
-      right={
-        <span className="font-mono text-[10px] text-text-faint">
-          anomaly layer — first-time processes & IPs fire baseline-anomaly
-        </span>
-      }
-    >
-      {isLoading && <div className="skeleton h-16 w-full" />}
-      {!isLoading && rows.length === 0 && (
-        <p className="py-3 text-center text-sm text-text-muted">
-          No host has crossed the baseline gate yet — a host must ship{" "}
-          <code className="rounded bg-bg-elevated px-1.5 py-0.5 font-mono text-[11px]">
-            50
-          </code>{" "}
-          observations before first-times start firing.
-        </p>
-      )}
-      {rows.length > 0 && (
-        <div className="overflow-auto rounded-lg border border-border-subtle">
-          <table className="w-full text-left font-mono text-[11px]">
-            <thead className="sticky top-0 bg-bg-elevated text-[10px] uppercase tracking-wide text-text-faint">
-              <tr>
-                <th className="px-2.5 py-1.5">Host</th>
-                <th className="px-2.5 py-1.5">Processes learned</th>
-                <th className="px-2.5 py-1.5">IPs learned</th>
-                <th className="px-2.5 py-1.5">Observations</th>
-                <th className="px-2.5 py-1.5">Anomalies</th>
-                <th className="px-2.5 py-1.5" />
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((b) => (
-                <tr key={b.host_id} className="border-t border-border-subtle/60 odd:bg-bg-surface">
-                  <td className="px-2.5 py-1.5 font-semibold text-text-primary">{b.host_id}</td>
-                  <td className="px-2.5 py-1.5 text-text-muted" title={b.processes.map((p) => `${p.value} ×${p.count}`).join("\n")}>
-                    {b.processes.length} distinct
-                  </td>
-                  <td className="px-2.5 py-1.5 text-text-muted" title={b.networks.map((n) => `${n.value} ×${n.count}`).join("\n")}>
-                    {b.networks.length} distinct
-                  </td>
-                  <td className="px-2.5 py-1.5 tabular-nums text-text-faint">{b.total_observations}</td>
-                  <td className="px-2.5 py-1.5">
-                    {b.anomaly_count > 0 ? (
-                      <Link to="/triage" className="rounded-full border border-risk-suspicious/50 bg-risk-suspicious/10 px-2 py-px text-[10px] text-risk-suspicious hover:bg-risk-suspicious/20">
-                        {b.anomaly_count} fired
-                      </Link>
-                    ) : (
-                      <span className="text-text-faint">—</span>
-                    )}
-                  </td>
-                  <td className="px-2.5 py-1.5 text-right">
-                    <button
-                      onClick={() => reset.mutate(b.host_id)}
-                      disabled={reset.isPending}
-                      className="press rounded border border-border-subtle px-2 py-0.5 font-mono text-[10px] text-text-faint hover:border-risk-malicious/50 hover:text-risk-malicious disabled:opacity-50"
-                    >
-                      Reset
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </Panel>
-  );
-}
-
-const IDENTITY_FILTERS = [
-  { value: "", label: "All" },
-  { value: "collector", label: "Collectors" },
-  { value: "webapp", label: "Webapp" },
-  { value: "silent", label: "Silent" },
-] as const;
-
 export default function AgentsPage() {
   const queryClient = useQueryClient();
-  // Filter-in-URL (Event Log parity): ?identity=collector|webapp|silent is
-  // the shareable/bookmarkable fleet view.
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
   const identity = searchParams.get("identity") ?? "";
+  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [platformFilter, setPlatformFilter] = useState<string>("all");
+  const [searchQuery, setSearchQuery] = useState<string>("");
+  const [selectedHostId, setSelectedHostId] = useState<string | null>(null);
+  const [huntIoc, setHuntIoc] = useState<string | null>(null);
+
   const { data, isLoading, isError } = useQuery({
     queryKey: ["agents", identity],
     queryFn: () => getAgents(identity),
     refetchInterval: 15_000,
   });
 
-  // Live fleet: a heartbeat push flips a host to online (and the fleet-health
-  // loop flips silent hosts) the moment it happens — the 15 s poll stays as
-  // the fallback.
   useEventStream(
     () => undefined,
     undefined,
@@ -725,18 +458,6 @@ export default function AgentsPage() {
     },
   );
 
-  const [showBootstrap, setShowBootstrap] = useState(false);
-  const [containmentHost, setContainmentHost] = useState<string | null>(null);
-  const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [platformFilter, setPlatformFilter] = useState<string>("all");
-  const [huntIoc, setHuntIoc] = useState<string | null>(null);
-  const [huntInput, setHuntInput] = useState<string>("");
-
-  const { data: bootstrapData } = useQuery({
-    queryKey: ["agent-bootstrap-commands"],
-    queryFn: getAgentBootstrapCommands,
-  });
-
   const agents = data?.agents ?? [];
   const totalEvents = agents.reduce((n, a) => n + a.event_count, 0);
   const totalAlerts = agents.reduce((n, a) => n + a.alert_count, 0);
@@ -745,8 +466,18 @@ export default function AgentsPage() {
     const st = a.silent ? "silent" : a.online ? "online" : "offline";
     if (statusFilter !== "all" && st !== statusFilter) return false;
     if (platformFilter !== "all" && !a.platforms.includes(platformFilter as any)) return false;
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      const match =
+        a.host_id.toLowerCase().includes(q) ||
+        (a.identity || "").toLowerCase().includes(q) ||
+        a.platforms.some((p) => p.toLowerCase().includes(q));
+      if (!match) return false;
+    }
     return true;
   });
+
+  const selectedAgent = agents.find((a) => a.host_id === selectedHostId);
 
   const handleExportInventory = () => {
     const header = "Host ID,Status,Identity,Platforms,Event Count,Run Count,Alert Count,Last Seen,Last Heartbeat\n";
@@ -766,202 +497,112 @@ export default function AgentsPage() {
   };
 
   return (
-    <div className="mx-auto max-w-[1200px] px-5 py-8 lg:px-8">
-      {showBootstrap && <BootstrapModal onClose={() => setShowBootstrap(false)} />}
-      {containmentHost && (
-        <ContainmentModal hostId={containmentHost} onClose={() => setContainmentHost(null)} />
+    <div className="mx-auto max-w-[1340px] px-6 py-8">
+      {selectedHostId && (
+        <HostInspectorDrawer
+          hostId={selectedHostId}
+          agent={selectedAgent}
+          onClose={() => setSelectedHostId(null)}
+        />
       )}
       {huntIoc && (
         <IocFleetHuntModal iocId={huntIoc} onClose={() => setHuntIoc(null)} />
       )}
 
-      <PageHeader
-        kicker="Operations · EDR Command Console"
-        title={
-          <>
-            EDR Fleet &amp; Hosts <span className="font-normal text-text-muted">— endpoint telemetry &amp; active response</span>
-          </>
-        }
-        lede="Unified endpoint operations console: monitor real-time sensor liveness, execute fleet-wide IOC compromise hunts, isolate compromised hosts via kernel firewall rules, and inspect behavioral anomaly baselines."
-        actions={
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleExportInventory}
-              className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-2 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
-              title="Download fleet host inventory as CSV"
-            >
-              <Icon name="download" size={12} />
-              Export Fleet CSV
-            </button>
-            <button
-              onClick={() => setShowBootstrap(true)}
-              className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/10 px-3 py-2 font-mono text-xs font-semibold text-accent transition-colors duration-150 hover:bg-accent/20"
-            >
-              <Icon name="terminal" size={14} />
-              Deploy Sensor / Bootstrap
-            </button>
-            <button
-              onClick={() => window.location.reload()}
-              className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-2 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
-            >
-              <Icon name="refresh" size={12} />
-              Refresh
-            </button>
-          </div>
-        }
-      />
+      {/* Top Console Header */}
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-4 border-b border-border-subtle pb-6">
+        <div>
+          <span className="font-mono text-[10px] uppercase tracking-wider text-accent font-semibold">
+            Endpoint Operations · EDR Fleet Console
+          </span>
+          <h1 className="mt-1 text-xl font-bold font-mono text-text-primary">
+            EDR Fleet &amp; Host Management
+          </h1>
+          <p className="mt-1 text-xs text-text-muted">
+            Live telemetry ingestion, host quarantine containment, and multi-sensor management.
+          </p>
+        </div>
 
-      {/* Fleet Threat Hunt Bar */}
-      <div className="mb-6 rounded-2xl border border-accent/40 bg-bg-surface p-4 shadow-sm">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-2.5">
-            <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-accent/50 bg-accent/15 text-accent">
-              <Icon name="search" size={15} />
-            </span>
-            <div>
-              <h2 className="font-mono text-xs font-bold text-text-primary">Cross-Fleet Threat Hunting (Compromise Assessment)</h2>
-              <p className="text-[11px] text-text-muted">Search for any IOC (IP, domain, hash, or process) across all enrolled endpoints simultaneously.</p>
-            </div>
-          </div>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (huntInput.trim()) setHuntIoc(huntInput.trim());
+        <div className="flex items-center gap-2 font-mono text-xs">
+          <button
+            onClick={() => {
+              const query = window.prompt("Enter IOC to retro-hunt across all endpoints (IP, hash, or process):");
+              if (query?.trim()) setHuntIoc(query.trim());
             }}
-            className="flex items-center gap-2"
+            className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/15 px-3 py-1.5 font-bold text-accent hover:bg-accent/25"
           >
-            <input
-              type="text"
-              value={huntInput}
-              onChange={(e) => setHuntInput(e.target.value)}
-              placeholder="Enter IOC (e.g. 198.51.100.44, cmd.exe, SHA256)..."
-              className="w-64 sm:w-80 rounded-xl border border-border-subtle bg-bg-base px-3 py-1.5 font-mono text-xs text-text-primary placeholder:text-text-faint focus:border-accent/60 focus:outline-none"
-            />
-            <button
-              type="submit"
-              disabled={!huntInput.trim()}
-              className="press inline-flex items-center gap-1.5 rounded-xl border border-accent/60 bg-accent/15 px-3 py-1.5 font-mono text-xs font-bold text-accent transition hover:bg-accent/25 disabled:opacity-40"
-            >
-              <Icon name="play" size={12} />
-              <span>Hunt Fleet</span>
-            </button>
-          </form>
+            <Icon name="search" size={13} />
+            <span>Hunt Fleet IOC</span>
+          </button>
+          <button
+            onClick={handleExportInventory}
+            className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-surface px-3 py-1.5 text-text-muted hover:border-accent/40 hover:text-text-primary"
+            title="Download CSV inventory"
+          >
+            <Icon name="download" size={12} />
+            <span>Export CSV</span>
+          </button>
+          <button
+            onClick={() => void queryClient.invalidateQueries({ queryKey: ["agents"] })}
+            className="press rounded-lg border border-border-subtle bg-bg-surface p-2 text-text-muted hover:border-accent/40 hover:text-text-primary"
+            title="Refresh fleet telemetry"
+          >
+            <Icon name="refresh" size={12} />
+          </button>
         </div>
       </div>
 
-      {/* Operational Capabilities Card Grid */}
-      <div className="mb-6 grid gap-3 sm:grid-cols-3 font-mono text-xs">
-        <div className="rounded-xl border border-border-subtle bg-bg-surface/70 p-3.5 space-y-1">
-          <div className="flex items-center gap-1.5 text-accent font-semibold">
-            <Icon name="shield" size={13} />
-            <span>Active Containment &amp; Isolation</span>
-          </div>
-          <p className="text-[11px] text-text-muted leading-relaxed font-sans">
-            Instantly isolate compromised endpoints using kernel firewall rules (<code className="text-accent font-mono text-[10px]">iptables</code> / <code className="text-accent font-mono text-[10px]">netsh</code>) and terminate rogue process trees remotely.
+      {/* Metric Stat HUD Strip */}
+      <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-5 font-mono">
+        <div className="rounded-xl border border-border-subtle bg-bg-surface p-3.5">
+          <span className="text-[10px] uppercase text-text-faint">Enrolled Hosts</span>
+          <p className="text-xl font-bold text-text-primary mt-1">{data?.total ?? 0}</p>
+        </div>
+        <div className="rounded-xl border border-border-subtle bg-bg-surface p-3.5">
+          <span className="text-[10px] uppercase text-text-faint">Online Sensors</span>
+          <p className="text-xl font-bold text-signal mt-1">{data?.online ?? 0}</p>
+        </div>
+        <div className="rounded-xl border border-border-subtle bg-bg-surface p-3.5">
+          <span className="text-[10px] uppercase text-text-faint">Silent / Stale</span>
+          <p className={`text-xl font-bold mt-1 ${data?.silent ? "text-risk-malicious" : "text-text-muted"}`}>
+            {data?.silent ?? 0}
           </p>
         </div>
-        <div className="rounded-xl border border-border-subtle bg-bg-surface/70 p-3.5 space-y-1">
-          <div className="flex items-center gap-1.5 text-signal font-semibold">
-            <Icon name="terminal" size={13} />
-            <span>Multi-Channel Sensor Telemetry</span>
-          </div>
-          <p className="text-[11px] text-text-muted leading-relaxed font-sans">
-            Streaming from native OS probes: Linux <code className="text-signal font-mono text-[10px]">eBPF/auditd</code>, Windows <code className="text-signal font-mono text-[10px]">Sysmon</code>, and macOS <code className="text-signal font-mono text-[10px]">EndpointSecurity</code> with live process snapshots.
-          </p>
+        <div className="rounded-xl border border-border-subtle bg-bg-surface p-3.5">
+          <span className="text-[10px] uppercase text-text-faint">Telemetry Shipped</span>
+          <p className="text-xl font-bold text-text-primary mt-1">{totalEvents.toLocaleString()}</p>
         </div>
-        <div className="rounded-xl border border-border-subtle bg-bg-surface/70 p-3.5 space-y-1">
-          <div className="flex items-center gap-1.5 text-text-primary font-semibold">
-            <Icon name="activity" size={13} />
-            <span>Behavioral Baseline Profiling</span>
-          </div>
-          <p className="text-[11px] text-text-muted leading-relaxed font-sans">
-            Calculates per-host normal process and network baselines. Automatically alerts on first-time anomalous process binaries and rare egress destinations.
+        <div className="rounded-xl border border-border-subtle bg-bg-surface p-3.5">
+          <span className="text-[10px] uppercase text-text-faint">Correlated Detections</span>
+          <p className={`text-xl font-bold mt-1 ${totalAlerts > 0 ? "text-risk-suspicious" : "text-text-muted"}`}>
+            {totalAlerts}
           </p>
         </div>
       </div>
 
-      {/* Sensor Deployment Quickstart when only local is present */}
-      {agents.length <= 1 && (
-        <div className="mb-6 rounded-2xl border border-accent/40 bg-bg-surface p-5 shadow-sm space-y-4">
-          <div className="flex items-center justify-between border-b border-border-subtle/60 pb-3">
-            <div className="flex items-center gap-2">
-              <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-accent/40 bg-accent/15 text-accent font-mono text-xs font-bold">
-                🚀
-              </span>
-              <div>
-                <h3 className="font-mono text-xs font-bold text-text-primary">Deploy Endpoint Sensor Agent</h3>
-                <p className="text-[11px] text-text-muted">Enroll real Linux, Windows, or macOS endpoints in 60 seconds with copy-paste commands</p>
-              </div>
-            </div>
-            <button
-              onClick={() => setShowBootstrap(true)}
-              className="press inline-flex items-center gap-1 rounded-lg border border-accent/60 bg-accent/10 px-3 py-1 font-mono text-xs font-semibold text-accent hover:bg-accent/20"
-            >
-              <span>Full Setup Guide</span>
-              <Icon name="arrowRight" size={12} />
-            </button>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="rounded-xl border border-border-subtle bg-bg-base/70 p-3 space-y-1.5">
-              <span className="font-mono text-[11px] font-semibold text-text-primary flex items-center gap-1">
-                <Icon name="linux" size={12} className="text-accent" /> Linux (Ubuntu / Debian / RHEL eBPF &amp; auditd)
-              </span>
-              <pre className="rounded-lg bg-bg-elevated/70 p-2 font-mono text-[11px] text-accent select-all overflow-x-auto">
-                {bootstrapData?.linux_command || "curl -sSL http://localhost:8000/install.sh | sudo bash"}
-              </pre>
-            </div>
-            <div className="rounded-xl border border-border-subtle bg-bg-base/70 p-3 space-y-1.5">
-              <span className="font-mono text-[11px] font-semibold text-text-primary flex items-center gap-1">
-                <Icon name="windows" size={12} className="text-accent" /> Windows (PowerShell + Sysmon)
-              </span>
-              <pre className="rounded-lg bg-bg-elevated/70 p-2 font-mono text-[11px] text-accent select-all overflow-x-auto">
-                {bootstrapData?.windows_command || "irm http://localhost:8000/install.ps1 | iex"}
-              </pre>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Identity, Status & Platform filters */}
-      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Filter fleet by identity">
-          {IDENTITY_FILTERS.map((f) => {
-            const active = (identity || "") === f.value;
-            return (
-              <button
-                key={f.value || "all"}
-                onClick={() => {
-                  const next = new URLSearchParams(searchParams);
-                  if (f.value) {
-                    next.set("identity", f.value);
-                  } else {
-                    next.delete("identity");
-                  }
-                  setSearchParams(next, { replace: true });
-                }}
-                aria-pressed={active}
-                className={`press inline-flex items-center gap-1.5 rounded-full border px-3 py-1 font-mono text-[11px] transition-colors duration-150 ${
-                  active
-                    ? "border-accent/60 bg-accent/10 text-accent"
-                    : "border-border-subtle bg-bg-surface text-text-muted hover:border-accent/40 hover:text-accent"
-                }`}
-              >
-                {f.label}
-              </button>
-            );
-          })}
+      {/* Filter & Command Control Bar */}
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3 font-mono text-xs">
+        <div className="flex-1 min-w-64 max-w-md relative">
+          <Icon name="search" size={12} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-faint" />
+          <input
+            type="text"
+            placeholder="Filter endpoints by hostname, OS, or role..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full rounded-xl border border-border-subtle bg-bg-surface py-1.5 pl-8 pr-3 text-text-primary placeholder:text-text-faint focus:border-accent/60 focus:outline-none"
+          />
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {/* Status filter */}
-          <div className="flex items-center rounded-lg border border-border-subtle bg-bg-surface p-0.5 font-mono text-[11px]">
+          {/* Status filter pills */}
+          <div className="flex items-center rounded-lg border border-border-subtle bg-bg-surface p-0.5">
             {(["all", "online", "silent", "offline"] as const).map((st) => (
               <button
                 key={st}
                 onClick={() => setStatusFilter(st)}
                 className={`rounded-md px-2 py-0.5 capitalize transition ${
                   statusFilter === st
-                    ? "bg-accent/20 font-bold text-accent shadow-sm"
+                    ? "bg-accent/20 font-bold text-accent shadow-xs"
                     : "text-text-muted hover:text-text-primary"
                 }`}
               >
@@ -970,15 +611,15 @@ export default function AgentsPage() {
             ))}
           </div>
 
-          {/* Platform filter */}
-          <div className="flex items-center rounded-lg border border-border-subtle bg-bg-surface p-0.5 font-mono text-[11px]">
+          {/* Platform filter pills */}
+          <div className="flex items-center rounded-lg border border-border-subtle bg-bg-surface p-0.5">
             {(["all", "linux", "windows", "macos"] as const).map((p) => (
               <button
                 key={p}
                 onClick={() => setPlatformFilter(p)}
                 className={`rounded-md px-2 py-0.5 capitalize transition ${
                   platformFilter === p
-                    ? "bg-accent/20 font-bold text-accent shadow-sm"
+                    ? "bg-accent/20 font-bold text-accent shadow-xs"
                     : "text-text-muted hover:text-text-primary"
                 }`}
               >
@@ -989,113 +630,138 @@ export default function AgentsPage() {
         </div>
       </div>
 
-      {/* Fleet summary strip */}
-      <div className="mb-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-        {[
-          { label: "Hosts", value: data?.total ?? "…", icon: "terminal" as const },
-          { label: "Online now", value: data?.online ?? "…", icon: "activity" as const, tone: data?.online ? "text-signal" : "text-text-muted" },
-          { label: "Silent hosts", value: data?.silent ?? "…", icon: "alert" as const, tone: data?.silent ? "text-risk-malicious" : "text-text-muted" },
-          { label: "Events shipped", value: totalEvents.toLocaleString(), icon: "list" as const },
-          { label: "Findings", value: totalAlerts.toLocaleString(), icon: "alert" as const, tone: totalAlerts ? "text-risk-malicious" : "text-text-muted" },
-        ].map((s) => (
-          <div key={s.label} className="panel flex items-center gap-3 px-5 py-4">
-            <span className={`flex h-9 w-9 items-center justify-center rounded-lg border border-border-subtle bg-bg-elevated/60 ${s.tone ?? "text-text-muted"}`}>
-              <Icon name={s.icon} size={16} />
-            </span>
-            <div>
-              <p className="kicker">{s.label}</p>
-              <p className="font-mono text-xl font-semibold tabular-nums text-text-primary">{s.value}</p>
-            </div>
-          </div>
-        ))}
-      </div>
-
       {isLoading && (
-        <div className="space-y-3">
-          {Array.from({ length: 3 }).map((_, i) => (
-            <div key={i} className="skeleton h-20 w-full" />
-          ))}
+        <div className="py-12 text-center font-mono text-xs text-text-muted">
+          Loading endpoint inventory…
         </div>
       )}
 
       {isError && (
-        <p className="rounded-lg border border-risk-malicious/40 bg-bg-surface p-4 text-sm text-risk-malicious">
-          Couldn't reach the fleet endpoint — is the backend running?
-        </p>
+        <div className="rounded-xl border border-risk-malicious/40 bg-bg-surface p-4 font-mono text-xs text-risk-malicious">
+          Could not communicate with OutPost agent manager — verify backend health.
+        </div>
       )}
 
-      {!isLoading && !isError && agents.length === 0 && (
-        <Panel kicker="Fleet" title={identity ? "No hosts match this filter" : "No telemetry received"}>
-          <div className="py-6 text-center">
-            <Icon name="terminal" size={28} className="mx-auto text-text-faint" />
-            {identity ? (
-              <p className="mx-auto mt-3 max-w-md text-sm leading-relaxed text-text-muted">
-                No host fits <code className="rounded bg-bg-elevated px-1.5 py-0.5 font-mono text-[11px]">identity={identity}</code>{" "}
-                right now.
-                <button
-                  onClick={() => setSearchParams(new URLSearchParams(), { replace: true })}
-                  className="ml-2 text-accent underline-offset-2 hover:underline"
-                >
-                  Clear filter
-                </button>
-              </p>
-            ) : (
-              <div className="mx-auto mt-3 max-w-lg space-y-3 text-sm leading-relaxed text-text-muted">
-                <p>
-                  No telemetry has been received yet. To enroll and monitor a host, run{" "}
-                  <code className="rounded bg-bg-elevated px-1.5 py-0.5 font-mono text-[11px] text-text-primary">
-                    outpost agent run
-                  </code>{" "}
-                  on the target endpoint.
-                </p>
-                <div className="rounded-xl border border-border-subtle bg-bg-base/50 p-4 text-left font-mono text-xs">
-                  <p className="font-semibold text-text-primary mb-2">Supported Collector Channels</p>
-                  <ul className="space-y-1.5 text-text-muted text-[11px]">
-                    <li>• <strong className="text-text-primary">Linux</strong>: <code className="text-accent">auditd</code> / <code className="text-accent">eBPF</code> (process execution, socket connections, file writes, auth)</li>
-                    <li>• <strong className="text-text-primary">Windows</strong>: <code className="text-accent">Sysmon</code> (process creation, network connect, file writes, registry)</li>
-                    <li>• <strong className="text-text-primary">macOS</strong>: <code className="text-accent">EndpointSecurity</code> (process exec/fork, socket connect, file access)</li>
-                  </ul>
-                </div>
-              </div>
-            )}
-          </div>
-        </Panel>
-      )}
+      {/* Main High-Density Fleet Grid Table */}
+      {!isLoading && !isError && (
+        <div className="rounded-xl border border-border-subtle bg-bg-surface overflow-hidden shadow-xs">
+          <table className="w-full text-left font-mono text-xs">
+            <thead className="bg-bg-elevated/70 border-b border-border-subtle text-[10px] uppercase text-text-faint">
+              <tr>
+                <th className="px-4 py-2.5">Endpoint Host</th>
+                <th className="px-4 py-2.5">OS &amp; Channels</th>
+                <th className="px-4 py-2.5">Identity &amp; Auth</th>
+                <th className="px-4 py-2.5">Telemetry Volume</th>
+                <th className="px-4 py-2.5">Heartbeat Liveness</th>
+                <th className="px-4 py-2.5 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border-subtle/50">
+              {filteredAgents.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-4 py-8 text-center text-text-muted">
+                    No endpoint hosts match the current filter criteria.
+                  </td>
+                </tr>
+              ) : (
+                filteredAgents.map((a) => {
+                  const status = a.silent ? "silent" : a.online ? "online" : "offline";
+                  return (
+                    <tr
+                      key={a.host_id}
+                      onClick={() => setSelectedHostId(a.host_id)}
+                      className="cursor-pointer hover:bg-bg-elevated/40 transition group"
+                    >
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2.5">
+                          <span
+                            className={`h-2 w-2 rounded-full ${
+                              status === "online"
+                                ? "bg-signal animate-outpost-pulse"
+                                : status === "silent"
+                                  ? "bg-risk-malicious"
+                                  : "bg-text-faint"
+                            }`}
+                          />
+                          <div>
+                            <span className="font-bold text-text-primary group-hover:text-accent transition">
+                              {a.host_id}
+                            </span>
+                            <span className="ml-2 font-mono text-[10px] text-text-faint">
+                              {a.heartbeat_version || ""}
+                            </span>
+                          </div>
+                        </div>
+                      </td>
 
-      {agents.length > 0 && (
-        <>
-          <Panel
-            kicker="Fleet"
-            title={`Hosts (${filteredAgents.length} of ${agents.length})`}
-            right={
-              <span className="font-mono text-[10px] text-text-faint">
-                online &lt; {data?.online_window_seconds}s · silent &gt; {data?.silent_window_seconds}s
-              </span>
-            }
-          >
-            {filteredAgents.length === 0 ? (
-              <p className="py-6 text-center text-xs font-mono text-text-muted">
-                No hosts match active status/platform filters.
-              </p>
-            ) : (
-              <ul className="space-y-2.5">
-                {filteredAgents.map((a) => (
-                  <AgentRow
-                    key={a.host_id}
-                    agent={a}
-                    onOpenContainment={(hid) => setContainmentHost(hid)}
-                  />
-                ))}
-              </ul>
-            )}
-          </Panel>
-          <div className="mt-5">
-            <SnapshotPanel agents={agents} />
-          </div>
-          <div className="mt-5">
-            <BaselinePanel agents={agents} />
-          </div>
-        </>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-1.5">
+                          {a.platforms.map((p) => (
+                            <span
+                              key={p}
+                              className="inline-flex items-center gap-1 rounded bg-bg-base border border-border-subtle px-1.5 py-0.5 text-[10px] text-text-muted capitalize"
+                            >
+                              <Icon name={platformIconName(p)} size={10} />
+                              {p}
+                            </span>
+                          ))}
+                          {a.channels && (
+                            <span className="text-[10px] text-text-faint">
+                              ({a.channels.join(", ")})
+                            </span>
+                          )}
+                        </div>
+                      </td>
+
+                      <td className="px-4 py-3 text-text-muted">
+                        <span className="rounded bg-bg-base border border-border-subtle px-1.5 py-0.5 text-[10px]">
+                          {a.identity}
+                        </span>
+                        {a.last_auth_role && (
+                          <span className="ml-1.5 text-[10px] text-text-faint">
+                            role: {a.last_auth_role}
+                          </span>
+                        )}
+                      </td>
+
+                      <td className="px-4 py-3 tabular-nums">
+                        <span className="text-text-primary">{a.event_count.toLocaleString()} events</span>
+                        <span className="text-text-faint text-[10px] ml-1.5">· {a.run_count} runs</span>
+                      </td>
+
+                      <td className="px-4 py-3 text-text-faint text-[11px]">
+                        {a.last_seen ? relativeTime(a.last_seen) : "—"}
+                      </td>
+
+                      <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button
+                            onClick={() => setSelectedHostId(a.host_id)}
+                            className="press rounded-md border border-accent/50 bg-accent/10 px-2 py-1 text-[11px] font-semibold text-accent hover:bg-accent/20"
+                          >
+                            Inspect
+                          </button>
+                          <Link
+                            to={`/hosts/${encodeURIComponent(a.host_id)}`}
+                            className="press rounded-md border border-border-subtle bg-bg-base px-2 py-1 text-[11px] text-text-muted hover:border-accent/40 hover:text-text-primary"
+                          >
+                            Timeline
+                          </Link>
+                          <Link
+                            to={`/events?host_id=${encodeURIComponent(a.host_id)}`}
+                            className="press rounded-md border border-border-subtle bg-bg-base px-2 py-1 text-[11px] text-text-muted hover:border-accent/40 hover:text-text-primary"
+                          >
+                            Events
+                          </Link>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );

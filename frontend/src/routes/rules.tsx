@@ -900,12 +900,25 @@ function SigmaDetectionStudio({
   const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
   const [yaml, setYaml] = useState("");
+  const [selectedRuleId, setSelectedRuleId] = useState<string | null>(null);
   const [result, setResult] = useState<any | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [imported, setImported] = useState(false);
   const [showCatalog, setShowCatalog] = useState(false);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
+
+  // Search and filter state for left catalog rail
+  const [searchFilter, setSearchFilter] = useState("");
+  const [tacticFilter, setTacticFilter] = useState("all");
+  const [severityFilter, setSeverityFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "disabled">("all");
+
+  // Inline backtest state in IDE
+  const [backtestWindow, setBacktestWindow] = useState<number>(2000);
+  const [backtestRunning, setBacktestRunning] = useState<boolean>(false);
+  const [backtestResult, setBacktestResult] = useState<RuleBacktestResult | null>(null);
+  const [backtestError, setBacktestError] = useState<string | null>(null);
 
   const { data: communityRules } = useQuery({
     queryKey: ["sigma-community"],
@@ -922,11 +935,11 @@ function SigmaDetectionStudio({
     onSuccess: () => {
       setImported(true);
       void queryClient.invalidateQueries({ queryKey: ["sigma-custom"] });
-      setActionNotice("Rule successfully deployed into live engine!");
+      setActionNotice("Rule deployed and active in live detection engine");
       setTimeout(() => {
         setImported(false);
         setActionNotice(null);
-      }, 3500);
+      }, 3000);
     },
   });
 
@@ -935,7 +948,7 @@ function SigmaDetectionStudio({
       patchCustomSigmaRule(ruleId, { enabled }),
     onSuccess: () => {
       void refetchCustom();
-      setActionNotice("Rule status updated");
+      setActionNotice("Rule evaluation status updated");
       setTimeout(() => setActionNotice(null), 2500);
     },
   });
@@ -944,14 +957,29 @@ function SigmaDetectionStudio({
     mutationFn: (ruleId: string) => deleteCustomSigmaRule(ruleId),
     onSuccess: () => {
       void refetchCustom();
-      setActionNotice("Rule deleted from engine");
+      setSelectedRuleId(null);
+      setYaml("");
+      setResult(null);
+      setBacktestResult(null);
+      setActionNotice("Rule removed from engine registry");
       setTimeout(() => setActionNotice(null), 2500);
     },
   });
 
-  // Auto-initialize when redirected from MITRE coverage gap with ?create=1&tactic=...
+  // Auto-initialize when redirected from MITRE coverage gap or deep-linked rule_id
   useEffect(() => {
     const tacticParam = searchParams.get("tactic");
+    const ruleIdParam = searchParams.get("rule_id");
+
+    if (ruleIdParam && customRules && customRules.length > 0) {
+      const match = customRules.find((r: any) => r.rule_id === ruleIdParam);
+      if (match) {
+        setSelectedRuleId(match.rule_id);
+        if (match.sigma_yaml) setYaml(match.sigma_yaml);
+        return;
+      }
+    }
+
     if (searchParams.get("create") === "1" && tacticParam && !yaml) {
       const sanitized = tacticParam.toLowerCase().replace(/[^a-z0-9]+/g, "_");
       setYaml(`title: Custom Rule for ${tacticParam}
@@ -967,10 +995,18 @@ detection:
       - 'suspicious_command'
   condition: selection
 `);
+    } else if (!yaml && customRules && customRules.length > 0 && !selectedRuleId) {
+      // Auto-load first rule by default
+      const first = customRules[0];
+      setSelectedRuleId(first.rule_id);
+      if (first.sigma_yaml) setYaml(first.sigma_yaml);
     }
-  }, [searchParams]);
+  }, [searchParams, customRules]);
 
   const loadExample = (type: "windows" | "linux" | "macos" | "c2" | "ransomware" = "windows") => {
+    setSelectedRuleId(null);
+    setResult(null);
+    setBacktestResult(null);
     if (type === "linux") {
       setYaml(`title: Linux Base64 Pipe Execution
 id: e2b08fa1-0002-4000-8000-000000000002
@@ -1057,7 +1093,6 @@ detection:
 `);
     }
     setError(null);
-    setResult(null);
   };
 
   const handleTranspile = async () => {
@@ -1076,346 +1111,559 @@ detection:
   };
 
   const handleSelectCommunityRule = (r: any) => {
+    setSelectedRuleId(null);
     setYaml(r.sigma_yaml);
     setShowCatalog(false);
     setError(null);
     setResult(null);
+    setBacktestResult(null);
   };
 
+  const handleRunInlineBacktest = async () => {
+    if (!yaml.trim()) return;
+    setBacktestRunning(true);
+    setBacktestError(null);
+    try {
+      const res = await backtestCustomRule({ sigma_yaml: yaml, max_events: backtestWindow });
+      setBacktestResult(res);
+    } catch (err: any) {
+      setBacktestError(err?.message || "Historical backtest query failed");
+    } finally {
+      setBacktestRunning(false);
+    }
+  };
+
+  // Filter rules for left catalog rail
+  const filteredRules = (customRules ?? []).filter((rule: any) => {
+    if (statusFilter === "active" && !rule.enabled) return false;
+    if (statusFilter === "disabled" && rule.enabled) return false;
+    if (severityFilter !== "all" && rule.level !== severityFilter) return false;
+    if (tacticFilter !== "all") {
+      const hasTactic = (rule.mitre_tactics || []).some((t: string) =>
+        t.toLowerCase().includes(tacticFilter.toLowerCase())
+      );
+      if (!hasTactic) return false;
+    }
+    if (searchFilter.trim()) {
+      const q = searchFilter.toLowerCase().trim();
+      const matchTitle = (rule.title || "").toLowerCase().includes(q);
+      const matchId = (rule.rule_id || "").toLowerCase().includes(q);
+      const matchDesc = (rule.description || "").toLowerCase().includes(q);
+      const matchTactics = (rule.mitre_tactics || []).some((t: string) => t.toLowerCase().includes(q));
+      if (!matchTitle && !matchId && !matchDesc && !matchTactics) return false;
+    }
+    return true;
+  });
+
+  const activeRule = (customRules ?? []).find((r: any) => r.rule_id === selectedRuleId);
+
   return (
-    <div className="mt-8 space-y-6">
+    <div className="mt-6 space-y-4 font-mono text-xs">
       {actionNotice && (
-        <div className="flex items-center justify-between rounded-xl border border-signal/50 bg-signal/15 px-4 py-2.5 font-mono text-xs text-signal animate-fade-in">
+        <div className="flex items-center justify-between rounded-xl border border-signal/50 bg-signal/15 px-4 py-2 font-mono text-xs text-signal animate-fade-in">
           <span>✓ {actionNotice}</span>
           <button onClick={() => setActionNotice(null)} className="text-text-muted hover:text-text-primary">✕</button>
         </div>
       )}
 
+      {/* SigmaHQ Catalog Modal */}
       {showCatalog && (
         <div
           role="dialog"
           aria-modal="true"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-fade-in"
           onClick={() => setShowCatalog(false)}
         >
           <div
-            className="w-full max-w-2xl max-h-[85vh] flex flex-col rounded-2xl border border-border-subtle bg-bg-surface p-6 shadow-2xl"
+            className="w-full max-w-2xl max-h-[85vh] flex flex-col rounded-2xl border border-border-subtle bg-bg-surface p-5 shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between border-b border-border-subtle pb-3 mb-4">
-              <div className="flex items-center gap-2">
-                <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-accent/40 bg-accent/15 text-accent font-mono text-xs font-bold">
-                  🛡️
-                </span>
-                <div>
-                  <h3 className="font-mono text-sm font-bold text-text-primary">SigmaHQ Community Rule Catalog</h3>
-                  <p className="text-xs text-text-muted">Curated high-fidelity rules covering Windows, Linux, and macOS</p>
-                </div>
+            <div className="flex items-center justify-between border-b border-border-subtle pb-3 mb-3">
+              <div>
+                <h3 className="font-bold text-text-primary text-sm">SigmaHQ Community Rule Catalog</h3>
+                <p className="text-[11px] text-text-muted">Pre-validated detection signatures for Windows, Linux, and macOS</p>
               </div>
               <button
                 onClick={() => setShowCatalog(false)}
-                className="text-text-muted hover:text-text-primary text-sm font-mono"
+                className="text-text-muted hover:text-text-primary text-sm p-1 rounded hover:bg-bg-base"
               >
                 ✕
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto space-y-3 pr-1">
+            <div className="flex-1 overflow-y-auto space-y-2.5 pr-1">
               {(communityRules ?? []).map((r) => (
                 <div
                   key={r.id}
-                  className="rounded-xl border border-border-subtle bg-bg-base/50 p-4 transition hover:border-accent/50 hover:bg-bg-elevated/40"
+                  className="rounded-lg border border-border-subtle bg-bg-base/60 p-3 hover:border-accent/40 transition"
                 >
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="font-mono text-xs font-bold text-text-primary">{r.title}</span>
-                    <div className="flex items-center gap-1.5 font-mono text-[10px]">
-                      <span className="rounded border border-border-subtle bg-bg-surface px-1.5 py-0.5 text-text-muted uppercase">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-bold text-text-primary">{r.title}</span>
+                    <div className="flex items-center gap-1 text-[10px]">
+                      <span className="rounded bg-bg-surface border border-border-subtle px-1.5 py-0.2 text-text-muted uppercase">
                         {r.platform}
                       </span>
-                      <span className="rounded bg-risk-malicious/15 px-1.5 py-0.5 text-risk-malicious font-bold uppercase">
+                      <span className={`rounded px-1.5 py-0.2 font-bold uppercase ${
+                        r.level === "critical"
+                          ? "bg-risk-malicious/20 text-risk-malicious"
+                          : r.level === "high"
+                            ? "bg-risk-suspicious/20 text-risk-suspicious"
+                            : "bg-accent/15 text-accent"
+                      }`}>
                         {r.level}
                       </span>
                     </div>
                   </div>
-                  <p className="mt-1 text-xs text-text-muted leading-relaxed">{r.description}</p>
-                  <div className="mt-3 flex items-center justify-between">
-                    <div className="flex flex-wrap gap-1 font-mono text-[10px] text-text-faint">
+                  <p className="mt-1 text-[11px] text-text-muted truncate">{r.description}</p>
+                  <div className="mt-2 flex items-center justify-between">
+                    <div className="flex gap-1">
                       {r.mitre_techniques.map((t) => (
-                        <span key={t} className="rounded bg-accent/10 px-1.5 py-0.5 text-accent">
+                        <span key={t} className="rounded bg-accent/10 px-1 py-0.2 text-[10px] text-accent">
                           {t}
                         </span>
                       ))}
                     </div>
                     <button
                       onClick={() => handleSelectCommunityRule(r)}
-                      className="press rounded-lg border border-accent/60 bg-accent/10 px-3 py-1 font-mono text-xs font-semibold text-accent hover:bg-accent/20"
+                      className="press rounded border border-accent/60 bg-accent/10 px-2 py-0.5 text-[11px] font-semibold text-accent hover:bg-accent/20"
                     >
-                      Load into Editor →
+                      Clone into IDE →
                     </button>
                   </div>
                 </div>
               ))}
             </div>
-
-            <div className="mt-4 pt-3 border-t border-border-subtle flex justify-end">
-              <button
-                onClick={() => setShowCatalog(false)}
-                className="press rounded-lg border border-border-subtle px-4 py-1.5 font-mono text-xs text-text-muted hover:text-text-primary"
-              >
-                Close
-              </button>
-            </div>
           </div>
         </div>
       )}
 
-      {/* Section 1: Active Custom / Imported Rules Inventory */}
-      <Panel
-        kicker="Engine Registry · Operator Rules"
-        title={`Deployed Custom Sigma Rules (${(customRules ?? []).length})`}
-        right={
-          <span className="font-mono text-[10px] text-text-faint">
-            Evaluated on all ingested events
-          </span>
-        }
-      >
-        {(!customRules || customRules.length === 0) ? (
-          <div className="py-6 text-center text-xs text-text-muted">
-            <p>No operator Sigma rules deployed yet. Author a custom rule below or browse the SigmaHQ Community Catalog.</p>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {customRules.map((rule: any) => (
-              <div
-                key={rule.rule_id}
-                className={`rounded-xl border p-4 transition ${
-                  rule.enabled
-                    ? "border-border-subtle bg-bg-surface hover:border-accent/40"
-                    : "border-border-subtle/50 bg-bg-surface/50 opacity-70"
-                }`}
+      {/* Split-View Detection Workbench: Left Catalog Rail + Right IDE Surface */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+        {/* Left Column: Rule Catalog Rail (4 cols) */}
+        <div className="lg:col-span-4 rounded-xl border border-border-subtle bg-bg-surface p-3.5 space-y-3">
+          {/* Top Rail Controls */}
+          <div className="flex items-center justify-between border-b border-border-subtle/60 pb-2.5">
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-text-primary text-xs">Rule Catalog</span>
+              <span className="rounded-full bg-bg-base border border-border-subtle px-2 py-0.2 text-[10px] text-text-muted">
+                {(customRules ?? []).length} Deployed
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => {
+                  setSelectedRuleId(null);
+                  loadExample("windows");
+                }}
+                className="press rounded border border-accent/50 bg-accent/15 px-2 py-0.5 text-[10px] font-bold text-accent hover:bg-accent/25"
+                title="Author a new custom Sigma rule from scratch"
               >
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div className="flex items-center gap-2.5">
-                    <button
-                      onClick={() => toggleMutation.mutate({ ruleId: rule.rule_id, enabled: !rule.enabled })}
-                      className={`press flex h-5 w-5 items-center justify-center rounded-md border font-mono text-[10px] font-bold transition ${
-                        rule.enabled
-                          ? "border-signal/60 bg-signal/20 text-signal"
-                          : "border-border-subtle bg-bg-base text-text-faint"
-                      }`}
-                      title={rule.enabled ? "Rule is Active (Click to Disable)" : "Rule is Disabled (Click to Enable)"}
-                    >
-                      {rule.enabled ? "✓" : "○"}
-                    </button>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-xs font-bold text-text-primary">{rule.title}</span>
-                        <span className={`rounded px-1.5 py-0.5 font-mono text-[9px] uppercase font-bold ${
-                          rule.level === "critical"
-                            ? "bg-risk-malicious/20 text-risk-malicious"
-                            : rule.level === "high"
-                              ? "bg-risk-suspicious/20 text-risk-suspicious"
-                              : "bg-accent/15 text-accent"
-                        }`}>
-                          {rule.level || "medium"}
+                + New
+              </button>
+              <button
+                onClick={() => setShowCatalog(true)}
+                className="press rounded border border-border-subtle bg-bg-base px-2 py-0.5 text-[10px] text-text-muted hover:border-accent/40 hover:text-text-primary"
+                title="Browse SigmaHQ Community Catalog"
+              >
+                SigmaHQ
+              </button>
+            </div>
+          </div>
+
+          {/* Search Box */}
+          <div className="relative">
+            <Icon name="search" size={12} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-text-faint" />
+            <input
+              type="text"
+              value={searchFilter}
+              onChange={(e) => setSearchFilter(e.target.value)}
+              placeholder="Filter by title, ID, tactic..."
+              className="w-full rounded-lg border border-border-subtle bg-bg-base py-1.5 pl-7 pr-2.5 text-xs text-text-primary placeholder:text-text-faint focus:border-accent/60 focus:outline-none"
+            />
+          </div>
+
+          {/* Filter Pills */}
+          <div className="flex flex-wrap items-center gap-1 text-[10px]">
+            <button
+              onClick={() => setStatusFilter(statusFilter === "all" ? "active" : statusFilter === "active" ? "disabled" : "all")}
+              className="press rounded border border-border-subtle bg-bg-base px-1.5 py-0.5 text-text-muted hover:text-text-primary"
+            >
+              Status: <span className="font-bold text-text-primary capitalize">{statusFilter}</span>
+            </button>
+            <button
+              onClick={() => {
+                const tactics = ["all", "execution", "persistence", "defense_evasion", "command_and_control"];
+                const nextIdx = (tactics.indexOf(tacticFilter) + 1) % tactics.length;
+                setTacticFilter(tactics[nextIdx]);
+              }}
+              className="press rounded border border-border-subtle bg-bg-base px-1.5 py-0.5 text-text-muted hover:text-text-primary"
+            >
+              Tactic: <span className="font-bold text-text-primary capitalize">{tacticFilter}</span>
+            </button>
+            <button
+              onClick={() => {
+                const sevs = ["all", "critical", "high", "medium"];
+                const nextIdx = (sevs.indexOf(severityFilter) + 1) % sevs.length;
+                setSeverityFilter(sevs[nextIdx]);
+              }}
+              className="press rounded border border-border-subtle bg-bg-base px-1.5 py-0.5 text-text-muted hover:text-text-primary"
+            >
+              Sev: <span className="font-bold text-text-primary capitalize">{severityFilter}</span>
+            </button>
+          </div>
+
+          {/* Rules List */}
+          <div className="max-h-[580px] overflow-y-auto space-y-1.5 pr-1 divide-y divide-border-subtle/30">
+            {filteredRules.length === 0 ? (
+              <p className="py-8 text-center text-[11px] text-text-muted">
+                No rules match the current filters.
+              </p>
+            ) : (
+              filteredRules.map((rule: any) => {
+                const isSelected = selectedRuleId === rule.rule_id;
+                return (
+                  <div
+                    key={rule.rule_id}
+                    onClick={() => {
+                      setSelectedRuleId(rule.rule_id);
+                      if (rule.sigma_yaml) setYaml(rule.sigma_yaml);
+                      setResult(null);
+                      setBacktestResult(null);
+                    }}
+                    className={`cursor-pointer rounded-lg p-2.5 transition pt-2 ${
+                      isSelected
+                        ? "border border-accent/60 bg-accent/10 shadow-xs"
+                        : "border border-transparent hover:bg-bg-base/70"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-1.5">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleMutation.mutate({ ruleId: rule.rule_id, enabled: !rule.enabled });
+                          }}
+                          className={`press flex h-4 w-4 shrink-0 items-center justify-center rounded border font-mono text-[9px] font-bold ${
+                            rule.enabled
+                              ? "border-signal/60 bg-signal/20 text-signal"
+                              : "border-border-subtle bg-bg-base text-text-faint"
+                          }`}
+                          title={rule.enabled ? "Rule is Active (Click to Disable)" : "Rule is Disabled (Click to Enable)"}
+                        >
+                          {rule.enabled ? "✓" : "○"}
+                        </button>
+                        <span className={`font-bold truncate text-xs ${isSelected ? "text-accent" : "text-text-primary"}`}>
+                          {rule.title}
                         </span>
-                        <span className="font-mono text-[10px] text-text-faint">{rule.rule_id}</span>
                       </div>
-                      <p className="mt-0.5 text-xs text-text-muted">{rule.description || "Operator detection rule."}</p>
+                      <span className={`rounded px-1.5 py-0.2 text-[9px] uppercase font-bold shrink-0 ${
+                        rule.level === "critical"
+                          ? "bg-risk-malicious/20 text-risk-malicious"
+                          : rule.level === "high"
+                            ? "bg-risk-suspicious/20 text-risk-suspicious"
+                            : "bg-accent/15 text-accent"
+                      }`}>
+                        {rule.level || "med"}
+                      </span>
+                    </div>
+
+                    <div className="mt-1.5 flex items-center justify-between text-[10px] text-text-faint">
+                      <div className="flex items-center gap-1 truncate">
+                        {(rule.mitre_tactics || []).slice(0, 2).map((t: string) => (
+                          <span key={t} className="rounded bg-bg-base border border-border-subtle px-1 py-0.1">
+                            {t}
+                          </span>
+                        ))}
+                      </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (window.confirm(`Delete rule "${rule.title}"?`)) {
+                            deleteMutation.mutate(rule.rule_id);
+                          }
+                        }}
+                        className="press text-text-faint hover:text-risk-malicious p-0.5"
+                        title="Delete rule"
+                      >
+                        <Icon name="x" size={10} />
+                      </button>
                     </div>
                   </div>
-
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => onOpenBacktest({ id: rule.rule_id, name: rule.title, customYaml: rule.sigma_yaml })}
-                      className="press inline-flex items-center gap-1 rounded-lg border border-accent/60 bg-accent/10 px-2.5 py-1 font-mono text-xs font-semibold text-accent hover:bg-accent/20"
-                      title="Backtest this rule against historical event store"
-                    >
-                      <Icon name="play" size={11} />
-                      Backtest
-                    </button>
-                    {rule.sigma_yaml && (
-                      <button
-                        onClick={() => {
-                          setYaml(rule.sigma_yaml);
-                          setResult(null);
-                          setError(null);
-                        }}
-                        className="press inline-flex items-center gap-1 rounded-lg border border-border-subtle bg-bg-base px-2.5 py-1 font-mono text-xs text-text-muted hover:border-accent/40 hover:text-text-primary"
-                        title="Load rule into editor"
-                      >
-                        Edit YAML
-                      </button>
-                    )}
-                    <button
-                      onClick={() => {
-                        if (window.confirm(`Delete custom rule "${rule.title}"?`)) {
-                          deleteMutation.mutate(rule.rule_id);
-                        }
-                      }}
-                      className="press inline-flex items-center gap-1 rounded-lg border border-border-subtle px-2 py-1 font-mono text-xs text-text-faint hover:border-risk-malicious/60 hover:text-risk-malicious"
-                      title="Delete rule"
-                    >
-                      <Icon name="x" size={11} />
-                    </button>
-                  </div>
-                </div>
-
-                <div className="mt-3 flex flex-wrap items-center gap-1.5 font-mono text-[10px]">
-                  <span className="text-text-faint">Tactics:</span>
-                  {(rule.mitre_tactics || []).map((t: string) => (
-                    <span key={t} className="rounded border border-border-subtle bg-bg-base px-1.5 py-0.5 text-text-muted">
-                      {t}
-                    </span>
-                  ))}
-                  {(rule.mitre_techniques || []).map((t: string) => (
-                    <span key={t} className="rounded border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-accent">
-                      {t}
-                    </span>
-                  ))}
-                  <span className="ml-auto text-text-faint">
-                    {rule.criteria ? `${rule.criteria.length} criteria mapped` : ""}
-                  </span>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </Panel>
-
-      {/* Section 2: Authoring Studio & Live Validator */}
-      <div>
-        <div className="mb-2 flex items-center justify-between">
-          <div>
-            <p className="kicker">Detection Engineering Studio</p>
-            <h2 className="mt-1 text-base font-semibold text-text-primary">Author, Transpile &amp; Backtest Sigma Rules</h2>
-          </div>
-          <div className="flex flex-wrap items-center gap-1.5 font-mono text-[11px]">
-            <button
-              onClick={() => setShowCatalog(true)}
-              className="press inline-flex items-center gap-1 rounded-lg border border-accent/50 bg-accent/10 px-2.5 py-1 font-semibold text-accent hover:bg-accent/20"
-            >
-              <Icon name="grid" size={12} />
-              <span>Browse SigmaHQ Catalog</span>
-            </button>
-            <span className="text-text-faint">|</span>
-            <span className="text-text-muted text-[10px]">Templates:</span>
-            <button
-              onClick={() => loadExample("windows")}
-              className="press rounded border border-border-subtle bg-bg-surface px-2 py-0.5 text-text-muted hover:border-accent/50 hover:text-accent"
-            >
-              Win Sysmon
-            </button>
-            <button
-              onClick={() => loadExample("linux")}
-              className="press rounded border border-border-subtle bg-bg-surface px-2 py-0.5 text-text-muted hover:border-accent/50 hover:text-accent"
-            >
-              Linux eBPF
-            </button>
-            <button
-              onClick={() => loadExample("macos")}
-              className="press rounded border border-border-subtle bg-bg-surface px-2 py-0.5 text-text-muted hover:border-accent/50 hover:text-accent"
-            >
-              macOS ES
-            </button>
-            <button
-              onClick={() => loadExample("c2")}
-              className="press rounded border border-border-subtle bg-bg-surface px-2 py-0.5 text-text-muted hover:border-accent/50 hover:text-accent"
-            >
-              C2 Beacon
-            </button>
-            <button
-              onClick={() => loadExample("ransomware")}
-              className="press rounded border border-border-subtle bg-bg-surface px-2 py-0.5 text-text-muted hover:border-accent/50 hover:text-accent"
-            >
-              Ransomware
-            </button>
+                );
+              })
+            )}
           </div>
         </div>
 
-        <Panel title="Sigma YAML Definition (Specification v2.1)">
-          <textarea
-            rows={8}
-            value={yaml}
-            onChange={(e) => setYaml(e.target.value)}
-            placeholder="Paste or author Sigma YAML rule here (detection selection, modifiers, level, MITRE tags)..."
-            className="w-full rounded-lg border border-border-subtle bg-bg-base p-3 font-mono text-xs text-text-primary focus:border-accent/60 focus:outline-none"
-          />
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                onClick={handleTranspile}
-                disabled={busy || !yaml.trim()}
-                className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/10 px-4 py-2 font-mono text-xs text-accent transition-colors hover:bg-accent/20 disabled:opacity-50"
-              >
-                <Icon name="terminal" size={14} />
-                {busy ? "Transpiling…" : "Transpile & Validate Filter"}
-              </button>
-              <button
-                onClick={() => onOpenBacktest({ name: result?.title || "Custom Sigma Draft", customYaml: yaml })}
-                disabled={!yaml.trim()}
-                className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/15 px-4 py-2 font-mono text-xs font-bold text-accent transition-colors hover:bg-accent/25 disabled:opacity-50"
-              >
-                <Icon name="play" size={14} />
-                <span>Test Against Event Store (Backtest)</span>
-              </button>
-              {result && (
+        {/* Right Column: Detection IDE & Live Backtester (8 cols) */}
+        <div className="lg:col-span-8 space-y-4">
+          {/* IDE Container */}
+          <div className="rounded-xl border border-border-subtle bg-bg-surface overflow-hidden shadow-xs">
+            {/* IDE Toolbar */}
+            <div className="border-b border-border-subtle bg-bg-elevated/40 p-3 flex flex-wrap items-center justify-between gap-2.5">
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-text-primary text-xs">
+                  {activeRule ? activeRule.title : "New Detection Rule Draft"}
+                </span>
+                {activeRule && (
+                  <button
+                    onClick={() => toggleMutation.mutate({ ruleId: activeRule.rule_id, enabled: !activeRule.enabled })}
+                    className={`press rounded border px-1.5 py-0.5 text-[10px] font-bold ${
+                      activeRule.enabled
+                        ? "border-signal/50 bg-signal/15 text-signal"
+                        : "border-border-subtle bg-bg-base text-text-muted"
+                    }`}
+                  >
+                    {activeRule.enabled ? "Active" : "Disabled"}
+                  </button>
+                )}
+              </div>
+
+              {/* Quick Template Presets */}
+              <div className="flex flex-wrap items-center gap-1 text-[10px]">
+                <span className="text-text-faint uppercase mr-1">Presets:</span>
                 <button
-                  onClick={() => importMutation.mutate(yaml)}
-                  disabled={importMutation.isPending}
-                  className="press inline-flex items-center gap-1.5 rounded-lg border border-signal/60 bg-signal/15 px-4 py-2 font-mono text-xs font-bold text-signal transition hover:bg-signal/25 disabled:opacity-50"
+                  onClick={() => loadExample("windows")}
+                  className="press rounded border border-border-subtle bg-bg-base px-1.5 py-0.5 text-text-muted hover:border-accent/40 hover:text-accent"
                 >
-                  <Icon name="check" size={14} />
-                  <span>{importMutation.isPending ? "Deploying…" : imported ? "✓ Rule Active in Engine" : "Deploy into Live Engine"}</span>
+                  Win Sysmon
                 </button>
+                <button
+                  onClick={() => loadExample("linux")}
+                  className="press rounded border border-border-subtle bg-bg-base px-1.5 py-0.5 text-text-muted hover:border-accent/40 hover:text-accent"
+                >
+                  Linux eBPF
+                </button>
+                <button
+                  onClick={() => loadExample("macos")}
+                  className="press rounded border border-border-subtle bg-bg-base px-1.5 py-0.5 text-text-muted hover:border-accent/40 hover:text-accent"
+                >
+                  macOS ES
+                </button>
+                <button
+                  onClick={() => loadExample("c2")}
+                  className="press rounded border border-border-subtle bg-bg-base px-1.5 py-0.5 text-text-muted hover:border-accent/40 hover:text-accent"
+                >
+                  C2 Beacon
+                </button>
+                <button
+                  onClick={() => loadExample("ransomware")}
+                  className="press rounded border border-border-subtle bg-bg-base px-1.5 py-0.5 text-text-muted hover:border-accent/40 hover:text-accent"
+                >
+                  Ransomware
+                </button>
+              </div>
+            </div>
+
+            {/* Code Editor Surface */}
+            <div className="p-3 bg-bg-base">
+              <textarea
+                rows={11}
+                spellCheck={false}
+                value={yaml}
+                onChange={(e) => setYaml(e.target.value)}
+                placeholder="Author Sigma YAML detection rule (selection criteria, modifiers, MITRE tags)..."
+                className="w-full rounded-lg border border-border-subtle/80 bg-bg-surface p-3 font-mono text-xs text-text-primary placeholder:text-text-faint focus:border-accent/70 focus:outline-none leading-relaxed resize-y"
+              />
+
+              {/* IDE Action Ribbon */}
+              <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    onClick={handleTranspile}
+                    disabled={busy || !yaml.trim()}
+                    className="press inline-flex items-center gap-1 rounded-md border border-accent/60 bg-accent/10 px-3 py-1.5 font-semibold text-accent hover:bg-accent/20 disabled:opacity-50"
+                  >
+                    <Icon name="terminal" size={12} />
+                    <span>{busy ? "Validating…" : "Transpile & Validate"}</span>
+                  </button>
+
+                  <button
+                    onClick={() => importMutation.mutate(yaml)}
+                    disabled={importMutation.isPending || !yaml.trim()}
+                    className="press inline-flex items-center gap-1 rounded-md border border-signal/60 bg-signal/15 px-3 py-1.5 font-bold text-signal hover:bg-signal/25 disabled:opacity-50"
+                  >
+                    <Icon name="check" size={12} />
+                    <span>{importMutation.isPending ? "Deploying…" : imported ? "✓ Deployed" : "Deploy into Engine"}</span>
+                  </button>
+
+                  <button
+                    onClick={handleRunInlineBacktest}
+                    disabled={backtestRunning || !yaml.trim()}
+                    className="press inline-flex items-center gap-1 rounded-md border border-accent/70 bg-accent/20 px-3 py-1.5 font-bold text-accent hover:bg-accent/30 disabled:opacity-50"
+                  >
+                    <Icon name="play" size={12} />
+                    <span>Backtest on History</span>
+                  </button>
+                </div>
+
+                {result && (
+                  <span className="text-risk-clean font-semibold text-[11px]">
+                    ✓ Transpiled {result.transpiled_filter_count} criteria
+                  </span>
+                )}
+              </div>
+
+              {error && <p className="mt-2 text-risk-malicious text-[11px] font-semibold">{error}</p>}
+
+              {/* Transpiled AST Feedback Strip */}
+              {result && (
+                <div className="mt-3 rounded-lg border border-border-subtle bg-bg-surface p-3 space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                    <span className="font-bold text-text-primary">{result.title}</span>
+                    <div className="flex items-center gap-1 text-[10px]">
+                      <span className="rounded bg-accent/15 px-1.5 py-0.2 text-accent">{result.rule_id}</span>
+                      <span className="rounded bg-risk-malicious/15 px-1.5 py-0.2 text-risk-malicious font-bold uppercase">{result.severity}</span>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {result.mitre_tactics.map((t: string) => (
+                      <span key={t} className="rounded bg-bg-base border border-border-subtle px-1.5 py-0.2 text-[10px] text-text-muted">
+                        {t}
+                      </span>
+                    ))}
+                    {result.mitre_techniques.map((t: string) => (
+                      <span key={t} className="rounded bg-accent/10 px-1.5 py-0.2 text-[10px] text-accent">
+                        {t}
+                      </span>
+                    ))}
+                  </div>
+                  <div className="mt-1 space-y-1 text-[10px]">
+                    {result.criteria.map((c: any, i: number) => (
+                      <div key={i} className="flex items-center gap-1.5 rounded bg-bg-base/70 px-2 py-0.5">
+                        <span className="text-accent">{c.target_field}</span>
+                        <span className="text-text-faint">{c.modifier}</span>
+                        <span className="text-risk-clean">&quot;{c.value}&quot;</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               )}
             </div>
-            {result && (
-              <span className="font-mono text-xs text-risk-clean">
-                ✓ Validated {result.transpiled_filter_count} criteria
-              </span>
-            )}
           </div>
-          {error && <p className="mt-3 font-mono text-xs text-risk-malicious">{error}</p>}
-          {result && (
-            <div className="mt-4 space-y-3 rounded-lg border border-border-subtle bg-bg-elevated/40 p-4">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="font-mono text-xs font-bold text-text-primary">{result.title}</span>
-                <span className="rounded bg-accent/15 px-2 py-0.5 font-mono text-[10px] text-accent">
-                  {result.rule_id}
+
+          {/* Integrated Historical Backtesting Console */}
+          <div className="rounded-xl border border-border-subtle bg-bg-surface p-4 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle/60 pb-2.5">
+              <div>
+                <span className="text-[10px] uppercase font-bold text-text-faint tracking-wider">
+                  Validation Engine
                 </span>
-                <span className="rounded bg-risk-malicious/15 px-2 py-0.5 font-mono text-[10px] uppercase text-risk-malicious">
-                  {result.severity}
-                </span>
+                <h4 className="font-bold text-text-primary text-xs">
+                  Historical Event Store Backtest
+                </h4>
               </div>
-              <p className="text-xs text-text-muted">{result.description}</p>
-              <div className="flex flex-wrap items-center gap-1.5">
-                <span className="font-mono text-[10px] text-text-faint">Tactics &amp; Techniques:</span>
-                {result.mitre_tactics.map((t: string) => (
-                  <span key={t} className="rounded border border-border-subtle bg-bg-base px-1.5 py-0.5 font-mono text-[10px] text-text-muted">
-                    {t}
-                  </span>
-                ))}
-                {result.mitre_techniques.map((t: string) => (
-                  <span key={t} className="rounded border border-accent/40 bg-accent/10 px-1.5 py-0.5 font-mono text-[10px] text-accent">
-                    {t}
-                  </span>
-                ))}
-              </div>
-              <div className="mt-2 space-y-1 font-mono text-[11px]">
-                <span className="text-[10px] uppercase text-text-faint">Mapped Evaluation Criteria:</span>
-                {result.criteria.map((c: any, i: number) => (
-                  <div key={i} className="flex items-center gap-2 rounded bg-bg-base px-2 py-1 text-text-primary">
-                    <span className="text-accent">{c.target_field}</span>
-                    <span className="text-text-faint">{c.modifier}</span>
-                    <span className="text-risk-clean">&quot;{c.value}&quot;</span>
-                    <span className="ml-auto text-[10px] text-text-faint">(from {c.original_field})</span>
-                  </div>
-                ))}
+
+              <div className="flex items-center gap-2">
+                <span className="text-text-faint text-[10px]">Window:</span>
+                <select
+                  value={backtestWindow}
+                  onChange={(e) => setBacktestWindow(Number(e.target.value))}
+                  disabled={backtestRunning}
+                  className="rounded border border-border-subtle bg-bg-base px-2 py-1 text-xs text-text-primary outline-none focus:border-accent"
+                >
+                  <option value={500}>500 Events</option>
+                  <option value={1000}>1,000 Events</option>
+                  <option value={2000}>2,000 Events</option>
+                  <option value={5000}>5,000 Events</option>
+                </select>
+
+                {onOpenBacktest && (
+                  <button
+                    onClick={() =>
+                      onOpenBacktest({
+                        id: activeRule?.rule_id,
+                        name: activeRule?.title || result?.title || "Custom Sigma Draft",
+                        customYaml: yaml,
+                      })
+                    }
+                    className="press inline-flex items-center gap-1 rounded-md border border-border-subtle bg-bg-base px-2 py-1 text-text-muted hover:border-accent/40 hover:text-text-primary"
+                    title="Open standalone backtest modal"
+                  >
+                    <span>Modal</span>
+                  </button>
+                )}
+
+                <button
+                  onClick={handleRunInlineBacktest}
+                  disabled={backtestRunning || !yaml.trim()}
+                  className="press inline-flex items-center gap-1 rounded-md border border-accent/60 bg-accent/15 px-2.5 py-1 font-semibold text-accent hover:bg-accent/25 disabled:opacity-50"
+                >
+                  <Icon name={backtestRunning ? "refresh" : "play"} size={11} className={backtestRunning ? "animate-spin" : ""} />
+                  <span>{backtestRunning ? "Scanning…" : "Execute Backtest"}</span>
+                </button>
               </div>
             </div>
-          )}
-        </Panel>
+
+            {backtestError && (
+              <p className="rounded border border-risk-malicious/40 bg-risk-malicious/10 p-2 text-risk-malicious text-[11px]">
+                {backtestError}
+              </p>
+            )}
+
+            {!backtestResult && !backtestRunning && (
+              <p className="py-6 text-center text-text-muted text-[11px]">
+                Run backtest to evaluate this rule against historical SQLite EDR event streams and verify false-positive risk.
+              </p>
+            )}
+
+            {backtestResult && (
+              <div className="space-y-3">
+                {/* Backtest HUD Strip */}
+                <div className="grid grid-cols-3 gap-2.5">
+                  <div className="rounded-lg border border-border-subtle bg-bg-base/60 p-2.5">
+                    <span className="text-[10px] text-text-faint uppercase">Events Evaluated</span>
+                    <p className="text-sm font-bold text-text-primary mt-0.5">{backtestResult.events_scanned.toLocaleString()}</p>
+                  </div>
+                  <div className="rounded-lg border border-border-subtle bg-bg-base/60 p-2.5">
+                    <span className="text-[10px] text-text-faint uppercase">Rule Trigger Hits</span>
+                    <p className="text-sm font-bold text-accent mt-0.5">
+                      {backtestResult.matches_count} ({backtestResult.match_rate_pct}%)
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-border-subtle bg-bg-base/60 p-2.5">
+                    <span className="text-[10px] text-text-faint uppercase">Est. False Positive Risk</span>
+                    <p className={`text-sm font-bold mt-0.5 uppercase ${
+                      backtestResult.estimated_fp_risk === "low"
+                        ? "text-emerald-400"
+                        : backtestResult.estimated_fp_risk === "medium"
+                          ? "text-amber-400"
+                          : "text-rose-500"
+                    }`}>
+                      {backtestResult.estimated_fp_risk}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Historical Matched Events Table */}
+                <div className="space-y-1.5">
+                  <span className="text-[10px] uppercase font-bold text-text-faint">
+                    Matched Historical Telemetry Events ({backtestResult.sample_matches.length})
+                  </span>
+                  {backtestResult.sample_matches.length === 0 ? (
+                    <div className="rounded-lg border border-border-subtle bg-bg-base/50 p-4 text-center text-text-muted text-[11px]">
+                      Zero events triggered within the scanned window — low false positive risk.
+                    </div>
+                  ) : (
+                    <div className="max-h-56 overflow-y-auto space-y-1 rounded-lg border border-border-subtle bg-bg-base/70 p-2 pr-1">
+                      {backtestResult.sample_matches.map((m: any, idx: number) => (
+                        <div key={idx} className="rounded border border-border-subtle/60 bg-bg-surface p-2 text-[11px]">
+                          <div className="flex items-center justify-between text-text-muted">
+                            <span className="font-bold text-accent">{m.process_name || m.event_type}</span>
+                            <span className="text-[10px] text-text-faint">{m.timestamp?.slice(0, 19).replace("T", " ")}</span>
+                          </div>
+                          <p className="mt-0.5 truncate text-text-primary text-[10px]" title={m.command_line || m.match_reason}>
+                            {m.match_reason || m.command_line}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -1555,9 +1803,13 @@ export default function RulesPage() {
   const { data, isLoading, isError } = useQuery({ queryKey: ["tuning"], queryFn: getTuning });
   const { data: fp } = useQuery({ queryKey: ["rule-fp"], queryFn: getRuleFp });
   const [activeTab, setActiveTab] = useState<"rules" | "coverage">("rules");
-  const [subDeck, setSubDeck] = useState<"knobs" | "sigma" | "yara" | "patterns" | "packs">(() =>
-    searchParams.get("create") === "1" ? "sigma" : "knobs"
-  );
+  const [subDeck, setSubDeck] = useState<"sigma" | "knobs" | "yara" | "patterns" | "packs">(() => {
+    const tabParam = searchParams.get("tab");
+    if (tabParam && ["sigma", "knobs", "yara", "patterns", "packs"].includes(tabParam)) {
+      return tabParam as any;
+    }
+    return "sigma";
+  });
   const [knobFilter, setKnobFilter] = useState("");
   const [showOverriddenOnly, setShowOverriddenOnly] = useState(false);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -1604,19 +1856,15 @@ export default function RulesPage() {
   const noisyCount = fp?.rules.filter((r) => r.over_threshold).length ?? 0;
 
   return (
-    <div className="mx-auto max-w-4xl px-6 py-10">
+    <div className="mx-auto max-w-7xl px-6 py-8 lg:px-10 space-y-6">
       <PageHeader
-        kicker="Detection & Intel · Rules"
-        title={
-          <>
-            Detection Engineering <span className="font-normal text-text-muted">— rules &amp; ATT&CK coverage</span>
-          </>
-        }
-        lede="Author Sigma and YARA rules, tune false-positive thresholds, and inspect Enterprise MITRE ATT&CK coverage matrices."
+        kicker="Detection Engineering &amp; Threat Intelligence"
+        title="Detection Engineering Studio"
+        lede="Author and transpile Sigma/YARA rules, run historical event backtests, and inspect MITRE ATT&CK coverage."
       />
 
       {/* Main Tab Switcher */}
-      <div className="mb-8 flex rounded-xl border border-border-subtle bg-bg-surface p-1 font-mono text-xs shadow-sm">
+      <div className="flex rounded-xl border border-border-subtle bg-bg-surface p-1 font-mono text-xs shadow-sm">
         <button
           onClick={() => setActiveTab("rules")}
           className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-medium transition ${
@@ -1626,7 +1874,7 @@ export default function RulesPage() {
           }`}
         >
           <Icon name="shield" size={13} />
-          <span>Detection Rules & Sigma Authoring</span>
+          <span>Detection Rules &amp; Sigma Authoring</span>
         </button>
         <button
           onClick={() => setActiveTab("coverage")}
@@ -1637,7 +1885,7 @@ export default function RulesPage() {
           }`}
         >
           <Icon name="grid" size={13} />
-          <span>MITRE ATT&CK Coverage Matrix</span>
+          <span>MITRE ATT&amp;CK Coverage Matrix</span>
         </button>
       </div>
 
@@ -1645,22 +1893,11 @@ export default function RulesPage() {
         <CoveragePage />
       ) : (
         <>
-          {isLoading && <p className="mt-6 text-sm text-text-muted">Loading tunables…</p>}
-          {isError && <p className="mt-6 text-sm text-risk-malicious">Couldn't load tunables — is the backend running?</p>}
+          {isLoading && <p className="mt-6 text-sm text-text-muted font-mono">Loading detection configurations…</p>}
+          {isError && <p className="mt-6 text-sm text-risk-malicious font-mono">Couldn't load detection configurations — verify backend is running.</p>}
 
           {/* Sub-deck navigation switcher */}
-          <div className="mt-4 mb-6 flex flex-wrap gap-2 border-b border-border-subtle pb-3 font-mono text-xs">
-            <button
-              onClick={() => setSubDeck("knobs")}
-              className={`press flex items-center gap-1.5 rounded-lg px-3 py-1.5 border transition ${
-                subDeck === "knobs"
-                  ? "border-accent/50 bg-accent/15 text-accent font-bold shadow-xs"
-                  : "border-border-subtle bg-bg-surface text-text-muted hover:text-text-primary"
-              }`}
-            >
-              <Icon name="sliders" size={13} />
-              <span>Detection Knobs &amp; Tuning</span>
-            </button>
+          <div className="flex flex-wrap gap-2 border-b border-border-subtle pb-3 font-mono text-xs">
             <button
               onClick={() => setSubDeck("sigma")}
               className={`press flex items-center gap-1.5 rounded-lg px-3 py-1.5 border transition ${
@@ -1671,6 +1908,17 @@ export default function RulesPage() {
             >
               <Icon name="terminal" size={13} />
               <span>Sigma Detection Studio</span>
+            </button>
+            <button
+              onClick={() => setSubDeck("knobs")}
+              className={`press flex items-center gap-1.5 rounded-lg px-3 py-1.5 border transition ${
+                subDeck === "knobs"
+                  ? "border-accent/50 bg-accent/15 text-accent font-bold shadow-xs"
+                  : "border-border-subtle bg-bg-surface text-text-muted hover:text-text-primary"
+              }`}
+            >
+              <Icon name="sliders" size={13} />
+              <span>Detection Knobs &amp; Tuning</span>
             </button>
             <button
               onClick={() => setSubDeck("yara")}
