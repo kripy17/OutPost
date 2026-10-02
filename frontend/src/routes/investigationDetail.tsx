@@ -170,7 +170,7 @@ export default function InvestigationDetailPage() {
   };
 
   return (
-    <div className="mx-auto max-w-5xl px-6 py-8">
+    <div className="mx-auto max-w-[1440px] px-4 py-6 sm:px-6 lg:px-8 space-y-6">
       <PageHeader
         kicker="Incident Response · Case File"
         title={inv.title}

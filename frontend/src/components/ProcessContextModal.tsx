@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { controlProcessXRay, getForensicCapsule, getProcessSummary, getProcessXRay } from "../lib/api";
 import { Icon } from "./Icon";
@@ -113,6 +113,14 @@ export function ProcessContextModal({
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
   const { data: xrayData, isLoading: isXrayLoading } = useQuery({
     queryKey: ["forensics", "process", pid],
     queryFn: () => getProcessXRay(pid),
@@ -179,12 +187,13 @@ export function ProcessContextModal({
   const mappedLibs = security.mapped_libraries || [];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-md">
+    <div className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-xs transition-opacity" onClick={onClose}>
       <div
-        className="flex max-h-[94vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-border-subtle bg-bg-surface shadow-[var(--shadow-raised)]"
+        className="flex h-full w-full max-w-4xl flex-col overflow-hidden border-l border-border-subtle bg-bg-surface shadow-2xl animate-slide-in"
         role="dialog"
         aria-modal="true"
         aria-labelledby="process-forensics-title"
+        onClick={(e) => e.stopPropagation()}
       >
         {/* Header Bar */}
         <div className="flex flex-wrap items-center justify-between border-b border-border-subtle bg-bg-elevated/50 px-6 py-4">

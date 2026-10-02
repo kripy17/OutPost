@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useEffect } from "react";
 import { Link } from "react-router-dom";
 import { getNetworkSummary } from "../lib/api";
 import { Icon } from "./Icon";
@@ -17,13 +18,22 @@ export function NetworkContextModal({
     staleTime: 30_000,
   });
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-xs transition-opacity" onClick={onClose}>
       <div
-        className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-border-subtle bg-bg-surface shadow-[var(--shadow-raised)]"
+        className="flex h-full w-full max-w-2xl flex-col overflow-hidden border-l border-border-subtle bg-bg-surface shadow-2xl animate-slide-in"
         role="dialog"
         aria-modal="true"
         aria-labelledby="network-modal-title"
+        onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div className="flex items-center justify-between border-b border-border-subtle bg-bg-elevated/40 px-6 py-4">

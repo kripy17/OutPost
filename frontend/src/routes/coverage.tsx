@@ -341,9 +341,9 @@ export default function CoveragePage() {
   };
 
   return (
-    <div className="mx-auto max-w-7xl px-6 py-10">
+    <div className="mx-auto max-w-[1440px] px-4 py-6 sm:px-6 lg:px-8 space-y-6">
       <PageHeader
-        kicker="Intelligence · ATT&CK Matrix"
+        kicker="Detection Engineering · MITRE ATT&CK Matrix"
         title={
           <>
             MITRE Enterprise Coverage <span className="font-normal text-text-muted">— detection &amp; simulation</span>
@@ -357,7 +357,7 @@ export default function CoveragePage() {
                 type="button"
                 onClick={() => setCoverageMode("rules")}
                 className={`rounded-md px-3 py-1 transition ${
-                  coverageMode === "rules" ? "bg-accent text-bg-base font-bold shadow-sm" : "text-text-muted hover:text-text"
+                  coverageMode === "rules" ? "bg-accent text-bg-base font-bold shadow-xs" : "text-text-muted hover:text-text"
                 }`}
               >
                 Detection Rules
@@ -366,7 +366,7 @@ export default function CoveragePage() {
                 type="button"
                 onClick={() => setCoverageMode("simulations")}
                 className={`rounded-md px-3 py-1 transition ${
-                  coverageMode === "simulations" ? "bg-accent text-bg-base font-bold shadow-sm" : "text-text-muted hover:text-text"
+                  coverageMode === "simulations" ? "bg-accent text-bg-base font-bold shadow-xs" : "text-text-muted hover:text-text"
                 }`}
               >
                 Adversary Canaries
@@ -375,6 +375,55 @@ export default function CoveragePage() {
           </div>
         }
       />
+
+      {/* Executive MITRE ATT&CK Scorecard Strip */}
+      <section className="grid grid-cols-2 gap-3 sm:grid-cols-4" aria-label="ATT&CK Coverage Metrics">
+        <div className="rounded-xl border border-border-subtle bg-bg-surface p-3.5 shadow-xs">
+          <div className="flex items-center justify-between text-text-muted">
+            <span className="font-mono text-[10px] uppercase tracking-wider font-semibold">Tactics Covered</span>
+            <Icon name="target" size={14} className="text-accent" />
+          </div>
+          <div className="mt-1 font-mono text-2xl font-bold tabular-nums text-text-primary">
+            {covered.length} <span className="text-sm font-normal text-text-muted">/ {TACTICS.length}</span>
+          </div>
+          <p className="mt-0.5 font-mono text-[10px] text-text-faint">
+            {Math.round((covered.length / TACTICS.length) * 100)}% enterprise tactics observed
+          </p>
+        </div>
+
+        <div className="rounded-xl border border-accent/25 bg-accent/5 p-3.5 shadow-xs">
+          <div className="flex items-center justify-between text-accent">
+            <span className="font-mono text-[10px] uppercase tracking-wider font-semibold">Mapped Techniques</span>
+            <Icon name="shield" size={14} />
+          </div>
+          <div className="mt-1 font-mono text-2xl font-bold tabular-nums text-accent">
+            {techniques}
+          </div>
+          <p className="mt-0.5 font-mono text-[10px] text-accent/70">Unique ATT&CK technique IDs</p>
+        </div>
+
+        <div className="rounded-xl border border-border-subtle bg-bg-surface p-3.5 shadow-xs">
+          <div className="flex items-center justify-between text-text-muted">
+            <span className="font-mono text-[10px] uppercase tracking-wider font-semibold">Detection Rules</span>
+            <Icon name="sliders" size={14} className="text-emerald-400" />
+          </div>
+          <div className="mt-1 font-mono text-2xl font-bold tabular-nums text-emerald-400">
+            {data.length}
+          </div>
+          <p className="mt-0.5 font-mono text-[10px] text-text-faint">Active Sigma & behavioral heuristics</p>
+        </div>
+
+        <div className="rounded-xl border border-amber-500/25 bg-amber-500/5 p-3.5 shadow-xs">
+          <div className="flex items-center justify-between text-amber-400">
+            <span className="font-mono text-[10px] uppercase tracking-wider font-semibold">Tactic Blind Spots</span>
+            <Icon name="alert" size={14} />
+          </div>
+          <div className="mt-1 font-mono text-2xl font-bold tabular-nums text-amber-400">
+            {gaps.length}
+          </div>
+          <p className="mt-0.5 font-mono text-[10px] text-amber-400/70">Uncovered candidate tactics</p>
+        </div>
+      </section>
 
       {/* Live Technique Canary Execution Result Modal / Drawer */}
       {activeTestResult && (
