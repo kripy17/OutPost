@@ -430,32 +430,6 @@ async def execute_bytes_sandbox(
                         fe["id"] = event_store.insert_event(conn, fe)
                 except Exception:
                     pass
-
-        ip_matches = set(re.findall(r"\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b", stdout_data + stderr_data))
-        for ip in ip_matches:
-            if not ip.startswith(("127.", "0.", "255.")):
-                ne = {
-                    "run_id": run_id,
-                    "platform": sample_plat,
-                    "event_type": "network_connection",
-                    "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                    "pid": main_pid,
-                    "dest_ip": ip,
-                    "dest_port": 4444 if ":4444" in (stdout_data + stderr_data) else 80,
-                    "protocol": "tcp",
-                    "host_id": "local",
-                }
-                events_batch.append(ne)
-                with db_session() as conn:
-                    ne["id"] = event_store.insert_event(conn, ne)
-                timeline_events.append({
-                    "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                    "elapsed_ms": int((time.monotonic() - start_mono) * 1000),
-                    "category": "network",
-                    "title": f"Network Egress Activity: {ip}",
-                    "details": f"Connection attempt to {ip}:{ne['dest_port']} (TCP)",
-                    "severity": "malicious" if ne["dest_port"] == 4444 else "suspicious",
-                })
     finally:
         try:
             shutil.rmtree(sandbox_dir, ignore_errors=True)

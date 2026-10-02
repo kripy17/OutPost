@@ -1084,7 +1084,6 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
   const [showIncidentBrief, setShowIncidentBrief] = useState(false);
   const [executionTimer, setExecutionTimer] = useState<number>(0);
   const [liveLogs, setLiveLogs] = useState<string[]>([]);
-  const [liveKpi, setLiveKpi] = useState<{ files: number; procs: number; sockets: number; rules: number }>({ files: 0, procs: 0, sockets: 0, rules: 0 });
   const timerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const terminalEndRef = useRef<HTMLDivElement>(null);
 
@@ -1127,47 +1126,19 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
       `[*] [00:00.075] Staging payload to ephemeral sandbox directory: /tmp/outpost_sandbox_${sample.sample_id}/`,
       `[*] [00:00.110] Attaching /proc process tree poller & network socket monitor...`,
       `[+] [00:00.180] Executing target: ${sample.original_name}`,
+      `[*] Awaiting execution completion and kernel telemetry stream...`,
     ];
     setLiveLogs(initialLogs);
-    setLiveKpi({ files: 0, procs: 1, sockets: 0, rules: 0 });
 
     const startTime = Date.now();
-    let tickCount = 0;
     timerIntervalRef.current = setInterval(() => {
       const elapsed = Math.floor((Date.now() - startTime) / 1000);
       setExecutionTimer(elapsed);
-      tickCount++;
-      if (tickCount === 2) {
-        setLiveLogs((prev) => [
-          ...prev,
-          `[>] [00:00.380] sys_execve("/tmp/.../${sample.original_name}", [], [clean env]) = 0`,
-          `[*] [00:00.520] Process PID active · Monitoring system calls & child forks`,
-        ]);
-        setLiveKpi((prev) => ({ ...prev, procs: 1 }));
-      } else if (tickCount === 4) {
-        setLiveLogs((prev) => [
-          ...prev,
-          `[!] [00:00.910] Socket allocated: AF_INET stream socket -> C2 sinkhole proxy engaged`,
-        ]);
-        setLiveKpi((prev) => ({ ...prev, sockets: 1 }));
-      } else if (tickCount === 6) {
-        setLiveLogs((prev) => [
-          ...prev,
-          `[+] [00:01.320] File mutation trapped in sandbox directory: /tmp/stealer_output.txt`,
-        ]);
-        setLiveKpi((prev) => ({ ...prev, files: 1 }));
-      }
-    }, 250);
+    }, 500);
 
     try {
       const res = await detonateSample(sample.sample_id, timeoutSeconds, isolationDriver);
       setResult(res);
-      setLiveKpi({
-        files: (res.dropped_artifacts || []).length,
-        procs: (res.process_tree || []).length || 1,
-        sockets: (res.sinkhole_traffic || []).length || 1,
-        rules: (res.alerts || []).length,
-      });
       if ((res.alerts || []).length > 0) {
         setInspectorTab("detections");
       } else if ((res.dropped_artifacts || []).length > 0) {
@@ -1194,7 +1165,6 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
     setError(null);
     setExecutionTimer(0);
     setLiveLogs([]);
-    setLiveKpi({ files: 0, procs: 0, sockets: 0, rules: 0 });
   };
 
   const handleCopyTerminal = () => {
@@ -1205,27 +1175,14 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
     setTimeout(() => setCopiedTerminal(false), 2000);
   };
 
-  const displayFiles: DroppedArtifactItem[] = result?.dropped_artifacts || (detonating && liveKpi.files > 0 ? [{
-    name: "stealer_output.txt",
-    filename: "stealer_output.txt",
-    size_bytes: 1420,
-    entropy: 7.82,
-    sha256: "b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3",
-    md5: "098f6bcd4621d373cade4e832627b4f6",
-    is_high_entropy: true,
-    preview: ["4D 5A 90 00 03 00 00 00  This program cannot be run in DOS mode."],
-    artifact_id: "art-canary-01",
-    download_url: "/sandbox/artifacts/stealer_output.txt",
-  }] : []);
-  const displayProcesses = result?.process_tree || (detonating && liveKpi.procs > 0 ? [{ pid: 1042, name: sample.original_name, cmdline: `./${sample.original_name}`, children: [] }] : []);
+  const displayFiles: DroppedArtifactItem[] = result?.dropped_artifacts || [];
+  const displayProcesses = result?.process_tree || [];
   const displayNetwork = result
     ? [
         ...(result.sinkhole_traffic || []),
         ...((result.events || []).filter((e) => e.event_type === "network_connection" || e.event_type === "socket_listen")),
       ]
-    : detonating && liveKpi.sockets > 0
-      ? [{ target: "198.51.100.44:4444", type: "tcp_socket" }]
-      : [];
+    : [];
   const displayAlerts = result?.alerts || [];
 
   return (

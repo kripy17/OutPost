@@ -11,6 +11,7 @@ Provides deep execution introspection for OutPost's dynamic malware analysis:
 import asyncio
 import datetime
 import hashlib
+import ipaddress
 import math
 import os
 import re
@@ -39,6 +40,57 @@ def calculate_entropy(data: bytes) -> float:
             p = count / total
             ent -= p * math.log2(p)
     return round(ent, 3)
+
+
+def resolve_socket_endpoints(pid: int, inode: int) -> dict[str, Any] | None:
+    """Inspect Linux /proc tables for the given socket inode to determine protocol,
+    local/remote IP addresses, ports, and connection state.
+    """
+    for proto in ("tcp", "udp", "tcp6", "udp6"):
+        for net_dir in (Path(f"/proc/{pid}/net"), Path("/proc/net")):
+            table_path = net_dir / proto
+            if not table_path.exists():
+                continue
+            try:
+                lines = table_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+            except OSError:
+                continue
+            for line in lines[1:]:
+                parts = line.strip().split()
+                if len(parts) < 10:
+                    continue
+                # Inode is at column index 9 in /proc/net/tcp, udp, tcp6, udp6
+                if parts[9] == str(inode):
+                    is_v6 = "6" in proto
+                    base_proto = "tcp" if "tcp" in proto else "udp"
+                    try:
+                        loc_ip_hex, loc_port_hex = parts[1].split(":")
+                        rem_ip_hex, rem_port_hex = parts[2].split(":")
+                        loc_port = int(loc_port_hex, 16)
+                        rem_port = int(rem_port_hex, 16)
+                        if is_v6:
+                            loc_bytes = b"".join([bytes.fromhex(loc_ip_hex)[i:i+4][::-1] for i in range(0, 16, 4)])
+                            loc_ip = str(ipaddress.IPv6Address(loc_bytes))
+                            rem_bytes = b"".join([bytes.fromhex(rem_ip_hex)[i:i+4][::-1] for i in range(0, 16, 4)])
+                            rem_ip = str(ipaddress.IPv6Address(rem_bytes))
+                        else:
+                            loc_ip = str(ipaddress.IPv4Address(bytes.fromhex(loc_ip_hex)[::-1]))
+                            rem_ip = str(ipaddress.IPv4Address(bytes.fromhex(rem_ip_hex)[::-1]))
+                        state = parts[3]
+                        # 0A is TCP_LISTEN; for UDP, rem_port == 0 is listening/unconnected
+                        is_listen = (state == "0A") or (rem_port == 0 and rem_ip in ("0.0.0.0", "::"))
+                        return {
+                            "protocol": base_proto,
+                            "state": state,
+                            "is_listen": is_listen,
+                            "local_ip": loc_ip,
+                            "local_port": loc_port,
+                            "dest_ip": rem_ip,
+                            "dest_port": rem_port,
+                        }
+                    except Exception:
+                        continue
+    return None
 
 
 async def poll_sandbox_process_tree(
@@ -179,14 +231,70 @@ async def poll_sandbox_process_tree(
                                 "severity": "malicious",
                             })
                         elif target.startswith("socket:["):
-                            timeline_events.append({
-                                "timestamp": now_iso,
-                                "elapsed_ms": elapsed_ms,
-                                "category": "network",
-                                "title": f"Socket Allocated: {target}",
-                                "details": f"PID {p} opened active network socket {target}",
-                                "severity": "info",
-                            })
+                            inode_str = target[len("socket:[") : -1]
+                            sock_info = None
+                            if inode_str.isdigit():
+                                sock_info = resolve_socket_endpoints(p, int(inode_str))
+
+                            if sock_info:
+                                is_listen = sock_info["is_listen"]
+                                if is_listen:
+                                    ev = {
+                                        "run_id": run_id,
+                                        "platform": platform_name,
+                                        "event_type": "socket_listen",
+                                        "timestamp": now_iso,
+                                        "pid": p,
+                                        "src_ip": sock_info["local_ip"],
+                                        "src_port": sock_info["local_port"],
+                                        "protocol": sock_info["protocol"],
+                                        "host_id": "local",
+                                    }
+                                    events_batch.append(ev)
+                                    with db_session() as conn:
+                                        ev["id"] = event_store.insert_event(conn, ev)
+                                    timeline_events.append({
+                                        "timestamp": now_iso,
+                                        "elapsed_ms": elapsed_ms,
+                                        "category": "network",
+                                        "title": f"Local Socket Listening: {sock_info['protocol'].upper()} :{sock_info['local_port']}",
+                                        "details": f"PID {p} bound listening socket on {sock_info['local_ip']}:{sock_info['local_port']}",
+                                        "severity": "suspicious" if sock_info["local_port"] in (4444, 1337, 8888, 6667) else "info",
+                                    })
+                                else:
+                                    ev = {
+                                        "run_id": run_id,
+                                        "platform": platform_name,
+                                        "event_type": "network_connection",
+                                        "timestamp": now_iso,
+                                        "pid": p,
+                                        "src_ip": sock_info["local_ip"],
+                                        "src_port": sock_info["local_port"],
+                                        "dest_ip": sock_info["dest_ip"],
+                                        "dest_port": sock_info["dest_port"],
+                                        "protocol": sock_info["protocol"],
+                                        "host_id": "local",
+                                    }
+                                    events_batch.append(ev)
+                                    with db_session() as conn:
+                                        ev["id"] = event_store.insert_event(conn, ev)
+                                    timeline_events.append({
+                                        "timestamp": now_iso,
+                                        "elapsed_ms": elapsed_ms,
+                                        "category": "network",
+                                        "title": f"Network Egress Connection: {sock_info['dest_ip']}:{sock_info['dest_port']}",
+                                        "details": f"PID {p} connected to {sock_info['dest_ip']}:{sock_info['dest_port']} ({sock_info['protocol'].upper()})",
+                                        "severity": "malicious" if sock_info["dest_port"] in (4444, 1337, 6667, 8888) else "suspicious",
+                                    })
+                            else:
+                                timeline_events.append({
+                                    "timestamp": now_iso,
+                                    "elapsed_ms": elapsed_ms,
+                                    "category": "network",
+                                    "title": f"Socket Allocated: {target}",
+                                    "details": f"PID {p} opened active network socket {target}",
+                                    "severity": "info",
+                                })
                 except Exception:
                     pass
 
