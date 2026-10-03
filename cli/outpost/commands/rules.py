@@ -381,8 +381,22 @@ def export_sigma(
     try:
         yaml_bundle = api_client.export_sigma_bundle()
     except Exception as exc:
-        console.print(f"[bold #C4453B]Export failed: {exc}[/bold #C4453B]")
-        raise typer.Exit(1)
+        if "Backend unreachable" in str(exc):
+            try:
+                import sys
+                from pathlib import Path
+                root = Path(__file__).resolve().parent.parent.parent.parent
+                if str(root / "backend") not in sys.path:
+                    sys.path.insert(0, str(root / "backend"))
+                from app.services.rule_generator import get_community_sigma_rules
+                rules = get_community_sigma_rules()
+                yaml_bundle = "\n---\n".join(r["sigma_yaml"].strip() for r in rules if r.get("sigma_yaml"))
+            except Exception:
+                console.print(f"[bold #C4453B]Export failed: {exc}[/bold #C4453B]")
+                raise typer.Exit(1)
+        else:
+            console.print(f"[bold #C4453B]Export failed: {exc}[/bold #C4453B]")
+            raise typer.Exit(1)
 
     if output:
         try:
