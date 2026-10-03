@@ -917,3 +917,40 @@ def post_rule_backtest(rule_id: str, max_events: int = Query(2000, ge=10, le=100
     with db_session() as conn:
         return backtest_rule(conn, rule_id=rule_id, max_events=max_events)
 
+
+@router.get("/rules/sigma/export", response_model=None)
+def export_sigma_rules_bundle():
+    """Export all OutPost detection rules and Sigma catalog as standard multi-document Sigma YAML bundle."""
+    from fastapi.responses import Response
+    from ..services.rule_generator import get_community_sigma_rules
+
+    docs = []
+    # 1. Curated Community SigmaHQ rules
+    comm_rules = get_community_sigma_rules()
+    for r in comm_rules:
+        yaml_content = r.get("sigma_yaml", "").strip()
+        if yaml_content:
+            docs.append(yaml_content)
+
+    # 2. Operator custom authored Sigma rules
+    with db_session() as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key = 'custom_sigma_rules'").fetchone()
+        if row and row["value"]:
+            try:
+                custom_rules = json.loads(row["value"])
+                for cr in custom_rules.values():
+                    cyaml = cr.get("sigma_yaml", "").strip()
+                    if cyaml:
+                        docs.append(cyaml)
+            except Exception:
+                pass
+
+    bundle_text = "\n---\n".join(docs)
+    filename = "outpost-sigma-rules.yml"
+    return Response(
+        content=bundle_text,
+        media_type="application/x-yaml",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+

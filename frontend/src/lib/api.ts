@@ -294,6 +294,12 @@ export async function getNavigatorLayer(): Promise<Blob> {
   return res.blob();
 }
 
+export async function getSigmaBundleExport(): Promise<Blob> {
+  const res = await fetch(`${BASE_URL}/rules/sigma/export`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(`GET /rules/sigma/export → ${res.status}`);
+  return res.blob();
+}
+
 export async function getRunExport(runId: string): Promise<Blob> {
   const res = await fetch(`${BASE_URL}/runs/${runId}/export`, { headers: authHeaders() });
   if (!res.ok) throw new Error(`GET /runs/${runId}/export → ${res.status}`);
@@ -1618,18 +1624,18 @@ export function getSandboxArtifactUrl(runId: string, filename: string): string {
 }
 
 /** Capture a new host system baseline for differential comparison. */
-export async function captureBaselineSnapshot(): Promise<{
+export async function captureBaselineSnapshot(hostId: string = "local"): Promise<{
   timestamp: string;
   process_count: number;
   processes: any[];
   network: any;
   metrics: any;
 }> {
-  return post<any>("/system/xray/snapshot/baseline", {});
+  return post<any>(`/hosts/${encodeURIComponent(hostId)}/baseline`, {});
 }
 
 /** Get differential delta (+/-) between baseline and current live host state. */
-export async function getSnapshotDifferential(): Promise<{
+export async function getSnapshotDifferential(hostId: string = "local"): Promise<{
   baseline_timestamp: string;
   current_timestamp: string;
   added_processes: any[];
@@ -1655,7 +1661,7 @@ export async function getSnapshotDifferential(): Promise<{
     temp_drops_count: number;
   };
 }> {
-  return get<any>("/system/xray/snapshot/diff");
+  return get<any>(`/hosts/${encodeURIComponent(hostId)}/diff`);
 }
 
 /** Compare two forensic capsules (.xray.json) side-by-side. */

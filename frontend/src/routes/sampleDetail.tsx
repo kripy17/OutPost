@@ -10,6 +10,7 @@ import { NetworkProtocolInspector } from "../components/NetworkProtocolInspector
 import { ArtifactHexViewerModal } from "../components/ArtifactHexViewerModal";
 import { IncidentBriefModal } from "../components/IncidentBriefModal";
 import { Tier3MicroVmModal } from "../components/Tier3MicroVmModal";
+import { SampleMitreMatrix } from "../components/SampleMitreMatrix";
 import type { BehavioralForecast, DroppedArtifactItem, ForecastReconciliation, PeMetadata, Platform, RunSummary, SampleDetonationResult, SampleStatic, SandboxTask } from "../types";
 import { filterStrings, formatBytes, getVirusTotalFileUrl, getVirusTotalIocUrl, iocTotal } from "./samplesHelpers";
 
@@ -1078,7 +1079,7 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
   const [timeoutSeconds, setTimeoutSeconds] = useState<number>(15);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<SampleDetonationResult | null>(null);
-  const [inspectorTab, setInspectorTab] = useState<"files" | "processes" | "network" | "detections" | "syscalls" | "timeline">("files");
+  const [inspectorTab, setInspectorTab] = useState<"files" | "processes" | "network" | "detections" | "mitre" | "syscalls" | "timeline">("files");
   const [copiedTerminal, setCopiedTerminal] = useState(false);
   const [selectedArtifact, setSelectedArtifact] = useState<DroppedArtifactItem | null>(null);
   const [selectedFrame, setSelectedFrame] = useState<number | null>(null);
@@ -1752,6 +1753,15 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
                   <span>Rules ({displayAlerts.length})</span>
                 </button>
                 <button
+                  onClick={() => setInspectorTab("mitre")}
+                  className={`flex items-center gap-1 rounded-lg px-2.5 py-1 transition ${
+                    inspectorTab === "mitre" ? "bg-accent/20 font-bold text-accent" : "text-text-muted hover:text-text-primary"
+                  }`}
+                >
+                  <Icon name="grid" size={12} />
+                  <span>MITRE ATT&amp;CK</span>
+                </button>
+                <button
                   onClick={() => setInspectorTab("syscalls")}
                   className={`flex items-center gap-1 rounded-lg px-2 py-1 transition ${
                     inspectorTab === "syscalls" ? "bg-accent/20 font-bold text-accent" : "text-text-muted hover:text-text-primary"
@@ -2137,7 +2147,14 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
                 </div>
               )}
 
-              {/* Tab 5: Syscalls */}
+              {/* Tab 5: MITRE ATT&CK Matrix */}
+              {inspectorTab === "mitre" && (
+                <div className="max-h-[360px] overflow-y-auto pr-1">
+                  <SampleMitreMatrix rulesFired={displayAlerts} />
+                </div>
+              )}
+
+              {/* Tab 6: Syscalls */}
               {inspectorTab === "syscalls" && (
                 <div className="max-h-[300px] overflow-y-auto pr-1">
                   {(!result?.syscalls || result.syscalls.length === 0) ? (

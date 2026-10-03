@@ -135,16 +135,20 @@ def get_xray_behavioral_explanations() -> list[dict]:
     return host_forensics.generate_behavioral_explanations()
 
 
+@router.post("/hosts/{host_id}/baseline", response_model=None)
+@router.post("/hosts/{host_id}/snapshot/baseline", response_model=None)
 @router.post("/system/forensics/snapshot/baseline", response_model=None)
 @router.post("/system/xray/snapshot/baseline", response_model=None)
-def capture_xray_baseline_snapshot() -> dict:
+def capture_xray_baseline_snapshot(host_id: str = "local") -> dict:
     """Capture a new host system baseline for differential dynamic execution comparison."""
     return host_forensics.capture_baseline_snapshot()
 
 
+@router.get("/hosts/{host_id}/diff", response_model=None)
+@router.get("/hosts/{host_id}/snapshot/diff", response_model=None)
 @router.get("/system/forensics/snapshot/diff", response_model=None)
 @router.get("/system/xray/snapshot/diff", response_model=None)
-def get_xray_snapshot_differential() -> dict:
+def get_xray_snapshot_differential(host_id: str = "local") -> dict:
     """Compute differential delta (+/-) between captured baseline and current host state."""
     return host_forensics.compute_snapshot_diff()
 

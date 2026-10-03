@@ -32,6 +32,7 @@ import { ProcessCausalityTree } from "../components/ProcessCausalityTree";
 import { ProcessNetworkMatrix } from "../components/ProcessNetworkMatrix";
 import { relativeTime } from "./agentsHelpers";
 import { HardwareSensorMatrix } from "../components/HardwareSensorMatrix";
+import { HostDifferentialDelta } from "../components/HostDifferentialDelta";
 
 const KIND_TABS: { value: TimelineKind | ""; label: string; icon: IconName }[] = [
   { value: "", label: "All", icon: "grid" },
@@ -161,7 +162,7 @@ function EntryRow({
 export default function HostDetailPage() {
   const { hostId } = useParams<{ hostId: string }>();
   const queryClient = useQueryClient();
-  const [activeView, setActiveView] = useState<"timeline" | "tree" | "network" | "sensors" | "hunts">("timeline");
+  const [activeView, setActiveView] = useState<"timeline" | "delta" | "tree" | "network" | "sensors" | "hunts">("timeline");
   const [activeProbeResult, setActiveProbeResult] = useState<ForensicProbeResult | null>(null);
   const [runningProbeId, setRunningProbeId] = useState<string | null>(null);
 
@@ -400,6 +401,17 @@ export default function HostDetailPage() {
         >
           <Icon name="list" size={13} />
           <span>Activity Timeline ({total})</span>
+        </button>
+        <button
+          onClick={() => setActiveView("delta")}
+          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-medium transition ${
+            activeView === "delta"
+              ? "bg-accent/15 font-bold text-accent shadow-sm"
+              : "text-text-muted hover:text-text-primary"
+          }`}
+        >
+          <Icon name="compare" size={13} />
+          <span>Differential Baseline Delta</span>
         </button>
         <button
           onClick={() => setActiveView("tree")}
@@ -729,6 +741,14 @@ export default function HostDetailPage() {
             })}
           </div>
         </Panel>
+      )}
+
+      {activeView === "delta" && (
+        <HostDifferentialDelta
+          hostId={hostId || "local"}
+          onInspectPid={(pid) => setInspectPid(pid)}
+          onInspectIp={(ip) => setInspectIp(ip)}
+        />
       )}
 
       {activeView === "tree" && (

@@ -32,6 +32,7 @@ import {
   patchCustomSigmaRule,
   deleteCustomSigmaRule,
   backtestCustomRule,
+  getSigmaBundleExport,
 } from "../lib/api";
 import { clearEnumDrafts, clearLogDrafts, clearYaraDraft, readEnumDrafts, readLogDrafts, readYaraDraft, writeEnumDrafts, writeLogDrafts, writeYaraDraft } from "./rulesDrafts";
 import type { CustomYaraRule, EnumPatternRow, FpDayPoint, LogPatternKind, RuleBacktestResult, RuleFpEntry, RulePack, TuningKnob, YaraTestResponse } from "../types";
@@ -769,6 +770,17 @@ function RulePackPanel() {
     }
   };
 
+  const doExportSigma = async () => {
+    setPackErr(null);
+    try {
+      const blob = await getSigmaBundleExport();
+      saveBlob(blob, "outpost-sigma-rules.yml");
+      setPackMsg("Exported full multi-document Sigma YAML ruleset bundle — ready for Splunk, Elastic, Sentinel, and pySigma pipelines.");
+    } catch {
+      setPackErr("Sigma export failed — is the backend running?");
+    }
+  };
+
   const doImport = async (file: File) => {
     setPackMsg(null);
     try {
@@ -806,7 +818,15 @@ function RulePackPanel() {
             className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/50 bg-accent/10 px-3 py-2 font-mono text-xs font-medium text-accent transition-all duration-150 hover:shadow-[var(--glow-accent)]"
           >
             <Icon name="download" size={12} />
-            Export pack
+            Export pack (JSON)
+          </button>
+          <button
+            onClick={() => void doExportSigma()}
+            className="press inline-flex items-center gap-1.5 rounded-lg border border-cyan-500/50 bg-cyan-500/10 px-3 py-2 font-mono text-xs font-medium text-cyan-400 transition-all duration-150 hover:bg-cyan-500/20"
+            title="Download multi-document Sigma YAML bundle for Splunk / Elastic / Sentinel"
+          >
+            <Icon name="terminal" size={12} />
+            Export Sigma Ruleset (.yml)
           </button>
           <button
             onClick={() => fileRef.current?.click()}

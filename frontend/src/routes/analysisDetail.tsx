@@ -25,6 +25,7 @@ import {
 import { useEventStream } from "../lib/useEventStream";
 import { toneFill, toneForSeverity } from "../lib/fillPatterns";
 import type { AnalysisObservation, AnalysisStatus, Finding } from "../types";
+import { SampleMitreMatrix } from "../components/SampleMitreMatrix";
 
 const STATUS_TONE: Record<AnalysisStatus, "muted" | "accent" | "clean" | "malicious"> = {
   queued: "muted",
@@ -535,6 +536,8 @@ export default function AnalysisDetailPage() {
               </div>
             )}
           </Panel>
+
+          <SampleMitreMatrix findings={findingsList} />
 
           <Panel title="Findings" kicker="alerts on this run" className="mb-6">
             {findings.isLoading ? (
