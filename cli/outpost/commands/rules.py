@@ -328,3 +328,70 @@ def backtest(
     else:
         console.print("[dim]Zero matching events triggered across the historical sample.[/dim]")
 
+
+@app.command("import")
+def import_rule(
+    path: str = typer.Argument(..., help="Path to Sigma YAML (.yml) or Rule Pack JSON (.json)"),
+    disabled: bool = typer.Option(False, "--disabled", help="Import rule(s) in disabled state"),
+) -> None:
+    """Import a Sigma detection rule / bundle (.yml) or full Rule Pack (.json) into OutPost."""
+    import os
+
+    show_banner(primary=False)
+    if not os.path.exists(path):
+        console.print(f"[bold #C4453B]File not found: {path}[/bold #C4453B]")
+        raise typer.Exit(1)
+
+    if path.endswith((".yml", ".yaml")):
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read()
+        try:
+            res = api_client.import_sigma(content, enabled=not disabled)
+            count = res.get("count", 1)
+            first_rule = res.get("rule", {})
+            console.print(f"[#3FA796]Successfully imported {count} Sigma rule(s) into detection engine.[/#3FA796]")
+            if count == 1:
+                console.print(f"  [bold]Rule ID:[/bold] {first_rule.get('rule_id')}")
+                console.print(f"  [bold]Title:[/bold]   {first_rule.get('title')}")
+                console.print(f"  [bold]Level:[/bold]   {first_rule.get('level')}")
+        except Exception as exc:
+            console.print(f"[bold #C4453B]Import failed: {exc}[/bold #C4453B]")
+            raise typer.Exit(1)
+    elif path.endswith(".json"):
+        import json
+        with open(path, "r", encoding="utf-8") as f:
+            pack_data = json.load(f)
+        try:
+            res = api_client.import_rule_pack(pack_data)
+            console.print(f"[#3FA796]Successfully imported rule pack: {res.get('tuning_applied', 0)} tuning knobs, {res.get('suppressions_added', 0)} suppressions applied.[/#3FA796]")
+        except Exception as exc:
+            console.print(f"[bold #C4453B]Import failed: {exc}[/bold #C4453B]")
+            raise typer.Exit(1)
+    else:
+        console.print("[bold #C4453B]Unsupported file format. Please provide a .yml/.yaml or .json file.[/bold #C4453B]")
+        raise typer.Exit(1)
+
+
+@app.command("export-sigma")
+def export_sigma(
+    output: str | None = typer.Option(None, "--output", "-o", help="File path to write the Sigma YAML bundle"),
+) -> None:
+    """Export all OutPost detection rules and Sigma catalog as standard multi-document YAML bundle."""
+    show_banner(primary=False)
+    try:
+        yaml_bundle = api_client.export_sigma_bundle()
+    except Exception as exc:
+        console.print(f"[bold #C4453B]Export failed: {exc}[/bold #C4453B]")
+        raise typer.Exit(1)
+
+    if output:
+        try:
+            with open(output, "w", encoding="utf-8") as f:
+                f.write(yaml_bundle)
+            console.print(f"[#3FA796]Successfully exported Sigma bundle to [bold]{output}[/bold][/#3FA796]")
+        except Exception as exc:
+            console.print(f"[bold #C4453B]Failed to write to {output}: {exc}[/bold #C4453B]")
+            raise typer.Exit(1)
+    else:
+        console.print(yaml_bundle)
+

@@ -755,6 +755,7 @@ function YaraLab() {
 function RulePackPanel() {
   const queryClient = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
+  const sigmaFileRef = useRef<HTMLInputElement>(null);
   const [packMsg, setPackMsg] = useState<string | null>(null);
   const [packErr, setPackErr] = useState<string | null>(null);
 
@@ -799,6 +800,22 @@ function RulePackPanel() {
     }
   };
 
+  const doImportSigma = async (file: File) => {
+    setPackMsg(null);
+    setPackErr(null);
+    try {
+      const yamlContent = await file.text();
+      const res = await importSigmaRule(yamlContent, true);
+      const count = (res as any).count ?? 1;
+      setPackMsg(
+        `Imported ${file.name} — ${count} SigmaHQ rule(s) activated into live detection store.`
+      );
+      void queryClient.invalidateQueries({ queryKey: ["custom-sigma-rules"] });
+    } catch (e) {
+      setPackErr(e instanceof Error ? e.message.slice(0, 240) : "Failed to import Sigma YAML rule.");
+    }
+  };
+
   return (
     <div className="mt-8">
       <div className="mb-3">
@@ -833,7 +850,7 @@ function RulePackPanel() {
             className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-2 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
           >
             <Icon name="download" size={12} className="rotate-180" />
-            Import pack
+            Import pack (JSON)
           </button>
           <input
             ref={fileRef}
@@ -843,6 +860,25 @@ function RulePackPanel() {
             onChange={(e) => {
               const f = e.target.files?.[0];
               if (f) void doImport(f);
+              e.target.value = "";
+            }}
+          />
+          <button
+            onClick={() => sigmaFileRef.current?.click()}
+            className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-2 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-cyan-400 hover:text-cyan-400"
+            title="Import single or multi-document SigmaHQ YAML rulepack (.yml / .yaml)"
+          >
+            <Icon name="download" size={12} className="rotate-180 text-cyan-400" />
+            Import Sigma (.yml)
+          </button>
+          <input
+            ref={sigmaFileRef}
+            type="file"
+            accept=".yml,.yaml,text/yaml"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void doImportSigma(f);
               e.target.value = "";
             }}
           />

@@ -722,6 +722,33 @@ def transpile_sigma(sigma_yaml: str) -> dict:
     return _post("/rules/sigma/transpile", {"sigma_yaml": sigma_yaml})
 
 
+def import_sigma(sigma_yaml: str, enabled: bool = True) -> dict:
+    """Import and activate single or multi-document Sigma YAML rule(s)."""
+    return _post("/rules/sigma/import", {"sigma_yaml": sigma_yaml, "enabled": enabled})
+
+
+def export_sigma_bundle() -> str:
+    """Download the full multi-document Sigma YAML bundle."""
+    base = get_base_url()
+    try:
+        resp = requests.get(f"{base}/rules/sigma/export", headers=_auth_headers(), timeout=15)
+    except requests.RequestException:
+        raise APIError(f"Backend unreachable at {base}") from None
+    if not resp.ok:
+        raise APIError(f"GET /rules/sigma/export → {resp.status_code}")
+    return resp.text
+
+
+def export_rule_pack() -> dict:
+    """Export complete rule surface (tuning, suppressions, patterns, threshold)."""
+    return _get("/rules/pack")
+
+
+def import_rule_pack(pack: dict) -> dict:
+    """Import and apply a rule pack document."""
+    return _post("/rules/pack", pack)
+
+
 def get_forensics_snapshot() -> dict:
     """Live host system telemetry snapshot (metrics, active processes, sockets)."""
     return _get("/system/forensics/snapshot")

@@ -111,3 +111,64 @@ def test_footprint_target_query(client):
     domain_data = resp.json()
     assert domain_data["sample"]["name"] == "c2-tracker.org"
     assert len(domain_data["seed_ips"]) >= 1
+
+
+def test_sigma_bundle_import_and_export(client):
+    bundle_yaml = """title: Bundle Rule Alpha
+id: aaaaaaaa-1111-2222-3333-444444444444
+status: experimental
+level: high
+tags:
+    - attack.execution
+    - attack.t1059
+logsource:
+    category: process_creation
+    product: linux
+detection:
+    selection:
+        CommandLine|contains:
+            - 'malicious_bundle_probe_a'
+    condition: selection
+---
+title: Bundle Rule Beta
+id: bbbbbbbb-1111-2222-3333-444444444444
+status: experimental
+level: critical
+tags:
+    - attack.persistence
+    - attack.t1053.003
+logsource:
+    category: process_creation
+    product: linux
+detection:
+    selection:
+        CommandLine|contains:
+            - 'malicious_bundle_probe_b'
+    condition: selection
+"""
+    # 1. Import multi-document bundle
+    resp = client.post("/rules/sigma/import", json={"sigma_yaml": bundle_yaml, "enabled": True})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "imported"
+    assert data["count"] == 2
+    assert len(data["rules"]) == 2
+    assert "bundle-rule-alpha" in data["rules"][0]["rule_id"]
+    assert "bundle-rule-beta" in data["rules"][1]["rule_id"]
+
+    # 2. Check rules in custom rules endpoint
+    resp = client.get("/rules/sigma/custom")
+    assert resp.status_code == 200
+    custom_rules = resp.json()
+    rule_ids = [r["rule_id"] for r in custom_rules]
+    assert any("bundle-rule-alpha" in r for r in rule_ids)
+    assert any("bundle-rule-beta" in r for r in rule_ids)
+
+    # 3. Check Sigma bundle export includes these rules
+    resp = client.get("/rules/sigma/export")
+    assert resp.status_code == 200
+    assert "text/yaml" in resp.headers.get("content-type", "") or "x-yaml" in resp.headers.get("content-type", "")
+    exported_text = resp.text
+    assert "Bundle Rule Alpha" in exported_text
+    assert "Bundle Rule Beta" in exported_text
+    assert "---" in exported_text

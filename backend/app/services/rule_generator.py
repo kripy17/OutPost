@@ -648,3 +648,32 @@ def transpile_sigma_yaml(yaml_str: str) -> dict[str, Any]:
         "source": "sigma_import",
     }
 
+
+def transpile_sigma_bundle(yaml_str: str) -> list[dict[str, Any]]:
+    """Transpile a single or multi-document Sigma YAML stream into OutPost detection rule definitions."""
+    if not yaml_str or not yaml_str.strip():
+        raise ValueError("Empty Sigma rule string")
+
+    import yaml
+
+    try:
+        loaded = list(yaml.safe_load_all(yaml_str))
+    except Exception as e:
+        raise ValueError(f"Invalid Sigma YAML: {e}")
+
+    docs: list[dict[str, Any]] = []
+    for doc in loaded:
+        if not doc or not isinstance(doc, dict):
+            continue
+        try:
+            doc_yaml = yaml.safe_dump(doc)
+            rule_def = transpile_sigma_yaml(doc_yaml)
+            rule_def["sigma_yaml"] = doc_yaml
+            docs.append(rule_def)
+        except Exception:
+            continue
+
+    if not docs:
+        raise ValueError("No valid Sigma rule definitions found in YAML stream")
+    return docs
+

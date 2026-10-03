@@ -752,22 +752,24 @@ class SigmaImportIn(BaseModel):
 
 @router.post("/rules/sigma/import", response_model=None)
 def post_sigma_import(body: SigmaImportIn, request: Request) -> dict:
-    """Import and activate a SigmaHQ detection rule into the OutPost detection store."""
-    from ..services.rule_generator import transpile_sigma_yaml
+    """Import and activate single or multi-document SigmaHQ detection rules into the OutPost detection store."""
+    from ..services.rule_generator import transpile_sigma_bundle
 
     try:
-        rule_def = transpile_sigma_yaml(body.sigma_yaml)
+        rule_defs = transpile_sigma_bundle(body.sigma_yaml)
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"Failed to parse Sigma rule: {exc}")
 
-    rule_def["enabled"] = body.enabled
-    rule_def["imported_at"] = datetime.now(timezone.utc).isoformat()
-
+    now = datetime.now(timezone.utc).isoformat()
     with db_session() as conn:
         # Save imported sigma rules into settings table under 'custom_sigma_rules'
         row = conn.execute("SELECT value FROM settings WHERE key = 'custom_sigma_rules'").fetchone()
-        current_rules = json.loads(row["value"]) if row else {}
-        current_rules[rule_def["rule_id"]] = rule_def
+        current_rules = json.loads(row["value"]) if row and row["value"] else {}
+        for rule_def in rule_defs:
+            rule_def["enabled"] = body.enabled
+            rule_def["imported_at"] = now
+            current_rules[rule_def["rule_id"]] = rule_def
+
         conn.execute(
             "INSERT INTO settings (key, value) VALUES ('custom_sigma_rules', ?) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -777,11 +779,16 @@ def post_sigma_import(body: SigmaImportIn, request: Request) -> dict:
         actor = auth.role_from_request(request)
         audit.log(
             conn, actor, "rules.sigma.import",
-            target_type="rules", target_id=rule_def["rule_id"],
-            detail=f"Imported SigmaHQ rule '{rule_def['title']}' (level: {rule_def['level']})",
+            target_type="rules", target_id=rule_defs[0]["rule_id"] if len(rule_defs) == 1 else "bundle",
+            detail=f"Imported {len(rule_defs)} SigmaHQ rule(s): " + ", ".join(r["title"] for r in rule_defs[:3]) + ("..." if len(rule_defs) > 3 else ""),
         )
 
-    return {"status": "imported", "rule": rule_def}
+    return {
+        "status": "imported",
+        "count": len(rule_defs),
+        "rule": rule_defs[0],
+        "rules": rule_defs,
+    }
 
 
 class SigmaCustomPatchIn(BaseModel):
