@@ -441,6 +441,253 @@ function HostInspectorDrawer({
   );
 }
 
+function EnrollSensorDrawer({ onClose }: { onClose: () => void }) {
+  const [copied, setCopied] = useState<string | null>(null);
+  const { data: bootstrapData } = useQuery({
+    queryKey: ["agent-bootstrap-commands"],
+    queryFn: getAgentBootstrapCommands,
+  });
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  const copyCmd = (text: string, label: string) => {
+    void navigator.clipboard.writeText(text);
+    setCopied(label);
+    setTimeout(() => setCopied(null), 2000);
+  };
+
+  const linuxCmd = bootstrapData?.linux_command || "curl -sSL http://localhost:8000/install.sh | sudo bash";
+  const winCmd = bootstrapData?.windows_command || "irm http://localhost:8000/install.ps1 | iex";
+  const dockerCmd = "docker run -d --name outpost-agent --pid=host --network=host --cap-add=SYS_PTRACE --cap-add=SYS_ADMIN -v /proc:/host/proc:ro -e OUTPOST_SERVER=http://host.docker.internal:8001 outpost/agent:latest";
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-xs animate-fade-in"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-2xl bg-bg-surface border-l border-border-subtle flex flex-col h-full shadow-2xl overflow-hidden font-mono"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="p-5 border-b border-border-subtle bg-bg-elevated/40 flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-accent/40 bg-accent/15 text-accent">
+              <Icon name="plus" size={18} />
+            </span>
+            <div>
+              <h2 className="text-sm font-bold text-text-primary">Enroll New Endpoint Sensor</h2>
+              <p className="text-xs text-text-muted">1-click bootstrap command scripts for Linux, Windows &amp; Docker</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-bg-elevated">
+            <Icon name="x" size={16} />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-5 space-y-6 text-xs">
+          <div className="rounded-xl border border-accent/30 bg-accent/5 p-4 text-[12px] text-text-secondary space-y-2">
+            <p className="font-bold text-text-primary flex items-center gap-1.5">
+              <Icon name="shield" size={13} className="text-accent" />
+              <span>How Endpoint Sensor Enrollment Works:</span>
+            </p>
+            <ol className="list-decimal list-inside space-y-1 text-text-muted text-[11px]">
+              <li>Open an elevated terminal (root on Linux, Administrator PowerShell on Windows).</li>
+              <li>Paste and execute the bootstrap command below for your operating system.</li>
+              <li>The sensor provisions local eBPF / Sysmon hooks and connects back to OutPost automatically.</li>
+              <li>Live process trees, network sockets, and security audit events appear in your console within 5 seconds.</li>
+            </ol>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="font-bold text-text-primary flex items-center gap-1.5">
+                <Icon name="linux" size={14} className="text-emerald-400" />
+                <span>Linux Sensor (eBPF Kernel Probes &amp; auditd)</span>
+              </span>
+              <button
+                onClick={() => copyCmd(linuxCmd, "linux")}
+                className="press rounded-md border border-border-subtle bg-bg-base px-2.5 py-1 text-[11px] text-text-secondary hover:text-accent hover:border-accent"
+              >
+                {copied === "linux" ? "Copied ✓" : "Copy Command"}
+              </button>
+            </div>
+            <pre className="rounded-lg bg-bg-base p-3 text-[11px] text-accent select-all overflow-x-auto border border-border-subtle leading-relaxed">
+              {linuxCmd}
+            </pre>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="font-bold text-text-primary flex items-center gap-1.5">
+                <Icon name="windows" size={14} className="text-cyan-400" />
+                <span>Windows Sensor (PowerShell + Sysmon Service)</span>
+              </span>
+              <button
+                onClick={() => copyCmd(winCmd, "windows")}
+                className="press rounded-md border border-border-subtle bg-bg-base px-2.5 py-1 text-[11px] text-text-secondary hover:text-accent hover:border-accent"
+              >
+                {copied === "windows" ? "Copied ✓" : "Copy Command"}
+              </button>
+            </div>
+            <pre className="rounded-lg bg-bg-base p-3 text-[11px] text-accent select-all overflow-x-auto border border-border-subtle leading-relaxed">
+              {winCmd}
+            </pre>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="font-bold text-text-primary flex items-center gap-1.5">
+                <Icon name="box" size={14} className="text-indigo-400" />
+                <span>Containerized Sensor (Docker Host-Mode)</span>
+              </span>
+              <button
+                onClick={() => copyCmd(dockerCmd, "docker")}
+                className="press rounded-md border border-border-subtle bg-bg-base px-2.5 py-1 text-[11px] text-text-secondary hover:text-accent hover:border-accent"
+              >
+                {copied === "docker" ? "Copied ✓" : "Copy Command"}
+              </button>
+            </div>
+            <pre className="rounded-lg bg-bg-base p-3 text-[11px] text-accent select-all overflow-x-auto border border-border-subtle leading-relaxed">
+              {dockerCmd}
+            </pre>
+          </div>
+        </div>
+
+        <div className="p-4 border-t border-border-subtle bg-bg-elevated/40 flex justify-end">
+          <button
+            onClick={onClose}
+            className="press rounded-lg border border-border-subtle bg-bg-surface px-4 py-1.5 font-mono text-xs text-text-muted hover:text-text-primary"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FleetIocSearchDrawer({
+  onSelectIoc,
+  onClose,
+}: {
+  onSelectIoc: (ioc: string) => void;
+  onClose: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const sampleSuggestions = [
+    { label: "C2 Beacon Node", value: "203.0.113.88" },
+    { label: "Reverse Shell Egress", value: "185.220.101.34" },
+    { label: "Credential Dumper", value: "procdump64.exe" },
+    { label: "PowerShell LOLBIN", value: "powershell.exe" },
+    { label: "Stager Server", value: "45.33.32.156" },
+  ];
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (query.trim()) {
+      onSelectIoc(query.trim());
+    }
+  };
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-xs animate-fade-in"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-xl bg-bg-surface border-l border-border-subtle flex flex-col h-full shadow-2xl overflow-hidden font-mono"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="p-5 border-b border-border-subtle bg-bg-elevated/40 flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-accent/40 bg-accent/15 text-accent">
+              <Icon name="search" size={16} />
+            </span>
+            <div>
+              <h2 className="text-sm font-bold text-text-primary">Hunt Fleet Indicator (IOC)</h2>
+              <p className="text-xs text-text-muted">Retroactive compromise assessment across all endpoint logs</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-bg-elevated">
+            <Icon name="x" size={16} />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="p-5 space-y-4">
+          <div>
+            <label className="block text-[11px] font-bold text-text-faint uppercase mb-1.5">
+              Target Indicator (IP address, Process Name, or SHA-256):
+            </label>
+            <div className="relative">
+              <Icon name="search" size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-faint" />
+              <input
+                type="text"
+                autoFocus
+                placeholder="e.g. 203.0.113.88 or mimikatz.exe"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                className="w-full rounded-xl border border-border-subtle bg-bg-base py-2.5 pl-9 pr-3 text-xs text-text-primary placeholder:text-text-faint focus:border-accent focus:outline-none"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <span className="text-[10px] text-text-faint uppercase font-bold">Suggested Threat Indicators:</span>
+            <div className="flex flex-wrap gap-1.5">
+              {sampleSuggestions.map((s) => (
+                <button
+                  type="button"
+                  key={s.value}
+                  onClick={() => onSelectIoc(s.value)}
+                  className="press rounded-lg border border-border-subtle bg-bg-base px-2 py-1 text-[11px] text-text-secondary hover:border-accent hover:text-accent transition flex items-center gap-1.5"
+                >
+                  <span className="text-accent">{s.value}</span>
+                  <span className="text-text-faint text-[9px]">({s.label})</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="pt-4 flex justify-end gap-2 border-t border-border-subtle">
+            <button
+              type="button"
+              onClick={onClose}
+              className="press rounded-lg border border-border-subtle px-4 py-1.5 text-xs text-text-muted hover:text-text-primary"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={!query.trim()}
+              className="press rounded-lg bg-accent px-4 py-1.5 text-xs font-bold text-white hover:brightness-110 disabled:opacity-40"
+            >
+              Launch Fleet Hunt
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 export default function AgentsPage() {
   const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
@@ -450,6 +697,8 @@ export default function AgentsPage() {
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [selectedHostId, setSelectedHostId] = useState<string | null>(null);
   const [huntIoc, setHuntIoc] = useState<string | null>(null);
+  const [showEnrollDrawer, setShowEnrollDrawer] = useState(false);
+  const [showHuntInput, setShowHuntInput] = useState(false);
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ["agents", identity],
@@ -506,6 +755,18 @@ export default function AgentsPage() {
 
   return (
     <div className="mx-auto max-w-[1440px] px-6 py-8 lg:px-8">
+      {showEnrollDrawer && (
+        <EnrollSensorDrawer onClose={() => setShowEnrollDrawer(false)} />
+      )}
+      {showHuntInput && (
+        <FleetIocSearchDrawer
+          onSelectIoc={(ioc) => {
+            setShowHuntInput(false);
+            setHuntIoc(ioc);
+          }}
+          onClose={() => setShowHuntInput(false)}
+        />
+      )}
       {selectedHostId && (
         <HostInspectorDrawer
           hostId={selectedHostId}
@@ -533,10 +794,14 @@ export default function AgentsPage() {
 
         <div className="flex items-center gap-2 font-mono text-xs">
           <button
-            onClick={() => {
-              const query = window.prompt("Enter IOC to retro-hunt across all endpoints (IP, hash, or process):");
-              if (query?.trim()) setHuntIoc(query.trim());
-            }}
+            onClick={() => setShowEnrollDrawer(true)}
+            className="press inline-flex items-center gap-1.5 rounded-lg border border-accent bg-accent px-3 py-1.5 font-bold text-white shadow-xs hover:brightness-110"
+          >
+            <Icon name="plus" size={13} />
+            <span>⚡ Enroll New Sensor</span>
+          </button>
+          <button
+            onClick={() => setShowHuntInput(true)}
             className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/15 px-3 py-1.5 font-bold text-accent hover:bg-accent/25"
           >
             <Icon name="search" size={13} />
@@ -557,6 +822,46 @@ export default function AgentsPage() {
           >
             <Icon name="refresh" size={12} />
           </button>
+        </div>
+      </div>
+
+      {/* Beginner Operational Posture Guide */}
+      <div className="mb-6 rounded-xl border border-border-subtle/90 bg-bg-surface/60 p-4 font-mono text-xs backdrop-blur-sm space-y-2">
+        <div className="flex items-center justify-between">
+          <span className="font-bold text-text-primary flex items-center gap-2">
+            <Icon name="shield" size={14} className="text-accent" />
+            <span>How Endpoint Fleet Sensors &amp; Active Containment Work</span>
+          </span>
+          <span className="text-[10px] text-text-faint">OutPost Autonomous EDR Architecture</span>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-1 text-[11px] text-text-muted">
+          <div className="rounded-lg bg-bg-base/70 p-2.5 border border-border-subtle space-y-1">
+            <div className="flex items-center gap-1.5 text-signal font-bold text-[10px] uppercase">
+              <span className="h-2 w-2 rounded-full bg-signal" />
+              <span>Online Sensor (Healthy)</span>
+            </div>
+            <p className="text-text-faint text-[10px] leading-relaxed">
+              Host continuously transmits heartbeats every 15s and streams live kernel procfs, socket binds, and process creations.
+            </p>
+          </div>
+          <div className="rounded-lg bg-bg-base/70 p-2.5 border border-border-subtle space-y-1">
+            <div className="flex items-center gap-1.5 text-risk-malicious font-bold text-[10px] uppercase">
+              <span className="h-2 w-2 rounded-full bg-risk-malicious" />
+              <span>Silent / Stale (Attention)</span>
+            </div>
+            <p className="text-text-faint text-[10px] leading-relaxed">
+              Host missed expected heartbeat windows. May indicate endpoint powered down, network partitioned, or agent terminated.
+            </p>
+          </div>
+          <div className="rounded-lg bg-bg-base/70 p-2.5 border border-border-subtle space-y-1">
+            <div className="flex items-center gap-1.5 text-accent font-bold text-[10px] uppercase">
+              <span className="h-2 w-2 rounded-full bg-accent" />
+              <span>Instant Host Quarantine</span>
+            </div>
+            <p className="text-text-faint text-[10px] leading-relaxed">
+              Isolate compromised hosts from network communication in 1 click while preserving security analyst remote access channels.
+            </p>
+          </div>
         </div>
       </div>
 

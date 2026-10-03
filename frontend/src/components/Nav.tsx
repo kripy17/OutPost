@@ -152,24 +152,29 @@ export function getNavigationGroups(
           badge: onlineAgents > 0 ? `${onlineAgents} on` : null,
           badgeTone: "clean",
         },
-        { to: "/footprint", label: "Digital Footprint", iconName: "globe" },
-        { to: "/watchlist", label: "Threat Watchlist", iconName: "star" },
       ],
     },
     {
-      label: "Malware & Lab",
+      label: "Threat Intelligence",
       links: [
-        { to: "/samples", label: "Sample Vault", iconName: "box" },
+        { to: "/campaigns", label: "Threat Campaigns", iconName: "flag" },
+        { to: "/watchlist", label: "Threat Watchlist", iconName: "star" },
+        { to: "/footprint", label: "Digital Footprint", iconName: "globe" },
+      ],
+    },
+    {
+      label: "Malware Analysis & Lab",
+      links: [
+        { to: "/samples", label: "Malware Analysis Vault", iconName: "box" },
         { to: "/monitor", label: "Simulation Lab", iconName: "play" },
         { to: "/history", label: "Detonation Runs", iconName: "clock" },
       ],
     },
     {
-      label: "Detection & Intel",
+      label: "Detection Engineering",
       links: [
         { to: "/rules", label: "Detection Rules", iconName: "sliders" },
         { to: "/coverage", label: "ATT&CK Coverage", iconName: "target" },
-        { to: "/campaigns", label: "Threat Campaigns", iconName: "flag" },
       ],
     },
     {

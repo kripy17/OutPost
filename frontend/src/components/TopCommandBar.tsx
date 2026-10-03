@@ -33,33 +33,33 @@ function resolveRouteMeta(pathname: string): RouteMeta {
       name: `Host (${host.slice(0, 16)})`,
     };
   }
-  if (pathname === "/footprint") return { pillar: "Endpoint Fleet", name: "Digital Footprint" };
-  if (pathname === "/watchlist") return { pillar: "Endpoint Fleet", name: "Threat Watchlist" };
+  if (pathname === "/footprint") return { pillar: "Threat Intelligence", name: "Digital Footprint" };
+  if (pathname === "/watchlist") return { pillar: "Threat Intelligence", name: "Threat Watchlist" };
 
-  if (pathname === "/samples") return { pillar: "Malware & Lab", name: "Sample Vault" };
+  if (pathname === "/samples") return { pillar: "Malware Analysis", name: "Malware Vault & Triage" };
   if (pathname.startsWith("/samples/")) {
     const id = pathname.split("/")[2] || "";
     return {
-      pillar: "Sample Vault",
+      pillar: "Malware Analysis",
       pillarHref: "/samples",
-      name: `Sample Triage (${id.slice(0, 8)})`,
+      name: `Binary Triage (${id.slice(0, 8)})`,
     };
   }
-  if (pathname === "/monitor") return { pillar: "Malware & Lab", name: "Simulation Lab" };
-  if (pathname === "/history") return { pillar: "Malware & Lab", name: "Detonation Runs" };
+  if (pathname === "/monitor") return { pillar: "Malware Analysis", name: "Simulation Lab" };
+  if (pathname === "/history") return { pillar: "Malware Analysis", name: "Detonation Runs" };
   if (pathname.startsWith("/runs/")) {
     const id = pathname.split("/")[2] || "";
     return {
-      pillar: "Detonation Runs",
+      pillar: "Malware Analysis",
       pillarHref: "/history",
       name: `Telemetry Run (${id.slice(0, 8)})`,
     };
   }
-  if (pathname === "/analysis") return { pillar: "Malware & Lab", name: "Static Analysis" };
+  if (pathname === "/analysis") return { pillar: "Malware Analysis", name: "Static Analysis" };
   if (pathname.startsWith("/analysis/")) {
     const id = pathname.split("/")[2] || "";
     return {
-      pillar: "Static Analysis",
+      pillar: "Malware Analysis",
       pillarHref: "/analysis",
       name: `Report (${id.slice(0, 8)})`,
     };
@@ -148,7 +148,7 @@ export default function TopCommandBar() {
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!searchInput.trim()) return;
-    navigate(`/events?q=${encodeURIComponent(searchInput.trim())}`);
+    navigate(`/search?mode=global&q=${encodeURIComponent(searchInput.trim())}`);
   };
 
   const openPalette = () => {

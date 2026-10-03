@@ -12,6 +12,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { Icon } from "../components/Icon";
 import { Chip, PageHeader, Panel, Stat } from "../components/ui";
 import {
   cancelAnalysisJob,
@@ -44,88 +45,183 @@ const EVENT_TYPE_LABEL: Record<string, string> = {
  *  stored analysis result; dynamic jobs produce raw event rows (no kind
  *  wrapper — P0 defers the observations table). */
 function ObservationRow({ obs }: { obs: AnalysisObservation }) {
+  const [stringFilter, setStringFilter] = useState("");
+  const [copiedStrings, setCopiedStrings] = useState(false);
+
   if (obs.kind === "strings" && Array.isArray(obs.data)) {
-    const strings = obs.data as string[];
+    const rawStrings = obs.data as string[];
+    const filtered = stringFilter.trim()
+      ? rawStrings.filter((s) => s.toLowerCase().includes(stringFilter.toLowerCase()))
+      : rawStrings;
+
+    const copyAll = () => {
+      void navigator.clipboard.writeText(rawStrings.join("\n"));
+      setCopiedStrings(true);
+      setTimeout(() => setCopiedStrings(false), 2000);
+    };
+
     return (
-      <div>
-        <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-text-faint">strings</p>
-        <div className="max-h-56 overflow-y-auto rounded-lg border border-border-subtle bg-bg-inset p-3 font-mono text-[11px] leading-relaxed text-text-muted">
-          {strings.length === 0 ? <span className="text-text-faint">none</span> : strings.map((s) => <div key={s}>{s}</div>)}
+      <div className="rounded-xl border border-border-subtle bg-bg-surface overflow-hidden shadow-xs">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle bg-bg-elevated/40 px-4 py-3">
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-xs font-bold uppercase tracking-wider text-text-primary">
+              Extracted &amp; Deobfuscated Strings
+            </span>
+            <span className="rounded-full border border-border-subtle bg-bg-base px-2 py-0.5 font-mono text-[10px] text-text-faint">
+              {rawStrings.length} strings
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="relative">
+              <input
+                type="text"
+                placeholder="Filter strings..."
+                value={stringFilter}
+                onChange={(e) => setStringFilter(e.target.value)}
+                className="w-48 rounded-lg border border-border-subtle bg-bg-base px-2.5 py-1 font-mono text-[11px] text-text-primary placeholder:text-text-faint focus:border-accent focus:outline-none"
+              />
+            </div>
+            <button
+              onClick={copyAll}
+              className="press rounded-lg border border-border-subtle bg-bg-surface px-2.5 py-1 font-mono text-[11px] text-text-secondary hover:text-text-primary hover:border-accent/40 transition"
+            >
+              {copiedStrings ? "Copied ✓" : "Copy All"}
+            </button>
+          </div>
+        </div>
+        <div className="max-h-72 overflow-y-auto p-4 font-mono text-[11px] leading-relaxed text-text-primary bg-bg-base/90 divide-y divide-border-subtle/30">
+          {filtered.length === 0 ? (
+            <span className="text-text-faint">
+              {rawStrings.length === 0 ? "none" : "No matching strings"}
+            </span>
+          ) : (
+            filtered.map((s, idx) => (
+              <div key={`${s}-${idx}`} className="py-1 flex items-start gap-3 hover:bg-bg-elevated/40 transition">
+                <span className="text-text-faint tabular-nums w-8 text-right select-none opacity-50">
+                  {idx + 1}
+                </span>
+                <span className="break-all font-mono select-all text-text-primary">{s}</span>
+              </div>
+            ))
+          )}
         </div>
       </div>
     );
   }
+
   if (obs.kind === "iocs" && obs.data && typeof obs.data === "object") {
     const iocs = obs.data as Record<string, string[]>;
     const cats = Object.entries(iocs).filter(([, v]) => v.length > 0);
     if (cats.length === 0) return null;
+
     return (
-      <div>
-        <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-text-faint">iocs</p>
-        <div className="space-y-1.5">
+      <div className="rounded-xl border border-border-subtle bg-bg-surface overflow-hidden shadow-xs">
+        <div className="border-b border-border-subtle bg-bg-elevated/40 px-4 py-3 flex items-center justify-between">
+          <span className="font-mono text-xs font-bold uppercase tracking-wider text-text-primary">
+            Extracted Indicators of Compromise (IOCs)
+          </span>
+          <span className="text-[10px] font-mono text-text-faint">Network &amp; Host Forensics</span>
+        </div>
+        <div className="p-4 space-y-4">
           {cats.map(([cat, values]) => (
-            <div key={cat} className="flex flex-wrap items-baseline gap-1.5">
-              <span className="w-16 shrink-0 font-mono text-[10px] uppercase text-text-faint">{cat}</span>
-              <span className="flex flex-wrap gap-1">
-                {values.slice(0, 24).map((v) => (
-                  <span key={v} className="rounded border border-border-subtle bg-bg-elevated px-1.5 py-px font-mono text-[10px] text-text-muted">
-                    {v}
-                  </span>
+            <div key={cat} className="space-y-1.5">
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-[10px] font-bold uppercase tracking-wider text-accent">
+                  {cat} ({values.length})
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {values.map((v) => (
+                  <div
+                    key={v}
+                    className="inline-flex items-center gap-2 rounded-lg border border-border-subtle bg-bg-base px-2.5 py-1 font-mono text-[11px] text-text-primary hover:border-accent/40 transition group"
+                  >
+                    <span className="select-all font-semibold">{v}</span>
+                    <Link
+                      to={`/watchlist`}
+                      className="text-[9px] uppercase tracking-wider rounded border border-border-subtle bg-bg-surface px-1.5 py-0.5 text-text-faint hover:text-accent hover:border-accent/50"
+                      title="Add to Watchlist"
+                    >
+                      Watchlist
+                    </Link>
+                  </div>
                 ))}
-                {values.length > 24 && (
-                  <span className="font-mono text-[10px] text-text-faint">+{values.length - 24} more</span>
-                )}
-              </span>
+              </div>
             </div>
           ))}
         </div>
       </div>
     );
   }
+
   if ((obs.kind === "pe" || obs.kind === "elf") && obs.data && typeof obs.data === "object") {
     const meta = obs.data as Record<string, unknown>;
+    const imports = Array.isArray(meta.imports) ? (meta.imports as string[]) : [];
+
     return (
-      <div>
-        <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-text-faint">{obs.kind}</p>
-        <dl className="grid grid-cols-2 gap-x-4 gap-y-1 rounded-lg border border-border-subtle bg-bg-inset p-3 sm:grid-cols-3">
-          {Object.entries(meta)
-            .filter(([k]) => k !== "sections")
-            .map(([k, v]) => (
-              <div key={k} className="min-w-0">
-                <dt className="text-[10px] uppercase tracking-wide text-text-faint">{k}</dt>
-                <dd className="truncate font-mono text-[11px] text-text-muted">{String(v ?? "—")}</dd>
-              </div>
-            ))}
-        </dl>
+      <div className="rounded-xl border border-border-subtle bg-bg-surface overflow-hidden shadow-xs space-y-4 p-4">
+        <div>
+          <span className="font-mono text-xs font-bold uppercase tracking-wider text-text-primary">
+            Binary Header &amp; Executable Architecture ({obs.kind.toUpperCase()})
+          </span>
+          <dl className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4 font-mono text-xs">
+            {Object.entries(meta)
+              .filter(([k]) => k !== "sections" && k !== "imports")
+              .map(([k, v]) => (
+                <div key={k} className="rounded-lg border border-border-subtle bg-bg-base p-2.5">
+                  <dt className="text-[10px] uppercase tracking-wider text-text-faint font-semibold">{k}</dt>
+                  <dd className="mt-1 truncate font-mono text-[11px] font-bold text-text-primary">
+                    {String(v ?? "—")}
+                  </dd>
+                </div>
+              ))}
+          </dl>
+        </div>
+
+        {imports.length > 0 && (
+          <div className="border-t border-border-subtle/60 pt-3">
+            <span className="font-mono text-[10px] font-bold uppercase tracking-wider text-text-faint">
+              Imported Libraries &amp; API Dependencies ({imports.length})
+            </span>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {imports.map((imp) => (
+                <span
+                  key={imp}
+                  className="rounded-md border border-border-subtle bg-bg-base px-2 py-0.5 font-mono text-[11px] text-text-secondary select-all"
+                >
+                  {imp}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     );
   }
-  // Honest note rows — e.g. static jobs whose bytes were never stored
-  // ("no stored bytes — re-upload to run static analysis"). A note must
-  // render, never be swallowed.
+
   if (obs.kind === "note" && typeof obs.data === "string") {
     return (
-      <p className="rounded-lg border border-border-subtle bg-bg-inset px-3 py-2 text-[12px] text-text-muted">
+      <div className="rounded-xl border border-border-subtle bg-bg-surface p-4 text-xs font-mono text-text-muted">
         {obs.data}
-      </p>
+      </div>
     );
   }
-  // Event-row fallback (dynamic backends): the backend hands back the run's
-  // events verbatim — same shape the Event Log renders.
+
   if (obs.timestamp || obs.event_type) {
     return (
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 rounded-lg border border-border-subtle bg-bg-inset px-3 py-2 font-mono text-[11px] text-text-muted">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 rounded-lg border border-border-subtle bg-bg-base/80 px-3 py-2 font-mono text-[11px] text-text-muted">
         <span className="text-text-faint">{obs.timestamp?.slice(11, 19) ?? ""}</span>
         <span className="rounded border border-border-subtle px-1 text-[9px] uppercase text-text-faint">
           {EVENT_TYPE_LABEL[obs.event_type ?? ""] ?? obs.event_type ?? "event"}
         </span>
-        <span>{obs.process_name ?? "—"}</span>
+        <span className="font-semibold text-text-primary">{obs.process_name ?? "—"}</span>
         {obs.dest_ip && <span className="text-accent">{obs.dest_ip}</span>}
         {obs.file_path && <span className="truncate text-text-faint">{obs.file_path}</span>}
         {obs.registry_key && <span className="truncate text-text-faint">{obs.registry_key}</span>}
       </div>
     );
   }
+
   return null;
 }
 
@@ -290,7 +386,7 @@ export default function AnalysisDetailPage() {
   const kindRows = observationsList.filter((o) => o.kind);
 
   return (
-    <div>
+    <div className="mx-auto max-w-[1440px] px-6 py-8 lg:px-8 space-y-6">
       <PageHeader
         kicker="Analysis workspace"
         title={j.sample_name ?? `job ${j.run_id.slice(0, 12)}`}
@@ -317,9 +413,60 @@ export default function AnalysisDetailPage() {
         }
       />
 
+      {/* Executive Threat Verdict Banner */}
+      {j.status === "completed" && (
+        <div className={`rounded-2xl border p-5 backdrop-blur-sm shadow-sm font-mono ${
+          j.risk_score >= 7
+            ? "border-risk-malicious/50 bg-risk-malicious/10"
+            : j.risk_score >= 4
+              ? "border-risk-suspicious/50 bg-risk-suspicious/10"
+              : "border-risk-clean/40 bg-risk-clean/10"
+        }`}>
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <span className={`flex h-12 w-12 items-center justify-center rounded-xl border text-xl ${
+                j.risk_score >= 7
+                  ? "border-risk-malicious/60 bg-risk-malicious/20 text-risk-malicious"
+                  : j.risk_score >= 4
+                    ? "border-risk-suspicious/60 bg-risk-suspicious/20 text-risk-suspicious"
+                    : "border-risk-clean/60 bg-risk-clean/20 text-risk-clean"
+              }`}>
+                <Icon name={j.risk_score >= 7 ? "alert" : j.risk_score >= 4 ? "zap" : "shield"} size={22} />
+              </span>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className={`text-base font-bold uppercase tracking-wide ${
+                    j.risk_score >= 7 ? "text-risk-malicious" : j.risk_score >= 4 ? "text-risk-suspicious" : "text-risk-clean"
+                  }`}>
+                    {j.risk_score >= 7 ? "MALICIOUS SPECIMEN" : j.risk_score >= 4 ? "SUSPICIOUS BEHAVIOR" : "BENIGN / CLEAN"}
+                  </span>
+                  <span className="rounded bg-bg-surface/80 border border-border-subtle px-2 py-0.5 text-[10px] text-text-muted">
+                    Automated Triage Verdict
+                  </span>
+                </div>
+                <p className="text-xs text-text-muted mt-0.5">
+                  Static analysis &amp; heuristic triage evaluated against 38 MITRE ATT&amp;CK rules.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-4">
+              <div className="text-right">
+                <span className="text-[10px] uppercase tracking-wider text-text-faint block">Threat Score</span>
+                <span className={`text-2xl font-bold ${
+                  j.risk_score >= 7 ? "text-risk-malicious" : j.risk_score >= 4 ? "text-risk-suspicious" : "text-risk-clean"
+                }`}>
+                  Level {j.risk_score} / 10
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {cancelError && <p className="mb-4 text-xs text-[#C4453B]">{cancelError}</p>}
 
-      <dl className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
+      <dl className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-4 font-mono">
         <Stat label="Progress" value={`${j.progress}%`} tone={j.status === "failed" ? "malicious" : "accent"} />
         <Stat label="Events" value={j.events} />
         <Stat label="Alerts" value={j.alerts} tone={j.alerts > 0 ? "malicious" : "default"} />

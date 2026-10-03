@@ -218,7 +218,7 @@ function Layout() {
                 <kbd className="rounded border border-border-subtle bg-bg-elevated px-2 py-0.5 text-text-primary">g a</kbd>
               </div>
               <div className="flex justify-between items-center py-2 border-b border-border-subtle/50">
-                <span>Go to Sample Vault</span>
+                <span>Go to Malware Analysis Vault</span>
                 <kbd className="rounded border border-border-subtle bg-bg-elevated px-2 py-0.5 text-text-primary">g s</kbd>
               </div>
               <div className="flex justify-between items-center py-2 border-b border-border-subtle/50">

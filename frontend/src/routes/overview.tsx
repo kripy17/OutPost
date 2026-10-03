@@ -559,7 +559,7 @@ export default function OverviewPage() {
               <span className="font-bold text-text-primary text-xs">Live Telemetry Event Stream</span>
             </div>
             <Link to="/events" className="press text-[11px] text-accent hover:underline inline-flex items-center gap-1">
-              <span>Telemetry Lake</span>
+              <span>Full Sensor Stream</span>
               <Icon name="arrowRight" size={10} />
             </Link>
           </div>

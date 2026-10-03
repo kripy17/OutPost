@@ -331,7 +331,7 @@ export default function SearchPage() {
   };
 
   return (
-    <div className="mx-auto max-w-5xl px-5 py-8 lg:px-8">
+    <div className="mx-auto max-w-[1440px] px-6 py-8 lg:px-8">
       <PageHeader
         kicker={
           activeTab === "workbench"
@@ -476,23 +476,33 @@ export default function SearchPage() {
             </button>
           </div>
 
-          <form onSubmit={onSearch} className="mt-6 flex gap-2">
-            <div className="relative w-full max-w-md">
-              <Icon name="search" size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-faint" />
+          <form onSubmit={onSearch} className="mt-6 flex flex-col sm:flex-row gap-2.5">
+            <div className="relative flex-1">
+              <Icon name="search" size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-faint" />
               <input
                 value={value}
                 onChange={(e) => setValue(e.target.value)}
                 placeholder={scope === "global" ? "e.g. 203.0.113.88  or  type:finding status:open beaconing" : "e.g. 185.220.101.34"}
-                className="w-full rounded-lg border border-border-subtle bg-bg-surface py-2 pl-9 pr-3 font-mono text-sm text-text-primary placeholder:text-text-faint focus:border-accent/60 focus:outline-none"
+                className="w-full rounded-xl border border-border-subtle bg-bg-surface py-2.5 pl-10 pr-9 font-mono text-sm text-text-primary placeholder:text-text-faint focus:border-accent/60 focus:outline-none shadow-xs transition"
               />
+              {value && (
+                <button
+                  type="button"
+                  onClick={() => setValue("")}
+                  className="press absolute right-3 top-1/2 -translate-y-1/2 text-text-faint hover:text-text-primary p-1 rounded"
+                  title="Clear query"
+                >
+                  <Icon name="x" size={13} />
+                </button>
+              )}
             </div>
             <button
               type="submit"
               disabled={scope === "global" ? globalLoading : loading}
-              className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 px-4 py-2 font-mono text-xs text-accent transition-colors duration-150 hover:bg-accent/10 disabled:opacity-50"
+              className="press inline-flex items-center justify-center gap-1.5 rounded-xl border border-accent/60 bg-accent/15 px-6 py-2.5 font-mono text-xs font-semibold text-accent transition-colors duration-150 hover:bg-accent/25 disabled:opacity-50 shadow-xs"
             >
-              <Icon name={(scope === "global" ? globalLoading : loading) ? "refresh" : "search"} size={12} className={(scope === "global" ? globalLoading : loading) ? "animate-spin" : ""} />
-              {(scope === "global" ? globalLoading : loading) ? "Searching…" : "Search"}
+              <Icon name={(scope === "global" ? globalLoading : loading) ? "refresh" : "search"} size={13} className={(scope === "global" ? globalLoading : loading) ? "animate-spin" : ""} />
+              <span>{(scope === "global" ? globalLoading : loading) ? "Searching…" : "Search"}</span>
             </button>
           </form>
 

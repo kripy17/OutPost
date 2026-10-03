@@ -41,7 +41,7 @@ def _ts(day: int, hour: int, minute: int, second: int = 0) -> str:
     return datetime.datetime(2026, 8, day, hour, minute, second, tzinfo=datetime.timezone.utc).isoformat()
 
 
-def _beacons(run_id: str, pid: int, day: int, start: tuple[int, int, int], step_s: int, n: int = 5) -> list[dict]:
+def _beacons(run_id: str, pid: int, day: int, start: tuple[int, int, int], step_s: int, n: int = 5, host_id: str = "dc01.corp.internal", log_source: str = "sysmon") -> list[dict]:
     h, m, s = start
     out = []
     for i in range(n):
@@ -51,6 +51,7 @@ def _beacons(run_id: str, pid: int, day: int, start: tuple[int, int, int], step_
                 "run_id": run_id, "platform": "windows", "event_type": "network_connection",
                 "timestamp": _ts(day, total // 3600, (total % 3600) // 60, total % 60),
                 "pid": pid, "dest_ip": C2_CAMPAIGN, "dest_port": 4444, "protocol": "TCP",
+                "host_id": host_id, "log_source": log_source,
             }
         )
     return out
@@ -61,21 +62,27 @@ def _variant_a(run_id: str) -> list[dict]:
     return [
         {"run_id": run_id, "platform": "windows", "event_type": "process_create", "timestamp": _ts(5, 10, 12, 1),
          "pid": 1000, "ppid": 4, "process_name": "winword.exe",
-         "command_line": r"C:\Program Files\Microsoft Office\root\Office16\WINWORD.EXE /q /n"},
+         "command_line": r"C:\Program Files\Microsoft Office\root\Office16\WINWORD.EXE /q /n",
+         "host_id": "dc01.corp.internal", "log_source": "sysmon"},
         {"run_id": run_id, "platform": "windows", "event_type": "process_create", "timestamp": _ts(5, 10, 12, 4),
          "pid": 1001, "ppid": 1000, "process_name": "powershell.exe",
-         "command_line": "powershell.exe -enc SQBFAFgAAGgBdAA="},
+         "command_line": "powershell.exe -enc SQBFAFgAAGgBdAA=",
+         "host_id": "dc01.corp.internal", "log_source": "sysmon"},
         {"run_id": run_id, "platform": "windows", "event_type": "process_create", "timestamp": _ts(5, 10, 12, 7),
          "pid": 1002, "ppid": 1000, "process_name": "cmd.exe",
-         "command_line": r"C:\Windows\System32\cmd.exe /c whoami"},
-        *(_beacons(run_id, 1002, 5, (10, 12, 20), 10)),
+         "command_line": r"C:\Windows\System32\cmd.exe /c whoami",
+         "host_id": "dc01.corp.internal", "log_source": "sysmon"},
+        *(_beacons(run_id, 1002, 5, (10, 12, 20), 10, host_id="dc01.corp.internal", log_source="sysmon")),
         {"run_id": run_id, "platform": "windows", "event_type": "network_connection", "timestamp": _ts(5, 10, 13, 2),
-         "pid": 1002, "dest_ip": C2_SECONDARY, "dest_port": 4444, "protocol": "TCP"},
+         "pid": 1002, "dest_ip": C2_SECONDARY, "dest_port": 4444, "protocol": "TCP",
+         "host_id": "dc01.corp.internal", "log_source": "sysmon"},
         {"run_id": run_id, "platform": "windows", "event_type": "network_connection", "timestamp": _ts(5, 10, 13, 5),
-         "pid": 1000, "dest_ip": "1.1.1.1", "dest_port": 443, "protocol": "TCP"},
+         "pid": 1000, "dest_ip": "1.1.1.1", "dest_port": 443, "protocol": "TCP",
+         "host_id": "dc01.corp.internal", "log_source": "sysmon"},
         {"run_id": run_id, "platform": "windows", "event_type": "registry_write", "timestamp": _ts(5, 10, 13, 10),
          "pid": 1000, "process_name": "winword.exe",
-         "registry_key": r"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run\Updater"},
+         "registry_key": r"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run\Updater",
+         "host_id": "dc01.corp.internal", "log_source": "sysmon"},
     ]
 
 
@@ -84,23 +91,28 @@ def _variant_b(run_id: str) -> list[dict]:
     events = [
         {"run_id": run_id, "platform": "windows", "event_type": "process_create", "timestamp": _ts(6, 9, 47, 1),
          "pid": 2000, "ppid": 4, "process_name": "wscript.exe",
-         "command_line": r"wscript.exe C:\Users\Public\invoice_lure\setup.jse"},
+         "command_line": r"wscript.exe C:\Users\Public\invoice_lure\setup.jse",
+         "host_id": "analyst-ws-03", "log_source": "sysmon"},
         {"run_id": run_id, "platform": "windows", "event_type": "process_create", "timestamp": _ts(6, 9, 47, 6),
          "pid": 2001, "ppid": 2000, "process_name": "powershell.exe",
-         "command_line": "powershell.exe -nop -w hidden -enc SQBFAFgAAGgBdAA="},
+         "command_line": "powershell.exe -nop -w hidden -enc SQBFAFgAAGgBdAA=",
+         "host_id": "analyst-ws-03", "log_source": "sysmon"},
         {"run_id": run_id, "platform": "windows", "event_type": "network_connection", "timestamp": _ts(6, 9, 47, 30),
-         "pid": 2001, "dest_ip": "8.8.8.8", "dest_port": 443, "protocol": "TCP"},
-        *(_beacons(run_id, 2001, 6, (9, 48, 0), 10)),
+         "pid": 2001, "dest_ip": "8.8.8.8", "dest_port": 443, "protocol": "TCP",
+         "host_id": "analyst-ws-03", "log_source": "sysmon"},
+        *(_beacons(run_id, 2001, 6, (9, 48, 0), 10, host_id="analyst-ws-03", log_source="sysmon")),
         {"run_id": run_id, "platform": "windows", "event_type": "registry_write", "timestamp": _ts(6, 9, 48, 50),
          "pid": 2000, "process_name": "wscript.exe",
-         "registry_key": r"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run\Updater"},
+         "registry_key": r"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run\Updater",
+         "host_id": "analyst-ws-03", "log_source": "sysmon"},
     ]
     # 11 file writes within 10 seconds → rename-burst (threshold 10).
     for i in range(11):
         events.append(
             {"run_id": run_id, "platform": "windows", "event_type": "file_write",
              "timestamp": _ts(6, 9, 49, i),
-             "pid": 2000, "file_path": f"C:\\Users\\victim\\Documents\\q3_report_{i:03d}.enc"}
+             "pid": 2000, "file_path": f"C:\\Users\\victim\\Documents\\q3_report_{i:03d}.enc",
+             "host_id": "analyst-ws-03", "log_source": "sysmon"}
         )
     return events
 

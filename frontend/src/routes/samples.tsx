@@ -239,13 +239,13 @@ export default function SamplesPage() {
   return (
     <div className="mx-auto max-w-[1440px] px-6 py-8 lg:px-8">
       <PageHeader
-        kicker="Sandbox & Lab · Samples"
+        kicker="Malware Lab · Binary Vault"
         title={
           <>
-            Sample Vault &amp; Detonations <span className="font-normal text-text-muted">— malware binaries &amp; dynamic analysis</span>
+            Malware Analysis Vault <span className="font-normal text-text-muted">— static binary inspection &amp; dynamic triage</span>
           </>
         }
-        lede="Central vault for uploaded binaries (.exe, .elf, .dll, scripts), static capability triage, and dynamic detonation tasks."
+        lede="Central vault for suspect binaries (.exe, .elf, .dll, scripts), cryptographic digests, Shannon entropy inspection, detected capabilities, and isolated detonation."
         actions={
           <div className="flex items-center gap-2">
             {exportError && <span className="font-mono text-[10px] text-risk-malicious">{exportError}</span>}
@@ -328,7 +328,7 @@ export default function SamplesPage() {
           }`}
         >
           <Icon name="box" size={13} />
-          <span>Malware Sample Vault</span>
+          <span>Malware Analysis Vault</span>
         </button>
         <button
           onClick={() => setActiveTab("analysis")}

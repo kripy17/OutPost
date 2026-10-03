@@ -25,7 +25,7 @@ const NAV_ITEMS: Item[] = [
   { kind: "nav", label: "Findings Queue", hint: "SOC alert triage & allowlisting", icon: "alert", to: "/findings" },
   { kind: "nav", label: "Investigations", hint: "Incident response cases & evidence locker", icon: "notes", to: "/investigations" },
   { kind: "nav", label: "Threat Campaigns", hint: "Adversary tracking & IOC graph", icon: "flag", to: "/campaigns" },
-  { kind: "nav", label: "Sample Vault", hint: "Binary static/dynamic detonation analyzer", icon: "box", to: "/samples" },
+  { kind: "nav", label: "Malware Analysis Vault", hint: "Binary static/dynamic detonation analyzer", icon: "box", to: "/samples" },
   { kind: "nav", label: "ATT&CK Matrix", hint: "Enterprise tactic coverage & gap heatmap", icon: "target", to: "/coverage" },
   { kind: "nav", label: "Detection Rules", hint: "Sigma / YAML rules engine & test runner", icon: "shield", to: "/rules" },
   { kind: "nav", label: "Sensor Fleet", hint: "eBPF, Auditd & Sysmon host endpoints", icon: "terminal", to: "/agents" },
