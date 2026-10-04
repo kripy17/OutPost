@@ -370,6 +370,34 @@ def export_run(run_id: str, format: str = "json") -> dict | Response:
             raise HTTPException(status_code=404, detail=bundle["error"])
         return bundle
 
+    if format == "pcap":
+        from pathlib import Path
+        from ..core import config
+        from ..services import sandbox_forensics
+
+        pcap_path = config.DATA_DIR / "sandbox_artifacts" / run_id / "traffic.pcap"
+        if pcap_path.exists():
+            pcap_content = pcap_path.read_bytes()
+        else:
+            with db_session() as conn:
+                events = [
+                    dict(r)
+                    for r in conn.execute(
+                        "SELECT * FROM events WHERE run_id = ? ORDER BY timestamp ASC",
+                        (run_id,),
+                    ).fetchall()
+                ]
+            pcap_art = sandbox_forensics.generate_pcap_capture(events, None, run_id)
+            if not pcap_art or not pcap_path.exists():
+                raise HTTPException(status_code=404, detail=f"No network traffic recorded for run {run_id}")
+            pcap_content = pcap_path.read_bytes()
+
+        return Response(
+            content=pcap_content,
+            media_type="application/vnd.tcpdump.pcap",
+            headers={"Content-Disposition": f'attachment; filename="outpost-traffic-{run_id[:12]}.pcap"'},
+        )
+
     return report_service.build_json_report(run_id)
 
 

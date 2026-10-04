@@ -344,6 +344,19 @@ def export_stix(run_id: str) -> dict:
     return _get(f"/runs/{run_id}/export?format=stix")
 
 
+def export_run_pcap(run_id: str) -> bytes:
+    """Download standard libpcap network packet trace (.pcap) for a run."""
+    resp = requests.get(f"{BASE_URL}/runs/{run_id}/export?format=pcap", timeout=15)
+    if not resp.ok:
+        raise APIError(f"GET /runs/{run_id}/export?format=pcap → {resp.status_code}: {resp.text[:200]}")
+    return resp.content
+
+
+def get_run_network_analysis(run_id: str) -> dict:
+    """Reconstructed protocol conversations (DNS, HTTP, TLS) and C2 beaconing metrics."""
+    return _get(f"/runs/{run_id}/network-analysis")
+
+
 def export_campaign_stix(campaign_key: str) -> dict:
     """STIX 2.1 bundle of a campaign cluster (webapp per-card export parity)."""
     from urllib.parse import quote

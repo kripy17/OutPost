@@ -38,7 +38,19 @@ export const LiveTriageModal: React.FC<LiveTriageModalProps> = ({ onClose, hostI
   };
 
   const handleDownload = () => {
-    window.open(`/system/forensics/triage/export?include_yara=${includeYara ? "true" : "false"}`, "_blank");
+    if (triageData) {
+      const blob = new Blob([JSON.stringify(triageData, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${triageData.triage_id || "triage_pack"}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } else {
+      window.open(`/system/forensics/triage/export?include_yara=${includeYara ? "true" : "false"}`, "_blank");
+    }
   };
 
   const summary = triageData?.summary || {};

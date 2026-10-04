@@ -26,6 +26,7 @@ import { useEventStream } from "../lib/useEventStream";
 import { toneFill, toneForSeverity } from "../lib/fillPatterns";
 import type { AnalysisObservation, AnalysisStatus, Finding } from "../types";
 import { SampleMitreMatrix } from "../components/SampleMitreMatrix";
+import { NetworkProtocolInspector } from "../components/NetworkProtocolInspector";
 
 const STATUS_TONE: Record<AnalysisStatus, "muted" | "accent" | "clean" | "malicious"> = {
   queued: "muted",
@@ -552,6 +553,12 @@ export default function AnalysisDetailPage() {
               </ul>
             )}
           </Panel>
+
+          {!isStatic && (
+            <div className="mb-6">
+              <NetworkProtocolInspector runId={j.run_id} />
+            </div>
+          )}
         </>
       )}
 

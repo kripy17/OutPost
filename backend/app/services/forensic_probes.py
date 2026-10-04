@@ -404,6 +404,75 @@ def hunt_ld_preload() -> List[Dict[str, Any]]:
     return results[:20]
 
 
+def hunt_kernel_modules() -> List[Dict[str, Any]]:
+    """Hunt for suspicious loadable kernel modules and kernel rootkits (T1547.006)."""
+    results: List[Dict[str, Any]] = []
+
+    # 1. Audit /proc/sys/kernel/tainted
+    taint_file = Path("/proc/sys/kernel/tainted")
+    if taint_file.is_file():
+        try:
+            val_str = taint_file.read_text(errors="ignore").strip()
+            if val_str.isdigit():
+                taint_val = int(val_str)
+                if taint_val > 0:
+                    flags = []
+                    if taint_val & (1 << 0):
+                        flags.append("Proprietary module (P)")
+                    if taint_val & (1 << 1):
+                        flags.append("Force loaded (F)")
+                    if taint_val & (1 << 12):
+                        flags.append("Out-of-tree module (O)")
+                    if taint_val & (1 << 13):
+                        flags.append("Unsigned module (E)")
+                    flag_str = ", ".join(flags) if flags else f"Taint mask {taint_val}"
+                    is_sus = bool(taint_val & (1 << 12) or taint_val & (1 << 13))
+                    results.append({
+                        "location": "/proc/sys/kernel/tainted",
+                        "entry": f"Kernel Tainted: {taint_val} ({flag_str})",
+                        "module": "kernel",
+                        "taint_val": taint_val,
+                        "is_suspicious": is_sus,
+                        "severity": "suspicious" if is_sus else "info",
+                        "details": f"Kernel execution tainted by {flag_str}",
+                    })
+        except Exception:
+            pass
+
+    # 2. Audit loaded modules in /proc/modules
+    known_rootkit_names = {
+        "diamorphine", "reptile", "suterusu", "adore", "kbeast", "moodnt",
+        "hide_proc", "rootkit", "kernel_hook", "syscall_hook", "backdoor",
+    }
+    proc_modules = Path("/proc/modules")
+    if proc_modules.is_file():
+        try:
+            content = proc_modules.read_text(errors="ignore")
+            for line in content.splitlines():
+                parts = line.split()
+                if not parts:
+                    continue
+                mod_name = parts[0]
+                size_bytes = parts[1] if len(parts) > 1 else "0"
+                state = parts[4] if len(parts) > 4 else "Live"
+                is_rootkit = mod_name.lower() in known_rootkit_names or any(rk in mod_name.lower() for rk in ("rootkit", "diamorph"))
+                if is_rootkit:
+                    results.append({
+                        "location": "/proc/modules",
+                        "entry": f"{mod_name} ({size_bytes} B, state={state})",
+                        "module": mod_name,
+                        "size": size_bytes,
+                        "state": state,
+                        "is_suspicious": True,
+                        "severity": "critical",
+                        "details": f"Identified signature of known kernel rootkit LKM: '{mod_name}'",
+                    })
+        except Exception:
+            pass
+
+    return results[:25]
+
+
 PROBE_REGISTRY = {
     "crontab_persistence": {
         "id": "crontab_persistence",
@@ -468,6 +537,14 @@ PROBE_REGISTRY = {
         "technique": "T1574.006",
         "description": "Detects user-space rootkits in /etc/ld.so.preload and processes injected with custom preloaded libraries.",
         "handler": hunt_ld_preload,
+    },
+    "kernel_rootkits": {
+        "id": "kernel_rootkits",
+        "name": "Kernel Modules & LKM Rootkit Inspection",
+        "tactic": "Persistence",
+        "technique": "T1547.006",
+        "description": "Audits /proc/modules and kernel taint flags for malicious out-of-tree loadable kernel modules and rootkits.",
+        "handler": hunt_kernel_modules,
     },
 }
 

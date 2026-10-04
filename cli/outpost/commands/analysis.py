@@ -239,3 +239,147 @@ def analysis_findings(
             (a.get("details") or "-")[:70],
         )
     console.print(table)
+
+
+@app.command("network")
+def analysis_network(
+    run_id: str = typer.Argument(..., help="the analysis run id"),
+    section: str = typer.Option("all", "--section", "-s", help="Section: all, metrics, c2, dns, http, tls, flows"),
+) -> None:
+    """Network protocol reconstruction, DNS ledger, HTTP requests, TLS JA3 fingerprinting, and C2 beaconing analysis."""
+    from rich.panel import Panel
+
+    show_banner(primary=False)
+    try:
+        data = api_client.get_run_network_analysis(run_id)
+    except api_client.APIError as exc:
+        try:
+            import sys
+            from pathlib import Path
+            root = Path(__file__).resolve().parent.parent.parent.parent
+            if str(root / "backend") not in sys.path:
+                sys.path.insert(0, str(root / "backend"))
+            from app.core.database import db_session
+            from app.services import network_protocol_analyzer
+            with db_session() as conn:
+                data = network_protocol_analyzer.analyze_run(conn, run_id)
+        except Exception:
+            console.print(f"[bold #C4453B]Network analysis failed: {exc}[/bold #C4453B]")
+            raise typer.Exit(1)
+
+    metrics = data.get("metrics", {})
+    c2 = data.get("c2_beaconing", {})
+    dns = data.get("dns_conversations", [])
+    http = data.get("http_requests", [])
+    tls = data.get("tls_handshakes", [])
+    flows = data.get("flows", [])
+
+    c2_detected = c2.get("beaconing_detected", False)
+    c2_style = "bold #C4453B" if c2_detected else "#3FA796"
+    c2_status = (
+        f"[{c2_style}]DETECTED ({c2.get('beacon_count', 0)} beacon(s))[/{c2_style}]"
+        if c2_detected
+        else "[#3FA796]Negative (No periodic beaconing observed)[/#3FA796]"
+    )
+
+    summary_text = (
+        f"[bold #3B82F6]Network Protocol Telemetry[/bold #3B82F6] — Run: [bold]{run_id}[/bold]\n"
+        f"• Sockets / Flows: [bold]{metrics.get('unique_flows_count', 0)}[/bold]  ·  "
+        f"Destinations: [bold]{metrics.get('unique_destinations_count', 0)}[/bold]\n"
+        f"• DNS Queries: [bold]{metrics.get('total_dns_queries', 0)}[/bold] (DGA Suspects: [{'bold #C4453B' if metrics.get('dga_suspect_count', 0) > 0 else 'dim'}]{metrics.get('dga_suspect_count', 0)}[/])\n"
+        f"• HTTP Transactions: [bold]{metrics.get('http_request_count', 0)}[/bold] (Suspicious: [{'bold #C4453B' if metrics.get('suspicious_http_count', 0) > 0 else 'dim'}]{metrics.get('suspicious_http_count', 0)}[/])\n"
+        f"• TLS Handshakes: [bold]{metrics.get('tls_handshake_count', 0)}[/bold]\n"
+        f"• C2 Periodic Beaconing: {c2_status}"
+    )
+    console.print(Panel(summary_text, border_style="blue", title="Protocol Analysis Overview"))
+
+    if section in ("all", "c2") and c2.get("beacons"):
+        b_table = Table(title="C2 Beaconing Detections", border_style="red")
+        b_table.add_column("Destination IP")
+        b_table.add_column("Count")
+        b_table.add_column("Median Interval")
+        b_table.add_column("Regularity")
+        b_table.add_column("Verdict")
+        for b in c2["beacons"]:
+            b_table.add_row(
+                b.get("ip", "-"),
+                str(b.get("count", 0)),
+                f"{b.get('median_interval_s', 0):.1f}s",
+                f"{b.get('regularity_score', 0) * 100:.0f}%",
+                f"[bold #C4453B]{b.get('verdict', 'Periodic C2 Beacon')}[/bold #C4453B]",
+            )
+        console.print(b_table)
+
+    if section in ("all", "dns") and dns:
+        d_table = Table(title=f"DNS Conversations ({len(dns)})", border_style="dim")
+        d_table.add_column("Domain / Query")
+        d_table.add_column("Queries")
+        d_table.add_column("Resolved IPs")
+        d_table.add_column("Category")
+        d_table.add_column("DGA Entropy")
+        for d in dns[:25]:
+            dga_flag = "[bold #C4453B]YES[/bold #C4453B]" if d.get("is_dga_suspect") else "[dim]No[/dim]"
+            cat = d.get("category", "regular")
+            cat_style = "bold #C4453B" if cat == "malicious" else ("bold #D9A441" if cat == "suspicious" else "dim")
+            d_table.add_row(
+                d.get("query", "-"),
+                str(d.get("query_count", 1)),
+                ", ".join(d.get("resolved_ips", [])[:3]) or "-",
+                f"[{cat_style}]{cat}[/]",
+                f"{d.get('dga_entropy', 0.0):.2f} ({dga_flag})",
+            )
+        console.print(d_table)
+
+    if section in ("all", "http") and http:
+        h_table = Table(title=f"HTTP Transactions ({len(http)})", border_style="dim")
+        h_table.add_column("Method")
+        h_table.add_column("Host")
+        h_table.add_column("Path / URL")
+        h_table.add_column("Status")
+        h_table.add_column("Indicator")
+        for h in http[:25]:
+            is_sus = h.get("is_suspicious", False)
+            ind_style = "bold #C4453B" if is_sus else "dim"
+            h_table.add_row(
+                h.get("method", "GET"),
+                h.get("host", "-"),
+                (h.get("path") or h.get("url") or "-")[:50],
+                str(h.get("status_code", "-")),
+                f"[{ind_style}]{'Suspicious C2 URI' if is_sus else 'Benign'}[/]",
+            )
+        console.print(h_table)
+
+    if section in ("all", "tls") and tls:
+        t_table = Table(title=f"TLS Handshakes & JA3 Profiles ({len(tls)})", border_style="dim")
+        t_table.add_column("SNI Domain")
+        t_table.add_column("JA3 Hash")
+        t_table.add_column("Matched Tool Profile")
+        t_table.add_column("Severity")
+        for t in tls[:25]:
+            tool = t.get("ja3_tool") or "Standard TLS Client"
+            sev = t.get("severity", "clean")
+            sev_style = _SEV_STYLE.get(sev, "dim")
+            t_table.add_row(
+                t.get("sni", "-"),
+                (t.get("ja3") or "-")[:16] + "…",
+                tool,
+                f"[{sev_style}]{sev}[/]" if sev_style else sev,
+            )
+        console.print(t_table)
+
+    if section in ("all", "flows") and flows:
+        f_table = Table(title=f"Network Flows ({len(flows)})", border_style="dim")
+        f_table.add_column("Protocol")
+        f_table.add_column("Source")
+        f_table.add_column("Destination")
+        f_table.add_column("Process")
+        f_table.add_column("Direction")
+        for f in flows[:25]:
+            f_table.add_row(
+                f.get("protocol", "tcp").upper(),
+                f"{f.get('src_ip')}:{f.get('src_port')}",
+                f"{f.get('dest_ip')}:{f.get('dest_port')}",
+                f"{f.get('process_name') or '-'} (PID {f.get('pid') or '-'})",
+                f.get("direction", "outbound"),
+            )
+        console.print(f_table)

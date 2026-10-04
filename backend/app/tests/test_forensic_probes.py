@@ -16,6 +16,7 @@ def test_list_forensic_probes():
     assert "systemd_services" in probe_ids
     assert "shell_profiles" in probe_ids
     assert "ld_preload_hijack" in probe_ids
+    assert "kernel_rootkits" in probe_ids
 
 
 def test_run_suid_probe():
@@ -55,6 +56,15 @@ def test_run_ld_preload_probe():
     assert res["probe_id"] == "ld_preload_hijack"
     assert res["tactic"] == "Defense Evasion"
     assert res["technique"] == "T1574.006"
+    assert "findings" in res
+    assert isinstance(res["findings"], list)
+
+
+def test_run_kernel_modules_probe():
+    res = forensic_probes.run_forensic_probe("kernel_rootkits")
+    assert res["probe_id"] == "kernel_rootkits"
+    assert res["tactic"] == "Persistence"
+    assert res["technique"] == "T1547.006"
     assert "findings" in res
     assert isinstance(res["findings"], list)
 
