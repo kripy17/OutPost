@@ -754,25 +754,50 @@ function PreExecutionForecastView({
             </div>
           ) : forecast ? (
             <>
-              {/* Summary callout */}
-              <div className="rounded-xl border border-amber-500/25 bg-amber-500/5 p-4 text-xs space-y-2">
-                <div className="flex items-center justify-between gap-2">
+              {/* Summary callout & Senior Reverse-Engineering Assessment */}
+              <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-xs space-y-3">
+                <div className="flex items-center justify-between gap-2 border-b border-amber-500/20 pb-2">
                   <div className="flex items-center gap-2 font-bold text-amber-300">
                     <Icon name="notes" size={13} />
-                    <span>Behavioral Forecast Summary</span>
+                    <span>Technical Threat Assessment &amp; Reverse-Engineering Dossier</span>
                   </div>
                   {forecast.entropy !== undefined && (
                     <span className="text-[10px] text-text-faint">
-                      Entropy: <strong>{forecast.entropy.toFixed(2)}</strong> / 8.0
-                      {forecast.is_packed ? " · (High Entropy / Packed)" : " · (Plaintext / Unpacked)"}
+                      Shannon Entropy: <strong className="text-text-primary">{forecast.entropy.toFixed(2)}</strong> / 8.0
+                      {forecast.is_packed ? " · (Packed / Encrypted Bytecode)" : " · (Plaintext / Unpacked)"}
                     </span>
                   )}
                 </div>
-                <p className="text-text-primary text-xs leading-relaxed">
-                  {forecast.summary}
-                </p>
+
+                <div className="space-y-1.5">
+                  <p className="text-text-primary text-xs leading-relaxed font-sans">
+                    {forecast.summary}
+                  </p>
+                  {forecast.threat_justification && (
+                    <p className="text-[11px] text-text-muted leading-relaxed italic border-l-2 border-amber-500/40 pl-2.5 my-1">
+                      {forecast.threat_justification}
+                    </p>
+                  )}
+                </div>
+
+                {forecast.technical_dossier?.threat_findings && forecast.technical_dossier.threat_findings.length > 0 && (
+                  <div className="pt-1 border-t border-amber-500/15 space-y-1">
+                    <span className="text-[10px] font-bold uppercase text-amber-400/90 tracking-wider block">
+                      Key Technical Evidence Points:
+                    </span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-[11px]">
+                      {forecast.technical_dossier.threat_findings.map((finding, fidx) => (
+                        <div key={fidx} className="flex items-start gap-1.5 rounded-lg bg-bg-surface/80 px-2.5 py-1.5 border border-border-subtle/70">
+                          <span className="text-accent mt-0.5">•</span>
+                          <span className="text-text-muted">{finding}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {forecast.explanations && forecast.explanations.length > 0 && (
-                  <div className="pt-1 flex flex-wrap gap-2 text-[10px] text-text-muted">
+                  <div className="pt-1 flex flex-wrap gap-1.5 text-[10px] text-text-muted">
                     {forecast.explanations.map((exp, eidx) => (
                       <span key={eidx} className="rounded bg-bg-surface px-2 py-0.5 border border-border-subtle/60">
                         {exp}

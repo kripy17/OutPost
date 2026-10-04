@@ -298,10 +298,46 @@ def generate_behavioral_forecast(
             "No high-confidence malicious behaviors predicted prior to detonation."
         )
 
+    # Build detailed technical DFIR assessment findings
+    tech_findings: list[str] = []
+    if is_packed or entropy > 7.1:
+        tech_findings.append(f"Entropy ({entropy:.2f}/8.0) confirms packed/encrypted bytecode sections")
+    if predicted_endpoints:
+        eps = [e["endpoint"] for e in predicted_endpoints[:3]]
+        tech_findings.append(f"Hardcoded external C2 network indicators ({', '.join(eps)})")
+    if predicted_file_drops:
+        drops = [f["path"] for f in predicted_file_drops[:2]]
+        tech_findings.append(f"Payload staging targeting temporary paths ({', '.join(drops)})")
+    if any(a.get("category") == "in_memory_execution" for a in anticipated_actions):
+        tech_findings.append("Unlinked in-memory allocation primitives indicate reflective code execution / memfd handles")
+    if any(a.get("category") == "process_injection" for a in anticipated_actions):
+        tech_findings.append("Process injection and remote thread allocation primitives identified")
+    if any(a.get("category") == "persistence" for a in anticipated_actions):
+        tech_findings.append("Discovered autostart hooks for persistence across system restarts")
+    if any(a.get("category") == "defense_evasion" for a in anticipated_actions):
+        tech_findings.append("Anti-debugging and environment inspection routines detected")
+
+    finding_str = "; ".join(tech_findings) if tech_findings else "Standard benign binary structure with no anomalous imports or payload staging indicators"
+
     summary = (
-        f"OutPost Pre-Execution Forecast: Sample is estimated as {threat_level.upper()} "
-        f"(Confidence: {confidence}%). " + " ".join(forecast_explanations[:2])
+        f"Reverse Engineering Assessment: Binary classified as {threat_level.upper()} ({confidence}% confidence). "
+        f"{finding_str}. "
+        f"Anticipates {len(anticipated_actions)} tactical capability vectors and {len(unique_mitre)} ATT&CK techniques prior to sandbox detonation."
     )
+
+    threat_justification = (
+        f"Classification as {threat_level.upper()} is determined by static bytecode inspection: "
+        f"{'presence of ' + str(len(anticipated_actions)) + ' anomalous capability indicators' if anticipated_actions else 'absence of known offensive signatures'}, "
+        f"Shannon entropy of {entropy:.2f}/8.0, and static risk score of {static_risk}/100."
+    )
+
+    technical_dossier = {
+        "entropy_rating": "High (Packed/Encrypted)" if (is_packed or entropy > 7.1) else "Normal (Unpacked)",
+        "capabilities_count": len(anticipated_actions),
+        "mitre_count": len(unique_mitre),
+        "threat_findings": tech_findings,
+        "justification": threat_justification,
+    }
 
     return {
         "sample_name": sample_name,
@@ -311,6 +347,8 @@ def generate_behavioral_forecast(
         "entropy": entropy,
         "is_packed": is_packed,
         "summary": summary,
+        "threat_justification": threat_justification,
+        "technical_dossier": technical_dossier,
         "anticipated_actions": anticipated_actions,
         "predicted_endpoints": predicted_endpoints,
         "predicted_mitre_techniques": unique_mitre,

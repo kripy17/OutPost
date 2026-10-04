@@ -596,6 +596,14 @@ export interface BehavioralForecast {
   predicted_mitre_techniques: PredictedMitreTechnique[];
   predicted_file_drops: Array<{ path: string; reason: string }>;
   explanations?: string[];
+  threat_justification?: string;
+  technical_dossier?: {
+    entropy_rating?: string;
+    capabilities_count?: number;
+    mitre_count?: number;
+    threat_findings?: string[];
+    justification?: string;
+  };
 }
 
 export interface ForecastReconciliation {

@@ -53,6 +53,8 @@ interface LiveExecutionResult {
     stage: number;
     name: string;
     cmd: string;
+    stdout?: string;
+    stderr?: string;
     exit_code: number;
     status: string;
   }>;
@@ -71,6 +73,211 @@ interface LiveExecutionResult {
     threat_family?: string;
   };
   events?: any[];
+  timeline?: any[];
+}
+
+interface DfirActionAnalysis {
+  objective: string;
+  tactical_intent: string;
+  mitre_technique?: string;
+  technique_name?: string;
+  category: "execution" | "discovery" | "evasion" | "persistence" | "credential" | "c2" | "impact" | "file";
+}
+
+function getDfirActionAnalysis(command: string, stageName?: string): DfirActionAnalysis {
+  const cmd = command.toLowerCase();
+
+  if (cmd.includes("whoami") || cmd.includes("uname") || cmd.includes("hostname") || cmd.includes("os-release")) {
+    return {
+      objective: "Host Fingerprinting & OS Architecture Discovery",
+      tactical_intent: "Queries system architecture, kernel release, and current user security context to identify target host environment and evasion prerequisites.",
+      mitre_technique: "T1082",
+      technique_name: "System Information Discovery",
+      category: "discovery",
+    };
+  }
+  if (cmd.includes("apparmor") || cmd.includes("sestatus") || cmd.includes("auditctl") || cmd.includes("systemctl")) {
+    return {
+      objective: "Defensive Posture & Security Control Interrogation",
+      tactical_intent: "Checks for the presence of local endpoint security sensors (AppArmor, SELinux, auditd) to determine if active process tracing is enabled.",
+      mitre_technique: "T1518.001",
+      technique_name: "Security Software Discovery",
+      category: "discovery",
+    };
+  }
+  if (cmd.includes("systemd-worker") || cmd.includes("masquerad") || (cmd.includes("cp /bin/sh") && cmd.includes("systemd"))) {
+    return {
+      objective: "Process Masquerading & Subprocess Camouflage",
+      tactical_intent: "Copies legitimate shell interpreters to a hidden directory disguised with system service names (e.g. systemd-worker) to blend into legitimate process trees.",
+      mitre_technique: "T1036.005",
+      technique_name: "Masquerading: Match Legitimate Name or Location",
+      category: "evasion",
+    };
+  }
+  if (cmd.includes("base64") || cmd.includes("decode") || cmd.includes("stage2.bin")) {
+    return {
+      objective: "Obfuscated Payload Decoding & Binary Staging",
+      tactical_intent: "Decodes base64-encoded payload bytecode directly to disk or execution buffers and sets execute permissions (chmod +x) for secondary stage execution.",
+      mitre_technique: "T1027.002",
+      technique_name: "Obfuscated Files or Information: Software Packing / Encoding",
+      category: "execution",
+    };
+  }
+  if (cmd.includes(".ssh") || cmd.includes("id_rsa") || cmd.includes("known_hosts") || cmd.includes("/etc/shadow") || cmd.includes("passwd")) {
+    return {
+      objective: "Credential Harvesting & Private Key Collection",
+      tactical_intent: "Scans user home directories and system paths for unencrypted SSH private keys and known hosts to prepare for lateral movement.",
+      mitre_technique: "T1552.001",
+      technique_name: "Unsecured Credentials: Credentials In Files",
+      category: "credential",
+    };
+  }
+  if (cmd.includes("cron") || cmd.includes("autostart") || cmd.includes("system_updater") || cmd.includes("init.d")) {
+    return {
+      objective: "Persistent Autostart Hook & Scheduled Task Staging",
+      tactical_intent: "Stages malicious cron job entries or scheduled runner configs to ensure persistent code execution across host reboots.",
+      mitre_technique: "T1053.003",
+      technique_name: "Scheduled Task/Job: Cron",
+      category: "persistence",
+    };
+  }
+  if (cmd.includes("curl") || cmd.includes("c2_connect") || cmd.includes("185.220.") || cmd.includes("beacon") || cmd.includes("nc ") || cmd.includes("tunnel")) {
+    return {
+      objective: "Command & Control (C2) Multi-Hop Egress Beaconing",
+      tactical_intent: "Initiates outbound TCP/HTTP beacon requests to external C2 nodes to establish reverse shell sessions or check in for tasking.",
+      mitre_technique: "T1071.001",
+      technique_name: "Application Layer Protocol: Web Protocols",
+      category: "c2",
+    };
+  }
+  if (cmd.includes("touch -r") || cmd.includes("timestomp") || cmd.includes("rm -f") || cmd.includes("history -c")) {
+    return {
+      objective: "Anti-Forensics Timestomping & Artifact Erasure",
+      tactical_intent: "Modifies file timestamps to match legitimate system binaries and deletes temporary staging payloads to impede forensic investigation.",
+      mitre_technique: "T1070.006",
+      technique_name: "Indicator Removal: Timestomp",
+      category: "evasion",
+    };
+  }
+  if (cmd.includes("vssadmin") || cmd.includes("bcdedit") || cmd.includes("recoveryenabled") || cmd.includes("shadow")) {
+    return {
+      objective: "Volume Shadow Copy Deletion & Recovery Inhibition",
+      tactical_intent: "Attempts to purge system recovery points and Volume Shadow Copies to prevent system restoration prior to ransomware encryption.",
+      mitre_technique: "T1490",
+      technique_name: "Inhibit System Recovery",
+      category: "impact",
+    };
+  }
+  if (cmd.includes("tar -czf") || cmd.includes(".locked") || cmd.includes("ledger.xlsx") || cmd.includes("ssn_export") || cmd.includes("canary_vault")) {
+    return {
+      objective: "Target Asset Harvesting & Simulated Data Encryption",
+      tactical_intent: "Discovers business-critical files and encrypts or archives documents into locked payloads while staging ransom notes.",
+      mitre_technique: "T1486",
+      technique_name: "Data Encrypted for Impact",
+      category: "impact",
+    };
+  }
+  if (cmd.includes("dns_query") || cmd.includes("darknet-corp") || cmd.includes("upload") || cmd.includes("exfil")) {
+    return {
+      objective: "Exfiltration Over Alternative Protocol (DNS / HTTPS)",
+      tactical_intent: "Chunks stolen documents into DNS query subdomains or posts encrypted archives to external exfiltration endpoints.",
+      mitre_technique: "T1048.003",
+      technique_name: "Exfiltration Over Unencrypted Non-C2 Protocol",
+      category: "c2",
+    };
+  }
+  if (cmd.includes("ps -ef") || cmd.includes("ps aux") || cmd.includes("tasklist")) {
+    return {
+      objective: "Process Table Enumeration",
+      tactical_intent: "Lists active processes on the host to discover potential security agents, databases, or processes to inject into.",
+      mitre_technique: "T1057",
+      technique_name: "Process Discovery",
+      category: "discovery",
+    };
+  }
+  if (cmd.includes("ip addr") || cmd.includes("ifconfig") || cmd.includes("netstat") || cmd.includes("ss -")) {
+    return {
+      objective: "Network Interface & Routing Discovery",
+      tactical_intent: "Enumerates local network interfaces, subnets, and active sockets to map adjacent network segments.",
+      mitre_technique: "T1016",
+      technique_name: "System Network Configuration Discovery",
+      category: "discovery",
+    };
+  }
+  if (cmd.includes("unlinked") || cmd.includes("fileless") || (cmd.includes("rm -f") && cmd.includes("payload"))) {
+    return {
+      objective: "Fileless Inode Unlinking & Memory Residency",
+      tactical_intent: "Unlinks the executable from the filesystem immediately after launch, maintaining memory residency without leaving a disk footprint.",
+      mitre_technique: "T1620",
+      technique_name: "Reflective Code Loading / Fileless Storage",
+      category: "evasion",
+    };
+  }
+
+  return {
+    objective: stageName || "Subprocess Command Execution",
+    tactical_intent: "Dispatched system shell command inside isolated cgroup workspace to advance campaign objectives.",
+    mitre_technique: "T1059.004",
+    technique_name: "Command and Scripting Interpreter: Unix Shell",
+    category: "execution",
+  };
+}
+
+function generateExecutionNarrative({
+  name,
+  stagesCount,
+  filesCount,
+  processesCount,
+  networkCount,
+  alertsCount,
+  threatVerdict,
+  techniques,
+}: {
+  name: string;
+  sourceType: string;
+  stagesCount: number;
+  filesCount: number;
+  processesCount: number;
+  networkCount: number;
+  alertsCount: number;
+  threatVerdict: string;
+  techniques: string[];
+}): string {
+  const parts: string[] = [];
+  parts.push(
+    `Isolated sandbox execution of "${name}" completed under ephemeral cgroup process confinement.`
+  );
+  if (stagesCount > 0) {
+    parts.push(
+      `The sample progressed through ${stagesCount} sequential execution phases, interrogating host environment parameters and security controls.`
+    );
+  }
+  if (processesCount > 0) {
+    parts.push(
+      `During execution, ${processesCount} child process${processesCount > 1 ? "es were" : " was"} spawned into the sandbox process namespace.`
+    );
+  }
+  if (filesCount > 0) {
+    parts.push(
+      `${filesCount} artifact file${filesCount > 1 ? "s were" : " was"} written or staged to disk, including temporary dropper payloads and canary targets.`
+    );
+  }
+  if (networkCount > 0) {
+    parts.push(
+      `${networkCount} outbound network socket connection${networkCount > 1 ? "s were" : " was"} attempted to external command-and-control endpoints and intercepted by OutPost.`
+    );
+  }
+  if (alertsCount > 0) {
+    const techStr = techniques.length > 0 ? ` (${techniques.slice(0, 3).join(", ")})` : "";
+    parts.push(
+      `OutPost's detection engine identified ${alertsCount} malicious or suspicious rule violation${alertsCount > 1 ? "s" : ""}${techStr}, yielding a threat verdict of ${threatVerdict}.`
+    );
+  } else {
+    parts.push(
+      `Zero detection rules were triggered during the observation window, though runtime artifacts remain logged for retrospective hunting.`
+    );
+  }
+  return parts.join(" ");
 }
 
 export default function MonitorPage() {
@@ -142,6 +349,18 @@ export default function MonitorPage() {
   const [showMitreModal, setShowMitreModal] = useState<boolean>(false);
   const [terminalSearch, setTerminalSearch] = useState<string>("");
   const [terminalFilterType, setTerminalFilterType] = useState<"all" | "commands" | "errors" | "system">("all");
+
+  // Left Deck Attack Story View State
+  const [leftDeckMode, setLeftDeckMode] = useState<"story" | "terminal">("story");
+  const [storyCategoryFilter, setStoryCategoryFilter] = useState<"all" | "process" | "file" | "network" | "detection">("all");
+  const [expandedStageOutputs, setExpandedStageOutputs] = useState<Record<number, boolean>>({});
+  const [copiedCommandIndex, setCopiedCommandIndex] = useState<number | null>(null);
+
+  const handleCopyCommand = (cmd: string, idx: number) => {
+    void navigator.clipboard.writeText(cmd);
+    setCopiedCommandIndex(idx);
+    setTimeout(() => setCopiedCommandIndex(null), 2000);
+  };
 
   // Technique Unit Tests State
   const [techniqueTactic, setTechniqueTactic] = useState<string>("all");
@@ -225,6 +444,10 @@ export default function MonitorPage() {
     setStepCreatedFiles([]);
     setExecutionError(null);
     setActiveTargetId(null);
+    setLeftDeckMode("story");
+    setStoryCategoryFilter("all");
+    setExpandedStageOutputs({});
+    setCopiedCommandIndex(null);
   };
 
   // Run Full Automated Live Canary Simulation
@@ -294,6 +517,7 @@ export default function MonitorPage() {
         },
       });
 
+      setLeftDeckMode("story");
       void queryClient.invalidateQueries({ queryKey: ["events"] });
       void queryClient.invalidateQueries({ queryKey: ["alerts"] });
       void queryClient.invalidateQueries({ queryKey: ["runs"] });
@@ -370,8 +594,10 @@ export default function MonitorPage() {
           dropped_count: createdList.length,
           threat_family: sample.family || "Vault Demonstration Sample",
         },
+        timeline: res.timeline || [],
       });
 
+      setLeftDeckMode("story");
       void queryClient.invalidateQueries({ queryKey: ["events"] });
       void queryClient.invalidateQueries({ queryKey: ["alerts"] });
       void queryClient.invalidateQueries({ queryKey: ["runs"] });
@@ -398,6 +624,7 @@ export default function MonitorPage() {
     setActiveResult(null);
     setExecutionError(null);
     setActiveTargetId(scenario.id);
+    setLeftDeckMode("story");
   };
 
   // Execute Next Single Stage in Stepper
@@ -649,6 +876,159 @@ export default function MonitorPage() {
     dropped_count: displayFiles.length,
     threat_family: displayThreatFamily,
   };
+
+  const attackPhases = useMemo(() => {
+    if (isStepModeActive) {
+      return stageHistory.map((sh, idx) => {
+        const analysis = getDfirActionAnalysis(sh.command, sh.stage_name);
+        return {
+          index: idx,
+          stageNumber: sh.stage_number,
+          totalStages: sh.total_stages,
+          name: sh.stage_name,
+          command: sh.command,
+          exitCode: sh.exit_code,
+          elapsedMs: sh.elapsed_ms,
+          stdout: sh.stdout,
+          stderr: sh.stderr,
+          status: sh.exit_code === 0 ? "success" : "failed",
+          analysis,
+          alerts: sh.alerts || [],
+          createdFiles: sh.created_files || [],
+          droppedArtifacts: sh.dropped_artifacts || [],
+        };
+      });
+    }
+
+    if (activeResult?.stages && activeResult.stages.length > 0) {
+      return activeResult.stages.map((stg, idx) => {
+        const analysis = getDfirActionAnalysis(stg.cmd, stg.name);
+        const matchedAlerts = (activeResult.alerts || []).filter((al: any) =>
+          (al.rule_name && al.rule_name.toLowerCase().includes(analysis.category)) ||
+          (analysis.mitre_technique && al.technique === analysis.mitre_technique)
+        );
+        return {
+          index: idx,
+          stageNumber: stg.stage,
+          totalStages: activeResult.stages!.length,
+          name: stg.name,
+          command: stg.cmd,
+          exitCode: stg.exit_code,
+          elapsedMs: activeResult.elapsed_ms || 24,
+          stdout: stg.stdout,
+          stderr: stg.stderr,
+          status: stg.status,
+          analysis,
+          alerts: matchedAlerts,
+          createdFiles: activeResult.created_files || [],
+          droppedArtifacts: activeResult.dropped_artifacts || [],
+        };
+      });
+    }
+
+    if (activeResult) {
+      const phases = [];
+      const mainCmd = activeResult.name ? `./${activeResult.name}` : "./sample.bin";
+      const initialAnalysis = getDfirActionAnalysis(mainCmd, `Detonation Initialization: ${activeResult.name}`);
+      phases.push({
+        index: 0,
+        stageNumber: 1,
+        totalStages: 1 + (displayFiles.length > 0 ? 1 : 0) + (displayNetwork.length > 0 ? 1 : 0),
+        name: `Process Ingestion & Sandboxed Launch: ${activeResult.name}`,
+        command: mainCmd,
+        exitCode: activeResult.exit_code,
+        elapsedMs: activeResult.elapsed_ms || 120,
+        stdout: activeResult.terminal_output,
+        stderr: undefined,
+        status: activeResult.exit_code === 0 ? "success" : "failed",
+        analysis: initialAnalysis,
+        alerts: activeResult.alerts || [],
+        createdFiles: [],
+        droppedArtifacts: [],
+      });
+
+      if (displayFiles.length > 0) {
+        phases.push({
+          index: 1,
+          stageNumber: 2,
+          totalStages: phases[0].totalStages,
+          name: "Filesystem Mutation & Artifact Staging",
+          command: `touch/write [${displayFiles.length} filesystem payload(s)]`,
+          exitCode: 0,
+          elapsedMs: 45,
+          stdout: `Created: ${displayFiles.map((f) => f.name).join(", ")}`,
+          status: "success",
+          analysis: {
+            objective: "Filesystem Mutation & Dropped Payload Ingestion",
+            tactical_intent: "The sample generated or dropped filesystem artifacts into the sandbox cage for secondary execution or data staging.",
+            mitre_technique: "T1105",
+            technique_name: "Ingress Tool Transfer / Dropped Artifact",
+            category: "file" as const,
+          },
+          alerts: [],
+          createdFiles: displayFiles,
+          droppedArtifacts: displayArtifacts,
+        });
+      }
+
+      if (displayNetwork.length > 0) {
+        phases.push({
+          index: 2,
+          stageNumber: phases.length + 1,
+          totalStages: phases[0].totalStages,
+          name: "Network Beaconing & C2 Sockets",
+          command: `socket.connect -> ${displayNetwork.map((n) => `${n.ip}:${n.port}`).join(", ")}`,
+          exitCode: 0,
+          elapsedMs: 80,
+          stdout: `Outbound Sockets: ${displayNetwork.map((n) => `${n.ip}:${n.port} (${n.protocol})`).join(", ")}`,
+          status: "success",
+          analysis: {
+            objective: "Outbound Network Egress & C2 Channel Establishment",
+            tactical_intent: "Sample opened network sockets to external addresses; connections were intercepted and contained by OutPost's sinkhole engine.",
+            mitre_technique: "T1071",
+            technique_name: "Application Layer Protocol",
+            category: "c2" as const,
+          },
+          alerts: [],
+          createdFiles: [],
+          droppedArtifacts: [],
+        });
+      }
+
+      return phases;
+    }
+
+    return [];
+  }, [isStepModeActive, stageHistory, activeResult, displayFiles, displayArtifacts, displayNetwork]);
+
+  const filteredAttackPhases = useMemo(() => {
+    return attackPhases.filter((ph) => {
+      if (storyCategoryFilter === "all") return true;
+      if (storyCategoryFilter === "process") return ph.analysis.category === "execution" || ph.analysis.category === "discovery";
+      if (storyCategoryFilter === "file") return ph.analysis.category === "file" || ph.analysis.category === "persistence" || ph.createdFiles.length > 0;
+      if (storyCategoryFilter === "network") return ph.analysis.category === "c2" || (displayNetwork.length > 0 && ph.name.toLowerCase().includes("network"));
+      if (storyCategoryFilter === "detection") return ph.alerts.length > 0;
+      return true;
+    });
+  }, [attackPhases, storyCategoryFilter, displayNetwork.length]);
+
+  const executionNarrative = useMemo(() => {
+    if (!hasActiveSession) return "";
+    const techniques = (activeResult?.mitre_matrix || [])
+      .filter((m) => m.detected)
+      .map((m) => m.id);
+    return generateExecutionNarrative({
+      name: displayName || "Target Sample",
+      sourceType: isStepModeActive ? "interactive_canary" : activeResult?.source_type || "sample",
+      stagesCount: attackPhases.length,
+      filesCount: displayFiles.length,
+      processesCount: displayProcesses.length,
+      networkCount: displayNetwork.length,
+      alertsCount: displayAlerts.length,
+      threatVerdict: displayThreatVerdict,
+      techniques,
+    });
+  }, [hasActiveSession, displayName, isStepModeActive, activeResult, attackPhases.length, displayFiles.length, displayProcesses.length, displayNetwork.length, displayAlerts.length, displayThreatVerdict]);
 
   return (
     <div className="mx-auto max-w-[1440px] px-6 py-8 lg:px-8 space-y-8">
@@ -1026,8 +1406,79 @@ export default function MonitorPage() {
                 </div>
               )}
 
-              {/* Terminal Screen Console Toolbar */}
+              {/* Mode Switcher Strip (When Active Session Exists) */}
               {hasActiveSession && (
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-2.5">
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setLeftDeckMode("story")}
+                      className={`press inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-bold transition ${
+                        leftDeckMode === "story"
+                          ? "border border-accent/60 bg-accent/20 text-accent shadow-sm"
+                          : "border border-border-subtle bg-bg-surface/50 text-text-muted hover:text-text-primary"
+                      }`}
+                    >
+                      <Icon name="shield" size={13} />
+                      <span>Attack Chain &amp; Execution Story</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setLeftDeckMode("terminal")}
+                      className={`press inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-bold transition ${
+                        leftDeckMode === "terminal"
+                          ? "border border-accent/60 bg-accent/20 text-accent shadow-sm"
+                          : "border border-border-subtle bg-bg-surface/50 text-text-muted hover:text-text-primary"
+                      }`}
+                    >
+                      <Icon name="terminal" size={13} />
+                      <span>Raw Terminal Logs</span>
+                    </button>
+                  </div>
+
+                  {leftDeckMode === "story" ? (
+                    <div className="flex items-center gap-1 text-[10px]">
+                      <span className="text-text-faint text-[10px] mr-1 hidden sm:inline">Filter:</span>
+                      {(["all", "process", "file", "network", "detection"] as const).map((cat) => (
+                        <button
+                          key={cat}
+                          type="button"
+                          onClick={() => setStoryCategoryFilter(cat)}
+                          className={`rounded px-2 py-0.5 font-bold uppercase transition ${
+                            storyCategoryFilter === cat
+                              ? "bg-accent/20 text-accent border border-accent/40"
+                              : "text-text-muted hover:text-text-primary bg-bg-surface border border-transparent"
+                          }`}
+                        >
+                          {cat}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 text-[10px] text-text-faint font-mono">
+                      {!isStepModeActive && (
+                        <span>{filteredTerminalLines.length} / {activeResult?.terminal_lines?.length || 0} lines</span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const logs = isStepModeActive ? cumulativeStepLogs : (activeResult?.terminal_lines || []).join("\n");
+                          void navigator.clipboard.writeText(logs);
+                        }}
+                        className="press inline-flex items-center gap-1 text-accent hover:underline font-bold"
+                        title="Copy full terminal stdout buffer"
+                      >
+                        <Icon name="copy" size={10} />
+                        <span>Copy Buffer</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Terminal Screen Console Toolbar (Only in Raw Terminal Mode) */}
+              {hasActiveSession && leftDeckMode === "terminal" && (
                 <div className="flex flex-wrap items-center justify-between gap-2 px-1 text-xs">
                   <div className="flex items-center gap-2 flex-1 min-w-[220px]">
                     <div className="relative flex-1">
@@ -1066,29 +1517,189 @@ export default function MonitorPage() {
                       ))}
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 text-[10px] text-text-faint font-mono">
-                    {!isStepModeActive && (
-                      <span>{filteredTerminalLines.length} / {activeResult?.terminal_lines?.length || 0} lines</span>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const logs = isStepModeActive ? cumulativeStepLogs : (activeResult?.terminal_lines || []).join("\n");
-                        void navigator.clipboard.writeText(logs);
-                      }}
-                      className="press inline-flex items-center gap-1 text-accent hover:underline font-bold"
-                      title="Copy full terminal stdout buffer"
-                    >
-                      <Icon name="copy" size={10} />
-                      <span>Copy Buffer</span>
-                    </button>
-                  </div>
                 </div>
               )}
 
-              {/* Terminal Screen Console */}
-              <div className="flex-1 rounded-xl border border-border-subtle/60 bg-[#06080d] p-4 overflow-y-auto max-h-[380px] shadow-inner selection:bg-accent selection:text-black">
-                {hasActiveSession ? (
+              {/* Main Left Deck Display: Story View vs Terminal View vs Standby */}
+              {!hasActiveSession ? (
+                /* Pristine Standby State */
+                <div className="flex-1 rounded-xl border border-border-subtle/60 bg-[#06080d] p-4 overflow-y-auto max-h-[460px] shadow-inner selection:bg-accent selection:text-black">
+                  <div className="flex flex-col items-center justify-center h-full min-h-[300px] text-center space-y-3 font-mono py-12">
+                    <div className="h-12 w-12 rounded-2xl border border-accent/40 bg-accent/10 flex items-center justify-center text-accent shadow-[var(--glow-accent)]">
+                      <Icon name="terminal" size={24} />
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-text-primary font-bold text-sm">Sandbox Terminal Standby</p>
+                      <p className="text-text-muted text-xs max-w-sm">
+                        Select a behavioral canary or vault sample from the gallery below to initiate isolated execution and watch the console output in real time.
+                      </p>
+                    </div>
+                    <div className="rounded-lg bg-bg-surface border border-border-subtle px-3 py-1.5 text-[11px] text-accent">
+                      outpost-sandbox:~$ <span className="animate-pulse">_</span>
+                    </div>
+                  </div>
+                </div>
+              ) : leftDeckMode === "story" ? (
+                /* Attack Chain & Behavioral Execution Story Mode */
+                <div className="flex-1 rounded-xl border border-border-subtle/60 bg-[#06080d] p-3 overflow-y-auto max-h-[460px] shadow-inner space-y-3">
+                  {/* Executive Narrative Card */}
+                  <div className="rounded-xl border border-accent/30 bg-accent/5 p-3.5 space-y-2">
+                    <div className="flex items-center justify-between text-xs font-bold text-accent">
+                      <span className="flex items-center gap-1.5">
+                        <Icon name="activity" size={13} />
+                        Executive Causality &amp; Behavioral Attack Narrative
+                      </span>
+                      <span className="text-[10px] text-text-faint uppercase">
+                        {displayThreatVerdict} · Score {displayThreatScore}/100
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-text-muted leading-relaxed font-sans">
+                      {executionNarrative}
+                    </p>
+                    <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-accent/20 text-[10px] font-mono text-text-faint">
+                      <span className="rounded bg-bg-surface/80 px-2 py-0.5 text-text-primary">
+                        <strong className="text-accent">{attackPhases.length}</strong> Phases Executed
+                      </span>
+                      <span className="rounded bg-bg-surface/80 px-2 py-0.5 text-text-primary">
+                        <strong className="text-cyan-400">{displayProcesses.length}</strong> Processes
+                      </span>
+                      <span className="rounded bg-bg-surface/80 px-2 py-0.5 text-text-primary">
+                        <strong className="text-amber-400">{displayFiles.length}</strong> Files Mutated
+                      </span>
+                      <span className="rounded bg-bg-surface/80 px-2 py-0.5 text-text-primary">
+                        <strong className="text-emerald-400">{displayNetwork.length}</strong> Sockets Opened
+                      </span>
+                      <span className="rounded bg-bg-surface/80 px-2 py-0.5 text-text-primary">
+                        <strong className="text-rose-400">{displayAlerts.length}</strong> Rule Hits
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Stepper initial standby prompt if in step mode without history yet */}
+                  {isStepModeActive && stageHistory.length === 0 && (
+                    <div className="rounded-xl border border-dashed border-accent/40 bg-accent/10 p-6 text-center space-y-2">
+                      <Icon name="sliders" size={24} className="mx-auto text-accent" />
+                      <p className="font-bold text-text-primary text-xs">Interactive Stepper Initialized</p>
+                      <p className="text-[11px] text-text-muted max-w-md mx-auto">
+                        Click <strong className="text-accent">"Execute Stage 1"</strong> above to dispatch the first phase into the isolated cgroup workspace. The detailed attack story will populate phase-by-phase.
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Chronological Phase Execution Cards */}
+                  <div className="space-y-3">
+                    {filteredAttackPhases.map((ph, pidx) => {
+                      const isExpanded = Boolean(expandedStageOutputs[ph.index]);
+                      const stdoutLines = (ph.stdout || "").split("\n").filter(Boolean);
+                      return (
+                        <div
+                          key={pidx}
+                          className="rounded-xl border border-border-subtle bg-bg-surface/90 p-3.5 space-y-2.5 transition hover:border-accent/40"
+                        >
+                          {/* Phase Header */}
+                          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle/50 pb-2">
+                            <div className="flex items-center gap-2">
+                              <span className="rounded bg-accent/20 border border-accent/40 px-2 py-0.5 text-[10px] font-bold text-accent uppercase">
+                                PHASE {ph.stageNumber} OF {ph.totalStages}
+                              </span>
+                              <span className="font-bold text-text-primary text-xs">
+                                {ph.name}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2 text-[10px]">
+                              <span className={`rounded px-1.5 py-0.5 font-bold uppercase ${
+                                ph.status === "success"
+                                  ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30"
+                                  : "bg-rose-500/15 text-rose-400 border border-rose-500/30"
+                              }`}>
+                                {ph.status === "success" ? `EXIT ${ph.exitCode}` : "FAILED"}
+                              </span>
+                              <span className="text-text-faint">{ph.elapsedMs}ms</span>
+                            </div>
+                          </div>
+
+                          {/* DFIR Tactical Intent & Plain-English Analysis */}
+                          <div className="space-y-1 bg-bg-base/70 rounded-lg p-2.5 border border-border-subtle/40">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-[11px] font-bold text-cyan-400 flex items-center gap-1.5">
+                                <Icon name="search" size={11} />
+                                {ph.analysis.objective}
+                              </span>
+                              {ph.analysis.mitre_technique && (
+                                <span className="rounded bg-accent/15 border border-accent/30 px-1.5 py-0.5 text-[9px] font-bold text-accent font-mono">
+                                  {ph.analysis.mitre_technique} · {ph.analysis.technique_name}
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[11px] text-text-muted leading-relaxed font-sans">
+                              {ph.analysis.tactical_intent}
+                            </p>
+                          </div>
+
+                          {/* Executed Command Box */}
+                          <div className="rounded-lg bg-[#06080d] p-2.5 border border-border-subtle/60 space-y-1">
+                            <div className="flex items-center justify-between text-[10px] text-text-faint">
+                              <span className="uppercase font-bold tracking-wider">Executed Subprocess Command</span>
+                              <button
+                                type="button"
+                                onClick={() => handleCopyCommand(ph.command, ph.index)}
+                                className="press inline-flex items-center gap-1 text-accent hover:underline font-bold"
+                              >
+                                <Icon name={copiedCommandIndex === ph.index ? "check" : "copy"} size={10} />
+                                <span>{copiedCommandIndex === ph.index ? "Copied" : "Copy Command"}</span>
+                              </button>
+                            </div>
+                            <pre className="text-accent text-[11px] whitespace-pre-wrap break-all font-mono">
+                              $ {ph.command}
+                            </pre>
+                          </div>
+
+                          {/* Attached Forensics Footprints (Files, Alerts, Sockets) */}
+                          {(ph.createdFiles.length > 0 || ph.alerts.length > 0) && (
+                            <div className="flex flex-wrap items-center gap-2 pt-1">
+                              {ph.createdFiles.map((cf: any, cidx: number) => (
+                                <div key={cidx} className="flex items-center gap-1 rounded bg-bg-base border border-border-subtle px-2 py-0.5 text-[10px] text-text-muted">
+                                  <Icon name="file" size={10} className="text-amber-400" />
+                                  <span className="font-mono text-text-primary">{cf.name}</span>
+                                  {cf.size_bytes !== undefined && <span className="text-text-faint">({cf.size_bytes} B)</span>}
+                                </div>
+                              ))}
+                              {ph.alerts.map((al: any, alidx: number) => (
+                                <div key={alidx} className="flex items-center gap-1 rounded bg-risk-malicious/15 border border-risk-malicious/40 px-2 py-0.5 text-[10px] text-risk-malicious font-bold">
+                                  <Icon name="alert" size={10} />
+                                  <span>{al.rule_name || al.rule_id}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Command Output Accordion */}
+                          {(ph.stdout || ph.stderr) && (
+                            <div className="pt-1">
+                              <button
+                                type="button"
+                                onClick={() => setExpandedStageOutputs((prev) => ({ ...prev, [ph.index]: !prev[ph.index] }))}
+                                className="press inline-flex items-center gap-1 text-[10px] text-text-muted hover:text-accent font-bold"
+                              >
+                                <Icon name={isExpanded ? "chevronDown" : "chevronRight"} size={11} />
+                                <span>{isExpanded ? "Hide" : "Show"} Terminal Output ({stdoutLines.length} lines)</span>
+                              </button>
+                              {isExpanded && (
+                                <div className="mt-2 rounded-lg bg-[#06080d] p-2.5 text-[10px] font-mono border border-border-subtle/60 max-h-40 overflow-y-auto space-y-1">
+                                  {ph.stdout && <pre className="text-emerald-300 whitespace-pre-wrap">{ph.stdout}</pre>}
+                                  {ph.stderr && <pre className="text-rose-400 whitespace-pre-wrap">[STDERR]: {ph.stderr}</pre>}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : (
+                /* Raw Terminal Console View */
+                <div className="flex-1 rounded-xl border border-border-subtle/60 bg-[#06080d] p-4 overflow-y-auto max-h-[380px] shadow-inner selection:bg-accent selection:text-black">
                   <div className="space-y-1 text-[11px] leading-relaxed font-mono">
                     <div className="text-emerald-400 font-bold mb-2 flex items-center gap-1.5">
                       <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
@@ -1150,24 +1761,8 @@ export default function MonitorPage() {
                     )}
                     <div ref={terminalEndRef} />
                   </div>
-                ) : (
-                  /* Pristine Standby State */
-                  <div className="flex flex-col items-center justify-center h-full min-h-[300px] text-center space-y-3 font-mono py-12">
-                    <div className="h-12 w-12 rounded-2xl border border-accent/40 bg-accent/10 flex items-center justify-center text-accent shadow-[var(--glow-accent)]">
-                      <Icon name="terminal" size={24} />
-                    </div>
-                    <div className="space-y-1">
-                      <p className="text-text-primary font-bold text-sm">Sandbox Terminal Standby</p>
-                      <p className="text-text-muted text-xs max-w-sm">
-                        Select a behavioral canary or vault sample from the gallery below to initiate isolated execution and watch the console output in real time.
-                      </p>
-                    </div>
-                    <div className="rounded-lg bg-bg-surface border border-border-subtle px-3 py-1.5 text-[11px] text-accent">
-                      outpost-sandbox:~$ <span className="animate-pulse">_</span>
-                    </div>
-                  </div>
-                )}
-              </div>
+                </div>
+              )}
             </div>
 
             {/* Terminal Footer Status Bar */}

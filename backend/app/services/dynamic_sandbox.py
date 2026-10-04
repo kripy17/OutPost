@@ -898,6 +898,8 @@ async def execute_simulation_scenario_live(scenario_id: str) -> dict[str, Any]:
                     "stage": idx,
                     "name": stage_name,
                     "cmd": stage_cmd,
+                    "stdout": out_s,
+                    "stderr": err_s,
                     "exit_code": proc.returncode,
                     "status": "success" if proc.returncode == 0 else "failed",
                 })
@@ -911,6 +913,8 @@ async def execute_simulation_scenario_live(scenario_id: str) -> dict[str, Any]:
                     "stage": idx,
                     "name": stage_name,
                     "cmd": stage_cmd,
+                    "stdout": "",
+                    "stderr": "[!] Stage execution timed out",
                     "exit_code": -1,
                     "status": "timeout",
                 })
