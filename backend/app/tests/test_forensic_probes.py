@@ -13,6 +13,9 @@ def test_list_forensic_probes():
     assert "deleted_binaries" in probe_ids
     assert "suspicious_sockets" in probe_ids
     assert "suid_lotl_binaries" in probe_ids
+    assert "systemd_services" in probe_ids
+    assert "shell_profiles" in probe_ids
+    assert "ld_preload_hijack" in probe_ids
 
 
 def test_run_suid_probe():
@@ -25,6 +28,33 @@ def test_run_suid_probe():
 def test_run_sockets_probe():
     res = forensic_probes.run_forensic_probe("suspicious_sockets")
     assert res["probe_id"] == "suspicious_sockets"
+    assert "findings" in res
+    assert isinstance(res["findings"], list)
+
+
+def test_run_systemd_probe():
+    res = forensic_probes.run_forensic_probe("systemd_services")
+    assert res["probe_id"] == "systemd_services"
+    assert res["tactic"] == "Persistence"
+    assert res["technique"] == "T1543.002"
+    assert "findings" in res
+    assert isinstance(res["findings"], list)
+
+
+def test_run_shell_profiles_probe():
+    res = forensic_probes.run_forensic_probe("shell_profiles")
+    assert res["probe_id"] == "shell_profiles"
+    assert res["tactic"] == "Persistence"
+    assert res["technique"] == "T1546.004"
+    assert "findings" in res
+    assert isinstance(res["findings"], list)
+
+
+def test_run_ld_preload_probe():
+    res = forensic_probes.run_forensic_probe("ld_preload_hijack")
+    assert res["probe_id"] == "ld_preload_hijack"
+    assert res["tactic"] == "Defense Evasion"
+    assert res["technique"] == "T1574.006"
     assert "findings" in res
     assert isinstance(res["findings"], list)
 

@@ -69,7 +69,10 @@ def test_capture_to_failing_command_returns_false(monkeypatch):
 def test_session_captures_on_interval_and_manifests(writer_cmd):
     session = ss.ScreenshotSession("runscreens1", interval=0.05)
     session.start()
-    time.sleep(0.35)
+    for _ in range(50):
+        if len(session.shots) >= 2:
+            break
+        time.sleep(0.05)
     shots = session.stop()
     assert len(shots) >= 2
     manifest = json.loads((session.dir / "manifest.json").read_text())
@@ -92,7 +95,10 @@ def test_session_without_capture_never_starts(monkeypatch):
 def test_list_shots_reads_disk_plus_manifest(writer_cmd):
     session = ss.ScreenshotSession("listsess", interval=0.05)
     session.start()
-    time.sleep(0.25)
+    for _ in range(50):
+        if len(session.shots) >= 1:
+            break
+        time.sleep(0.05)
     session.stop()
 
     listing = ss.list_shots("listsess")

@@ -496,8 +496,21 @@ def list_probes(
     try:
         probes = api_client.get_forensic_probes(host_id=host)
     except api_client.APIError as exc:
-        console.print(f"[bold #C4453B]Failed to load forensic probes: {exc}[/bold #C4453B]")
-        raise typer.Exit(1)
+        if "Backend unreachable" in str(exc) and host == "local":
+            try:
+                import sys
+                from pathlib import Path
+                root = Path(__file__).resolve().parent.parent.parent.parent
+                if str(root / "backend") not in sys.path:
+                    sys.path.insert(0, str(root / "backend"))
+                from app.services import forensic_probes
+                probes = forensic_probes.list_forensic_probes()
+            except Exception:
+                console.print(f"[bold #C4453B]Failed to load forensic probes: {exc}[/bold #C4453B]")
+                raise typer.Exit(1)
+        else:
+            console.print(f"[bold #C4453B]Failed to load forensic probes: {exc}[/bold #C4453B]")
+            raise typer.Exit(1)
 
     table = Table(title=f"OutPost — Live Host Forensic Hunt Probes ({len(probes)})", border_style="dim")
     table.add_column("Probe ID", style="cyan bold", no_wrap=True)
@@ -531,8 +544,21 @@ def hunt(
     try:
         res = api_client.run_forensic_probe(probe_id, host_id=host)
     except api_client.APIError as exc:
-        console.print(f"[bold #C4453B]Forensic hunt failed: {exc}[/bold #C4453B]")
-        raise typer.Exit(1)
+        if "Backend unreachable" in str(exc) and host == "local":
+            try:
+                import sys
+                from pathlib import Path
+                root = Path(__file__).resolve().parent.parent.parent.parent
+                if str(root / "backend") not in sys.path:
+                    sys.path.insert(0, str(root / "backend"))
+                from app.services import forensic_probes
+                res = forensic_probes.run_forensic_probe(probe_id)
+            except Exception:
+                console.print(f"[bold #C4453B]Forensic hunt failed: {exc}[/bold #C4453B]")
+                raise typer.Exit(1)
+        else:
+            console.print(f"[bold #C4453B]Forensic hunt failed: {exc}[/bold #C4453B]")
+            raise typer.Exit(1)
 
     anomalies = res.get("anomalies_count", 0)
     anom_color = "red" if anomalies > 0 else "green"
@@ -630,8 +656,21 @@ def triage_pack(
     try:
         data = api_client.collect_forensic_triage(host_id=host, include_yara=not no_yara)
     except api_client.APIError as exc:
-        console.print(f"[bold #C4453B]Triage pack acquisition failed: {exc}[/bold #C4453B]")
-        raise typer.Exit(1)
+        if "Backend unreachable" in str(exc) and host == "local":
+            try:
+                import sys
+                from pathlib import Path
+                root = Path(__file__).resolve().parent.parent.parent.parent
+                if str(root / "backend") not in sys.path:
+                    sys.path.insert(0, str(root / "backend"))
+                from app.services import forensic_probes
+                data = forensic_probes.collect_host_triage_pack(include_yara=not no_yara, host_id=host)
+            except Exception:
+                console.print(f"[bold #C4453B]Triage pack acquisition failed: {exc}[/bold #C4453B]")
+                raise typer.Exit(1)
+        else:
+            console.print(f"[bold #C4453B]Triage pack acquisition failed: {exc}[/bold #C4453B]")
+            raise typer.Exit(1)
 
     summary = data.get("summary", {})
     sev = summary.get("severity", "clean")

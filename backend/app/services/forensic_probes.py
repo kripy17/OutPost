@@ -226,6 +226,184 @@ def hunt_suid_binaries() -> List[Dict[str, Any]]:
     return results[:30]
 
 
+def hunt_systemd_units() -> List[Dict[str, Any]]:
+    """Hunt for suspicious systemd services and timer persistence (T1543.002 / T1053.006)."""
+    results: List[Dict[str, Any]] = []
+    systemd_dirs = [
+        Path("/etc/systemd/system"),
+        Path("/run/systemd/system"),
+        Path("/usr/lib/systemd/system"),
+        Path.home() / ".config/systemd/user",
+    ]
+    home_dir = Path("/home")
+    if home_dir.exists():
+        try:
+            for u in home_dir.iterdir():
+                u_sys = u / ".config/systemd/user"
+                if u_sys.is_dir() and u_sys not in systemd_dirs:
+                    systemd_dirs.append(u_sys)
+        except Exception:
+            pass
+
+    sus_patterns = [
+        "curl ", "wget ", "python", "perl", "sh -i", "bash -i", "/dev/tcp",
+        "/tmp/", "/dev/shm/", "base64", "nc ", "ncat ", "socat ", "chmod +x",
+    ]
+
+    for d in systemd_dirs:
+        if not d.exists() or not d.is_dir():
+            continue
+        try:
+            for unit_file in d.iterdir():
+                if not unit_file.is_file() or unit_file.is_symlink():
+                    continue
+                if not any(unit_file.name.endswith(ext) for ext in (".service", ".timer", ".path")):
+                    continue
+                try:
+                    content = unit_file.read_text(errors="ignore")
+                    is_hidden = unit_file.name.startswith(".")
+                    for line in content.splitlines():
+                        clean = line.strip()
+                        if any(clean.startswith(prefix) for prefix in ("ExecStart=", "ExecStartPre=", "ExecStartPost=")):
+                            cmd = clean.split("=", 1)[1].strip()
+                            is_sus = any(p in cmd.lower() for p in sus_patterns) or is_hidden
+                            if is_sus or "/etc/systemd/system" in str(d):
+                                results.append({
+                                    "location": str(unit_file),
+                                    "entry": f"[{unit_file.name}] {cmd[:100]}",
+                                    "unit_name": unit_file.name,
+                                    "command": cmd[:140],
+                                    "is_suspicious": is_sus,
+                                    "severity": "malicious" if ("/tmp/" in cmd or "/dev/shm/" in cmd or "/dev/tcp" in cmd) else ("suspicious" if is_sus else "info"),
+                                    "details": "Executes scripting interpreter or staging payload" if is_sus else "Configured systemd service unit",
+                                })
+                except Exception:
+                    pass
+        except Exception:
+            pass
+    return results[:35]
+
+
+def hunt_shell_profiles() -> List[Dict[str, Any]]:
+    """Hunt for unauthorized environment hooks and shell profile backdoors (T1546.004)."""
+    results: List[Dict[str, Any]] = []
+    profile_targets = [
+        Path("/etc/profile"),
+        Path("/etc/bash.bashrc"),
+        Path("/etc/environment"),
+        Path.home() / ".bashrc",
+        Path.home() / ".bash_profile",
+        Path.home() / ".profile",
+        Path.home() / ".zshrc",
+    ]
+    prof_d = Path("/etc/profile.d")
+    if prof_d.is_dir():
+        try:
+            for f in prof_d.iterdir():
+                if f.is_file() and f not in profile_targets:
+                    profile_targets.append(f)
+        except Exception:
+            pass
+
+    home_dir = Path("/home")
+    if home_dir.exists():
+        try:
+            for u in home_dir.iterdir():
+                for name in (".bashrc", ".bash_profile", ".profile", ".zshrc"):
+                    sh_f = u / name
+                    if sh_f.is_file() and sh_f not in profile_targets:
+                        profile_targets.append(sh_f)
+        except Exception:
+            pass
+
+    sus_patterns = [
+        "alias sudo=", "alias su=", "alias ssh=", "/dev/tcp/", "nohup ",
+        "disown", "nc -e", "mkfifo", "curl ", "wget ", "base64", "LD_PRELOAD",
+        "PROMPT_COMMAND", "/tmp/", "/dev/shm/",
+    ]
+
+    for p in profile_targets:
+        if not p.is_file():
+            continue
+        try:
+            content = p.read_text(errors="ignore")
+            for line in content.splitlines():
+                clean = line.strip()
+                if clean and not clean.startswith("#"):
+                    is_sus = any(pat.lower() in clean.lower() for pat in sus_patterns)
+                    if is_sus:
+                        results.append({
+                            "location": str(p),
+                            "entry": clean[:120],
+                            "file": str(p),
+                            "line": clean[:120],
+                            "is_suspicious": True,
+                            "severity": "malicious" if ("alias sudo" in clean or "/dev/tcp" in clean or "LD_PRELOAD" in clean) else "suspicious",
+                            "details": "Suspicious shell startup hook or hijacked command alias",
+                        })
+        except Exception:
+            pass
+    return results[:25]
+
+
+def hunt_ld_preload() -> List[Dict[str, Any]]:
+    """Hunt for shared library hijacking via /etc/ld.so.preload and process environments (T1574.006)."""
+    results: List[Dict[str, Any]] = []
+
+    # 1. Global /etc/ld.so.preload check
+    preload_file = Path("/etc/ld.so.preload")
+    if preload_file.is_file():
+        try:
+            content = preload_file.read_text(errors="ignore")
+            entries = [line.strip() for line in content.splitlines() if line.strip() and not line.strip().startswith("#")]
+            for entry in entries:
+                results.append({
+                    "location": "/etc/ld.so.preload",
+                    "entry": entry,
+                    "source": "/etc/ld.so.preload",
+                    "library": entry,
+                    "is_suspicious": True,
+                    "severity": "malicious",
+                    "details": f"Global rootkit hook in /etc/ld.so.preload: '{entry}'",
+                })
+        except Exception:
+            pass
+
+    # 2. Inspect active process environments in /proc/*/environ for LD_PRELOAD
+    proc_dir = Path("/proc")
+    if proc_dir.exists():
+        try:
+            for entry in proc_dir.iterdir():
+                if not entry.name.isdigit():
+                    continue
+                pid = int(entry.name)
+                environ_path = entry / "environ"
+                try:
+                    env_bytes = environ_path.read_bytes()
+                    for env_var in env_bytes.split(b"\x00"):
+                        if env_var.startswith(b"LD_PRELOAD="):
+                            val = env_var.decode(errors="ignore").split("=", 1)[1]
+                            if val.strip():
+                                comm = (entry / "comm").read_text().strip() if (entry / "comm").exists() else "unknown"
+                                results.append({
+                                    "location": f"/proc/{pid}/environ",
+                                    "entry": f"PID {pid} ({comm}) -> LD_PRELOAD={val}",
+                                    "source": f"/proc/{pid}/environ",
+                                    "pid": pid,
+                                    "process_name": comm,
+                                    "library": val,
+                                    "is_suspicious": True,
+                                    "severity": "malicious",
+                                    "details": f"Process {comm} (PID {pid}) executed with LD_PRELOAD={val}",
+                                })
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    return results[:20]
+
+
 PROBE_REGISTRY = {
     "crontab_persistence": {
         "id": "crontab_persistence",
@@ -266,6 +444,30 @@ PROBE_REGISTRY = {
         "technique": "T1548.001",
         "description": "Scans system directories for SUID binaries known to permit privilege escalation (GTFOBins).",
         "handler": hunt_suid_binaries,
+    },
+    "systemd_services": {
+        "id": "systemd_services",
+        "name": "Systemd Services & Timers Persistence",
+        "tactic": "Persistence",
+        "technique": "T1543.002",
+        "description": "Scans system and user systemd service and timer unit files for backdoors and unauthorized execution.",
+        "handler": hunt_systemd_units,
+    },
+    "shell_profiles": {
+        "id": "shell_profiles",
+        "name": "Shell Profile & Environment Backdoor Audit",
+        "tactic": "Persistence",
+        "technique": "T1546.004",
+        "description": "Audits /etc/profile, bashrc, and user startup dotfiles for command interception and stealth payloads.",
+        "handler": hunt_shell_profiles,
+    },
+    "ld_preload_hijack": {
+        "id": "ld_preload_hijack",
+        "name": "LD_PRELOAD & Shared Library Hijack Inspection",
+        "tactic": "Defense Evasion",
+        "technique": "T1574.006",
+        "description": "Detects user-space rootkits in /etc/ld.so.preload and processes injected with custom preloaded libraries.",
+        "handler": hunt_ld_preload,
     },
 }
 
