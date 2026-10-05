@@ -276,8 +276,25 @@ CREATE TABLE IF NOT EXISTS agent_heartbeats (
     -- recent heartbeat ('agent' = OUTPOST_AGENT_TOKEN, 'admin'/'analyst' =
     -- browser roles, 'local' = auth off / no credential) and when.
     last_auth_role TEXT,
-    last_auth_at TEXT
+    last_auth_at TEXT,
+    metrics_json TEXT,
+    agent_id TEXT
 );
+
+-- Cryptographic agent fleet enrollment (Phase 4.1): registered sensors with unique
+-- identity, machine fingerprint, secret key for HMAC-SHA256 authenticated telemetry.
+CREATE TABLE IF NOT EXISTS enrolled_agents (
+    agent_id TEXT PRIMARY KEY,
+    host_id TEXT NOT NULL,
+    platform TEXT,
+    machine_id TEXT,
+    enrolled_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    agent_secret TEXT NOT NULL,
+    hardware_info TEXT,
+    status TEXT NOT NULL DEFAULT 'active'
+);
+CREATE INDEX IF NOT EXISTS idx_enrolled_agents_host_id ON enrolled_agents(host_id);
 
 -- Active host containment & remediation: stores isolation status and queued actions.
 CREATE TABLE IF NOT EXISTS host_containment (
@@ -618,6 +635,37 @@ def _migrate_agent_heartbeats_auth(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _migrate_agent_heartbeats_metrics(conn: sqlite3.Connection) -> None:
+    """Idempotent: add metrics_json and agent_id columns to agent_heartbeats."""
+    cols = _column_names(conn, "agent_heartbeats")
+    if "metrics_json" not in cols:
+        conn.execute("ALTER TABLE agent_heartbeats ADD COLUMN metrics_json TEXT")
+    if "agent_id" not in cols:
+        conn.execute("ALTER TABLE agent_heartbeats ADD COLUMN agent_id TEXT")
+    conn.commit()
+
+
+def _migrate_enrolled_agents(conn: sqlite3.Connection) -> None:
+    """Idempotent: ensure enrolled_agents table exists."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS enrolled_agents (
+            agent_id TEXT PRIMARY KEY,
+            host_id TEXT NOT NULL,
+            platform TEXT,
+            machine_id TEXT,
+            enrolled_at TEXT NOT NULL,
+            last_seen_at TEXT NOT NULL,
+            agent_secret TEXT NOT NULL,
+            hardware_info TEXT,
+            status TEXT NOT NULL DEFAULT 'active'
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_enrolled_agents_host_id ON enrolled_agents(host_id)")
+    conn.commit()
+
+
 def _migrate_events_host_id(conn: sqlite3.Connection) -> None:
     """Idempotent: add the `host_id` fleet column (which agent a host event
     came from) to pre-existing DBs. Fresh DBs get it from SCHEMA; older
@@ -820,6 +868,8 @@ def init_db() -> None:
         _migrate_alerts_assignee(conn)
         _migrate_alerts_findings(conn)
         _migrate_agent_heartbeats_auth(conn)
+        _migrate_agent_heartbeats_metrics(conn)
+        _migrate_enrolled_agents(conn)
         _migrate_samples_platform_unknown(conn)
         _migrate_runs_platform_macos(conn)
         _migrate_runs_kind(conn)

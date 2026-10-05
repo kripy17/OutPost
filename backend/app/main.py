@@ -53,7 +53,7 @@ from .core.db import init_db
 # (the deck's pulse) and the auth endpoints themselves. The SSE stream is NOT
 # public: EventSource can't set headers, so the frontend appends `?token=` to
 # the URL instead — the gate below verifies it like any other request.
-_PUBLIC_PREFIXES = ("/health", "/platform", "/auth/")
+_PUBLIC_PREFIXES = ("/health", "/platform", "/auth/", "/agents/register")
 
 
 @asynccontextmanager
@@ -179,14 +179,24 @@ async def auth_gate(request: Request, call_next):
     if any(path.startswith(p) for p in _PUBLIC_PREFIXES):
         return await call_next(request)
 
-    token = auth_service.token_from_request(dict(request.headers), dict(request.query_params))
-    role = auth_service.verify_token(token) if token else None
-    # The shared agent credential (OUTPOST_AGENT_TOKEN) is a *host* identity,
-    # not a browser role: it may only touch telemetry (ship events, heartbeat,
-    # claim/create/complete sessions, read run data). Everything else 403s, so
-    # a stolen agent token can't triage alerts or touch settings.
-    if role is None and auth_service.verify_agent_token(token):
-        role = "agent"
+    headers = {k.lower(): v for k, v in request.headers.items()}
+    agent_id = headers.get("x-outpost-agent-id")
+    ts = headers.get("x-outpost-timestamp")
+    sig = headers.get("x-outpost-signature")
+    role = None
+    if agent_id and ts and sig:
+        if auth_service.verify_agent_hmac_headers(agent_id, ts, sig, request.method, path):
+            role = "agent"
+
+    if role is None:
+        token = auth_service.token_from_request(dict(request.headers), dict(request.query_params))
+        role = auth_service.verify_token(token) if token else None
+        # The shared agent credential (OUTPOST_AGENT_TOKEN) is a *host* identity,
+        # not a browser role: it may only touch telemetry (ship events, heartbeat,
+        # claim/create/complete sessions, read run data). Everything else 403s, so
+        # a stolen agent token can't triage alerts or touch settings.
+        if role is None and auth_service.verify_agent_token(token):
+            role = "agent"
     if role is None:
         return JSONResponse(status_code=401, content={"detail": "Authentication required"})
     if role == "analyst" and request.method not in ("GET", "HEAD", "OPTIONS"):

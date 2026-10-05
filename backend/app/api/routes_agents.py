@@ -13,6 +13,7 @@ and its events land here attributed to that host.
 """
 
 import json
+import secrets
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
@@ -27,6 +28,90 @@ ONLINE_WINDOW_SECONDS = 120
 # A host that heartbeated before but hasn't for this long is "silent" — the
 # collector died, was uninstalled, or the network path broke.
 SILENT_WINDOW_SECONDS = 600
+
+
+@router.post("/agents/register", response_model=None)
+def register_agent(
+    payload: dict,
+    request: Request,
+) -> dict:
+    """Cryptographically enroll a new endpoint agent sensor into the fleet.
+
+    Generates unique agent_id and high-entropy agent_secret for HMAC-SHA256
+    telemetry authentication, anti-replay, and anti-tamper telemetry shipping.
+    """
+    from ..models import audit
+
+    host_id = (payload.get("host_id") or "").strip()
+    if not host_id:
+        raise HTTPException(status_code=422, detail="Field 'host_id' is required.")
+
+    platform = payload.get("platform")
+    machine_id = payload.get("machine_id")
+    hardware_info = payload.get("hardware_info")
+    hardware_json = json.dumps(hardware_info) if hardware_info else None
+
+    agent_id = f"agt_{secrets.token_hex(12)}"
+    agent_secret = secrets.token_hex(32)
+    now = datetime.now(timezone.utc).isoformat()
+
+    with db_session() as conn:
+        conn.execute(
+            """
+            INSERT INTO enrolled_agents (
+                agent_id, host_id, platform, machine_id, enrolled_at, last_seen_at, agent_secret, hardware_info, status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')
+            """,
+            (agent_id, host_id, platform, machine_id, now, now, agent_secret, hardware_json),
+        )
+        audit.log(
+            conn,
+            "system",
+            "agent.register",
+            target_type="host",
+            target_id=host_id,
+            detail=f"enrolled sensor {agent_id} for host {host_id} (platform: {platform})",
+        )
+
+    return {
+        "status": "enrolled",
+        "agent_id": agent_id,
+        "agent_secret": agent_secret,
+        "host_id": host_id,
+        "enrolled_at": now,
+    }
+
+
+@router.get("/agents/enrolled", response_model=None)
+def list_enrolled_agents() -> list[dict]:
+    """List all cryptographically enrolled fleet agents."""
+    with db_session() as conn:
+        rows = conn.execute(
+            """
+            SELECT agent_id, host_id, platform, machine_id, enrolled_at, last_seen_at, status, hardware_info
+            FROM enrolled_agents
+            ORDER BY last_seen_at DESC
+            """
+        ).fetchall()
+    out = []
+    for r in rows:
+        hw = None
+        if r["hardware_info"]:
+            try:
+                hw = json.loads(r["hardware_info"])
+            except Exception:
+                hw = None
+        out.append({
+            "agent_id": r["agent_id"],
+            "host_id": r["host_id"],
+            "platform": r["platform"],
+            "machine_id": r["machine_id"],
+            "enrolled_at": r["enrolled_at"],
+            "last_seen_at": r["last_seen_at"],
+            "status": r["status"],
+            "hardware_info": hw,
+        })
+    return out
 
 
 @router.post("/agents/{host_id}/heartbeat", response_model=None)
@@ -49,25 +134,37 @@ def post_heartbeat(
     payload = payload or {}
     now = datetime.now(timezone.utc).isoformat()
     # Last-auth context: how THIS heartbeat authenticated — 'agent' (the
-    # shared OUTPOST_AGENT_TOKEN), 'admin'/'analyst' (browser roles), or
+    # shared OUTPOST_AGENT_TOKEN or HMAC), 'admin'/'analyst' (browser roles), or
     # 'local' (auth off / no credential). This is what lets the fleet view
     # tell collector-shipped hosts (authenticated as the agent) apart from
     # webapp-local traffic.
     auth_role = auth_service.role_from_request(request)
+
+    metrics = payload.get("metrics")
+    metrics_json = json.dumps(metrics) if metrics else None
+    agent_id = payload.get("agent_id") or request.headers.get("x-outpost-agent-id")
+
     with db_session() as conn:
         conn.execute(
             """
-            INSERT INTO agent_heartbeats (host_id, last_heartbeat, platform, version, last_auth_role, last_auth_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO agent_heartbeats (host_id, last_heartbeat, platform, version, last_auth_role, last_auth_at, metrics_json, agent_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(host_id) DO UPDATE SET
                 last_heartbeat = excluded.last_heartbeat,
                 platform = COALESCE(excluded.platform, agent_heartbeats.platform),
                 version = COALESCE(excluded.version, agent_heartbeats.version),
                 last_auth_role = excluded.last_auth_role,
-                last_auth_at = excluded.last_auth_at
+                last_auth_at = excluded.last_auth_at,
+                metrics_json = COALESCE(excluded.metrics_json, agent_heartbeats.metrics_json),
+                agent_id = COALESCE(excluded.agent_id, agent_heartbeats.agent_id)
             """,
-            (host_id, now, payload.get("platform"), payload.get("version"), auth_role, now),
+            (host_id, now, payload.get("platform"), payload.get("version"), auth_role, now, metrics_json, agent_id),
         )
+        if agent_id:
+            conn.execute(
+                "UPDATE enrolled_agents SET last_seen_at = ? WHERE agent_id = ?",
+                (now, agent_id),
+            )
         # The host is alive again — a silent episode (if any) is over; the
         # next silence pages fresh.
         fleet_health.clear_notified(conn, host_id)
@@ -239,10 +336,18 @@ def list_agents(
         hb_rows = {
             r["host_id"]: r
             for r in conn.execute(
-                "SELECT host_id, last_heartbeat, platform, version, last_auth_role, last_auth_at "
+                "SELECT host_id, last_heartbeat, platform, version, last_auth_role, last_auth_at, metrics_json, agent_id "
                 "FROM agent_heartbeats"
             ).fetchall()
         }
+
+    def _parse_metrics(json_str: str | None) -> dict | None:
+        if not json_str:
+            return None
+        try:
+            return json.loads(json_str)
+        except Exception:
+            return None
 
     def _age_seconds(iso: str | None) -> int | None:
         if not iso:
@@ -265,6 +370,8 @@ def list_agents(
             hb_age is not None and hb_age <= online_window
         )
         silent = hb is not None and (hb_age or 0) > silent_window
+        hb_metrics = _parse_metrics(hb["metrics_json"] if hb and "metrics_json" in hb.keys() else None)
+        hb_agent_id = hb["agent_id"] if hb and "agent_id" in hb.keys() else None
         agents.append(
             {
                 "host_id": r["host_id"],
@@ -290,6 +397,8 @@ def list_agents(
                 "platforms": sorted({p for p in (r["platforms"] or "").split(",") if p}),
                 "recent_run_ids": [rid for rid in (r["recent_run_ids"] or "").split(",") if rid][:5],
                 "last_snapshot_at": snap_rows.get(r["host_id"]),
+                "metrics": hb_metrics,
+                "agent_id": hb_agent_id,
             }
         )
     # Snapshot- or heartbeat-only hosts (an agent that shipped a "running now"
@@ -306,6 +415,8 @@ def list_agents(
             collected_at is not None
             and (now - datetime.fromisoformat(collected_at)).total_seconds() <= online_window
         )
+        hb_metrics = _parse_metrics(hb["metrics_json"] if hb and "metrics_json" in hb.keys() else None)
+        hb_agent_id = hb["agent_id"] if hb and "agent_id" in hb.keys() else None
         agents.append(
             {
                 "host_id": host_id,
@@ -326,6 +437,8 @@ def list_agents(
                 "platforms": [],
                 "recent_run_ids": [],
                 "last_snapshot_at": collected_at,
+                "metrics": hb_metrics,
+                "agent_id": hb_agent_id,
             }
         )
 

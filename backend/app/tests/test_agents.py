@@ -446,3 +446,116 @@ def test_host_containment_isolation_and_kill(client):
     assert uniso_res.status_code == 200
     assert uniso_res.json()["isolated"] is False
 
+
+def test_agent_cryptographic_registration(client):
+    """Enrolling a sensor generates a unique agent_id, secret, and persists in enrolled_agents."""
+    res = client.post(
+        "/agents/register",
+        json={
+            "host_id": "crypto-sensor-01",
+            "platform": "linux",
+            "machine_id": "mach-uuid-1234",
+            "hardware_info": {"cpu_cores": 8, "total_ram_gb": 32},
+        },
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "enrolled"
+    assert data["agent_id"].startswith("agt_")
+    assert len(data["agent_secret"]) == 64
+    assert data["host_id"] == "crypto-sensor-01"
+
+    # Listing enrolled agents returns the sensor metadata
+    enrolled = client.get("/agents/enrolled").json()
+    match = [a for a in enrolled if a["agent_id"] == data["agent_id"]]
+    assert len(match) == 1
+    assert match[0]["host_id"] == "crypto-sensor-01"
+    assert match[0]["platform"] == "linux"
+    assert match[0]["machine_id"] == "mach-uuid-1234"
+    assert match[0]["hardware_info"] == {"cpu_cores": 8, "total_ram_gb": 32}
+
+
+def test_agent_hmac_authentication_and_tamper_protection(client, monkeypatch):
+    """HMAC-SHA256 signatures authenticate collector traffic as 'agent' and reject tampered/expired requests."""
+    import hashlib
+    import hmac
+    import time
+
+    # Register sensor
+    reg = client.post("/agents/register", json={"host_id": "hmac-host-01", "platform": "linux"}).json()
+    agent_id = reg["agent_id"]
+    secret = reg["agent_secret"]
+
+    now_ts = str(int(time.time()))
+    path = "/agents/hmac-host-01/heartbeat"
+    canonical = f"{agent_id}:{now_ts}:POST:{path}"
+    valid_sig = hmac.new(secret.encode(), canonical.encode(), hashlib.sha256).hexdigest()
+
+    headers = {
+        "X-OutPost-Agent-Id": agent_id,
+        "X-OutPost-Timestamp": now_ts,
+        "X-OutPost-Signature": valid_sig,
+    }
+
+    # Valid signature succeeds and attributes role: agent
+    hb = client.post(path, json={"platform": "linux", "version": "1.0"}, headers=headers)
+    assert hb.status_code == 200
+
+    agents_list = client.get("/agents").json()["agents"]
+    host_row = next((a for a in agents_list if a["host_id"] == "hmac-host-01"), None)
+    assert host_row is not None
+    assert host_row["last_auth_role"] == "agent"
+
+    # Tampered signature fails
+    tampered_headers = {
+        "X-OutPost-Agent-Id": agent_id,
+        "X-OutPost-Timestamp": now_ts,
+        "X-OutPost-Signature": "0" * 64,
+    }
+    # With fail-closed auth enabled, tampered signature produces 401
+    monkeypatch.setenv("OUTPOST_AUTH_REQUIRED", "1")
+    monkeypatch.setenv("OUTPOST_ADMIN_PASSWORD", "test-admin-pass")
+    tampered_res = client.post(path, json={"platform": "linux"}, headers=tampered_headers)
+    assert tampered_res.status_code == 401
+
+    # Expired timestamp (> 300s) fails
+    expired_ts = str(int(time.time()) - 400)
+    expired_canon = f"{agent_id}:{expired_ts}:POST:{path}"
+    expired_sig = hmac.new(secret.encode(), expired_canon.encode(), hashlib.sha256).hexdigest()
+    expired_headers = {
+        "X-OutPost-Agent-Id": agent_id,
+        "X-OutPost-Timestamp": expired_ts,
+        "X-OutPost-Signature": expired_sig,
+    }
+    expired_res = client.post(path, json={"platform": "linux"}, headers=expired_headers)
+    assert expired_res.status_code == 401
+
+
+def test_agent_heartbeat_with_live_telemetry_metrics(client):
+    """Heartbeat stores host metrics and /agents returns them in the fleet response."""
+    metrics_payload = {
+        "cpu_percent": 24.5,
+        "memory_percent": 61.2,
+        "memory_used_mb": 4096,
+        "memory_total_mb": 8192,
+        "queue_backlog": 3,
+        "uptime_seconds": 3600,
+    }
+
+    res = client.post(
+        "/agents/metric-host/heartbeat",
+        json={
+            "platform": "linux",
+            "version": "outpost-collector/1.0",
+            "agent_id": "agt_testmetric123",
+            "metrics": metrics_payload,
+        },
+    )
+    assert res.status_code == 200
+
+    fleet = client.get("/agents").json()
+    target = next((a for a in fleet["agents"] if a["host_id"] == "metric-host"), None)
+    assert target is not None
+    assert target["metrics"] == metrics_payload
+    assert target["agent_id"] == "agt_testmetric123"
+

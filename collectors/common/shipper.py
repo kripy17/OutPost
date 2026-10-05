@@ -6,9 +6,13 @@ Per docs/03-COLLECTOR-SPEC.md:
   so no data is lost if the backend restarts mid-run
 """
 
+import hashlib
+import hmac
 import json
 import logging
 import os
+import sqlite3
+import threading
 import time
 from pathlib import Path
 from urllib.parse import quote
@@ -21,13 +25,36 @@ COLLECTOR_VERSION = "outpost-collector/1.0"
 log = logging.getLogger("outpost.shipper")
 
 
-def _auth_headers() -> dict:
-    """Authorization for the shared agent credential (OUTPOST_AGENT_TOKEN).
+def compute_hmac_headers(agent_id: str, agent_secret: str, method: str = "GET", path: str = "/") -> dict:
+    """Compute HMAC-SHA256 signature headers for an enrolled agent."""
+    ts = str(int(time.time()))
+    method_clean = (method or "GET").upper()
+    path_clean = path or "/"
+    canonical = f"{agent_id}:{ts}:{method_clean}:{path_clean}"
+    sig = hmac.new(agent_secret.encode("utf-8"), canonical.encode("utf-8"), hashlib.sha256).hexdigest()
+    return {
+        "X-OutPost-Agent-Id": agent_id,
+        "X-OutPost-Timestamp": ts,
+        "X-OutPost-Signature": sig,
+    }
+
+
+def _auth_headers(
+    method: str = "GET",
+    path: str = "/",
+    agent_id: str | None = None,
+    agent_secret: str | None = None,
+) -> dict:
+    """Authorization for the agent: HMAC signature if enrolled, or Bearer token fallback.
 
     When set, every request carries it so the collector works under
     fail-closed auth (OUTPOST_AUTH_REQUIRED=1) — heartbeats, event shipping,
     and session claims all authenticate as the host. Empty when unset.
     """
+    aid = agent_id or os.environ.get("OUTPOST_AGENT_ID", "").strip()
+    asec = agent_secret or os.environ.get("OUTPOST_AGENT_SECRET", "").strip()
+    if aid and asec:
+        return compute_hmac_headers(aid, asec, method, path)
     tok = os.environ.get("OUTPOST_AGENT_TOKEN", "").strip()
     return {"Authorization": f"Bearer {tok}"} if tok else {}
 
@@ -123,6 +150,78 @@ def resolve_live_run_id(backend_url: str, platform: str) -> str:
     return resp.json()["run_id"]
 
 
+class SQLiteSpool:
+    """Thread-safe, crash-resilient local event spool buffer using SQLite WAL mode."""
+
+    def __init__(self, db_path: str):
+        self.db_path = db_path
+        self._init_db()
+
+    def _init_db(self) -> None:
+        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS event_spool (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at REAL NOT NULL,
+                    payload TEXT NOT NULL
+                )
+                """
+            )
+            conn.commit()
+
+    def spool(self, events: list[dict]) -> None:
+        if not events:
+            return
+        now = time.time()
+        rows = [(now, json.dumps(ev)) for ev in events]
+        with sqlite3.connect(self.db_path) as conn:
+            conn.executemany("INSERT INTO event_spool (created_at, payload) VALUES (?, ?)", rows)
+            conn.commit()
+
+    def count(self) -> int:
+        if not os.path.exists(self.db_path):
+            return 0
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                row = conn.execute("SELECT COUNT(*) FROM event_spool").fetchone()
+                return row[0] if row else 0
+        except Exception:
+            return 0
+
+    def peek(self, limit: int = 100) -> list[tuple[int, dict]]:
+        if not os.path.exists(self.db_path):
+            return []
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                rows = conn.execute(
+                    "SELECT id, payload FROM event_spool ORDER BY id ASC LIMIT ?", (limit,)
+                ).fetchall()
+                out = []
+                for row_id, raw in rows:
+                    try:
+                        out.append((row_id, json.loads(raw)))
+                    except Exception:
+                        pass
+                return out
+        except Exception:
+            return []
+
+    def remove(self, ids: list[int]) -> None:
+        if not ids or not os.path.exists(self.db_path):
+            return
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                placeholders = ",".join("?" for _ in ids)
+                conn.execute(f"DELETE FROM event_spool WHERE id IN ({placeholders})", ids)
+                conn.commit()
+        except Exception:
+            pass
+
+
 class Shipper:
     def __init__(
         self,
@@ -134,6 +233,9 @@ class Shipper:
         max_retries: int = 3,
         host_id: str | None = None,
         compress: bool = False,
+        agent_id: str | None = None,
+        agent_secret: str | None = None,
+        **kwargs,
     ):
         self.backend_url = backend_url.rstrip("/")
         self.run_id = run_id
@@ -142,9 +244,33 @@ class Shipper:
         self.max_retries = max_retries
         self.host_id = host_id or _default_host_id()
         self.compress = compress
+        self.agent_id = agent_id or os.environ.get("OUTPOST_AGENT_ID", "").strip() or None
+        self.agent_secret = agent_secret or os.environ.get("OUTPOST_AGENT_SECRET", "").strip() or None
         self.buffer: list[dict] = []
         self.last_flush = time.time()
-        self.spool_path = spool_path or str(Path.cwd() / f"outpost-spool-{run_id}.jsonl")
+        self._start_time = time.time()
+        self._last_heartbeat = 0.0
+        self._hb_running = False
+        self._hb_thread: threading.Thread | None = None
+
+        if spool_path is None:
+            self.spool_path = str(Path.cwd() / f"outpost-spool-{run_id}.db")
+            self._use_sqlite_spool = True
+        elif spool_path.endswith(".jsonl"):
+            self.spool_path = spool_path
+            self._use_sqlite_spool = False
+        else:
+            self.spool_path = spool_path
+            self._use_sqlite_spool = True
+
+        if self._use_sqlite_spool:
+            self._sqlite_spool = SQLiteSpool(self.spool_path)
+        else:
+            self._sqlite_spool = None
+
+    def get_auth_headers(self, method: str = "GET", path: str = "/") -> dict:
+        """Resolve current authorization headers (HMAC signature or Bearer token)."""
+        return _auth_headers(method, path, self.agent_id, self.agent_secret)
 
     def add(self, event: dict) -> None:
         """Queue one normalized event dict; flush when thresholds are hit.
@@ -168,7 +294,95 @@ class Shipper:
         if len(self.buffer) >= self.batch_size or time.time() - self.last_flush > self.flush_interval:
             self.flush()
 
-    def maybe_heartbeat(self, platform: str | None = None, interval: float = 60.0) -> None:
+    ship = add
+
+    def get_system_metrics(self) -> dict:
+        """Collect live host system telemetry (CPU %, memory %, queue backlog, uptime)."""
+        cpu_pct = 0.0
+        mem_pct = 0.0
+        mem_used_mb = 0
+        mem_total_mb = 0
+
+        try:
+            import psutil
+            cpu_pct = float(psutil.cpu_percent(interval=None))
+            vmem = psutil.virtual_memory()
+            mem_pct = float(vmem.percent)
+            mem_used_mb = int(vmem.used / (1024 * 1024))
+            mem_total_mb = int(vmem.total / (1024 * 1024))
+        except (ImportError, Exception):
+            try:
+                if os.path.exists("/proc/loadavg"):
+                    with open("/proc/loadavg", "r") as fh:
+                        load1 = float(fh.read().split()[0])
+                    cpu_count = os.cpu_count() or 1
+                    cpu_pct = round(min(100.0, (load1 / cpu_count) * 100.0), 1)
+                if os.path.exists("/proc/meminfo"):
+                    mem_data = {}
+                    with open("/proc/meminfo", "r") as fh:
+                        for line in fh:
+                            parts = line.split(":")
+                            if len(parts) == 2:
+                                k = parts[0].strip()
+                                v = parts[1].strip().split()[0]
+                                if v.isdigit():
+                                    mem_data[k] = int(v)
+                    total_kb = mem_data.get("MemTotal", 0)
+                    avail_kb = mem_data.get("MemAvailable", mem_data.get("MemFree", 0))
+                    if total_kb > 0:
+                        used_kb = max(0, total_kb - avail_kb)
+                        mem_total_mb = int(total_kb / 1024)
+                        mem_used_mb = int(used_kb / 1024)
+                        mem_pct = round((used_kb / total_kb) * 100.0, 1)
+            except Exception:
+                pass
+
+        backlog = len(self.buffer)
+        if getattr(self, "_use_sqlite_spool", False) and getattr(self, "_sqlite_spool", None):
+            backlog += self._sqlite_spool.count()
+
+        uptime_sec = int(time.time() - getattr(self, "_start_time", time.time()))
+
+        return {
+            "cpu_percent": round(cpu_pct, 1),
+            "memory_percent": round(mem_pct, 1),
+            "memory_used_mb": mem_used_mb,
+            "memory_total_mb": mem_total_mb,
+            "queue_backlog": backlog,
+            "uptime_seconds": uptime_sec,
+        }
+
+    def start_heartbeat_daemon(self, interval: float = 30.0, platform: str | None = None) -> None:
+        """Start a background daemon thread that periodically ships heartbeats."""
+        if getattr(self, "_hb_running", False):
+            return
+        self._hb_running = True
+        self._hb_thread = threading.Thread(
+            target=self._heartbeat_worker,
+            args=(interval, platform),
+            daemon=True,
+            name="outpost-heartbeat-daemon",
+        )
+        self._hb_thread.start()
+
+    def stop_heartbeat_daemon(self) -> None:
+        self._hb_running = False
+
+    def _heartbeat_worker(self, interval: float, platform: str | None) -> None:
+        while getattr(self, "_hb_running", False):
+            try:
+                self.maybe_heartbeat(platform=platform, interval=0.0)
+            except Exception as e:
+                log.debug("Heartbeat daemon error: %s", e)
+            time.sleep(interval)
+
+    def maybe_heartbeat(
+        self,
+        platform: str | None = None,
+        interval: float = 60.0,
+        metrics: dict | None = None,
+        channel: str | None = None,
+    ) -> None:
         """Ping /agents/{host}/heartbeat when `interval` elapsed since the last
         ping — liveness independent of event volume, so the fleet view can
         flag hosts that went silent. Best-effort like snapshots: a down
@@ -176,11 +390,23 @@ class Shipper:
         if time.time() - getattr(self, "_last_heartbeat", 0.0) < interval:
             return
         self._last_heartbeat = time.time()
+        path = f"/agents/{quote(self.host_id, safe='')}/heartbeat"
         try:
+            payload = {
+                "platform": platform,
+                "version": COLLECTOR_VERSION,
+            }
+            if metrics is not None:
+                payload["metrics"] = metrics
+            else:
+                payload["metrics"] = self.get_system_metrics()
+            if self.agent_id:
+                payload["agent_id"] = self.agent_id
+
             resp = requests.post(
-                f"{self.backend_url}/agents/{quote(self.host_id, safe='')}/heartbeat",
-                json={"platform": platform, "version": COLLECTOR_VERSION},
-                headers=_auth_headers(),
+                f"{self.backend_url}{path}",
+                json=payload,
+                headers=self.get_auth_headers("POST", path),
                 timeout=5,
             )
             resp.raise_for_status()
@@ -200,6 +426,8 @@ class Shipper:
                 log.warning("Containment evaluation error: %s", e_cont)
         except Exception as exc:
             log.warning("Heartbeat failed: %s", exc)
+
+    heartbeat = maybe_heartbeat
 
     def _execute_pending_actions(self, actions: list[dict]) -> None:
         """Execute queued remediation actions (e.g. process termination) and acknowledge completion."""
@@ -230,32 +458,33 @@ class Shipper:
 
         if executed_ids:
             try:
+                ack_path = f"/agents/{quote(self.host_id, safe='')}/actions/ack"
                 ack_resp = requests.post(
-                    f"{self.backend_url}/agents/{quote(self.host_id, safe='')}/actions/ack",
+                    f"{self.backend_url}{ack_path}",
                     json={"action_ids": executed_ids},
-                    headers=_auth_headers(),
+                    headers=self.get_auth_headers("POST", ack_path),
                     timeout=5,
                 )
                 ack_resp.raise_for_status()
             except Exception as ack_err:
                 log.warning("Failed to acknowledge agent actions %s: %s", executed_ids, ack_err)
 
-
     def ship_snapshot(self, platform: str | None = None) -> dict | None:
         """POST the live system snapshot (processes + listening ports) for this
         host. Best-effort: a failure just logs — the event stream must never
         die because the snapshot couldn't ship."""
         try:
-            from . import snapshot as snapshot_mod  # package import (collectors.common)
+            from . import snapshot as snapshot_mod
         except ImportError:
-            import snapshot as snapshot_mod  # top-level module (test sys.path)
+            import snapshot as snapshot_mod
 
         try:
             payload = snapshot_mod.collect_snapshot(self.host_id, platform)
+            path = "/ingest/snapshot"
             resp = requests.post(
-                f"{self.backend_url}/ingest/snapshot",
+                f"{self.backend_url}{path}",
                 json=payload,
-                headers=_auth_headers(),
+                headers=self.get_auth_headers("POST", path),
                 timeout=5,
             )
             resp.raise_for_status()
@@ -269,7 +498,7 @@ class Shipper:
         self.buffer = []
 
         if batch:
-            headers = _auth_headers()
+            headers = self.get_auth_headers("POST", "/ingest/batch")
             for attempt in range(self.max_retries):
                 try:
                     if self.compress:
@@ -292,14 +521,16 @@ class Shipper:
                         log.warning("Backend unreachable — spooled %d events to %s", len(batch), self.spool_path)
             self.last_flush = time.time()
         else:
-            # Empty flush still attempts spool replay — without this, a
-            # collector with no new events would never push buffered events
-            # back after the backend recovers (the buffer check used to
-            # early-return and skip replay entirely).
             self._replay_spool()
 
-    # -- fallback spooling ---------------------------------------------------
     def _spool(self, batch: list[dict]) -> None:
+        if getattr(self, "_use_sqlite_spool", False) and getattr(self, "_sqlite_spool", None):
+            try:
+                self._sqlite_spool.spool(batch)
+            except Exception as err:
+                log.warning("Failed to write to SQLite spool: %s", err)
+            return
+
         try:
             if os.path.exists(self.spool_path) and os.path.getsize(self.spool_path) > 25 * 1024 * 1024:
                 log.warning("Spool file exceeds 25MB safety cap (%s)", self.spool_path)
@@ -310,6 +541,23 @@ class Shipper:
 
     def _replay_spool(self) -> None:
         """Push any spooled events to the backend now that it's reachable."""
+        if getattr(self, "_use_sqlite_spool", False) and getattr(self, "_sqlite_spool", None):
+            try:
+                chunk_size = 100
+                headers = self.get_auth_headers("POST", "/ingest/batch")
+                while True:
+                    items = self._sqlite_spool.peek(chunk_size)
+                    if not items:
+                        break
+                    batch = [it[1] for it in items]
+                    ids = [it[0] for it in items]
+                    resp = requests.post(f"{self.backend_url}/ingest/batch", json=batch, headers=headers, timeout=5)
+                    resp.raise_for_status()
+                    self._sqlite_spool.remove(ids)
+            except Exception:
+                log.warning("SQLite spool replay failed — will retry on next successful flush")
+            return
+
         if not os.path.exists(self.spool_path):
             return
         try:
@@ -317,7 +565,7 @@ class Shipper:
                 events = [json.loads(line) for line in fh if line.strip()]
             if events:
                 chunk_size = 100
-                headers = _auth_headers()
+                headers = self.get_auth_headers("POST", "/ingest/batch")
                 for i in range(0, len(events), chunk_size):
                     chunk = events[i : i + chunk_size]
                     requests.post(f"{self.backend_url}/ingest/batch", json=chunk, headers=headers, timeout=5).raise_for_status()

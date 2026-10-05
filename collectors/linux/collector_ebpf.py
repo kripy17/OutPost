@@ -144,8 +144,8 @@ def parse_trace_line(line: str, run_id: str) -> dict | None:
 
 def run_collector(backend_url: str, mode: str, timeout: int | None = None, run_id: str | None = None) -> None:
     """Run eBPF kernel tracepoint collector loop."""
-    resolved_run_id = run_id or resolve_live_run_id(backend_url, channel="ebpf")
-    shipper = Shipper(backend_url=backend_url, run_id=resolved_run_id, platform="linux")
+    resolved_run_id = run_id or resolve_live_run_id(backend_url, platform="linux")
+    shipper = Shipper(backend_url=backend_url, run_id=resolved_run_id)
 
     # Locate trace pipe
     pipe_path = None
@@ -161,7 +161,7 @@ def run_collector(backend_url: str, mode: str, timeout: int | None = None, run_i
         print("[!] Kernel trace_pipe not accessible directly (root or debugfs required).")
         print("[*] Running in synthetic eBPF heartbeat and proc probe mode.")
         while True:
-            shipper.heartbeat(channel="ebpf")
+            shipper.maybe_heartbeat(platform="linux")
             time.sleep(3)
             if mode == "analysis" and timeout and (time.time() - start_time >= timeout):
                 break
@@ -175,9 +175,9 @@ def run_collector(backend_url: str, mode: str, timeout: int | None = None, run_i
                 if line:
                     ev = parse_trace_line(line, resolved_run_id)
                     if ev:
-                        shipper.ship(ev)
+                        shipper.add(ev)
 
-                shipper.heartbeat(channel="ebpf")
+                shipper.maybe_heartbeat(platform="linux")
 
                 if mode == "analysis" and timeout and (time.time() - start_time >= timeout):
                     break

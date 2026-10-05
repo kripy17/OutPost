@@ -84,6 +84,60 @@ def verify_agent_token(token: str) -> bool:
     return hmac.compare_digest(token.encode(), configured.encode())
 
 
+def verify_agent_hmac_headers(
+    agent_id: str,
+    timestamp_str: str,
+    signature: str,
+    method: str = "GET",
+    path: str = "/",
+) -> bool:
+    """Verify HMAC-SHA256 request signature for an enrolled agent.
+
+    Format: HMAC-SHA256(agent_secret, f"{agent_id}:{timestamp_str}:{method}:{path}")
+    Includes anti-replay drift check (abs(now - ts) <= 300s).
+    """
+    if not agent_id or not timestamp_str or not signature:
+        return False
+    try:
+        try:
+            ts = float(timestamp_str)
+        except ValueError:
+            from datetime import datetime, timezone
+            ts = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00")).timestamp()
+        if abs(time.time() - ts) > 300:
+            return False
+    except Exception:
+        return False
+
+    secret = None
+    if os.getenv("OUTPOST_AGENT_ID") == agent_id and os.getenv("OUTPOST_AGENT_SECRET"):
+        secret = os.getenv("OUTPOST_AGENT_SECRET")
+    else:
+        try:
+            from ..core.db import db_session
+            with db_session() as conn:
+                row = conn.execute(
+                    "SELECT agent_secret, status FROM enrolled_agents WHERE agent_id = ?",
+                    (agent_id,),
+                ).fetchone()
+                if row and row["status"] == "active":
+                    secret = row["agent_secret"]
+                    from datetime import datetime, timezone
+                    now_iso = datetime.now(timezone.utc).isoformat()
+                    conn.execute("UPDATE enrolled_agents SET last_seen_at = ? WHERE agent_id = ?", (now_iso, agent_id))
+        except Exception:
+            pass
+
+    if not secret:
+        return False
+
+    method_clean = (method or "GET").upper()
+    path_clean = path or "/"
+    canonical = f"{agent_id}:{timestamp_str}:{method_clean}:{path_clean}"
+    expected = hmac.new(secret.encode("utf-8"), canonical.encode("utf-8"), hashlib.sha256).hexdigest()
+    return hmac.compare_digest(signature.lower(), expected.lower())
+
+
 def _env_hash(role: str) -> str:
     return os.getenv(f"OUTPOST_{role.upper()}_PASSWORD_HASH", "").strip()
 
@@ -346,8 +400,19 @@ def role_from_request(request) -> str:
     """The acting identity for a request: the verified role when auth is on
     (falls back to 'local' if the token is missing/invalid so audit rows are
     never lost), or 'local' when auth is off. Collector traffic presents the
-    shared agent credential and is attributed as 'agent'. Audit logging uses
-    this."""
+    shared agent credential or cryptographic HMAC signature and is attributed
+    as 'agent'. Audit logging uses this."""
+    headers = {k.lower(): v for k, v in request.headers.items()} if hasattr(request, "headers") else {}
+    agent_id = headers.get("x-outpost-agent-id")
+    ts = headers.get("x-outpost-timestamp")
+    sig = headers.get("x-outpost-signature")
+    if agent_id and ts and sig:
+        method = getattr(request, "method", "GET")
+        url = getattr(request, "url", None)
+        path = url.path if url and hasattr(url, "path") else "/"
+        if verify_agent_hmac_headers(agent_id, ts, sig, method, path):
+            return "agent"
+
     if not auth_enabled():
         return "local"
     tok = token_from_request(dict(request.headers), dict(request.query_params))

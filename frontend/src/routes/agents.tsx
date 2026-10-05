@@ -184,6 +184,82 @@ function HostInspectorDrawer({
             </div>
           </div>
 
+          {/* Endpoint Hardware & Telemetry HUD */}
+          <div className="mt-3.5 rounded-lg border border-border-subtle bg-bg-base/70 p-2.5 font-mono text-[11px] space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] uppercase font-bold text-text-faint flex items-center gap-1.5">
+                <Icon name="activity" size={11} className="text-accent" />
+                <span>Sensor Health &amp; In-Flight Telemetry</span>
+              </span>
+              <span className="text-[10px] text-text-muted">
+                {agent?.agent_id ? (
+                  <span className="text-signal flex items-center gap-1">
+                    <span className="h-1.5 w-1.5 rounded-full bg-signal" />
+                    <span>Enrolled: {agent.agent_id}</span>
+                  </span>
+                ) : (
+                  <span className="text-text-faint">Standard Token Auth</span>
+                )}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-4 gap-2 pt-0.5">
+              <div className="rounded bg-bg-surface/80 p-1.5 border border-border-subtle/60">
+                <div className="flex justify-between items-center text-[10px] text-text-faint">
+                  <span>CPU</span>
+                  <span className="font-bold text-text-primary">{agent?.metrics?.cpu_percent ?? 0}%</span>
+                </div>
+                <div className="mt-1 h-1 w-full bg-bg-elevated rounded-full overflow-hidden">
+                  <div
+                    className={`h-full transition-all ${
+                      (agent?.metrics?.cpu_percent ?? 0) > 80
+                        ? "bg-risk-malicious"
+                        : (agent?.metrics?.cpu_percent ?? 0) > 50
+                          ? "bg-amber-400"
+                          : "bg-signal"
+                    }`}
+                    style={{ width: `${Math.min(100, Math.max(0, agent?.metrics?.cpu_percent ?? 0))}%` }}
+                  />
+                </div>
+              </div>
+
+              <div className="rounded bg-bg-surface/80 p-1.5 border border-border-subtle/60">
+                <div className="flex justify-between items-center text-[10px] text-text-faint">
+                  <span>RAM</span>
+                  <span className="font-bold text-text-primary">{agent?.metrics?.memory_percent ?? 0}%</span>
+                </div>
+                <div className="mt-1 h-1 w-full bg-bg-elevated rounded-full overflow-hidden">
+                  <div
+                    className={`h-full transition-all ${
+                      (agent?.metrics?.memory_percent ?? 0) > 85
+                        ? "bg-risk-malicious"
+                        : (agent?.metrics?.memory_percent ?? 0) > 65
+                          ? "bg-amber-400"
+                          : "bg-signal"
+                    }`}
+                    style={{ width: `${Math.min(100, Math.max(0, agent?.metrics?.memory_percent ?? 0))}%` }}
+                  />
+                </div>
+              </div>
+
+              <div className="rounded bg-bg-surface/80 p-1.5 border border-border-subtle/60">
+                <span className="text-[10px] text-text-faint block">Spool Backlog</span>
+                <span className="font-bold text-text-primary text-[11px] mt-0.5 block">
+                  {agent?.metrics?.queue_backlog !== undefined ? `${agent.metrics.queue_backlog} events` : "0 (WAL OK)"}
+                </span>
+              </div>
+
+              <div className="rounded bg-bg-surface/80 p-1.5 border border-border-subtle/60">
+                <span className="text-[10px] text-text-faint block">Sensor Uptime</span>
+                <span className="font-bold text-accent text-[11px] mt-0.5 block">
+                  {agent?.metrics?.uptime_seconds !== undefined
+                    ? `${Math.floor(agent.metrics.uptime_seconds / 60)}m ${agent.metrics.uptime_seconds % 60}s`
+                    : "Live"}
+                </span>
+              </div>
+            </div>
+          </div>
+
           {/* Quick Tab Strip */}
           <div className="mt-4 flex rounded-lg border border-border-subtle bg-bg-base/80 p-1 font-mono text-xs">
             <button
@@ -964,6 +1040,7 @@ export default function AgentsPage() {
                 <th className="px-4 py-2.5">Endpoint Host</th>
                 <th className="px-4 py-2.5">OS &amp; Channels</th>
                 <th className="px-4 py-2.5">Identity &amp; Auth</th>
+                <th className="px-4 py-2.5">Sensor Health &amp; Backlog</th>
                 <th className="px-4 py-2.5">Telemetry Volume</th>
                 <th className="px-4 py-2.5">Heartbeat Liveness</th>
                 <th className="px-4 py-2.5 text-right">Actions</th>
@@ -972,7 +1049,7 @@ export default function AgentsPage() {
             <tbody className="divide-y divide-border-subtle/50">
               {filteredAgents.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-text-muted">
+                  <td colSpan={7} className="px-4 py-8 text-center text-text-muted">
                     No endpoint hosts match the current filter criteria.
                   </td>
                 </tr>
@@ -1027,13 +1104,65 @@ export default function AgentsPage() {
                       </td>
 
                       <td className="px-4 py-3 text-text-muted">
-                        <span className="rounded bg-bg-base border border-border-subtle px-1.5 py-0.5 text-[10px]">
-                          {a.identity}
-                        </span>
-                        {a.last_auth_role && (
-                          <span className="ml-1.5 text-[10px] text-text-faint">
-                            role: {a.last_auth_role}
-                          </span>
+                        <div className="flex flex-col gap-0.5">
+                          <div className="flex items-center gap-1">
+                            <span className="rounded bg-bg-base border border-border-subtle px-1.5 py-0.5 text-[10px]">
+                              {a.identity}
+                            </span>
+                            {a.last_auth_role && (
+                              <span className="text-[10px] text-text-faint">
+                                role: {a.last_auth_role}
+                              </span>
+                            )}
+                          </div>
+                          {a.agent_id && (
+                            <span className="text-[9px] font-mono text-signal truncate max-w-36" title={a.agent_id}>
+                              {a.agent_id}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+
+                      <td className="px-4 py-3">
+                        {a.metrics ? (
+                          <div className="flex items-center gap-1.5">
+                            <span
+                              className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-mono font-semibold border ${
+                                (a.metrics.cpu_percent ?? 0) > 80
+                                  ? "bg-risk-malicious/15 border-risk-malicious/40 text-risk-malicious"
+                                  : (a.metrics.cpu_percent ?? 0) > 50
+                                    ? "bg-amber-400/15 border-amber-400/40 text-amber-400"
+                                    : "bg-signal/15 border-signal/40 text-signal"
+                              }`}
+                              title={`CPU Load: ${a.metrics.cpu_percent}%`}
+                            >
+                              <span>CPU {a.metrics.cpu_percent}%</span>
+                            </span>
+                            <span
+                              className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-mono font-semibold border ${
+                                (a.metrics.memory_percent ?? 0) > 85
+                                  ? "bg-risk-malicious/15 border-risk-malicious/40 text-risk-malicious"
+                                  : (a.metrics.memory_percent ?? 0) > 65
+                                    ? "bg-amber-400/15 border-amber-400/40 text-amber-400"
+                                    : "bg-signal/15 border-signal/40 text-signal"
+                              }`}
+                              title={`RAM: ${a.metrics.memory_percent}% (${a.metrics.memory_used_mb ?? 0} MB / ${a.metrics.memory_total_mb ?? 0} MB)`}
+                            >
+                              <span>RAM {a.metrics.memory_percent}%</span>
+                            </span>
+                            <span
+                              className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-mono border ${
+                                (a.metrics.queue_backlog ?? 0) > 0
+                                  ? "bg-amber-400/15 border-amber-400/40 text-amber-400 font-bold"
+                                  : "bg-bg-base border-border-subtle text-text-faint"
+                              }`}
+                              title="Local Spool Backlog"
+                            >
+                              <span>{a.metrics.queue_backlog ? `! ${a.metrics.queue_backlog} spooled` : "0 spooled"}</span>
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="text-[10px] text-text-faint font-mono">—</span>
                         )}
                       </td>
 

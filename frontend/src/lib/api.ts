@@ -1567,6 +1567,8 @@ export async function runLiveSimulation(scenarioId: string): Promise<{
     cmd: string;
     exit_code: number;
     status: string;
+    stdout?: string;
+    stderr?: string;
   }>;
   events_count: number;
   alerts_count: number;
@@ -1581,6 +1583,7 @@ export async function runLiveSimulation(scenarioId: string): Promise<{
   detection_efficacy_pct?: number;
   syscalls?: Array<{ pid?: number; syscall: string; arguments: string; result: string; category: string }>;
   sinkhole_traffic?: Array<{ type: string; target: string; intercepted_response?: string; action?: string }>;
+  network_connections?: Array<{ ip: string; port: number; protocol?: string; status?: string }>;
   mitre_matrix?: Array<{ id: string; name?: string; detected: boolean; severity?: string }>;
   actionable_iocs?: {
     ips: string[];

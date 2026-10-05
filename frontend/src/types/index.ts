@@ -872,6 +872,17 @@ export interface AgentInfo {
   recent_run_ids?: string[];
   /** Latest live snapshot time — present when the agent shipped one. */
   last_snapshot_at?: string | null;
+  /** Cryptographic agent enrollment identity (e.g. agt_...). */
+  agent_id?: string | null;
+  /** Live host system telemetry shipped with heartbeats. */
+  metrics?: {
+    cpu_percent?: number;
+    memory_percent?: number;
+    memory_used_mb?: number;
+    memory_total_mb?: number;
+    queue_backlog?: number;
+    uptime_seconds?: number;
+  } | null;
 }
 
 export interface AgentsResponse {

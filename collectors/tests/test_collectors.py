@@ -735,3 +735,133 @@ def test_shipper_executes_pending_actions_and_acknowledges(tmp_path, monkeypatch
     assert ack_calls[0]["json"] == {"action_ids": ["act-123"]}
 
 
+def test_sqlite_spool_operations(tmp_path):
+    """SQLiteSpool creates a WAL database, buffers events, and drains atomically."""
+    from shipper import SQLiteSpool
+
+    db_path = str(tmp_path / "spool.db")
+    spool = SQLiteSpool(db_path)
+    assert spool.count() == 0
+
+    events = [{"event_type": "process_create", "pid": 100}, {"event_type": "socket_bind", "port": 4444}]
+    spool.spool(events)
+    assert spool.count() == 2
+
+    peeked = spool.peek(limit=10)
+    assert len(peeked) == 2
+    assert peeked[0][1]["pid"] == 100
+    assert peeked[1][1]["port"] == 4444
+
+    # Remove first item
+    spool.remove([peeked[0][0]])
+    assert spool.count() == 1
+    remaining = spool.peek(limit=10)
+    assert len(remaining) == 1
+    assert remaining[0][1]["port"] == 4444
+
+
+def test_shipper_sqlite_wal_spooling_and_recovery(monkeypatch, tmp_path):
+    """Shipper uses SQLite WAL spool by default, buffers on connection failure, and drains on recovery."""
+    import requests
+    from shipper import Shipper
+
+    posted = []
+
+    class FakeResp:
+        def raise_for_status(self):
+            return None
+
+    def fake_post(url, json=None, timeout=None, headers=None, data=None):
+        if fail[0]:
+            raise requests.ConnectionError("backend offline")
+        posted.append(json or [])
+        return FakeResp()
+
+    monkeypatch.setattr("shipper.requests.post", fake_post)
+
+    spool_db = tmp_path / "spool.db"
+    sh = Shipper("http://backend:8001", "run-wal", batch_size=2, flush_interval=999, max_retries=1, spool_path=str(spool_db))
+
+    fail = [True]
+    sh.add({"event_type": "file_write", "file_path": "/tmp/a"})
+    sh.add({"event_type": "file_write", "file_path": "/tmp/b"})
+    sh.flush()
+
+    assert spool_db.exists()
+    assert sh.get_system_metrics()["queue_backlog"] >= 2
+
+    # Now backend recovers
+    fail = [False]
+    sh.flush()
+
+    assert len(posted) == 1
+    assert len(posted[0]) == 2
+    assert sh.get_system_metrics()["queue_backlog"] == 0
+
+
+def test_shipper_hmac_request_signing(monkeypatch, tmp_path):
+    """Shipper sends HMAC headers when agent_id and agent_secret are configured."""
+    from shipper import Shipper
+
+    seen_headers = []
+
+    class FakeResp:
+        def raise_for_status(self):
+            return None
+
+    def fake_post(url, json=None, timeout=None, headers=None):
+        seen_headers.append(headers or {})
+        return FakeResp()
+
+    monkeypatch.setattr("shipper.requests.post", fake_post)
+
+    sh = Shipper(
+        "http://backend:8001",
+        "run-hmac",
+        agent_id="agt_secret123",
+        agent_secret="0123456789abcdef0123456789abcdef",
+        spool_path=str(tmp_path / "s.jsonl"),
+    )
+    sh.maybe_heartbeat(platform="linux", interval=0.0)
+
+    assert len(seen_headers) == 1
+    h = seen_headers[0]
+    assert h["X-OutPost-Agent-Id"] == "agt_secret123"
+    assert "X-OutPost-Timestamp" in h
+    assert len(h["X-OutPost-Signature"]) == 64
+
+
+def test_shipper_telemetry_metrics_collection_and_heartbeat(monkeypatch, tmp_path):
+    """Shipper gathers live metrics and includes them in the heartbeat payload."""
+    from shipper import Shipper
+
+    posted_bodies = []
+
+    class FakeResp:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"status": "ok"}
+
+    def fake_post(url, json=None, timeout=None, headers=None):
+        posted_bodies.append(json or {})
+        return FakeResp()
+
+    monkeypatch.setattr("shipper.requests.post", fake_post)
+
+    sh = Shipper("http://backend:8001", "run-metrics", spool_path=str(tmp_path / "s.jsonl"))
+    metrics = sh.get_system_metrics()
+    assert "cpu_percent" in metrics
+    assert "memory_percent" in metrics
+    assert "queue_backlog" in metrics
+    assert "uptime_seconds" in metrics
+
+    sh.maybe_heartbeat(platform="linux", interval=0.0)
+    assert len(posted_bodies) == 1
+    hb = posted_bodies[0]
+    assert "metrics" in hb
+    assert "cpu_percent" in hb["metrics"]
+    assert "queue_backlog" in hb["metrics"]
+
+
