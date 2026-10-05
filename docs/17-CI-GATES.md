@@ -127,9 +127,9 @@ The size-gate budgets are grounded in real CI measurements, not guesses:
 | `outpost-backend:ci` (python:3.12-slim + pip deps + app) | **191 MB** (200,772,677 B, commit `326f97c`) | 300 MB | 400 MB |
 | `outpost-airgap-ci` (test harness: node:22 + python3 + venv + frontend deps + Playwright/Chromium) | **1724 MB** (1,807,945,795 B, commit `f4f4ddf`) | 2048 MB | 2560 MB |
 
-> **Last measured:** `outpost-web:ci` 60 MB — badge job @ `9e127aa` (2026-08-14).
-> **Last measured:** `outpost-backend:ci` 191 MB — badge job @ `326f97c` (2026-08-14).
-> **Last measured:** `outpost-airgap-ci` 1724 MB — badge job @ `f4f4ddf` (2026-08-14).
+> **Last measured:** `outpost-web:ci` 64 MB — badge job @ `90a1078` (2026-10-05).
+> **Last measured:** `outpost-backend:ci` 201 MB — badge job @ `90a1078` (2026-10-05).
+> **Last measured:** `outpost-airgap-ci` 1738 MB — badge job @ `90a1078` (2026-10-05).
 
 **Enforced statically:** verify.sh's `Image budgets` step runs
 `scripts/gate_image_budget_docs.py` — every `check-image-size.sh`
