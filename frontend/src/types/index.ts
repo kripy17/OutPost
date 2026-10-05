@@ -2069,6 +2069,54 @@ export interface HostXRaySnapshotData {
   socket_count: number;
 }
 
+export interface CriterionDiagnostic {
+  original_field: string;
+  target_field: string;
+  modifier: string;
+  expected_values: string[];
+  event_value: string;
+  passed: boolean;
+  is_exclusion: boolean;
+  status: "PASS" | "FAIL";
+}
+
+export interface RuleSimulationResult {
+  matched: boolean;
+  title: string;
+  level: string;
+  severity: string;
+  mitre_tactics: string[];
+  mitre_techniques: string[];
+  diagnostics: CriterionDiagnostic[];
+  simulated_alert: {
+    rule_name: string;
+    level: string;
+    severity: string;
+    mitre_tactic: string;
+    mitre_technique: string;
+    details: string;
+    related_pid?: number | null;
+    related_ip?: string | null;
+  } | null;
+  recommendation: string;
+}
+
+export interface RuleTriggerTestResult {
+  status: string;
+  run_id: string;
+  alerts_count: number;
+  alert_id?: number | null;
+  alert?: {
+    rule_id: string;
+    rule_name: string;
+    severity: string;
+    details: string;
+    related_pid?: number | null;
+    related_ip?: string | null;
+  } | null;
+  findings_url: string;
+}
+
 
 
 

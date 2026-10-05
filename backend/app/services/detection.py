@@ -2651,6 +2651,68 @@ def load_custom_sigma_rules(conn: sqlite3.Connection) -> dict:
         return {}
 
 
+def _extract_event_field_value(event: dict, field: str) -> str:
+    raw = event.get(field)
+    if raw is not None and str(raw).strip():
+        return str(raw).strip()
+
+    aliases = {
+        "process_name": ("image", "Image", "exe_path", "process", "binary"),
+        "parent_name": ("parent_process_name", "parentimage", "ParentImage", "parent"),
+        "command_line": ("commandline", "CommandLine", "cmd", "cmdline"),
+        "dest_ip": ("destinationip", "DestinationIp", "dst_ip", "remote_ip", "ip"),
+        "dest_port": ("destinationport", "DestinationPort", "dst_port", "remote_port", "port"),
+        "file_path": ("targetfilename", "TargetFilename", "filename", "path"),
+        "registry_key": ("targetobject", "TargetObject", "reg_key"),
+        "user": ("username", "User", "UserName", "account"),
+        "host_id": ("hostname", "ComputerName", "host"),
+        "event_type": ("category", "event", "EventID"),
+        "protocol": ("proto", "Protocol"),
+        "sha256": ("hash", "hashes", "sha1", "md5"),
+    }
+    for alt in aliases.get(field, ()):
+        val = event.get(alt)
+        if val is not None and str(val).strip():
+            return str(val).strip()
+    return ""
+
+
+def _evaluate_single_criterion(crit: dict, event: dict) -> tuple[bool, str, str]:
+    field = crit.get("target_field", "command_line")
+    mod = (crit.get("modifier") or "contains").lower()
+    vals = crit.get("values") or ([crit["value"]] if isinstance(crit.get("value"), str) else crit.get("value") or [])
+    event_val = _extract_event_field_value(event, field)
+    if not event_val:
+        return False, field, ""
+
+    event_val_lower = event_val.lower()
+    for v_raw in vals:
+        val = str(v_raw).lower()
+        if mod in ("contains", "all"):
+            if val in event_val_lower:
+                return True, field, event_val
+        elif mod == "startswith":
+            if event_val_lower.startswith(val):
+                return True, field, event_val
+        elif mod == "endswith":
+            if event_val_lower.endswith(val):
+                return True, field, event_val
+        elif mod in ("equals", "exact"):
+            if event_val_lower == val:
+                return True, field, event_val
+        elif mod in ("re", "regex"):
+            try:
+                if re.search(val, event_val_lower, re.IGNORECASE):
+                    return True, field, event_val
+            except re.error:
+                pass
+        else:
+            if val in event_val_lower:
+                return True, field, event_val
+
+    return False, field, event_val
+
+
 def check_custom_sigma_rules(custom_rules: dict, event: dict) -> list[Alert]:
     """Evaluate imported SigmaHQ detection rules against one normalized event."""
     alerts = []
@@ -2671,56 +2733,24 @@ def check_custom_sigma_rules(custom_rules: dict, event: dict) -> list[Alert]:
         if not criteria:
             continue
 
-        matched_all = True
+        matched_selection = True
+        matched_exclusion = False
         matched_details = []
 
         for crit in criteria:
-            field = crit.get("target_field", "command_line")
-            mod = crit.get("modifier", "contains").lower()
-            vals = crit.get("values") or ([crit["value"]] if isinstance(crit.get("value"), str) else crit.get("value") or [])
+            is_excl = crit.get("is_exclusion", False)
+            passed, f_name, ev_val = _evaluate_single_criterion(crit, event)
+            if is_excl:
+                if passed:
+                    matched_exclusion = True
+                    break
+            else:
+                if not passed:
+                    matched_selection = False
+                    break
+                matched_details.append(f"{crit.get('original_field', f_name)} matched")
 
-            event_val = str(event.get(field) or "").lower()
-            if not event_val:
-                matched_all = False
-                break
-
-            matched_crit = False
-            for v_raw in vals:
-                val = str(v_raw).lower()
-                if mod in ("contains", "all"):
-                    if val in event_val:
-                        matched_crit = True
-                        break
-                elif mod == "startswith":
-                    if event_val.startswith(val):
-                        matched_crit = True
-                        break
-                elif mod == "endswith":
-                    if event_val.endswith(val):
-                        matched_crit = True
-                        break
-                elif mod in ("equals", "exact"):
-                    if event_val == val:
-                        matched_crit = True
-                        break
-                elif mod in ("re", "regex"):
-                    try:
-                        if re.search(val, event_val, re.IGNORECASE):
-                            matched_crit = True
-                            break
-                    except re.error:
-                        pass
-                else:
-                    if val in event_val:
-                        matched_crit = True
-                        break
-
-            if not matched_crit:
-                matched_all = False
-                break
-            matched_details.append(f"{crit.get('original_field', field)} matched")
-
-        if matched_all:
+        if matched_selection and not matched_exclusion and matched_details:
             alerts.append(
                 Alert(
                     run_id=event.get("run_id") or "",
@@ -2737,6 +2767,78 @@ def check_custom_sigma_rules(custom_rules: dict, event: dict) -> list[Alert]:
             )
 
     return alerts
+
+
+def simulate_rule_evaluation(rule_def_or_yaml: dict | str, event: dict) -> dict:
+    """Simulate evaluation of a custom Sigma rule against arbitrary telemetry with granular diagnostics."""
+    from .rule_generator import transpile_sigma_yaml
+
+    rule_def = rule_def_or_yaml
+    if isinstance(rule_def_or_yaml, str):
+        rule_def = transpile_sigma_yaml(rule_def_or_yaml)
+
+    title = rule_def.get("title", "Custom Detection Rule")
+    level = rule_def.get("level", "high")
+    severity = rule_def.get("severity", "malicious" if level in ("critical", "high") else "suspicious")
+    mitre_tactics = rule_def.get("mitre_tactics", ["execution"])
+    mitre_techniques = rule_def.get("mitre_techniques", ["T1059"])
+    criteria = rule_def.get("criteria", [])
+
+    diagnostics = []
+    matched_selection = True
+    matched_exclusion = False
+
+    for crit in criteria:
+        is_excl = crit.get("is_exclusion", False)
+        passed, f_name, ev_val = _evaluate_single_criterion(crit, event)
+        status = "PASS" if passed else "FAIL"
+        if is_excl:
+            if passed:
+                matched_exclusion = True
+        else:
+            if not passed:
+                matched_selection = False
+
+        diagnostics.append({
+            "original_field": crit.get("original_field", f_name),
+            "target_field": f_name,
+            "modifier": crit.get("modifier", "contains"),
+            "expected_values": crit.get("values", [crit.get("value")]),
+            "event_value": ev_val,
+            "passed": passed,
+            "is_exclusion": is_excl,
+            "status": status,
+        })
+
+    is_match = bool(matched_selection and not matched_exclusion and criteria)
+    simulated_alert = None
+    if is_match:
+        simulated_alert = {
+            "rule_name": title,
+            "level": level,
+            "severity": severity,
+            "mitre_tactic": mitre_tactics[0] if mitre_tactics else "execution",
+            "mitre_technique": mitre_techniques[0] if mitre_techniques else "T1059",
+            "details": f"Sigma detection matched: {', '.join([d['original_field'] for d in diagnostics if d['passed'] and not d['is_exclusion']])}",
+            "related_pid": event.get("pid"),
+            "related_ip": event.get("dest_ip"),
+        }
+
+    return {
+        "matched": is_match,
+        "title": title,
+        "level": level,
+        "severity": severity,
+        "mitre_tactics": mitre_tactics,
+        "mitre_techniques": mitre_techniques,
+        "diagnostics": diagnostics,
+        "simulated_alert": simulated_alert,
+        "recommendation": (
+            f"Rule would trigger an immediate {severity.upper()} finding in the SOC triage queue mapped to {mitre_techniques[0]}."
+            if is_match else
+            "Event does not satisfy all selection conditions or triggered an exclusion filter."
+        ),
+    }
 
 
 # ---------------------------------------------------------------------------

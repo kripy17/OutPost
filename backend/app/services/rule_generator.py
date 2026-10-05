@@ -594,26 +594,37 @@ def transpile_sigma_yaml(yaml_str: str) -> dict[str, Any]:
             raw_field = raw_k.strip()
 
         fl = raw_field.lower()
-        if "image" in fl and "parent" not in fl:
-            target = "process_name"
-        elif "parentimage" in fl or "parent" in fl:
+        if any(k in fl for k in ("parentimage", "parent_image", "parent_process", "parent_name", "ppid")):
             target = "parent_name"
-        elif "commandline" in fl or "cmd" in fl:
+        elif any(k in fl for k in ("image", "process_name", "process", "executable", "binary", "exe_path")):
+            target = "process_name"
+        elif any(k in fl for k in ("commandline", "command_line", "cmdline", "cmd", "arguments", "args")):
             target = "command_line"
-        elif "targetobject" in fl or "registry" in fl:
+        elif any(k in fl for k in ("targetobject", "registry_key", "reg_key", "registry")):
             target = "registry_key"
-        elif "targetfilename" in fl or "file" in fl:
+        elif any(k in fl for k in ("targetfilename", "file_path", "filename", "filepath", "path", "file")):
             target = "file_path"
-        elif "destinationip" in fl or "dest_ip" in fl or "dst_ip" in fl:
+        elif any(k in fl for k in ("destinationip", "dest_ip", "dst_ip", "remote_ip", "destination_ip", "ip")):
             target = "dest_ip"
-        elif "destinationport" in fl or "dest_port" in fl or "dst_port" in fl:
+        elif any(k in fl for k in ("destinationport", "dest_port", "dst_port", "remote_port", "destination_port", "port")):
             target = "dest_port"
+        elif any(k in fl for k in ("username", "user_name", "user", "account")):
+            target = "user"
+        elif any(k in fl for k in ("host_id", "hostname", "computername", "host")):
+            target = "host_id"
+        elif any(k in fl for k in ("event_type", "category", "event")):
+            target = "event_type"
+        elif any(k in fl for k in ("protocol", "proto")):
+            target = "protocol"
+        elif any(k in fl for k in ("sha256", "hash", "md5", "hashes")):
+            target = "sha256"
 
         return target, modifier
 
     for sel_name, sel_content in detection_def.items():
         if sel_name == "condition" or not isinstance(sel_content, dict):
             continue
+        is_excl = sel_name.lower().startswith(("filter", "exclusion", "exclude", "drop"))
         for field_key, field_val in sel_content.items():
             target_f, mod = _normalize_field(str(field_key))
             values = field_val if isinstance(field_val, list) else [field_val]
@@ -622,6 +633,7 @@ def transpile_sigma_yaml(yaml_str: str) -> dict[str, Any]:
                 continue
             criteria.append({
                 "section": sel_name,
+                "is_exclusion": is_excl,
                 "original_field": str(field_key),
                 "target_field": target_f,
                 "modifier": mod,
@@ -647,6 +659,80 @@ def transpile_sigma_yaml(yaml_str: str) -> dict[str, Any]:
         "condition": str(detection_def.get("condition") or "selection"),
         "source": "sigma_import",
     }
+
+
+def build_sigma_yaml(data: dict[str, Any]) -> str:
+    """Build canonical Sigma YAML string from structured rule definition or visual builder state."""
+    import yaml
+
+    title = str(data.get("title") or "Custom Detection Rule").strip()
+    rule_id = str(data.get("id") or data.get("rule_id") or uuid.uuid4()).strip()
+    status = str(data.get("status") or "experimental").strip()
+    description = str(data.get("description") or "Custom operator-authored detection rule").strip()
+    level = str(data.get("level") or "high").lower().strip()
+    product = str(data.get("platform") or data.get("product") or "all").lower().strip()
+
+    tags = []
+    tactics = data.get("mitre_tactics") or []
+    techniques = data.get("mitre_techniques") or []
+    for tac in tactics:
+        t_clean = str(tac).lower().replace("-", "_").strip()
+        if t_clean:
+            tags.append(f"attack.{t_clean}")
+    for tech in techniques:
+        t_clean = str(tech).upper().strip()
+        if t_clean:
+            tags.append(f"attack.{t_clean.lower()}")
+
+    logsource: dict[str, str] = {}
+    if product and product != "all":
+        logsource["product"] = product
+    event_category = data.get("category") or data.get("event_type")
+    if event_category:
+        logsource["category"] = str(event_category).strip()
+
+    detection: dict[str, Any] = {}
+    selection: dict[str, Any] = {}
+    for crit in data.get("criteria", []):
+        field = crit.get("original_field") or crit.get("field") or crit.get("target_field") or "CommandLine"
+        mod = crit.get("modifier") or "contains"
+        field_key = f"{field}|{mod}" if mod and mod not in ("contains", "exact") else field
+        val = crit.get("values") or crit.get("value") or []
+        if isinstance(val, list) and len(val) == 1:
+            val = val[0]
+        selection[field_key] = val
+
+    detection["selection"] = selection or {"CommandLine|contains": ["suspicious_pattern"]}
+
+    exclusions = data.get("exclusions") or []
+    if exclusions:
+        filter_dict: dict[str, Any] = {}
+        for excl in exclusions:
+            field = excl.get("original_field") or excl.get("field") or excl.get("target_field") or "CommandLine"
+            mod = excl.get("modifier") or "contains"
+            field_key = f"{field}|{mod}" if mod and mod not in ("contains", "exact") else field
+            val = excl.get("values") or excl.get("value") or []
+            if isinstance(val, list) and len(val) == 1:
+                val = val[0]
+            filter_dict[field_key] = val
+        detection["filter"] = filter_dict
+        detection["condition"] = "selection and not filter"
+    else:
+        detection["condition"] = "selection"
+
+    doc: dict[str, Any] = {
+        "title": title,
+        "id": rule_id,
+        "status": status,
+        "description": description,
+        "level": level,
+        "tags": tags or ["attack.execution", "attack.t1059"],
+    }
+    if logsource:
+        doc["logsource"] = logsource
+    doc["detection"] = detection
+
+    return yaml.safe_dump(doc, sort_keys=False)
 
 
 def transpile_sigma_bundle(yaml_str: str) -> list[dict[str, Any]]:

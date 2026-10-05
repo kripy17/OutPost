@@ -1314,6 +1314,30 @@ export async function backtestCustomRule(payload: {
   return post<RuleBacktestResult>("/rules/backtest/custom", payload);
 }
 
+/** Simulate execution of a Sigma detection rule against arbitrary telemetry with criteria diagnostics (POST /rules/simulate). */
+export async function simulateCustomRule(payload: {
+  sigma_yaml?: string;
+  rule_def?: any;
+  event: any;
+}): Promise<import("../types").RuleSimulationResult> {
+  return post<import("../types").RuleSimulationResult>("/rules/simulate", payload);
+}
+
+/** Convert visual rule builder form specification into canonical Sigma YAML (POST /rules/visual-to-yaml). */
+export async function convertVisualRuleToYaml(payload: any): Promise<{ sigma_yaml: string }> {
+  return post<{ sigma_yaml: string }>("/rules/visual-to-yaml", payload);
+}
+
+/** Deploy and fire an ad-hoc test event into live engine, verifying end-to-end alert generation (POST /rules/test-trigger). */
+export async function triggerLiveRuleTest(payload: {
+  sigma_yaml?: string;
+  rule_id?: string;
+  event: any;
+  sample_name?: string;
+}): Promise<import("../types").RuleTriggerTestResult> {
+  return post<import("../types").RuleTriggerTestResult>("/rules/test-trigger", payload);
+}
+
 
 /** Get full live host X-Ray snapshot (metrics, active processes, open sockets). */
 export async function getHostXRaySnapshot(): Promise<HostXRaySnapshotData> {

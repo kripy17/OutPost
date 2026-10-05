@@ -900,6 +900,153 @@ def post_custom_rule_backtest(body: CustomBacktestIn) -> dict:
         return backtest_rule_yaml(conn, rule_def=rule_def, max_events=body.max_events)
 
 
+class RuleSimulateIn(BaseModel):
+    sigma_yaml: str | None = None
+    rule_def: dict | None = None
+    event: dict
+
+
+@router.post("/rules/simulate", response_model=None)
+def post_rule_simulate(body: RuleSimulateIn) -> dict:
+    """Simulate execution of a Sigma detection rule against arbitrary telemetry with criteria diagnostics."""
+    from ..services.detection import simulate_rule_evaluation
+    from ..services.rule_generator import transpile_sigma_yaml
+
+    rule_def = body.rule_def
+    if not rule_def and body.sigma_yaml:
+        try:
+            rule_def = transpile_sigma_yaml(body.sigma_yaml)
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail=f"Failed to transpile Sigma rule YAML: {exc}")
+
+    if not rule_def:
+        raise HTTPException(status_code=422, detail="Either sigma_yaml or rule_def is required.")
+
+    return simulate_rule_evaluation(rule_def, body.event)
+
+
+class VisualToYamlIn(BaseModel):
+    title: str = Field(..., min_length=2)
+    id: str | None = None
+    description: str | None = None
+    level: str | None = "high"
+    platform: str | None = "all"
+    category: str | None = None
+    mitre_tactics: list[str] | None = None
+    mitre_techniques: list[str] | None = None
+    criteria: list[dict] = Field(..., min_length=1)
+    exclusions: list[dict] | None = None
+
+
+@router.post("/rules/visual-to-yaml", response_model=None)
+def post_visual_to_yaml(body: VisualToYamlIn) -> dict:
+    """Convert visual rule builder form specification into canonical Sigma YAML."""
+    from ..services.rule_generator import build_sigma_yaml
+
+    yaml_str = build_sigma_yaml(body.model_dump())
+    return {"sigma_yaml": yaml_str}
+
+
+class RuleTestTriggerIn(BaseModel):
+    sigma_yaml: str | None = None
+    rule_id: str | None = None
+    event: dict
+    sample_name: str | None = "custom_rule_verification"
+
+
+@router.post("/rules/test-trigger", response_model=None)
+def post_rule_test_trigger(body: RuleTestTriggerIn, request: Request) -> dict:
+    """Deploy and fire an ad-hoc test event into live engine, verifying end-to-end alert generation."""
+    import uuid
+    from ..models import event as event_store
+    from ..models import run as run_store
+    from ..services import normalizer
+    from ..services.detection import evaluate_batch
+    from ..services.rule_generator import transpile_sigma_yaml
+
+    rule_yaml = body.sigma_yaml
+    rule_id = body.rule_id
+
+    with db_session() as conn:
+        # If sigma_yaml provided, import or update it in settings
+        if rule_yaml:
+            try:
+                rule_def = transpile_sigma_yaml(rule_yaml)
+            except Exception as exc:
+                raise HTTPException(status_code=422, detail=f"Invalid Sigma rule YAML: {exc}")
+
+            rule_id = rule_def["rule_id"]
+            row = conn.execute("SELECT value FROM settings WHERE key = 'custom_sigma_rules'").fetchone()
+            current_rules = json.loads(row["value"]) if row and row["value"] else {}
+            rule_def["enabled"] = True
+            current_rules[rule_id] = rule_def
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES ('custom_sigma_rules', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (json.dumps(current_rules),),
+            )
+
+        # Create verification run
+        run_id = f"sim_{uuid.uuid4().hex[:10]}"
+        sample_name = body.sample_name or "custom_detection_verify"
+        platform = str(body.event.get("platform") or "linux")
+        run_store.create_run(
+            conn,
+            run_id=run_id,
+            sample_name=sample_name,
+            platform=platform,
+            session_type="analysis",
+            source="custom_rule_test",
+        )
+
+        # Store event
+        event_dict = dict(body.event)
+        event_dict["run_id"] = run_id
+        event_dict["platform"] = platform
+        if "timestamp" not in event_dict:
+            event_dict["timestamp"] = datetime.now(timezone.utc).isoformat()
+        if "host_id" not in event_dict:
+            event_dict["host_id"] = "local"
+
+        normalized = normalizer.normalize_event(event_dict)
+        if not normalized.get("raw_record"):
+            normalized["raw_record"] = json.dumps(event_dict)
+        normalized["id"] = event_store.insert_event(conn, normalized)
+
+        # Run detection
+        new_alerts = evaluate_batch(conn, run_id, [normalized])
+
+        actor = auth.role_from_request(request)
+        audit.log(
+            conn, actor, "rules.test_trigger",
+            target_type="rules", target_id=rule_id or run_id,
+            detail=f"Fired test event for rule '{rule_id}' (alerts={len(new_alerts)})",
+        )
+
+        alert_dict = None
+        alert_id = None
+        if new_alerts:
+            a = new_alerts[0]
+            alert_id = getattr(a, "id", None)
+            alert_dict = {
+                "rule_id": a.rule_id,
+                "rule_name": a.rule_name,
+                "severity": str(a.severity),
+                "details": a.details,
+                "related_pid": a.related_pid,
+                "related_ip": a.related_ip,
+            }
+
+        return {
+            "status": "triggered" if new_alerts else "event_stored_no_alert",
+            "run_id": run_id,
+            "alerts_count": len(new_alerts),
+            "alert_id": alert_id,
+            "alert": alert_dict,
+            "findings_url": f"/findings?q={rule_id}",
+        }
+
+
 @router.get("/coverage/navigator/download", response_model=None)
 def download_navigator_layer():
     """Download official MITRE ATT&CK Navigator JSON layer representing OutPost rule coverage."""
