@@ -106,7 +106,7 @@ export function ThemePalettePopover({
       >
         <span className="relative flex items-center justify-center text-sm">
           {activeTheme === "light" ? <IconSun /> : <IconMoon />}
-          <span className="absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full bg-accent animate-pulse shadow-[var(--glow-accent)]" />
+          <span className="absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full bg-accent ring-2 ring-accent/30 animate-pulse" />
         </span>
       </button>
 
@@ -120,7 +120,7 @@ export function ThemePalettePopover({
           <div className="flex items-center justify-between border-b border-border-subtle pb-2.5">
             <div className="flex items-center gap-1.5">
               <span className="text-sm">🎨</span>
-              <span className="font-mono text-xs font-bold uppercase tracking-wider text-text-primary">
+              <span className="font-sans text-xs font-bold uppercase tracking-wider text-text-primary">
                 Theme Studio
               </span>
             </div>
@@ -130,11 +130,11 @@ export function ThemePalettePopover({
           </div>
 
           {/* Tab Selector */}
-          <div className="mt-2.5 flex rounded-lg border border-border-subtle bg-bg-surface p-0.5 font-mono text-[11px]">
+          <div className="mt-2.5 flex rounded-lg border border-border-subtle bg-bg-surface p-0.5 font-sans text-xs">
             <button
               onClick={() => setTab("THEMES")}
               className={`flex-1 rounded-md py-1 text-center font-medium transition ${
-                tab === "THEMES" ? "bg-accent/15 font-bold text-accent shadow-sm" : "text-text-muted hover:text-text-primary"
+                tab === "THEMES" ? "bg-accent/15 font-bold text-accent shadow-xs" : "text-text-muted hover:text-text-primary"
               }`}
             >
               Theme Presets ({THEME_PRESETS.length})
@@ -160,7 +160,7 @@ export function ThemePalettePopover({
                     onClick={() => applyThemePreset(t.id)}
                     className={`flex w-full items-center justify-between rounded-xl border p-2 text-left transition ${
                       isCurrent
-                        ? "border-accent/60 bg-accent/15 shadow-[var(--glow-accent)]"
+                        ? "border-accent/60 bg-accent/15 ring-1 ring-accent/40 shadow-xs"
                         : "border-border-subtle bg-bg-surface/70 hover:border-border-strong hover:bg-bg-surface"
                     }`}
                   >
@@ -204,7 +204,7 @@ export function ThemePalettePopover({
                       title={p.name}
                       className={`flex flex-col items-center gap-1.5 rounded-xl border p-2 text-[10px] transition ${
                         active
-                          ? "border-accent/70 bg-accent/20 font-bold text-accent shadow-[var(--glow-accent)]"
+                          ? "border-accent/70 bg-accent/20 font-bold text-accent ring-1 ring-accent/40 shadow-xs"
                           : "border-border-subtle bg-bg-surface text-text-muted hover:border-border-strong"
                       }`}
                     >

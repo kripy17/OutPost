@@ -83,7 +83,7 @@ export default function WelcomePage() {
             <button
               onClick={() => choose.mutate("demo")}
               disabled={choose.isPending}
-              className="press inline-flex w-full items-center justify-center gap-2 rounded-lg bg-accent px-4 py-2.5 text-xs font-semibold text-bg-base transition-all duration-150 hover:bg-accent-soft hover:shadow-[var(--glow-accent)] disabled:opacity-50"
+              className="press inline-flex w-full items-center justify-center gap-2 rounded-lg bg-accent px-4 py-2.5 text-xs font-semibold text-bg-base transition-all duration-150 hover:bg-accent-soft ring-1 ring-accent/30 shadow-xs disabled:opacity-50"
             >
               <Icon name="play" size={13} />
               {choose.isPending ? "Seeding…" : "Seed demo campaign"}
@@ -158,7 +158,7 @@ export default function WelcomePage() {
             <button
               onClick={() => choose.mutate("empty")}
               disabled={choose.isPending}
-              className="press inline-flex w-full items-center justify-center gap-2 rounded-lg border border-accent/60 bg-accent/10 px-4 py-2.5 text-xs font-semibold text-accent transition-all duration-150 hover:bg-accent/20 hover:shadow-[var(--glow-accent)] disabled:opacity-50"
+              className="press inline-flex w-full items-center justify-center gap-2 rounded-lg border border-accent/60 bg-accent/10 px-4 py-2.5 text-xs font-semibold text-accent transition-all duration-150 hover:bg-accent/20 ring-1 ring-accent/30 disabled:opacity-50"
             >
               <Icon name="terminal" size={13} />
               {choose.isPending ? "Starting…" : "Start empty · guided setup"}

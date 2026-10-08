@@ -406,7 +406,7 @@ export default function EventsPage() {
       </header>
 
       {/* ── Executive Pulse HUD (4 KPI Gauges) ───────────────────────── */}
-      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 font-mono text-xs">
+      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 font-sans text-xs">
         {/* 1. CPU Utilization */}
         <div className="rounded-2xl border border-border-subtle bg-bg-surface/80 p-4 shadow-sm backdrop-blur-sm relative overflow-hidden flex flex-col justify-between">
           <div>
@@ -820,7 +820,7 @@ export default function EventsPage() {
               <button
                 key={tab.id}
                 onClick={() => setActiveDeck(tab.id as any)}
-                className={`press flex items-center gap-1.5 rounded-lg px-3 py-2 font-mono text-xs font-semibold transition ${
+                className={`press flex items-center gap-1.5 rounded-lg px-3 py-2 font-sans text-xs font-semibold transition ${
                   activeDeck === tab.id
                     ? "bg-accent/15 text-accent border border-accent/40 shadow-xs"
                     : "text-text-muted hover:text-text-primary hover:bg-bg-elevated/40 border border-transparent"
@@ -829,7 +829,7 @@ export default function EventsPage() {
                 <Icon name={tab.icon as any} size={14} />
                 <span>{tab.label}</span>
                 {tab.count !== null && (
-                  <span className="rounded-full bg-bg-base px-1.5 py-0.2 text-[10px] font-bold tabular-nums border border-border-subtle">
+                  <span className="rounded-full bg-bg-base px-1.5 py-0.2 font-mono text-[10px] font-bold tabular-nums border border-border-subtle">
                     {tab.count}
                   </span>
                 )}
@@ -846,7 +846,7 @@ export default function EventsPage() {
         </div>
 
         {/* Search & Filter Toolbar (Available across all views) */}
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border-subtle bg-bg-surface p-2.5 font-mono text-xs">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border-subtle bg-bg-surface p-2.5 font-sans text-xs">
           {/* Universal Search Bar */}
           <div className="relative flex-1 min-w-[240px]">
             <Icon name="search" size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-faint" />

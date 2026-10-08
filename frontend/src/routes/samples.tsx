@@ -362,7 +362,7 @@ export default function SamplesPage() {
             }}
             className={`mb-6 flex flex-col items-center justify-center rounded-2xl border-2 border-dashed p-6 text-center transition-all duration-150 ${
               dragOver
-                ? "border-accent bg-accent/10 shadow-[var(--glow-accent)]"
+                ? "border-accent bg-accent/10 ring-2 ring-accent/30"
                 : "border-border-subtle bg-bg-surface/60 hover:border-accent/50 hover:bg-bg-surface"
             }`}
           >
@@ -387,7 +387,7 @@ export default function SamplesPage() {
                 ✓ 1-Click VirusTotal External Pivots
               </span>
             </div>
-            <label className="press mt-3.5 inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/15 px-4 py-2 font-mono text-xs font-semibold text-accent transition-colors hover:bg-accent/25 hover:shadow-[var(--glow-accent)]">
+            <label className="press mt-3.5 inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/15 px-4 py-2 font-sans text-xs font-semibold text-accent transition-colors hover:bg-accent/25 focus:ring-1 focus:ring-accent/40">
               <Icon name="plus" size={12} />
               <span>{uploading ? "Analyzing binary bytes safely…" : "Select Binary to Upload"}</span>
               <input

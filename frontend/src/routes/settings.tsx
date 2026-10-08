@@ -250,7 +250,7 @@ function ThemePalettePanel() {
                 aria-pressed={isCurrent}
                 className={`press flex flex-col justify-between rounded-xl border p-3 text-left transition-all ${
                   isCurrent
-                    ? "border-accent/70 bg-accent/15 shadow-[var(--glow-accent)]"
+                    ? "border-accent/70 bg-accent/15 ring-1 ring-accent/40 shadow-xs"
                     : "border-border-subtle bg-bg-surface hover:border-accent/40"
                 }`}
               >
@@ -297,7 +297,7 @@ function ThemePalettePanel() {
                 aria-pressed={isCurrent}
                 className={`press flex flex-col items-center gap-1.5 rounded-xl border p-2.5 text-center transition ${
                   isCurrent
-                    ? "border-accent/70 bg-accent/15 font-bold text-accent shadow-[var(--glow-accent)]"
+                    ? "border-accent/70 bg-accent/15 font-bold text-accent ring-1 ring-accent/40 shadow-xs"
                     : "border-border-subtle bg-bg-surface text-text-muted hover:border-border-strong"
                 }`}
               >
@@ -1253,7 +1253,7 @@ export default function SettingsPage() {
               <button
                 onClick={submitPassword}
                 disabled={rotate.isPending}
-                className="press rounded-lg border border-accent/60 bg-accent/10 px-4 py-2 font-mono text-xs font-medium text-accent transition-colors duration-150 hover:shadow-[var(--glow-accent)] disabled:opacity-50"
+                className="press rounded-lg border border-accent/60 bg-accent/10 px-4 py-2 font-sans text-xs font-semibold text-accent transition-colors duration-150 hover:bg-accent/20 ring-1 ring-accent/30 disabled:opacity-50"
               >
                 {rotate.isPending ? "Storing…" : "Set password"}
               </button>
@@ -1441,7 +1441,7 @@ export default function SettingsPage() {
             <button
               onClick={() => save.mutate((draft ?? (data as NotificationSettings)) as NotificationSettingsIn)}
               disabled={save.isPending || Boolean(me?.enabled && me.read_only)}
-              className="press inline-flex items-center gap-2 rounded-lg border border-accent/60 bg-accent/10 px-5 py-2.5 font-mono text-sm font-medium text-accent transition-all duration-150 hover:shadow-[var(--glow-accent)] disabled:cursor-default disabled:opacity-50"
+              className="press inline-flex items-center gap-2 rounded-lg border border-accent/60 bg-accent/10 px-5 py-2.5 font-sans text-sm font-semibold text-accent transition-all duration-150 hover:bg-accent/20 ring-1 ring-accent/30 disabled:cursor-default disabled:opacity-50"
             >
               <Icon name={save.isPending ? "refresh" : "check"} size={13} className={save.isPending ? "animate-spin" : ""} />
               {save.isPending ? "Saving…" : "Save channels"}

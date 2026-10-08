@@ -1525,7 +1525,7 @@ export default function MonitorPage() {
                 /* Pristine Standby State */
                 <div className="flex-1 rounded-xl border border-border-subtle/60 bg-[#06080d] p-4 overflow-y-auto max-h-[460px] shadow-inner selection:bg-accent selection:text-black">
                   <div className="flex flex-col items-center justify-center h-full min-h-[300px] text-center space-y-3 font-mono py-12">
-                    <div className="h-12 w-12 rounded-2xl border border-accent/40 bg-accent/10 flex items-center justify-center text-accent shadow-[var(--glow-accent)]">
+                    <div className="h-12 w-12 rounded-2xl border border-accent/40 bg-accent/10 flex items-center justify-center text-accent ring-1 ring-accent/30 shadow-xs">
                       <Icon name="terminal" size={24} />
                     </div>
                     <div className="space-y-1">
@@ -2327,7 +2327,7 @@ export default function MonitorPage() {
                         <button
                           onClick={() => void handleRunFullPlaybook(pb)}
                           disabled={isExecuting}
-                          className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/15 px-3 py-1 text-[11px] font-bold text-accent transition hover:bg-accent/25 hover:shadow-[var(--glow-accent)] disabled:opacity-50"
+                          className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/15 px-3 py-1 text-[11px] font-bold text-accent transition hover:bg-accent/25 focus:ring-1 focus:ring-accent/40 disabled:opacity-50"
                         >
                           <Icon
                             name={isDetonating ? "refresh" : "play"}
@@ -2416,7 +2416,7 @@ export default function MonitorPage() {
                         <button
                           onClick={() => void handleDetonateVaultSample(s)}
                           disabled={isExecuting}
-                          className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/15 px-3 py-1 text-[11px] font-bold text-accent transition hover:bg-accent/25 hover:shadow-[var(--glow-accent)] disabled:opacity-50"
+                          className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/15 px-3 py-1 text-[11px] font-bold text-accent transition hover:bg-accent/25 focus:ring-1 focus:ring-accent/40 disabled:opacity-50"
                         >
                           <Icon
                             name={isDetonating ? "refresh" : "play"}
@@ -2489,7 +2489,7 @@ export default function MonitorPage() {
                     {techniqueResult.detection_status !== "detected" && techniqueResult.alerts_count === 0 && (
                       <Link
                         to={`/rules?tab=sigma&mode=builder&technique=${techniqueResult.technique_id}&tactic=${techniqueResult.tactic}&name=${encodeURIComponent(techniqueResult.name)}&title=${encodeURIComponent("Detect " + techniqueResult.name)}`}
-                        className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/20 px-3 py-1 text-[11px] font-bold text-accent transition hover:bg-accent/30 hover:shadow-[var(--glow-accent)]"
+                        className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/20 px-3 py-1 text-[11px] font-bold text-accent transition hover:bg-accent/30 ring-1 ring-accent/30"
                         title="Open Visual Rule Builder to author a Sigma rule for this gap"
                       >
                         <Icon name="shield" size={12} />
