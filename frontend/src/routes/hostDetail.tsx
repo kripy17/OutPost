@@ -33,6 +33,7 @@ import { ProcessNetworkMatrix } from "../components/ProcessNetworkMatrix";
 import { relativeTime } from "./agentsHelpers";
 import { HardwareSensorMatrix } from "../components/HardwareSensorMatrix";
 import { HostDifferentialDelta } from "../components/HostDifferentialDelta";
+import HostXRayMonitor from "../components/HostXRayMonitor";
 
 const KIND_TABS: { value: TimelineKind | ""; label: string; icon: IconName }[] = [
   { value: "", label: "All", icon: "grid" },
@@ -162,7 +163,7 @@ function EntryRow({
 export default function HostDetailPage() {
   const { hostId } = useParams<{ hostId: string }>();
   const queryClient = useQueryClient();
-  const [activeView, setActiveView] = useState<"timeline" | "delta" | "tree" | "network" | "sensors" | "hunts">("timeline");
+  const [activeView, setActiveView] = useState<"timeline" | "forensics" | "delta" | "tree" | "network" | "sensors" | "hunts">("timeline");
   const [activeProbeResult, setActiveProbeResult] = useState<ForensicProbeResult | null>(null);
   const [runningProbeId, setRunningProbeId] = useState<string | null>(null);
 
@@ -401,6 +402,17 @@ export default function HostDetailPage() {
         >
           <Icon name="list" size={13} />
           <span>Activity Timeline ({total})</span>
+        </button>
+        <button
+          onClick={() => setActiveView("forensics")}
+          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-semibold transition ${
+            activeView === "forensics"
+              ? "bg-accent/15 text-accent shadow-xs"
+              : "text-text-muted hover:text-text-primary"
+          }`}
+        >
+          <Icon name="activity" size={13} />
+          <span>Host X-Ray &amp; Processes</span>
         </button>
         <button
           onClick={() => setActiveView("delta")}
@@ -741,6 +753,10 @@ export default function HostDetailPage() {
             })}
           </div>
         </Panel>
+      )}
+
+      {activeView === "forensics" && (
+        <HostXRayMonitor hostId={hostId || "local"} initialPid={inspectPid} />
       )}
 
       {activeView === "delta" && (

@@ -125,7 +125,7 @@ export function getNavigationGroups(
       label: "Live Operations",
       links: [
         { to: "/", label: "Overview", iconName: "grid", end: true },
-        { to: "/events", label: "Telemetry & Host Forensics", iconName: "activity" },
+        { to: "/events", label: "Security Telemetry", iconName: "activity" },
         {
           to: "/findings",
           label: "Incident Findings",
@@ -505,7 +505,7 @@ export default function Nav() {
             {!railCollapsed && (
               <div className="flex flex-col">
                 <span className="text-[14px] font-bold tracking-tight text-text-primary">{customTitle}</span>
-                <span className="font-mono text-[9px] font-semibold tracking-wider text-accent/80 uppercase">EDR // CONSOLE v7.4</span>
+                <span className="text-[10px] font-medium text-text-muted">SOC Operations</span>
               </div>
             )}
           </div>
@@ -531,9 +531,8 @@ export default function Nav() {
           {groups.map((group, i) => (
             <div key={group.label} className={railCollapsed && i > 0 ? "border-t border-border-subtle/70 pt-1.5" : ""}>
               {!railCollapsed && (
-                <p className="flex items-center gap-1.5 px-2 pb-1.5 font-mono text-[10px] font-bold uppercase tracking-wider text-text-faint">
-                  <span className="text-accent/60 font-medium">{`[0${i + 1}]`}</span>
-                  <span>{group.label}</span>
+                <p className="px-2 pb-1.5 font-mono text-[10px] font-bold uppercase tracking-wider text-text-faint">
+                  {group.label}
                 </p>
               )}
               <div className="space-y-0.5">

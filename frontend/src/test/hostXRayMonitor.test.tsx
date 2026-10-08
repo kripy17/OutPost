@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
-import EventsPage from "../routes/events";
+import HostXRayMonitor from "../components/HostXRayMonitor";
 import type { HostXRaySnapshotData } from "../types";
 
 const {
@@ -339,7 +339,7 @@ function renderEventsPage(initialUrl = "/events") {
   return render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={[initialUrl]}>
-        <EventsPage />
+        <HostXRayMonitor />
       </MemoryRouter>
     </QueryClientProvider>,
   );
