@@ -363,7 +363,7 @@ export default function InvestigationsPage() {
         actions={
           <button
             onClick={() => setIsDrawerOpen(true)}
-            className="press inline-flex items-center gap-2 rounded-lg border border-accent/60 bg-accent px-3.5 py-2 font-mono text-xs font-semibold text-black shadow-[var(--glow-accent)] hover:bg-accent/90"
+            className="press inline-flex items-center gap-2 rounded-lg border border-accent bg-accent px-3.5 py-2 font-sans text-xs font-semibold text-white shadow-xs hover:brightness-110"
           >
             <Icon name="plus" size={14} />
             Open New Incident Case
@@ -372,80 +372,80 @@ export default function InvestigationsPage() {
       />
 
       {/* Executive Case Posture Strip */}
-      <section className="grid grid-cols-2 gap-3 sm:grid-cols-5" aria-label="Incident Posture Metrics">
+      <section className="grid grid-cols-2 gap-3 sm:grid-cols-5 font-sans" aria-label="Incident Posture Metrics">
         <div className="rounded-xl border border-border-subtle bg-bg-surface p-3.5 shadow-xs">
           <div className="flex items-center justify-between text-text-muted">
-            <span className="font-mono text-[10px] uppercase tracking-wider">Total Cases</span>
+            <span className="text-[10px] uppercase tracking-wider font-semibold text-text-faint">Total Cases</span>
             <Icon name="notes" size={14} className="text-text-faint" />
           </div>
           <div className="mt-1 font-mono text-2xl font-bold tabular-nums text-text-primary">
             {metrics.total}
           </div>
-          <p className="mt-0.5 font-mono text-[10px] text-text-faint">Logged incident anchors</p>
+          <p className="mt-0.5 text-[11px] text-text-muted">Logged incident anchors</p>
         </div>
 
         <div className="rounded-xl border border-rose-500/25 bg-rose-500/5 p-3.5 shadow-xs">
           <div className="flex items-center justify-between text-rose-400">
-            <span className="font-mono text-[10px] uppercase tracking-wider font-semibold">Critical Threat</span>
+            <span className="text-[10px] uppercase tracking-wider font-semibold">Critical Threat</span>
             <span className="h-2 w-2 rounded-full bg-rose-500" />
           </div>
           <div className="mt-1 font-mono text-2xl font-bold tabular-nums text-rose-400">
             {metrics.critical}
           </div>
-          <p className="mt-0.5 font-mono text-[10px] text-rose-400/70">Malicious active SLA</p>
+          <p className="mt-0.5 text-[11px] text-rose-400/80">Malicious active SLA</p>
         </div>
 
         <div className="rounded-xl border border-accent/25 bg-accent/5 p-3.5 shadow-xs">
           <div className="flex items-center justify-between text-accent">
-            <span className="font-mono text-[10px] uppercase tracking-wider font-semibold">Active Triage</span>
+            <span className="text-[10px] uppercase tracking-wider font-semibold">Active Triage</span>
             <Icon name="activity" size={14} />
           </div>
           <div className="mt-1 font-mono text-2xl font-bold tabular-nums text-accent">
             {metrics.active}
           </div>
-          <p className="mt-0.5 font-mono text-[10px] text-accent/70">In flight operations</p>
+          <p className="mt-0.5 text-[11px] text-accent/80">In flight operations</p>
         </div>
 
         <div className="rounded-xl border border-amber-500/25 bg-amber-500/5 p-3.5 shadow-xs">
           <div className="flex items-center justify-between text-amber-400">
-            <span className="font-mono text-[10px] uppercase tracking-wider font-semibold">Contained</span>
+            <span className="text-[10px] uppercase tracking-wider font-semibold">Contained</span>
             <Icon name="shield" size={14} />
           </div>
           <div className="mt-1 font-mono text-2xl font-bold tabular-nums text-amber-400">
             {metrics.contained}
           </div>
-          <p className="mt-0.5 font-mono text-[10px] text-amber-400/70">Network isolated / neutralized</p>
+          <p className="mt-0.5 text-[11px] text-amber-400/80">Network isolated / neutralized</p>
         </div>
 
         <div className="rounded-xl border border-border-subtle bg-bg-surface p-3.5 shadow-xs">
           <div className="flex items-center justify-between text-text-muted">
-            <span className="font-mono text-[10px] uppercase tracking-wider">Resolved / Closed</span>
+            <span className="text-[10px] uppercase tracking-wider font-semibold text-text-faint">Resolved / Closed</span>
             <Icon name="check" size={14} className="text-emerald-400" />
           </div>
           <div className="mt-1 font-mono text-2xl font-bold tabular-nums text-emerald-400">
             {metrics.resolved}
           </div>
-          <p className="mt-0.5 font-mono text-[10px] text-text-faint">Completed investigations</p>
+          <p className="mt-0.5 text-[11px] text-text-muted">Completed investigations</p>
         </div>
       </section>
 
       {/* Filter and Command Strip */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border-subtle pb-4">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border-subtle pb-4 font-sans text-xs">
         {/* Status Tabs */}
         <div className="flex flex-wrap gap-1">
           {STATUS_TABS.map((t) => (
             <button
               key={t.value}
               onClick={() => setStatus(t.value)}
-              className={`rounded-lg border px-3 py-1.5 font-mono text-xs font-medium transition-colors ${
+              className={`rounded-lg border px-3 py-1.5 font-sans text-xs font-medium transition-colors ${
                 status === t.value
-                  ? "border-accent/60 bg-accent/15 text-accent shadow-xs"
+                  ? "border-accent/60 bg-accent/15 text-accent shadow-xs font-semibold"
                   : "border-border-subtle bg-bg-surface text-text-muted hover:border-border-strong hover:text-text-primary"
               }`}
             >
               {t.label}
               {t.value === "" && data?.total !== undefined && (
-                <span className="ml-1.5 rounded bg-bg-elevated px-1.5 py-0.5 text-[10px] text-text-faint">
+                <span className="ml-1.5 rounded bg-bg-elevated px-1.5 py-0.5 font-mono text-[10px] text-text-faint">
                   {data.total}
                 </span>
               )}
@@ -517,7 +517,7 @@ export default function InvestigationsPage() {
                   setStatus("");
                   setSeverityFilter("all");
                 }}
-                className="press mt-4 inline-flex items-center gap-1.5 rounded-lg border border-accent/50 bg-accent/10 px-3 py-1.5 font-mono text-xs font-semibold text-accent hover:bg-accent/20"
+                className="press mt-4 inline-flex items-center gap-1.5 rounded-lg border border-accent/50 bg-accent/10 px-3 py-1.5 font-sans text-xs font-semibold text-accent hover:bg-accent/20"
               >
                 <Icon name="x" size={11} />
                 Clear active filters
@@ -525,7 +525,7 @@ export default function InvestigationsPage() {
             ) : (
               <button
                 onClick={() => setIsDrawerOpen(true)}
-                className="press mt-4 inline-flex items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/15 px-4 py-2 font-mono text-xs font-semibold text-accent shadow-[var(--glow-accent)] hover:bg-accent/25"
+                className="press mt-4 inline-flex items-center gap-1.5 rounded-lg border border-accent bg-accent px-4 py-2 font-sans text-xs font-semibold text-white shadow-xs hover:brightness-110"
               >
                 <Icon name="plus" size={12} />
                 Open First Incident Case

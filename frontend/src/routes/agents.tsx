@@ -159,7 +159,7 @@ function HostInspectorDrawer({
                 <button
                   onClick={() => toggleIsolation.mutate(false)}
                   disabled={toggleIsolation.isPending}
-                  className="press inline-flex items-center gap-1 rounded-lg border border-signal/60 bg-signal/15 px-3 py-1.5 font-mono text-xs font-bold text-signal hover:bg-signal/25 disabled:opacity-50"
+                  className="press inline-flex items-center gap-1 rounded-lg border border-signal/60 bg-signal/15 px-3 py-1.5 font-sans text-xs font-semibold text-signal hover:bg-signal/25 disabled:opacity-50"
                   title="Lift network containment and restore normal traffic"
                 >
                   <Icon name="check" size={12} />
@@ -169,7 +169,7 @@ function HostInspectorDrawer({
                 <button
                   onClick={() => toggleIsolation.mutate(true)}
                   disabled={toggleIsolation.isPending}
-                  className="press inline-flex items-center gap-1 rounded-lg border border-risk-malicious/60 bg-risk-malicious/15 px-3 py-1.5 font-mono text-xs font-bold text-risk-malicious hover:bg-risk-malicious/25 disabled:opacity-50"
+                  className="press inline-flex items-center gap-1 rounded-lg border border-risk-malicious/60 bg-risk-malicious/15 px-3 py-1.5 font-sans text-xs font-semibold text-risk-malicious hover:bg-risk-malicious/25 disabled:opacity-50"
                   title="Isolate host from network using kernel firewall rules"
                 >
                   <Icon name="alert" size={12} />
@@ -186,15 +186,15 @@ function HostInspectorDrawer({
           </div>
 
           {/* Endpoint Hardware & Telemetry HUD */}
-          <div className="mt-3.5 rounded-lg border border-border-subtle bg-bg-base/70 p-2.5 font-mono text-[11px] space-y-2">
+          <div className="mt-3.5 rounded-lg border border-border-subtle bg-bg-base/70 p-2.5 font-sans text-[11px] space-y-2">
             <div className="flex items-center justify-between">
-              <span className="text-[10px] uppercase font-bold text-text-faint flex items-center gap-1.5">
+              <span className="text-[10px] uppercase font-semibold text-text-faint flex items-center gap-1.5">
                 <Icon name="activity" size={11} className="text-accent" />
                 <span>Sensor Health &amp; In-Flight Telemetry</span>
               </span>
               <span className="text-[10px] text-text-muted">
                 {agent?.agent_id ? (
-                  <span className="text-signal flex items-center gap-1">
+                  <span className="text-signal flex items-center gap-1 font-mono">
                     <span className="h-1.5 w-1.5 rounded-full bg-signal" />
                     <span>Enrolled: {agent.agent_id}</span>
                   </span>
@@ -208,7 +208,7 @@ function HostInspectorDrawer({
               <div className="rounded bg-bg-surface/80 p-1.5 border border-border-subtle/60">
                 <div className="flex justify-between items-center text-[10px] text-text-faint">
                   <span>CPU</span>
-                  <span className="font-bold text-text-primary">{agent?.metrics?.cpu_percent ?? 0}%</span>
+                  <span className="font-bold font-mono text-text-primary">{agent?.metrics?.cpu_percent ?? 0}%</span>
                 </div>
                 <div className="mt-1 h-1 w-full bg-bg-elevated rounded-full overflow-hidden">
                   <div
@@ -227,7 +227,7 @@ function HostInspectorDrawer({
               <div className="rounded bg-bg-surface/80 p-1.5 border border-border-subtle/60">
                 <div className="flex justify-between items-center text-[10px] text-text-faint">
                   <span>RAM</span>
-                  <span className="font-bold text-text-primary">{agent?.metrics?.memory_percent ?? 0}%</span>
+                  <span className="font-bold font-mono text-text-primary">{agent?.metrics?.memory_percent ?? 0}%</span>
                 </div>
                 <div className="mt-1 h-1 w-full bg-bg-elevated rounded-full overflow-hidden">
                   <div
@@ -245,14 +245,14 @@ function HostInspectorDrawer({
 
               <div className="rounded bg-bg-surface/80 p-1.5 border border-border-subtle/60">
                 <span className="text-[10px] text-text-faint block">Spool Backlog</span>
-                <span className="font-bold text-text-primary text-[11px] mt-0.5 block">
+                <span className="font-semibold text-text-primary text-[11px] font-mono mt-0.5 block">
                   {agent?.metrics?.queue_backlog !== undefined ? `${agent.metrics.queue_backlog} events` : "0 (WAL OK)"}
                 </span>
               </div>
 
               <div className="rounded bg-bg-surface/80 p-1.5 border border-border-subtle/60">
                 <span className="text-[10px] text-text-faint block">Sensor Uptime</span>
-                <span className="font-bold text-accent text-[11px] mt-0.5 block">
+                <span className="font-semibold text-accent text-[11px] font-mono mt-0.5 block">
                   {agent?.metrics?.uptime_seconds !== undefined
                     ? `${Math.floor(agent.metrics.uptime_seconds / 60)}m ${agent.metrics.uptime_seconds % 60}s`
                     : "Live"}
@@ -262,7 +262,7 @@ function HostInspectorDrawer({
           </div>
 
           {/* Quick Tab Strip */}
-          <div className="mt-4 flex rounded-lg border border-border-subtle bg-bg-base/80 p-1 font-mono text-xs">
+          <div className="mt-4 flex rounded-lg border border-border-subtle bg-bg-base/80 p-1 font-sans text-xs">
             <button
               onClick={() => setActiveTab("snapshot")}
               className={`flex-1 py-1.5 text-center rounded-md font-medium transition ${
@@ -857,12 +857,12 @@ export default function AgentsPage() {
       )}
 
       {/* Top Console Header */}
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-4 border-b border-border-subtle pb-6">
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-4 border-b border-border-subtle pb-6 font-sans">
         <div>
           <span className="font-mono text-[10px] uppercase tracking-wider text-accent font-semibold">
             Endpoint Operations · EDR Fleet Console
           </span>
-          <h1 className="mt-1 text-xl font-bold font-mono text-text-primary">
+          <h1 className="mt-1 text-xl font-bold font-sans text-text-primary">
             EDR Fleet &amp; Host Management
           </h1>
           <p className="mt-1 text-xs text-text-muted">
@@ -870,17 +870,17 @@ export default function AgentsPage() {
           </p>
         </div>
 
-        <div className="flex items-center gap-2 font-mono text-xs">
+        <div className="flex items-center gap-2 font-sans text-xs">
           <button
             onClick={() => setShowEnrollDrawer(true)}
-            className="press inline-flex items-center gap-1.5 rounded-lg border border-accent bg-accent px-3 py-1.5 font-bold text-white shadow-xs hover:brightness-110"
+            className="press inline-flex items-center gap-1.5 rounded-lg border border-accent bg-accent px-3 py-1.5 font-semibold text-white shadow-xs hover:brightness-110"
           >
             <Icon name="plus" size={13} />
             <span>⚡ Enroll New Sensor</span>
           </button>
           <button
             onClick={() => setShowHuntInput(true)}
-            className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/15 px-3 py-1.5 font-bold text-accent hover:bg-accent/25"
+            className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/15 px-3 py-1.5 font-semibold text-accent hover:bg-accent/25"
           >
             <Icon name="search" size={13} />
             <span>Hunt Fleet IOC</span>
@@ -904,12 +904,12 @@ export default function AgentsPage() {
       </div>
 
       {/* Primary Console Deck Switcher */}
-      <div className="mb-6 flex rounded-xl border border-border-subtle bg-bg-surface p-1 font-mono text-xs shadow-xs">
+      <div className="mb-6 flex rounded-xl border border-border-subtle bg-bg-surface p-1 font-sans text-xs shadow-xs">
         <button
           onClick={() => setActiveDeck("fleet")}
           className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-medium transition ${
             activeDeck === "fleet"
-              ? "bg-accent/15 font-bold text-accent shadow-xs"
+              ? "bg-accent/15 font-semibold text-accent shadow-xs"
               : "text-text-muted hover:text-text-primary"
           }`}
         >
@@ -920,7 +920,7 @@ export default function AgentsPage() {
           onClick={() => setActiveDeck("task_manager")}
           className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-medium transition ${
             activeDeck === "task_manager"
-              ? "bg-accent/15 font-bold text-accent shadow-xs"
+              ? "bg-accent/15 font-semibold text-accent shadow-xs"
               : "text-text-muted hover:text-text-primary"
           }`}
         >
@@ -934,39 +934,39 @@ export default function AgentsPage() {
       ) : (
         <>
           {/* Beginner Operational Posture Guide */}
-      <div className="mb-6 rounded-xl border border-border-subtle/90 bg-bg-surface/60 p-4 font-mono text-xs backdrop-blur-sm space-y-2">
+      <div className="mb-6 rounded-xl border border-border-subtle/90 bg-bg-surface/60 p-4 font-sans text-xs backdrop-blur-sm space-y-2">
         <div className="flex items-center justify-between">
-          <span className="font-bold text-text-primary flex items-center gap-2">
+          <span className="font-semibold text-text-primary flex items-center gap-2">
             <Icon name="shield" size={14} className="text-accent" />
             <span>How Endpoint Fleet Sensors &amp; Active Containment Work</span>
           </span>
-          <span className="text-[10px] text-text-faint">OutPost Autonomous EDR Architecture</span>
+          <span className="font-mono text-[10px] text-text-faint">OutPost Autonomous EDR Architecture</span>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-1 text-[11px] text-text-muted">
           <div className="rounded-lg bg-bg-base/70 p-2.5 border border-border-subtle space-y-1">
-            <div className="flex items-center gap-1.5 text-signal font-bold text-[10px] uppercase">
+            <div className="flex items-center gap-1.5 text-signal font-semibold text-[10px] uppercase tracking-wide">
               <span className="h-2 w-2 rounded-full bg-signal" />
               <span>Online Sensor (Healthy)</span>
             </div>
-            <p className="text-text-faint text-[10px] leading-relaxed">
+            <p className="text-text-faint text-[11px] leading-relaxed">
               Host continuously transmits heartbeats every 15s and streams live kernel procfs, socket binds, and process creations.
             </p>
           </div>
           <div className="rounded-lg bg-bg-base/70 p-2.5 border border-border-subtle space-y-1">
-            <div className="flex items-center gap-1.5 text-risk-malicious font-bold text-[10px] uppercase">
+            <div className="flex items-center gap-1.5 text-risk-malicious font-semibold text-[10px] uppercase tracking-wide">
               <span className="h-2 w-2 rounded-full bg-risk-malicious" />
               <span>Silent / Stale (Attention)</span>
             </div>
-            <p className="text-text-faint text-[10px] leading-relaxed">
+            <p className="text-text-faint text-[11px] leading-relaxed">
               Host missed expected heartbeat windows. May indicate endpoint powered down, network partitioned, or agent terminated.
             </p>
           </div>
           <div className="rounded-lg bg-bg-base/70 p-2.5 border border-border-subtle space-y-1">
-            <div className="flex items-center gap-1.5 text-accent font-bold text-[10px] uppercase">
+            <div className="flex items-center gap-1.5 text-accent font-semibold text-[10px] uppercase tracking-wide">
               <span className="h-2 w-2 rounded-full bg-accent" />
               <span>Instant Host Quarantine</span>
             </div>
-            <p className="text-text-faint text-[10px] leading-relaxed">
+            <p className="text-text-faint text-[11px] leading-relaxed">
               Isolate compromised hosts from network communication in 1 click while preserving security analyst remote access channels.
             </p>
           </div>
@@ -974,35 +974,35 @@ export default function AgentsPage() {
       </div>
 
       {/* Metric Stat HUD Strip */}
-      <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-5 font-mono">
+      <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-5 font-sans">
         <div className="rounded-xl border border-border-subtle bg-bg-surface p-3.5">
-          <span className="text-[10px] uppercase text-text-faint">Enrolled Hosts</span>
-          <p className="text-xl font-bold text-text-primary mt-1">{data?.total ?? 0}</p>
+          <span className="text-[10px] uppercase tracking-wider text-text-faint font-medium">Enrolled Hosts</span>
+          <p className="text-xl font-bold font-mono tabular-nums text-text-primary mt-1">{data?.total ?? 0}</p>
         </div>
         <div className="rounded-xl border border-border-subtle bg-bg-surface p-3.5">
-          <span className="text-[10px] uppercase text-text-faint">Online Sensors</span>
-          <p className="text-xl font-bold text-signal mt-1">{data?.online ?? 0}</p>
+          <span className="text-[10px] uppercase tracking-wider text-text-faint font-medium">Online Sensors</span>
+          <p className="text-xl font-bold font-mono tabular-nums text-signal mt-1">{data?.online ?? 0}</p>
         </div>
         <div className="rounded-xl border border-border-subtle bg-bg-surface p-3.5">
-          <span className="text-[10px] uppercase text-text-faint">Silent / Stale</span>
-          <p className={`text-xl font-bold mt-1 ${data?.silent ? "text-risk-malicious" : "text-text-muted"}`}>
+          <span className="text-[10px] uppercase tracking-wider text-text-faint font-medium">Silent / Stale</span>
+          <p className={`text-xl font-bold font-mono tabular-nums mt-1 ${data?.silent ? "text-risk-malicious" : "text-text-muted"}`}>
             {data?.silent ?? 0}
           </p>
         </div>
         <div className="rounded-xl border border-border-subtle bg-bg-surface p-3.5">
-          <span className="text-[10px] uppercase text-text-faint">Telemetry Shipped</span>
-          <p className="text-xl font-bold text-text-primary mt-1">{totalEvents.toLocaleString()}</p>
+          <span className="text-[10px] uppercase tracking-wider text-text-faint font-medium">Telemetry Shipped</span>
+          <p className="text-xl font-bold font-mono tabular-nums text-text-primary mt-1">{totalEvents.toLocaleString()}</p>
         </div>
         <div className="rounded-xl border border-border-subtle bg-bg-surface p-3.5">
-          <span className="text-[10px] uppercase text-text-faint">Correlated Detections</span>
-          <p className={`text-xl font-bold mt-1 ${totalAlerts > 0 ? "text-risk-suspicious" : "text-text-muted"}`}>
+          <span className="text-[10px] uppercase tracking-wider text-text-faint font-medium">Correlated Detections</span>
+          <p className={`text-xl font-bold font-mono tabular-nums mt-1 ${totalAlerts > 0 ? "text-risk-suspicious" : "text-text-muted"}`}>
             {totalAlerts}
           </p>
         </div>
       </div>
 
       {/* Filter & Command Control Bar */}
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3 font-mono text-xs">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3 font-sans text-xs">
         <div className="flex-1 min-w-64 max-w-md relative">
           <Icon name="search" size={12} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-faint" />
           <input
@@ -1021,9 +1021,9 @@ export default function AgentsPage() {
               <button
                 key={st}
                 onClick={() => setStatusFilter(st)}
-                className={`rounded-md px-2 py-0.5 capitalize transition ${
+                className={`rounded-md px-2.5 py-1 text-xs capitalize transition font-medium ${
                   statusFilter === st
-                    ? "bg-accent/20 font-bold text-accent shadow-xs"
+                    ? "bg-accent/20 font-semibold text-accent shadow-xs"
                     : "text-text-muted hover:text-text-primary"
                 }`}
               >
@@ -1038,9 +1038,9 @@ export default function AgentsPage() {
               <button
                 key={p}
                 onClick={() => setPlatformFilter(p)}
-                className={`rounded-md px-2 py-0.5 capitalize transition ${
+                className={`rounded-md px-2.5 py-1 text-xs capitalize transition font-medium ${
                   platformFilter === p
-                    ? "bg-accent/20 font-bold text-accent shadow-xs"
+                    ? "bg-accent/20 font-semibold text-accent shadow-xs"
                     : "text-text-muted hover:text-text-primary"
                 }`}
               >
@@ -1052,13 +1052,13 @@ export default function AgentsPage() {
       </div>
 
       {isLoading && (
-        <div className="py-12 text-center font-mono text-xs text-text-muted">
+        <div className="py-12 text-center font-sans text-xs text-text-muted">
           Loading endpoint inventory…
         </div>
       )}
 
       {isError && (
-        <div className="rounded-xl border border-risk-malicious/40 bg-bg-surface p-4 font-mono text-xs text-risk-malicious">
+        <div className="rounded-xl border border-risk-malicious/40 bg-bg-surface p-4 font-sans text-xs text-risk-malicious">
           Could not communicate with OutPost agent manager — verify backend health.
         </div>
       )}
@@ -1066,7 +1066,7 @@ export default function AgentsPage() {
       {/* Main High-Density Fleet Grid Table */}
       {!isLoading && !isError && (
         <div className="rounded-xl border border-border-subtle bg-bg-surface overflow-hidden shadow-xs">
-          <table className="w-full text-left font-mono text-xs">
+          <table className="w-full text-left font-sans text-xs">
             <thead className="bg-bg-elevated/70 border-b border-border-subtle text-[10px] uppercase text-text-faint">
               <tr>
                 <th className="px-4 py-2.5">Endpoint Host</th>

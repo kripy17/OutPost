@@ -48,7 +48,7 @@ function AlertDetailDrawer({
       onClick={onClose}
     >
       <div
-        className="h-full w-full max-w-lg bg-[#0B0E14] border-l border-border-subtle p-6 overflow-y-auto space-y-5 font-mono text-xs shadow-2xl animate-in slide-in-from-right duration-200"
+        className="h-full w-full max-w-lg bg-[#0B0E14] border-l border-border-subtle p-6 overflow-y-auto space-y-5 font-sans text-xs shadow-2xl animate-in slide-in-from-right duration-200"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -305,7 +305,7 @@ function FindingRow({
             {ageLabel(a.triggered_at)} ago
           </span>
         </div>
-        <p className="mt-0.5 truncate font-mono text-[11px] text-text-muted" title={a.details}>
+        <p className="mt-0.5 truncate font-sans text-xs text-text-muted leading-relaxed" title={a.details}>
           {a.details}
         </p>
         <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-text-faint">
@@ -709,12 +709,12 @@ export default function FindingsPage() {
       />
 
       {/* Main Tab Switcher */}
-      <div className="mb-6 flex rounded-xl border border-border-subtle bg-bg-surface p-1 font-mono text-xs shadow-sm">
+      <div className="mb-6 flex rounded-xl border border-border-subtle bg-bg-surface p-1 font-sans text-xs shadow-sm">
         <button
           onClick={() => setActiveTab("findings")}
           className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2.5 font-medium transition ${
             activeTab === "findings"
-              ? "bg-accent/15 font-bold text-accent shadow-sm"
+              ? "bg-accent/15 font-semibold text-accent shadow-sm"
               : "text-text-muted hover:text-text-primary"
           }`}
         >
@@ -725,7 +725,7 @@ export default function FindingsPage() {
           onClick={() => setActiveTab("investigations")}
           className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2.5 font-medium transition ${
             activeTab === "investigations"
-              ? "bg-accent/15 font-bold text-accent shadow-sm"
+              ? "bg-accent/15 font-semibold text-accent shadow-sm"
               : "text-text-muted hover:text-text-primary"
           }`}
         >
@@ -739,48 +739,48 @@ export default function FindingsPage() {
       ) : (
         <>
       {/* ── Executive Triage KPI Ribbon ─────────────────────────────── */}
-      <section className="mb-4 grid grid-cols-2 sm:grid-cols-4 gap-3 font-mono text-xs">
+      <section className="mb-4 grid grid-cols-2 sm:grid-cols-4 gap-3 font-sans text-xs">
         <div className="rounded-xl border border-border-subtle bg-bg-surface/80 p-3 shadow-xs">
-          <div className="flex items-center justify-between text-text-faint text-[10px] uppercase">
+          <div className="flex items-center justify-between text-text-faint text-[10px] uppercase tracking-wider font-medium">
             <span>Open Findings</span>
             <span className="h-2 w-2 rounded-full bg-red-400" />
           </div>
           <div className="mt-1 flex items-baseline gap-2">
-            <span className="text-xl font-bold text-text-primary tabular-nums">{data?.open ?? 0}</span>
-            <span className="text-[10px] text-text-muted">active in triage</span>
+            <span className="text-xl font-bold font-mono text-text-primary tabular-nums">{data?.open ?? 0}</span>
+            <span className="text-[11px] text-text-muted">active in triage</span>
           </div>
         </div>
 
         <div className="rounded-xl border border-border-subtle bg-bg-surface/80 p-3 shadow-xs">
-          <div className="flex items-center justify-between text-text-faint text-[10px] uppercase">
+          <div className="flex items-center justify-between text-text-faint text-[10px] uppercase tracking-wider font-medium">
             <span>Acknowledged</span>
             <span className="h-2 w-2 rounded-full bg-amber-400" />
           </div>
           <div className="mt-1 flex items-baseline gap-2">
-            <span className="text-xl font-bold text-amber-400 tabular-nums">{data?.acknowledged ?? 0}</span>
-            <span className="text-[10px] text-text-muted">in progress</span>
+            <span className="text-xl font-bold font-mono text-amber-400 tabular-nums">{data?.acknowledged ?? 0}</span>
+            <span className="text-[11px] text-text-muted">in progress</span>
           </div>
         </div>
 
         <div className="rounded-xl border border-border-subtle bg-bg-surface/80 p-3 shadow-xs">
-          <div className="flex items-center justify-between text-text-faint text-[10px] uppercase">
+          <div className="flex items-center justify-between text-text-faint text-[10px] uppercase tracking-wider font-medium">
             <span>Resolved</span>
             <span className="h-2 w-2 rounded-full bg-emerald-400" />
           </div>
           <div className="mt-1 flex items-baseline gap-2">
-            <span className="text-xl font-bold text-emerald-400 tabular-nums">{data?.resolved ?? 0}</span>
-            <span className="text-[10px] text-text-muted">closed</span>
+            <span className="text-xl font-bold font-mono text-emerald-400 tabular-nums">{data?.resolved ?? 0}</span>
+            <span className="text-[11px] text-text-muted">closed</span>
           </div>
         </div>
 
         <div className="rounded-xl border border-border-subtle bg-bg-surface/80 p-3 shadow-xs">
-          <div className="flex items-center justify-between text-text-faint text-[10px] uppercase">
+          <div className="flex items-center justify-between text-text-faint text-[10px] uppercase tracking-wider font-medium">
             <span>Queue Total</span>
             <Icon name="activity" size={12} className="text-accent" />
           </div>
           <div className="mt-1 flex items-baseline gap-2">
-            <span className="text-xl font-bold text-accent tabular-nums">{data?.total ?? 0}</span>
-            <span className="text-[10px] text-text-muted">scope findings</span>
+            <span className="text-xl font-bold font-mono text-accent tabular-nums">{data?.total ?? 0}</span>
+            <span className="text-[11px] text-text-muted">scope findings</span>
           </div>
         </div>
       </section>
@@ -797,23 +797,23 @@ export default function FindingsPage() {
               key={t.v}
               onClick={() => switchStatus(t.v)}
               aria-pressed={status === t.v}
-              className={`press inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 font-mono text-[11px] transition-colors duration-150 ${
-                status === t.v ? "border-accent/50 bg-accent/10 font-medium text-accent" : "border-border-subtle text-text-muted hover:bg-bg-elevated hover:text-text-primary"
+              className={`press inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 font-sans text-xs transition-colors duration-150 ${
+                status === t.v ? "border-accent/50 bg-accent/10 font-semibold text-accent" : "border-border-subtle text-text-muted hover:bg-bg-elevated hover:text-text-primary"
               }`}
             >
               {t.label}
-              <span className="rounded-full border border-border-subtle bg-bg-elevated/60 px-1.5 font-mono text-[9px] tabular-nums text-text-faint">
+              <span className="rounded-full border border-border-subtle bg-bg-elevated/60 px-1.5 font-mono text-[10px] tabular-nums text-text-faint">
                 {count ?? "…"}
               </span>
             </button>
           );
         })}
 
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex items-center gap-2 font-sans text-xs">
           <select
             value={provenance}
             onChange={(e) => setProvenance(e.target.value)}
-            className="rounded-lg border border-border-subtle bg-bg-surface px-2.5 py-1.5 font-mono text-xs text-text-primary outline-none transition-colors focus:border-accent/60"
+            className="rounded-lg border border-border-subtle bg-bg-surface px-2.5 py-1.5 font-sans text-xs text-text-primary outline-none transition-colors focus:border-accent/60"
             aria-label="Filter by provenance"
             title="Real = host/sandbox telemetry · Synthetic = seed/webapp-demo runs — demo noise can be hidden or acked in bulk"
           >
@@ -824,7 +824,7 @@ export default function FindingsPage() {
           <select
             value={sev}
             onChange={(e) => setParam("severity", e.target.value)}
-            className="rounded-lg border border-border-subtle bg-bg-surface px-2.5 py-1.5 font-mono text-xs text-text-primary outline-none transition-colors focus:border-accent/60"
+            className="rounded-lg border border-border-subtle bg-bg-surface px-2.5 py-1.5 font-sans text-xs text-text-primary outline-none transition-colors focus:border-accent/60"
             aria-label="Filter by severity"
           >
             <option value="">All severities</option>
@@ -835,8 +835,8 @@ export default function FindingsPage() {
             <button
               onClick={() => setParam("sort", sort === "aging" ? "newest" : "aging")}
               aria-pressed={sort === "aging"}
-              className={`px-3 py-1.5 font-mono text-[11px] transition-colors duration-150 ${
-                sort === "aging" ? "bg-accent/10 font-medium text-accent" : "text-text-muted hover:bg-bg-elevated hover:text-text-primary"
+              className={`px-3 py-1.5 font-sans text-xs transition-colors duration-150 ${
+                sort === "aging" ? "bg-accent/10 font-semibold text-accent" : "text-text-muted hover:bg-bg-elevated hover:text-text-primary"
               }`}
               title={sort === "aging" ? "Oldest first — findings that have waited longest surface first" : "Newest first"}
             >
@@ -855,11 +855,11 @@ export default function FindingsPage() {
               value={q}
               onChange={(e) => setParam("q", e.target.value)}
               placeholder="sample, rule, detail…"
-              className="w-44 rounded-lg border border-border-subtle bg-bg-surface px-2.5 py-1.5 font-mono text-xs text-text-primary placeholder:text-text-faint outline-none transition-colors focus:border-accent/60"
+              className="w-44 rounded-lg border border-border-subtle bg-bg-surface px-2.5 py-1.5 font-sans text-xs text-text-primary placeholder:text-text-faint outline-none transition-colors focus:border-accent/60"
               aria-label="Search findings"
             />
-            <button type="submit" className="press inline-flex items-center gap-1 rounded-lg border border-border-subtle px-2.5 py-1.5 font-mono text-[11px] text-text-muted transition-colors hover:border-accent/60 hover:text-accent">
-              <Icon name="search" size={11} />
+            <button type="submit" className="press inline-flex items-center gap-1 rounded-lg border border-border-subtle px-2.5 py-1.5 font-sans text-xs text-text-muted transition-colors hover:border-accent/60 hover:text-accent">
+              <Icon name="search" size={12} />
             </button>
           </form>
         </div>

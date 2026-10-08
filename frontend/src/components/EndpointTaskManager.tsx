@@ -8,6 +8,7 @@ import {
   getForensicCapsule,
 } from "../lib/api";
 import ProcessContextModal from "./ProcessContextModal";
+import ProcessNetworkTopologyMap from "./ProcessNetworkTopologyMap";
 
 interface ProcessItem {
   pid: number;
@@ -39,6 +40,7 @@ export const EndpointTaskManager: React.FC<{ hostId?: string }> = ({ hostId = "l
   const [searchQuery, setSearchQuery] = useState("");
   const [filterType, setFilterType] = useState<"all" | "suspicious" | "sockets" | "root" | "resource">("all");
   const [autoRefresh, setAutoRefresh] = useState(true);
+  const [viewLayout, setViewLayout] = useState<"table" | "topology">("table");
   const [selectedPidForModal, setSelectedPidForModal] = useState<number | null>(null);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
   const [yaraResult, setYaraResult] = useState<{
@@ -196,7 +198,7 @@ export const EndpointTaskManager: React.FC<{ hostId?: string }> = ({ hostId = "l
   }, [filteredProcesses, flaggedPids]);
 
   return (
-    <div className="space-y-5 font-mono text-xs">
+    <div className="space-y-5 font-sans text-xs">
       {/* Top Action Notice */}
       {actionNotice && (
         <div className="flex items-center justify-between rounded-xl border border-signal/60 bg-signal/15 px-4 py-2.5 text-signal animate-fade-in shadow-xs">
@@ -276,6 +278,34 @@ export const EndpointTaskManager: React.FC<{ hostId?: string }> = ({ hostId = "l
 
         {/* Global Action Buttons */}
         <div className="flex flex-wrap items-center gap-2">
+          {/* View Mode Switcher */}
+          <div className="flex items-center rounded-lg border border-border-subtle bg-bg-base p-0.5">
+            <button
+              type="button"
+              onClick={() => setViewLayout("table")}
+              className={`flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-semibold transition ${
+                viewLayout === "table"
+                  ? "bg-accent/20 text-accent border border-accent/40 shadow-xs"
+                  : "text-text-muted hover:text-text-primary"
+              }`}
+            >
+              <Icon name="list" size={11} />
+              <span>Table</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewLayout("topology")}
+              className={`flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-semibold transition ${
+                viewLayout === "topology"
+                  ? "bg-accent/20 text-accent border border-accent/40 shadow-xs"
+                  : "text-text-muted hover:text-text-primary"
+              }`}
+            >
+              <Icon name="activity" size={11} />
+              <span>Live Topology</span>
+            </button>
+          </div>
+
           <button
             type="button"
             onClick={() => yaraScanMutation.mutate()}
@@ -310,8 +340,20 @@ export const EndpointTaskManager: React.FC<{ hostId?: string }> = ({ hostId = "l
         </div>
       </div>
 
-      {/* Filter Tabs */}
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle pb-2">
+      {viewLayout === "topology" ? (
+        <ProcessNetworkTopologyMap
+          processes={processes}
+          sockets={sockets}
+          flaggedPids={flaggedPids}
+          onSelectPid={(pid) => setSelectedPidForModal(pid)}
+          onKillPid={(pid) => processControl.mutate({ pid, action: "kill" })}
+          onYaraScanPid={() => yaraScanMutation.mutate()}
+          height={560}
+        />
+      ) : (
+        <>
+          {/* Filter Tabs */}
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle pb-2">
         <div className="flex flex-wrap items-center gap-1">
           {[
             { id: "all", label: `All Processes (${processes.length})` },
@@ -518,6 +560,8 @@ export const EndpointTaskManager: React.FC<{ hostId?: string }> = ({ hostId = "l
           </table>
         </div>
       </div>
+    </>
+  )}
 
       {/* Deep Process Context Modal */}
       {selectedPidForModal !== null && (

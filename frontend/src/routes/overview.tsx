@@ -15,6 +15,7 @@ import {
   runLiveSimulation,
 } from "../lib/api";
 import { useEventStream } from "../lib/useEventStream";
+import InteractiveThreatTopology from "../components/InteractiveThreatTopology";
 import type { GlobalAlert, QueueAlert } from "../types";
 
 const ATTACK_TACTICS = [
@@ -200,6 +201,7 @@ export default function OverviewPage() {
   const [inspectAlert, setInspectAlert] = useState<AlertDrawerState | null>(null);
   const [simulationRunning, setSimulationRunning] = useState(false);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<"topology" | "analytics">("topology");
 
   // Real-time Event Stream Listener
   useEventStream(() => {
@@ -309,14 +311,14 @@ export default function OverviewPage() {
   }, [recentAlerts, ruleMap]);
 
   return (
-    <div className="mx-auto max-w-7xl px-6 py-6 lg:px-10 space-y-6 font-mono text-xs">
+    <div className="mx-auto max-w-7xl px-6 py-6 lg:px-10 space-y-6 font-sans text-xs">
       {/* Header Bar */}
       <div className="flex flex-wrap items-center justify-between gap-4 border-b border-border-subtle pb-4">
         <div>
           <span className="text-[10px] uppercase font-bold tracking-wider text-text-faint">
             Operations Cockpit · Telemetry Window: {preset.label}
           </span>
-          <h1 className="text-lg font-bold text-text-primary tracking-tight">
+          <h1 className="text-xl font-bold text-text-primary tracking-tight">
             Security Operations Center
           </h1>
           <p className="text-xs text-text-muted mt-0.5">
@@ -324,7 +326,33 @@ export default function OverviewPage() {
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2.5">
+          {/* View Mode Switcher */}
+          <div className="flex items-center rounded-lg border border-border-subtle bg-bg-surface p-0.5">
+            <button
+              onClick={() => setViewMode("topology")}
+              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                viewMode === "topology"
+                  ? "bg-accent/20 text-accent border border-accent/40 shadow-xs"
+                  : "text-text-muted hover:text-text-primary"
+              }`}
+            >
+              <Icon name="activity" size={12} />
+              <span>Threat Topology</span>
+            </button>
+            <button
+              onClick={() => setViewMode("analytics")}
+              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                viewMode === "analytics"
+                  ? "bg-accent/20 text-accent border border-accent/40 shadow-xs"
+                  : "text-text-muted hover:text-text-primary"
+              }`}
+            >
+              <Icon name="grid" size={12} />
+              <span>Operations HUD</span>
+            </button>
+          </div>
+
           <button
             onClick={handleLaunchSimulation}
             disabled={simulationRunning}
@@ -350,6 +378,18 @@ export default function OverviewPage() {
         <div className="flex items-center justify-between rounded-xl border border-signal/50 bg-signal/15 px-4 py-2 font-mono text-xs text-signal animate-fade-in">
           <span>✓ {actionNotice}</span>
           <button onClick={() => setActionNotice(null)} className="text-text-muted hover:text-text-primary">✕</button>
+        </div>
+      )}
+
+      {/* Main Threat Topology Canvas (When ViewMode === "topology") */}
+      {viewMode === "topology" && (
+        <div className="space-y-2">
+          <InteractiveThreatTopology
+            alerts={rawAlerts}
+            agents={fleet?.agents}
+            events={telemetryEvents?.events}
+            height={460}
+          />
         </div>
       )}
 

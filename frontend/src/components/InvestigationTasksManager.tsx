@@ -189,7 +189,7 @@ export const InvestigationTasksManager: React.FC<{ investigationId: string }> = 
     >
       <div className="space-y-4">
         {/* Playbook Presets Ribbon */}
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border-subtle bg-bg-elevated/30 p-2.5 text-xs font-mono">
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border-subtle bg-bg-elevated/30 p-2.5 text-xs font-sans">
           <span className="text-text-muted text-[11px] font-bold uppercase tracking-wider flex items-center gap-1.5">
             <Icon name="zap" size={12} className="text-accent" />
             Quick SOAR Playbooks:
