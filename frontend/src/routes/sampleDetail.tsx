@@ -152,6 +152,350 @@ function HexPreviewViewer({ preview }: { preview?: Array<{ offset: string; hex: 
   );
 }
 
+/* ── Executive Threat Triage & DFIR Posture Card ────────────────────────── */
+
+function ExecutiveThreatTriageCard({
+  sample,
+  st,
+}: {
+  sample: { sample_id: string; sha256: string; original_name?: string; detected_platform?: string };
+  st?: SampleStatic;
+}) {
+  if (!st || !st.available) return null;
+
+  // Determine threat classification verdict
+  const capCats = new Set((st.capabilities || []).map((c) => c.category));
+  const riskScore = st.static_risk_score ?? 0;
+  const entropy = st.entropy ?? 0;
+  const isPacked = Boolean(st.is_packed || entropy > 7.1);
+
+  let verdict = "Clean / Legitimate Binary";
+  let verdictColor = "text-emerald-400 border-emerald-500/40 bg-emerald-500/10";
+  let verdictBadge = "Clean";
+
+  if (capCats.has("Cryptographic & Ransomware") || (st.risk_factors || []).some((rf) => rf.toLowerCase().includes("ransom"))) {
+    verdict = "Ransomware / Cryptographic Extortion Payload";
+    verdictColor = "text-rose-400 border-rose-500/50 bg-rose-500/15";
+    verdictBadge = "Malicious";
+  } else if (capCats.has("Process Injection") && isPacked) {
+    verdict = "Packed Dropper / In-Memory Payload Injector";
+    verdictColor = "text-rose-400 border-rose-500/50 bg-rose-500/15";
+    verdictBadge = "Malicious";
+  } else if (capCats.has("Process Injection")) {
+    verdict = "Trojan / Process Hollowing Primitive";
+    verdictColor = "text-rose-400 border-rose-500/50 bg-rose-500/15";
+    verdictBadge = "Malicious";
+  } else if (capCats.has("Credential Access")) {
+    verdict = "Credential Harvester / LSASS Stealer";
+    verdictColor = "text-rose-400 border-rose-500/50 bg-rose-500/15";
+    verdictBadge = "Malicious";
+  } else if (capCats.has("Persistence & Autostart") && capCats.has("Network Communications & C2")) {
+    verdict = "Backdoor / Remote Access Trojan (RAT)";
+    verdictColor = "text-rose-400 border-rose-500/50 bg-rose-500/15";
+    verdictBadge = "Malicious";
+  } else if (riskScore >= 70) {
+    verdict = "High-Risk Malicious Artifact";
+    verdictColor = "text-rose-400 border-rose-500/50 bg-rose-500/15";
+    verdictBadge = "Malicious";
+  } else if (riskScore >= 35 || isPacked) {
+    verdict = "Suspicious Binary / Obfuscated Code";
+    verdictColor = "text-amber-400 border-amber-500/50 bg-amber-500/15";
+    verdictBadge = "Suspicious";
+  }
+
+  // Format machine architecture
+  const formatStr = st.pe
+    ? `PE (${st.pe.machine}, ${st.pe.bits}-bit, ${st.pe.subsystem || "Native"})`
+    : st.elf
+      ? `ELF (${st.elf.machine}, ${st.elf.class}-bit, ${st.elf.type})`
+      : "Raw Binary Stream";
+
+  return (
+    <Panel kicker="Executive DFIR Triage" title="Static Threat Verdict & Binary Posture">
+      <div className="space-y-4 font-mono">
+        {/* Main Verdict & Gauge Bar */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 rounded-xl border border-border-subtle bg-bg-base/70 p-4">
+          <div className="md:col-span-2 space-y-2">
+            <div className="flex items-center gap-2">
+              <span className={`rounded border px-2.5 py-0.5 text-xs font-bold uppercase tracking-wider ${verdictColor}`}>
+                {verdictBadge}
+              </span>
+              <span className="text-[11px] text-text-faint">Heuristic Static Classifier</span>
+            </div>
+            <h3 className="text-base font-bold text-text-primary">{verdict}</h3>
+            <p className="text-xs text-text-muted leading-relaxed">
+              Analyzed {sample.original_name ? <span className="font-semibold text-text-primary">{sample.original_name}</span> : "binary payload"} against Shannon entropy distributions, static IOCs, import table hashes, and MITRE capability patterns without execution risk.
+            </p>
+          </div>
+
+          <div className="flex flex-col justify-center items-start md:items-end rounded-lg bg-bg-surface/60 p-3 border border-border-subtle/60">
+            <span className="text-[10px] uppercase tracking-wider text-text-faint">Static Threat Score</span>
+            <div className="flex items-baseline gap-1 mt-0.5">
+              <span className={`text-2xl font-black ${riskScore >= 70 ? "text-rose-400" : riskScore >= 35 ? "text-amber-400" : "text-emerald-400"}`}>
+                {riskScore}
+              </span>
+              <span className="text-xs text-text-faint">/ 100</span>
+            </div>
+            <div className="w-full mt-2 h-2 rounded-full bg-bg-elevated overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all duration-500 ${
+                  riskScore >= 70 ? "bg-rose-500 shadow-[var(--glow-malicious)]" : riskScore >= 35 ? "bg-amber-400" : "bg-emerald-400"
+                }`}
+                style={{ width: `${Math.max(5, riskScore)}%` }}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* 4 Deep Binary Posture Cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+          {/* Tile 1: Binary Format & Subsystem */}
+          <div className="rounded-xl border border-border-subtle bg-bg-base/60 p-3 space-y-1">
+            <span className="text-[10px] uppercase text-text-faint block">Format &amp; Subsystem</span>
+            <div className="font-bold text-text-primary text-xs truncate" title={formatStr}>
+              {formatStr}
+            </div>
+            <div className="text-[10px] text-text-muted">
+              {st.pe?.entry_point_rva ? `Entry RVA: 0x${st.pe.entry_point_rva.toString(16)}` : st.elf ? `Entry: 0x${st.elf.entry_point.toString(16)}` : "Offset: 0x0000"}
+            </div>
+          </div>
+
+          {/* Tile 2: Entropy & Packing */}
+          <div className="rounded-xl border border-border-subtle bg-bg-base/60 p-3 space-y-1">
+            <span className="text-[10px] uppercase text-text-faint block">Shannon Entropy</span>
+            <div className="flex items-center gap-1.5 font-bold text-xs">
+              <span className={entropy > 7.0 ? "text-rose-400" : entropy > 6.0 ? "text-amber-400" : "text-emerald-400"}>
+                {entropy} / 8.0
+              </span>
+              {isPacked ? (
+                <span className="rounded bg-rose-500/20 px-1 py-0.2 text-[9px] text-rose-400 font-bold">Packed</span>
+              ) : (
+                <span className="rounded bg-emerald-500/20 px-1 py-0.2 text-[9px] text-emerald-400 font-bold">Native</span>
+              )}
+            </div>
+            <div className="text-[10px] text-text-muted">
+              {isPacked ? "High byte randomness (UPX/crypto)" : "Linear code/data distribution"}
+            </div>
+          </div>
+
+          {/* Tile 3: Authenticode / Signing */}
+          <div className="rounded-xl border border-border-subtle bg-bg-base/60 p-3 space-y-1">
+            <span className="text-[10px] uppercase text-text-faint block">Code Signing &amp; Integrity</span>
+            <div className="font-bold text-xs truncate">
+              {st.pe?.authenticode?.signed ? (
+                <span className="text-emerald-400">Authenticode Signed</span>
+              ) : (
+                <span className="text-amber-400">Unsigned Binary</span>
+              )}
+            </div>
+            <div className="text-[10px] text-text-muted truncate">
+              {st.pe?.authenticode?.signed ? `Cert size: ${st.pe.authenticode.cert_size} B` : "No digital signature attached"}
+            </div>
+          </div>
+
+          {/* Tile 4: Exploit Mitigations */}
+          <div className="rounded-xl border border-border-subtle bg-bg-base/60 p-3 space-y-1">
+            <span className="text-[10px] uppercase text-text-faint block">Kernel Mitigations</span>
+            <div className="font-bold text-xs text-text-primary truncate">
+              {st.pe?.mitigations && st.pe.mitigations.length > 0 ? (
+                <span className="text-emerald-400">{st.pe.mitigations.length} Mitigations</span>
+              ) : (
+                <span className="text-rose-400">0 Active Mitigations</span>
+              )}
+            </div>
+            <div className="text-[10px] text-text-muted truncate">
+              {st.pe?.mitigations?.join(", ") || "ASLR/DEP Disabled"}
+            </div>
+          </div>
+        </div>
+
+        {/* Primary Threat Factors List */}
+        {st.risk_factors && st.risk_factors.length > 0 && (
+          <div className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-3.5 space-y-2">
+            <div className="flex items-center justify-between text-xs font-bold text-rose-400">
+              <span className="flex items-center gap-1.5">
+                <Icon name="alert" size={13} />
+                Detected Static Threat Factors ({st.risk_factors.length})
+              </span>
+              <span className="text-[10px] uppercase text-text-faint">Rule Assessment</span>
+            </div>
+            <ul className="grid grid-cols-1 md:grid-cols-2 gap-1.5 text-[11px] text-text-muted list-disc list-inside">
+              {st.risk_factors.map((rf, idx) => (
+                <li key={idx} className="leading-snug">
+                  {rf}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    </Panel>
+  );
+}
+
+/* ── Security API & Threat Intent Cockpit ────────────────────────────────── */
+
+const SECURITY_API_CATEGORIES = [
+  {
+    category: "Process Injection & Memory Manipulation",
+    tactic: "Defense Evasion / Privilege Escalation",
+    technique: "T1055",
+    description: "Allocates executable memory in foreign or local processes, writes shellcode, or hijacks remote thread execution.",
+    symbols: ["VirtualAlloc", "VirtualAllocEx", "VirtualProtect", "WriteProcessMemory", "CreateRemoteThread", "QueueUserAPC", "NtMapViewOfSection", "mmap", "mprotect", "ptrace", "process_vm_writev", "dlopen", "dlsym"],
+    suspiciousness: "high" as const,
+  },
+  {
+    category: "Defense Evasion & Anti-Analysis",
+    tactic: "Defense Evasion",
+    technique: "T1497 / T1622",
+    description: "Probes for debugger traps, hypervisors, and sandbox hooks to terminate execution or evade behavioral instrumentation.",
+    symbols: ["IsDebuggerPresent", "CheckRemoteDebuggerPresent", "NtQueryInformationProcess", "OutputDebugString", "rdtsc", "GetTickCount", "UnhookWindowsHookEx", "PTRACE_TRACEME"],
+    suspiciousness: "high" as const,
+  },
+  {
+    category: "Persistence & Host Autostart",
+    tactic: "Persistence",
+    technique: "T1547 / T1053",
+    description: "Installs autorun entries, modifies registry Run keys, registers system services, or stages cron/systemd scripts.",
+    symbols: ["RegSetValueEx", "RegCreateKeyEx", "SetWindowsHookEx", "CreateService", "StartService", "SchTasks", "LaunchAgent", "systemd", ".bashrc", "RunOnce"],
+    suspiciousness: "medium" as const,
+  },
+  {
+    category: "Command & Control (C2) Networking",
+    tactic: "Command and Control",
+    technique: "T1071 / T1095",
+    description: "Initiates low-level network socket connections, resolves remote DNS hosts, or establishes HTTP/TLS beacon sessions.",
+    symbols: ["WSAStartup", "socket", "connect", "InternetOpen", "HttpSendRequest", "URLDownloadToFile", "curl_easy_init", "send", "recv", "beacon", "reverse_tcp"],
+    suspiciousness: "medium" as const,
+  },
+  {
+    category: "Credential Access & Reconnaissance",
+    tactic: "Credential Access / Discovery",
+    technique: "T1003 / T1082",
+    description: "Harvester of user credentials, LSASS tokens, SAM registry hives, and active process privileges.",
+    symbols: ["GetComputerName", "GetUserName", "NetUserEnum", "EnumProcesses", "LookupPrivilegeValue", "OpenProcessToken", "MiniDumpWriteDump", "CryptUnprotectData", "lsass", "mimikatz", "shadow"],
+    suspiciousness: "high" as const,
+  },
+  {
+    category: "Cryptographic & Ransomware Routines",
+    tactic: "Impact",
+    technique: "T1486",
+    description: "Generates cryptographic keys, initializes symmetric/asymmetric ciphers, and rapidly encrypts victim files.",
+    symbols: ["CryptEncrypt", "CryptGenKey", "BCryptEncrypt", "AES_encrypt", "EVP_EncryptInit", "ransom", ".locked", "decrypt_instructions", "wallet"],
+    suspiciousness: "high" as const,
+  },
+];
+
+function SecurityApisIntentCockpit({ st }: { st?: SampleStatic }) {
+  if (!st || !st.available) return null;
+
+  const observedStrings = new Set([
+    ...(st.strings || []),
+    ...(st.categorized_strings?.security_apis || []),
+  ]);
+  const capabilities = st.capabilities || [];
+
+  const categoryMatches = SECURITY_API_CATEGORIES.map((cat) => {
+    const backendCap = capabilities.find((c) => c.category.toLowerCase().includes(cat.category.toLowerCase().slice(0, 10)));
+    const matchedSymbols = new Set<string>();
+    if (backendCap) {
+      backendCap.matched.forEach((m) => matchedSymbols.add(m));
+    }
+    cat.symbols.forEach((sym) => {
+      for (const s of observedStrings) {
+        if (s.includes(sym)) {
+          matchedSymbols.add(sym);
+          break;
+        }
+      }
+    });
+
+    return {
+      ...cat,
+      matched: Array.from(matchedSymbols),
+    };
+  }).filter((c) => c.matched.length > 0);
+
+  if (categoryMatches.length === 0) return null;
+
+  return (
+    <Panel
+      kicker="Deep Binary Inspection"
+      title="Import Address Table (IAT) &amp; Security API Threat Intent"
+      right={
+        <span className="font-mono text-[10px] text-text-faint">
+          {categoryMatches.length} Intent Categories Identified
+        </span>
+      }
+    >
+      <div className="space-y-4 font-mono text-xs">
+        <p className="text-text-muted text-[11px] leading-relaxed">
+          Correlated imported functions and binary symbols against known ATT&amp;CK tradecraft primitives to deduce payload behavior prior to live detonation.
+        </p>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {categoryMatches.map((cat, idx) => (
+            <div
+              key={idx}
+              className={`rounded-xl border p-3.5 space-y-2.5 transition ${
+                cat.suspiciousness === "high"
+                  ? "border-rose-500/30 bg-rose-500/5 hover:border-rose-500/50"
+                  : "border-amber-500/30 bg-amber-500/5 hover:border-amber-500/50"
+              }`}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-1.5">
+                    <span
+                      className={`h-2 w-2 rounded-full ${
+                        cat.suspiciousness === "high" ? "bg-rose-400" : "bg-amber-400"
+                      }`}
+                    />
+                    <span className="font-bold text-text-primary text-xs">{cat.category}</span>
+                  </div>
+                  <div className="flex items-center gap-1 text-[10px] text-text-faint">
+                    <span>{cat.tactic}</span>
+                    <span>·</span>
+                    <span className="text-accent">{cat.technique}</span>
+                  </div>
+                </div>
+
+                <span
+                  className={`rounded px-1.5 py-0.2 text-[9px] font-bold uppercase ${
+                    cat.suspiciousness === "high"
+                      ? "bg-rose-500/20 text-rose-400 border border-rose-500/30"
+                      : "bg-amber-500/20 text-amber-400 border border-amber-500/30"
+                  }`}
+                >
+                  {cat.suspiciousness}
+                </span>
+              </div>
+
+              <p className="text-[11px] text-text-muted leading-relaxed">
+                {cat.description}
+              </p>
+
+              <div className="space-y-1 pt-1 border-t border-border-subtle/50">
+                <span className="text-[10px] uppercase text-text-faint block">Identified API Symbols ({cat.matched.length}):</span>
+                <div className="flex flex-wrap gap-1">
+                  {cat.matched.map((m) => (
+                    <span
+                      key={m}
+                      className="rounded bg-bg-surface border border-border-subtle px-1.5 py-0.5 text-[10px] text-text-primary select-all"
+                    >
+                      {m}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </Panel>
+  );
+}
+
 /* ── Static analysis (strings / IOCs / PE / ELF) ─────────────────────────── */
 
 function StaticAnalysis({ sample }: { sample: { sample_id: string; sha256: string } }) {
@@ -219,6 +563,8 @@ function StaticAnalysis({ sample }: { sample: { sample_id: string; sha256: strin
           </span>
         </div>
       </div>
+
+      {st && st.available && <ExecutiveThreatTriageCard sample={sample} st={st} />}
 
       <CryptographicHashesCard sample={sample} st={st} />
 
@@ -454,6 +800,9 @@ function StaticAnalysis({ sample }: { sample: { sample_id: string; sha256: strin
           <PeElfTable st={st} />
         </Panel>
       )}
+
+      {/* Security API & Threat Intent Cockpit */}
+      {st && st.available && <SecurityApisIntentCockpit st={st} />}
     </div>
   );
 }

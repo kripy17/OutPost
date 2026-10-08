@@ -2454,53 +2454,185 @@ export default function MonitorPage() {
               ))}
             </div>
 
-            {/* Technique Result Banner */}
+            {/* Continuous BAS & Telemetry Correlation Cockpit */}
             {techniqueResult && (
-              <div className="rounded-2xl border border-accent/50 bg-bg-surface p-4 font-mono text-xs space-y-3 shadow-xl">
-                <div className="flex items-center justify-between border-b border-border-subtle pb-2.5">
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
-                        techniqueResult.status === "success"
-                          ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40"
-                          : "bg-rose-500/20 text-rose-400 border border-rose-500/40"
-                      }`}
-                    >
-                      {techniqueResult.status} (exit {techniqueResult.exit_code})
-                    </span>
-                    <span className="font-bold text-text-primary">
+              <div className="rounded-2xl border border-accent/50 bg-bg-surface p-5 font-mono text-xs space-y-4 shadow-2xl">
+                {/* Header with Detection Verdict & Gap Fixer */}
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border-subtle pb-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {techniqueResult.detection_status === "detected" || techniqueResult.alerts_count > 0 ? (
+                      <span className="rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-2.5 py-1 text-[11px] font-bold text-emerald-400 flex items-center gap-1.5 shadow-sm">
+                        <Icon name="shield" size={13} />
+                        <span>DETECTED (DEFENSE VERIFIED)</span>
+                      </span>
+                    ) : techniqueResult.detection_status === "telemetry_only" ? (
+                      <span className="rounded-lg border border-amber-500/40 bg-amber-500/15 px-2.5 py-1 text-[11px] font-bold text-amber-400 flex items-center gap-1.5 shadow-sm">
+                        <Icon name="alert" size={13} />
+                        <span>TELEMETRY ONLY (DETECTION GAP)</span>
+                      </span>
+                    ) : (
+                      <span className="rounded-lg border border-rose-500/50 bg-rose-500/15 px-2.5 py-1 text-[11px] font-bold text-rose-400 flex items-center gap-1.5 shadow-sm">
+                        <Icon name="alert" size={13} />
+                        <span>MISSED (DETECTION GAP)</span>
+                      </span>
+                    )}
+                    <span className="font-bold text-text-primary text-sm">
                       {techniqueResult.technique_id} · {techniqueResult.name}
                     </span>
+                    <span className="text-[10px] text-text-faint rounded bg-bg-elevated px-2 py-0.5">
+                      Tactic: {techniqueResult.tactic}
+                    </span>
                   </div>
-                  <button onClick={() => setTechniqueResult(null)} className="hover:text-accent font-bold">
-                    Close ×
-                  </button>
+
+                  <div className="flex items-center gap-2">
+                    {/* 1-Click Detection Gap Fixer Button when missed or telemetry only */}
+                    {techniqueResult.detection_status !== "detected" && techniqueResult.alerts_count === 0 && (
+                      <Link
+                        to={`/rules?tab=sigma&mode=builder&technique=${techniqueResult.technique_id}&tactic=${techniqueResult.tactic}&name=${encodeURIComponent(techniqueResult.name)}&title=${encodeURIComponent("Detect " + techniqueResult.name)}`}
+                        className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/20 px-3 py-1 text-[11px] font-bold text-accent transition hover:bg-accent/30 hover:shadow-[var(--glow-accent)]"
+                        title="Open Visual Rule Builder to author a Sigma rule for this gap"
+                      >
+                        <Icon name="shield" size={12} />
+                        <span>Fix Gap: Open in Rule Builder</span>
+                      </Link>
+                    )}
+                    <button
+                      onClick={() => setTechniqueResult(null)}
+                      className="press rounded-lg border border-border-subtle bg-bg-base px-2.5 py-1 text-[11px] text-text-muted hover:text-text-primary"
+                    >
+                      Close ×
+                    </button>
+                  </div>
                 </div>
 
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[11px]">
-                  <div className="bg-bg-base/60 p-2 rounded border border-border-subtle/50">
-                    <span className="text-text-muted block text-[10px] uppercase">Prerequisites</span>
-                    <span className={techniqueResult.prereqs_met ? "text-emerald-400 font-bold" : "text-rose-400 font-bold"}>
-                      {techniqueResult.prereqs_met ? "Verified OK" : "Missing"}
-                    </span>
+                {/* 3-Column Correlation Grid: Red Team Execution <-> EDR Telemetry <-> Detection Verdict */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+                  {/* Column 1: Red Team Attack Execution */}
+                  <div className="rounded-xl border border-border-subtle bg-bg-base/60 p-3 space-y-2">
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="font-bold text-accent uppercase flex items-center gap-1.5">
+                        <Icon name="play" size={12} />
+                        1. Simulated Attack
+                      </span>
+                      <span className="text-[10px] text-text-faint">Exit: {techniqueResult.exit_code}</span>
+                    </div>
+
+                    <div className="space-y-1 text-[10px]">
+                      <div className="flex justify-between">
+                        <span className="text-text-faint">Prerequisites:</span>
+                        <span className={techniqueResult.prereqs_met ? "text-emerald-400 font-bold" : "text-rose-400 font-bold"}>
+                          {techniqueResult.prereqs_met ? "Verified OK" : "Missing"}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-text-faint">Automated Cleanup:</span>
+                        <span className="text-emerald-400 font-bold capitalize">{techniqueResult.cleanup_status}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-text-faint">Execution Latency:</span>
+                        <span className="text-text-primary font-bold">{techniqueResult.elapsed_ms}ms</span>
+                      </div>
+                    </div>
+
+                    {techniqueResult.stdout && (
+                      <div className="mt-2 rounded-lg bg-[#04060a] p-2 text-[10px] text-[#c9d1d9] max-h-20 overflow-y-auto whitespace-pre-wrap break-all">
+                        {techniqueResult.stdout}
+                      </div>
+                    )}
                   </div>
-                  <div className="bg-bg-base/60 p-2 rounded border border-border-subtle/50">
-                    <span className="text-text-muted block text-[10px] uppercase">Cleanup</span>
-                    <span className="text-emerald-400 font-bold capitalize">
-                      {techniqueResult.cleanup_status}
-                    </span>
+
+                  {/* Column 2: Sensor Telemetry Ingestion */}
+                  <div className="rounded-xl border border-border-subtle bg-bg-base/60 p-3 space-y-2">
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="font-bold text-cyan-400 uppercase flex items-center gap-1.5">
+                        <Icon name="activity" size={12} />
+                        2. Sensor Telemetry
+                      </span>
+                      <span className="text-[10px] font-bold text-cyan-400">{techniqueResult.events_count} Events</span>
+                    </div>
+
+                    <div className="space-y-1.5 text-[10px]">
+                      <div className="flex justify-between items-center">
+                        <span className="text-text-faint">Telemetry Coverage:</span>
+                        <span className="text-cyan-300 font-bold">{techniqueResult.telemetry_coverage_pct ?? 100}%</span>
+                      </div>
+                      <div className="w-full h-1.5 rounded-full bg-bg-elevated overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-cyan-400"
+                          style={{ width: `${techniqueResult.telemetry_coverage_pct ?? 100}%` }}
+                        />
+                      </div>
+
+                      {techniqueResult.matched_telemetry && techniqueResult.matched_telemetry.length > 0 && (
+                        <div className="pt-1">
+                          <span className="text-[9px] uppercase text-text-faint block">Captured Primitives:</span>
+                          <div className="flex flex-wrap gap-1 mt-0.5">
+                            {techniqueResult.matched_telemetry.map((t) => (
+                              <span key={t} className="rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.2 text-[9px] font-bold">
+                                ✓ {t}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {techniqueResult.missing_telemetry && techniqueResult.missing_telemetry.length > 0 && (
+                        <div className="pt-1">
+                          <span className="text-[9px] uppercase text-text-faint block">Missing Telemetry:</span>
+                          <div className="flex flex-wrap gap-1 mt-0.5">
+                            {techniqueResult.missing_telemetry.map((t) => (
+                              <span key={t} className="rounded bg-rose-500/15 text-rose-400 border border-rose-500/30 px-1.5 py-0.2 text-[9px] font-bold">
+                                ✗ {t}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                  <div className="bg-bg-base/60 p-2 rounded border border-border-subtle/50">
-                    <span className="text-text-muted block text-[10px] uppercase">Telemetry Ingested</span>
-                    <span className="text-accent font-bold">
-                      {techniqueResult.events_count} events
-                    </span>
-                  </div>
-                  <div className="bg-bg-base/60 p-2 rounded border border-border-subtle/50">
-                    <span className="text-text-muted block text-[10px] uppercase">Detections</span>
-                    <span className={techniqueResult.alerts_count > 0 ? "text-rose-400 font-bold" : "text-text-muted"}>
-                      {techniqueResult.alerts_count} alert(s)
-                    </span>
+
+                  {/* Column 3: Detection Engine Outcome */}
+                  <div className="rounded-xl border border-border-subtle bg-bg-base/60 p-3 space-y-2">
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="font-bold text-rose-400 uppercase flex items-center gap-1.5">
+                        <Icon name="shield" size={12} />
+                        3. Detection Outcome
+                      </span>
+                      <span className={`text-[10px] font-bold ${techniqueResult.alerts_count > 0 ? "text-rose-400" : "text-text-muted"}`}>
+                        {techniqueResult.alerts_count} Alert(s)
+                      </span>
+                    </div>
+
+                    <div className="space-y-1.5 text-[10px]">
+                      <div className="flex justify-between">
+                        <span className="text-text-faint">Mean Time to Detect (MTTD):</span>
+                        <span className="text-text-primary font-bold">{techniqueResult.mttd_ms || techniqueResult.elapsed_ms}ms</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-text-faint">Computed Threat Score:</span>
+                        <span className="text-rose-400 font-bold">{techniqueResult.risk_score} / 100</span>
+                      </div>
+
+                      {techniqueResult.matched_rules && techniqueResult.matched_rules.length > 0 ? (
+                        <div className="pt-1 space-y-1">
+                          <span className="text-[9px] uppercase text-text-faint block">Fired Sigma Rules:</span>
+                          {techniqueResult.matched_rules.map((r, ridx) => (
+                            <Link
+                              key={ridx}
+                              to={`/rules?rule_id=${r.rule_id}`}
+                              className="press flex items-center justify-between rounded border border-border-subtle bg-bg-surface p-1.5 text-[10px] hover:border-accent hover:text-accent"
+                            >
+                              <span className="font-bold truncate">{r.rule_name}</span>
+                              <span className="rounded bg-rose-500/20 px-1 text-[9px] text-rose-400 font-bold uppercase">{r.severity || "high"}</span>
+                            </Link>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="rounded-lg border border-dashed border-border-subtle p-2 text-center text-text-muted text-[10px] mt-1">
+                          No matching detection rules fired. Use "Fix Gap" above to write an AST detection rule for this technique.
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -2548,12 +2680,22 @@ export default function MonitorPage() {
 
                     <div className="border-t border-border-subtle/50 pt-2 flex items-center justify-between text-[11px] font-mono text-text-faint">
                       <span>Platforms: {tech.supported_platforms.join(", ")}</span>
-                      <button
-                        onClick={() => setExpandedTechniqueId(isExpanded ? null : tech.id)}
-                        className="hover:text-accent cursor-pointer"
-                      >
-                        {isExpanded ? "Hide Code ▲" : "View Code ▼"}
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <Link
+                          to={`/rules?tab=sigma&mode=builder&technique=${tech.technique_id}&tactic=${tech.tactic}&name=${encodeURIComponent(tech.name)}&title=${encodeURIComponent("Detect " + tech.name)}`}
+                          className="press inline-flex items-center gap-1 rounded border border-border-subtle bg-bg-surface px-2 py-0.5 text-[10px] text-text-muted hover:border-accent hover:text-accent font-mono"
+                          title="Open Visual Rule Builder for this technique"
+                        >
+                          <Icon name="shield" size={10} />
+                          <span>Rule Builder</span>
+                        </Link>
+                        <button
+                          onClick={() => setExpandedTechniqueId(isExpanded ? null : tech.id)}
+                          className="hover:text-accent cursor-pointer"
+                        >
+                          {isExpanded ? "Hide Code ▲" : "View Code ▼"}
+                        </button>
+                      </div>
                     </div>
 
                     {isExpanded && (

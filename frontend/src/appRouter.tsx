@@ -27,6 +27,7 @@ import { shouldShowLogin } from "./routes/authGate";
 // stays on its own chunk like everything else.
 const LoginPage = lazy(() => import("./routes/login"));
 const AgentsPage = lazy(() => import("./routes/agents"));
+const TasksPage = lazy(() => import("./routes/tasks"));
 const AuditPage = lazy(() => import("./routes/audit"));
 const CampaignsPage = lazy(() => import("./routes/campaigns"));
 const CoveragePage = lazy(() => import("./routes/coverage"));
@@ -273,6 +274,7 @@ export const router = createBrowserRouter([
       { path: "/search", element: <SearchPage /> },
       { path: "/watchlist", element: <WatchlistPage /> },
       { path: "/agents", element: <AgentsPage /> },
+      { path: "/tasks", element: <TasksPage /> },
       { path: "/hosts/:hostId", element: <HostDetailPage /> },
       { path: "/audit", element: <AuditPage /> },
       { path: "/findings", element: <FindingsPage /> },

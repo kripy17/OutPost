@@ -1940,6 +1940,9 @@ export interface TechniqueRunResult {
   tactic: string;
   name: string;
   status: "success" | "failed";
+  detection_status?: "detected" | "telemetry_only" | "missed";
+  matched_rules?: Array<{ rule_id: string; rule_name: string; severity?: string }>;
+  mttd_ms?: number;
   exit_code: number;
   elapsed_ms: number;
   prereqs_met: boolean;
@@ -2041,6 +2044,8 @@ export interface XRayProcessItem {
   is_unmanaged?: boolean;
   socket_count?: number;
   cwd?: string;
+  threat_score?: number;
+  integrity_label?: string;
 }
 
 export interface XRaySocketItem {

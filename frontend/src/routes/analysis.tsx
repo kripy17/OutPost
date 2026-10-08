@@ -27,10 +27,8 @@ const STATUS_TABS: { value: AnalysisStatus | ""; label: string }[] = [
 ];
 
 const BACKENDS: { value: AnalysisBackend; label: string; hint: string; available?: boolean }[] = [
-  { value: "static", label: "Static", hint: "Synchronous triage over the stored bytes — strings, IOCs, PE/ELF metadata" },
-  { value: "isolated-outpost", label: "Isolated OutPost", hint: "Native dynamic sandbox detonation with process tracing and network containment", available: true },
-  { value: "watched-host", label: "Watched host", hint: "Execution backend not configured — no host executor exists yet (501)", available: false },
-  { value: "external-provider", label: "External provider", hint: "Execution backend not configured — no sandbox provider wired yet (501); use Sandbox detonate", available: false },
+  { value: "static", label: "Static Triage", hint: "Synchronous deep triage over stored bytes — strings, IOCs, PE/ELF sections & entropy", available: true },
+  { value: "isolated-outpost", label: "Isolated Dynamic Sandbox", hint: "Native sandbox execution with live process tracing, socket containment, and dropped artifacts", available: true },
 ];
 
 const STATUS_TONE: Record<AnalysisStatus, "muted" | "accent" | "clean" | "malicious"> = {
@@ -146,9 +144,9 @@ export default function AnalysisPage() {
   return (
     <div>
       <PageHeader
-        kicker="Artifact analysis"
-        title="Analysis"
-        lede="Submit an artifact for static triage and follow the job through its persisted lifecycle — results land as observations and findings. Dynamic backends (watched host, external provider, isolated) are listed but not yet executable — the API refuses them rather than queueing jobs that could never run."
+        kicker="Artifact analysis & detonation"
+        title="Analysis Jobs & Background Tasks"
+        lede="Submit vault artifacts for safe static triage or native isolated dynamic sandbox detonation. Follow background execution progress, process trees, and correlated alerts in real time."
         actions={
           <button className="btn btn-primary" onClick={() => setCreating((v) => !v)}>
             <Icon name="plus" size={14} /> New analysis

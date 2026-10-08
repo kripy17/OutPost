@@ -16,6 +16,7 @@ import {
   addInvestigationRef,
   closeInvestigation,
   createInvestigation,
+  executeInvestigationTask,
   getInvestigation,
   listInvestigations,
   patchInvestigation,
@@ -130,6 +131,24 @@ describe("P1.1 investigation API contracts", () => {
       expect.stringContaining(`${BASE}/investigations/inv1/notes`),
       expect.objectContaining({ method: "POST", body: JSON.stringify({ note: "Confirmed" }) }),
     );
+  });
+
+  it("executeInvestigationTask POSTs /investigations/:id/tasks/:taskId/execute", async () => {
+    mockFetchOnce(200, {
+      task: { id: "t1", title: "Isolate host", status: "completed" },
+      receipt: {
+        action: "host_isolation",
+        status: "success",
+        detail: "Host endpoint isolated",
+        timestamp: "2026-08-17T00:00:00Z",
+      },
+    });
+    const res = await executeInvestigationTask("inv1", 1);
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining(`${BASE}/investigations/inv1/tasks/1/execute`),
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(res.receipt?.status).toBe("success");
   });
 
   it("setAlertInvestigation carries the current status so detach never moves triage state", async () => {

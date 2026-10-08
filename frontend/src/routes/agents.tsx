@@ -5,6 +5,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { platformIconName } from "../components/iconMeta";
 import { IocFleetHuntModal } from "../components/IocFleetHuntModal";
+import { EndpointTaskManager } from "../components/EndpointTaskManager";
 import {
   getAgentBootstrapCommands,
   getAgents,
@@ -775,6 +776,7 @@ export default function AgentsPage() {
   const [huntIoc, setHuntIoc] = useState<string | null>(null);
   const [showEnrollDrawer, setShowEnrollDrawer] = useState(false);
   const [showHuntInput, setShowHuntInput] = useState(false);
+  const [activeDeck, setActiveDeck] = useState<"fleet" | "task_manager">("fleet");
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ["agents", identity],
@@ -901,7 +903,37 @@ export default function AgentsPage() {
         </div>
       </div>
 
-      {/* Beginner Operational Posture Guide */}
+      {/* Primary Console Deck Switcher */}
+      <div className="mb-6 flex rounded-xl border border-border-subtle bg-bg-surface p-1 font-mono text-xs shadow-xs">
+        <button
+          onClick={() => setActiveDeck("fleet")}
+          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-medium transition ${
+            activeDeck === "fleet"
+              ? "bg-accent/15 font-bold text-accent shadow-xs"
+              : "text-text-muted hover:text-text-primary"
+          }`}
+        >
+          <Icon name="shield" size={13} />
+          <span>EDR Fleet Sensor Inventory ({data?.total ?? 0})</span>
+        </button>
+        <button
+          onClick={() => setActiveDeck("task_manager")}
+          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-medium transition ${
+            activeDeck === "task_manager"
+              ? "bg-accent/15 font-bold text-accent shadow-xs"
+              : "text-text-muted hover:text-text-primary"
+          }`}
+        >
+          <Icon name="activity" size={13} />
+          <span>Live Endpoint Task Manager &amp; Processes</span>
+        </button>
+      </div>
+
+      {activeDeck === "task_manager" ? (
+        <EndpointTaskManager hostId="local" />
+      ) : (
+        <>
+          {/* Beginner Operational Posture Guide */}
       <div className="mb-6 rounded-xl border border-border-subtle/90 bg-bg-surface/60 p-4 font-mono text-xs backdrop-blur-sm space-y-2">
         <div className="flex items-center justify-between">
           <span className="font-bold text-text-primary flex items-center gap-2">
@@ -1204,6 +1236,8 @@ export default function AgentsPage() {
             </tbody>
           </table>
         </div>
+      )}
+        </>
       )}
     </div>
   );

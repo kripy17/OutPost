@@ -1142,6 +1142,29 @@ export async function generateRecommendedTasks(investigationId: string): Promise
   return post<InvestigationTask[]>(`/investigations/${encodeURIComponent(investigationId)}/tasks/generate-recommended`, {});
 }
 
+/** Execute concrete SOAR containment action on a task (POST /investigations/{id}/tasks/{taskId}/execute). */
+export async function executeInvestigationTask(
+  investigationId: string,
+  taskId: number,
+): Promise<{
+  status: string;
+  action: string;
+  output: string;
+  task: InvestigationTask;
+  receipt?: { action: string; status: string; detail: string; timestamp?: string };
+}> {
+  return post<{
+    status: string;
+    action: string;
+    output: string;
+    task: InvestigationTask;
+    receipt?: { action: string; status: string; detail: string; timestamp?: string };
+  }>(
+    `/investigations/${encodeURIComponent(investigationId)}/tasks/${taskId}/execute`,
+    {},
+  );
+}
+
 /** Get chronological causality timeline for an investigation (GET /investigations/{id}/timeline). */
 export async function getInvestigationTimeline(
   investigationId: string,

@@ -152,6 +152,13 @@ export function getNavigationGroups(
           badge: onlineAgents > 0 ? `${onlineAgents} on` : null,
           badgeTone: "clean",
         },
+        {
+          to: "/tasks",
+          label: "Live Task Manager",
+          iconName: "activity",
+          badge: "LIVE",
+          badgeTone: "accent",
+        },
       ],
     },
     {
