@@ -12,10 +12,8 @@ import {
   getRecentAlerts,
   getRuleMeta,
   listInvestigations,
-  runLiveSimulation,
 } from "../lib/api";
 import { useEventStream } from "../lib/useEventStream";
-import InteractiveThreatTopology from "../components/InteractiveThreatTopology";
 import type { GlobalAlert, QueueAlert } from "../types";
 
 const ATTACK_TACTICS = [
@@ -61,7 +59,7 @@ function AlertInspectorDrawer({
     <div
       role="dialog"
       aria-modal="true"
-      className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-xs animate-fade-in font-mono"
+      className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-xs animate-fade-in font-sans"
       onClick={onClose}
     >
       <div
@@ -94,11 +92,11 @@ function AlertInspectorDrawer({
         </div>
 
         {/* Action Ribbon */}
-        <div className="p-3 border-b border-border-subtle bg-bg-base/60 flex flex-wrap items-center gap-1.5">
+        <div className="p-3 border-b border-border-subtle bg-bg-base/60 flex flex-wrap items-center gap-1.5 font-sans">
           {alert.id && alert.status === "open" && (
             <button
               onClick={() => onAcknowledge(alert.id)}
-              className="press inline-flex items-center gap-1 rounded border border-signal/60 bg-signal/15 px-2.5 py-1 text-[11px] font-bold text-signal hover:bg-signal/25"
+              className="press inline-flex items-center gap-1 rounded border border-signal/60 bg-signal/15 px-2.5 py-1 text-[11px] font-semibold text-signal hover:bg-signal/25"
             >
               <Icon name="check" size={11} />
               <span>Acknowledge Alert</span>
@@ -107,7 +105,7 @@ function AlertInspectorDrawer({
 
           <Link
             to={`/findings?alert_id=${alert.id || ""}`}
-            className="press inline-flex items-center gap-1 rounded border border-border-subtle bg-bg-surface px-2.5 py-1 text-[11px] text-text-muted hover:border-accent/40 hover:text-text-primary"
+            className="press inline-flex items-center gap-1 rounded border border-border-subtle bg-bg-surface px-2.5 py-1 text-[11px] font-semibold text-text-muted hover:border-accent/40 hover:text-text-primary"
           >
             <Icon name="shield" size={11} />
             <span>Triage in Queue</span>
@@ -116,7 +114,7 @@ function AlertInspectorDrawer({
           {alert.related_ip && (
             <Link
               to={`/footprint?target=${encodeURIComponent(alert.related_ip)}`}
-              className="press inline-flex items-center gap-1 rounded border border-border-subtle bg-bg-surface px-2.5 py-1 text-[11px] text-text-muted hover:border-accent/40 hover:text-text-primary"
+              className="press inline-flex items-center gap-1 rounded border border-border-subtle bg-bg-surface px-2.5 py-1 text-[11px] font-semibold text-text-muted hover:border-accent/40 hover:text-text-primary"
             >
               <Icon name="globe" size={11} />
               <span>Pivot IP</span>
@@ -125,7 +123,7 @@ function AlertInspectorDrawer({
 
           <button
             onClick={() => void copyToClipboard(JSON.stringify(alert, null, 2))}
-            className="press inline-flex items-center gap-1 rounded border border-border-subtle bg-bg-surface px-2.5 py-1 text-[11px] text-text-muted hover:text-text-primary ml-auto"
+            className="press inline-flex items-center gap-1 rounded border border-border-subtle bg-bg-surface px-2.5 py-1 text-[11px] font-semibold text-text-muted hover:text-text-primary ml-auto"
           >
             <Icon name="copy" size={11} />
             <span>Copy JSON</span>
@@ -140,34 +138,36 @@ function AlertInspectorDrawer({
             <div className="grid grid-cols-2 gap-2 text-[11px]">
               <div>
                 <span className="text-text-faint">Rule ID:</span>
-                <p className="font-bold text-accent mt-0.5">{alert.rule_id}</p>
+                <p className="font-mono text-xs font-semibold text-accent mt-0.5">{alert.rule_id}</p>
               </div>
               <div>
                 <span className="text-text-faint">Triggered Timestamp:</span>
-                <p className="text-text-primary mt-0.5">{alert.triggered_at?.slice(0, 19).replace("T", " ")} UTC</p>
+                <p className="font-mono text-xs tabular-nums text-text-primary mt-0.5">
+                  {alert.triggered_at?.slice(0, 19).replace("T", " ")} UTC
+                </p>
               </div>
               {ruleMeta && (
                 <>
                   <div>
                     <span className="text-text-faint">ATT&amp;CK Technique:</span>
-                    <p className="font-bold text-text-primary mt-0.5">{ruleMeta.technique}</p>
+                    <p className="font-mono text-xs font-semibold text-text-primary mt-0.5">{ruleMeta.technique}</p>
                   </div>
                   <div>
                     <span className="text-text-faint">ATT&amp;CK Tactic:</span>
-                    <p className="text-text-primary mt-0.5 capitalize">{ruleMeta.tactic}</p>
+                    <p className="font-medium text-text-primary mt-0.5 capitalize">{ruleMeta.tactic}</p>
                   </div>
                 </>
               )}
               {alert.related_ip && (
                 <div>
                   <span className="text-text-faint">Related Socket IP:</span>
-                  <p className="font-bold text-risk-malicious mt-0.5">{alert.related_ip}</p>
+                  <p className="font-mono text-xs font-bold text-risk-malicious mt-0.5">{alert.related_ip}</p>
                 </div>
               )}
               {alert.related_pid && (
                 <div>
                   <span className="text-text-faint">Related PID:</span>
-                  <p className="text-text-primary mt-0.5">{alert.related_pid}</p>
+                  <p className="font-mono text-xs tabular-nums text-text-primary mt-0.5">{alert.related_pid}</p>
                 </div>
               )}
             </div>
@@ -184,7 +184,7 @@ function AlertInspectorDrawer({
           {/* Raw Payload Block */}
           <div className="rounded-lg border border-border-subtle bg-bg-base p-3 space-y-1.5">
             <span className="text-[10px] uppercase font-bold text-text-faint tracking-wider">Raw Finding JSON</span>
-            <pre className="max-h-48 overflow-y-auto text-[10px] text-text-muted leading-tight">
+            <pre className="max-h-48 overflow-y-auto text-[10px] font-mono text-text-muted leading-tight">
               {JSON.stringify(alert, null, 2)}
             </pre>
           </div>
@@ -199,9 +199,7 @@ export default function OverviewPage() {
   const { preset } = useSocTimeRange();
 
   const [inspectAlert, setInspectAlert] = useState<AlertDrawerState | null>(null);
-  const [simulationRunning, setSimulationRunning] = useState(false);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<"topology" | "analytics">("topology");
 
   // Real-time Event Stream Listener
   useEventStream(() => {
@@ -257,7 +255,7 @@ export default function OverviewPage() {
 
   // Mutations
   const ackMutation = useMutation({
-    mutationFn: (id: number) => bulkUpdateAlertStatus([id], "acknowledged", "Acknowledged in Operations Cockpit"),
+    mutationFn: (id: number) => bulkUpdateAlertStatus([id], "acknowledged", "Acknowledged in Operations Overview"),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["alerts"] });
       if (inspectAlert && inspectAlert.alert.id) {
@@ -267,22 +265,6 @@ export default function OverviewPage() {
       setTimeout(() => setActionNotice(null), 2500);
     },
   });
-
-  const handleLaunchSimulation = async () => {
-    setSimulationRunning(true);
-    try {
-      await runLiveSimulation("win_c2_beacon");
-      setActionNotice("Simulated adversary beacon scenario executed in lab");
-      void queryClient.invalidateQueries({ queryKey: ["alerts"] });
-      void queryClient.invalidateQueries({ queryKey: ["events"] });
-      void queryClient.invalidateQueries({ queryKey: ["runs"] });
-    } catch {
-      setActionNotice("Simulation execution failed — check lab status");
-    } finally {
-      setSimulationRunning(false);
-      setTimeout(() => setActionNotice(null), 3500);
-    }
-  };
 
   // KPI Calculations
   const rawAlerts = Array.isArray(alertQueue) ? alertQueue : (alertQueue?.alerts ?? []);
@@ -294,7 +276,9 @@ export default function OverviewPage() {
   const onlineAgents = (fleet?.agents ?? []).filter((a) => a.online).length;
   const coveragePct = totalAgents > 0 ? Math.round((onlineAgents / totalAgents) * 100) : 100;
 
-  const activeCases = (investigations?.investigations ?? []).filter((i) => i.status !== "closed" && i.status !== "resolved").length;
+  const activeCases = (investigations?.investigations ?? []).filter(
+    (i) => i.status !== "closed" && i.status !== "resolved"
+  ).length;
   const totalEventsIngested = (fleet?.agents ?? []).reduce((acc, a) => acc + (a.event_count || 0), 0);
 
   // Active ATT&CK Tactics Map
@@ -315,57 +299,27 @@ export default function OverviewPage() {
       {/* Header Bar */}
       <div className="flex flex-wrap items-center justify-between gap-4 border-b border-border-subtle pb-4">
         <div>
-          <span className="text-[10px] uppercase font-bold tracking-wider text-text-faint">
-            Operations Cockpit · Telemetry Window: {preset.label}
+          <span className="text-[10px] uppercase font-semibold tracking-wider text-text-faint">
+            Operations Overview · Time Window: {preset.label}
           </span>
           <h1 className="text-xl font-bold text-text-primary tracking-tight">
-            Security Operations Center
+            Security Operations Overview
           </h1>
           <p className="text-xs text-text-muted mt-0.5">
-            Enterprise threat monitoring, fleet posture, and real-time alert triage.
+            Enterprise threat detection posture, sensor fleet status, and active security findings.
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
-          {/* View Mode Switcher */}
-          <div className="flex items-center rounded-lg border border-border-subtle bg-bg-surface p-0.5">
-            <button
-              onClick={() => setViewMode("topology")}
-              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition ${
-                viewMode === "topology"
-                  ? "bg-accent/20 text-accent border border-accent/40 shadow-xs"
-                  : "text-text-muted hover:text-text-primary"
-              }`}
-            >
-              <Icon name="activity" size={12} />
-              <span>Threat Topology</span>
-            </button>
-            <button
-              onClick={() => setViewMode("analytics")}
-              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition ${
-                viewMode === "analytics"
-                  ? "bg-accent/20 text-accent border border-accent/40 shadow-xs"
-                  : "text-text-muted hover:text-text-primary"
-              }`}
-            >
-              <Icon name="grid" size={12} />
-              <span>Operations HUD</span>
-            </button>
+          <div className="flex items-center gap-2 rounded-lg border border-border-subtle bg-bg-surface px-3 py-1.5 text-xs text-text-muted shadow-xs">
+            <span className="h-2 w-2 rounded-full bg-signal" />
+            <span className="font-semibold text-text-primary">Engine Online</span>
+            <span className="text-text-faint">· Live Ingest</span>
           </div>
-
-          <button
-            onClick={handleLaunchSimulation}
-            disabled={simulationRunning}
-            className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/15 px-3 py-1.5 font-bold text-accent hover:bg-accent/25 disabled:opacity-50 transition"
-            title="Detonate a realistic benign or adversary scenario to verify detection pipelines"
-          >
-            <Icon name={simulationRunning ? "refresh" : "play"} size={12} className={simulationRunning ? "animate-spin" : ""} />
-            <span>{simulationRunning ? "Detonating Scenario…" : "Simulate Scenario"}</span>
-          </button>
 
           <Link
             to="/findings"
-            className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-surface px-3 py-1.5 text-text-muted hover:border-accent/40 hover:text-text-primary transition"
+            className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-surface px-3 py-1.5 text-text-muted hover:border-accent/40 hover:text-text-primary font-semibold transition shadow-xs"
           >
             <span>Triage Queue</span>
             <Icon name="arrowRight" size={11} />
@@ -375,336 +329,349 @@ export default function OverviewPage() {
 
       {/* Action Notification Toast */}
       {actionNotice && (
-        <div className="flex items-center justify-between rounded-xl border border-signal/50 bg-signal/15 px-4 py-2 font-mono text-xs text-signal animate-fade-in">
-          <span>✓ {actionNotice}</span>
+        <div className="flex items-center justify-between rounded-xl border border-signal/50 bg-signal/15 px-4 py-2 text-xs text-signal animate-fade-in shadow-xs">
+          <span className="font-medium">✓ {actionNotice}</span>
           <button onClick={() => setActionNotice(null)} className="text-text-muted hover:text-text-primary">✕</button>
         </div>
       )}
 
-      {/* Main Threat Topology Canvas (When ViewMode === "topology") */}
-      {viewMode === "topology" && (
-        <div className="space-y-2">
-          <InteractiveThreatTopology
-            alerts={rawAlerts}
-            agents={fleet?.agents}
-            events={telemetryEvents?.events}
-            height={460}
-          />
-        </div>
-      )}
-
-      {/* Executive KPI HUD Strip (5 Cards) */}
+      {/* KPI Metric Strip (5 Cards) */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-        <div className="rounded-xl border border-border-subtle bg-bg-surface p-3.5 shadow-xs">
-          <span className="text-[10px] uppercase font-bold text-text-faint tracking-wider">Active Incident Cases</span>
-          <p className="mt-1 text-lg font-bold text-text-primary">{activeCases}</p>
-          <span className="text-[10px] text-text-faint">
-            {activeCases === 0 ? "Zero open escalations" : "Requires incident lead review"}
+        <Link
+          to="/investigations"
+          className="rounded-xl border border-border-subtle bg-bg-surface p-3.5 shadow-xs hover:border-accent/40 transition group"
+        >
+          <span className="text-[10px] uppercase font-semibold text-text-faint tracking-wider">Active Cases</span>
+          <p className="mt-1 text-lg font-bold text-text-primary font-mono tabular-nums">{activeCases}</p>
+          <span className="text-[10px] text-text-faint group-hover:text-accent transition">
+            {activeCases === 0 ? "Zero open escalations" : "Open incident dossiers"}
           </span>
-        </div>
+        </Link>
 
-        <div className="rounded-xl border border-border-subtle bg-bg-surface p-3.5 shadow-xs">
-          <span className="text-[10px] uppercase font-bold text-text-faint tracking-wider">Unresolved Findings</span>
-          <p className="mt-1 text-lg font-bold">
+        <Link
+          to="/findings"
+          className="rounded-xl border border-border-subtle bg-bg-surface p-3.5 shadow-xs hover:border-accent/40 transition group"
+        >
+          <span className="text-[10px] uppercase font-semibold text-text-faint tracking-wider">Unresolved Findings</span>
+          <p className="mt-1 text-lg font-bold font-mono tabular-nums">
             <span className={criticalCount > 0 ? "text-risk-malicious" : "text-text-primary"}>
               {openAlerts.length}
             </span>
-            <span className="text-[11px] text-text-faint font-normal ml-1.5">
+            <span className="text-[11px] text-text-faint font-normal font-sans ml-1.5">
               ({criticalCount} crit · {highCount} high)
             </span>
           </p>
-          <span className="text-[10px] text-text-faint">Awaiting analyst triage</span>
-        </div>
+          <span className="text-[10px] text-text-faint group-hover:text-accent transition">Awaiting analyst triage</span>
+        </Link>
 
-        <div className="rounded-xl border border-border-subtle bg-bg-surface p-3.5 shadow-xs">
-          <span className="text-[10px] uppercase font-bold text-text-faint tracking-wider">Sensor Fleet Health</span>
-          <p className="mt-1 text-lg font-bold text-risk-clean">
+        <Link
+          to="/agents"
+          className="rounded-xl border border-border-subtle bg-bg-surface p-3.5 shadow-xs hover:border-accent/40 transition group"
+        >
+          <span className="text-[10px] uppercase font-semibold text-text-faint tracking-wider">Sensor Fleet</span>
+          <p className="mt-1 text-lg font-bold text-risk-clean font-mono tabular-nums">
             {coveragePct}%
-            <span className="text-[11px] text-text-faint font-normal ml-1.5">
+            <span className="text-[11px] text-text-faint font-normal font-sans ml-1.5">
               ({onlineAgents}/{totalAgents} online)
             </span>
           </p>
-          <span className="text-[10px] text-text-faint">Linux, Windows, macOS</span>
-        </div>
+          <span className="text-[10px] text-text-faint group-hover:text-accent transition">Monitored endpoints</span>
+        </Link>
 
-        <div className="rounded-xl border border-border-subtle bg-bg-surface p-3.5 shadow-xs">
-          <span className="text-[10px] uppercase font-bold text-text-faint tracking-wider">Telemetry Ingested</span>
-          <p className="mt-1 text-lg font-bold text-accent">
+        <Link
+          to="/events"
+          className="rounded-xl border border-border-subtle bg-bg-surface p-3.5 shadow-xs hover:border-accent/40 transition group"
+        >
+          <span className="text-[10px] uppercase font-semibold text-text-faint tracking-wider">Telemetry Ingested</span>
+          <p className="mt-1 text-lg font-bold text-accent font-mono tabular-nums">
             {totalEventsIngested.toLocaleString()}
           </p>
-          <span className="text-[10px] text-text-faint">Events evaluated by engine</span>
-        </div>
+          <span className="text-[10px] text-text-faint group-hover:text-accent transition">Events processed</span>
+        </Link>
 
-        <div className="rounded-xl border border-border-subtle bg-bg-surface p-3.5 shadow-xs">
-          <span className="text-[10px] uppercase font-bold text-text-faint tracking-wider">ATT&amp;CK Techniques</span>
-          <p className="mt-1 text-lg font-bold text-text-primary">
+        <Link
+          to="/coverage"
+          className="rounded-xl border border-border-subtle bg-bg-surface p-3.5 shadow-xs hover:border-accent/40 transition group"
+        >
+          <span className="text-[10px] uppercase font-semibold text-text-faint tracking-wider">ATT&amp;CK Techniques</span>
+          <p className="mt-1 text-lg font-bold text-text-primary font-mono tabular-nums">
             {ruleMetaList.length}
           </p>
-          <span className="text-[10px] text-text-faint">Active Sigma/engine rules</span>
-        </div>
+          <span className="text-[10px] text-text-faint group-hover:text-accent transition">Active detection rules</span>
+        </Link>
       </div>
 
-      {/* 4-Quadrant Operations Workspace */}
+      {/* 2-Column Operations Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-        {/* Quadrant 1: Priority Threat Alert Feed (7 cols) */}
-        <div className="lg:col-span-7 rounded-xl border border-border-subtle bg-bg-surface overflow-hidden shadow-xs flex flex-col">
-          <div className="p-3.5 border-b border-border-subtle bg-bg-elevated/40 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="font-bold text-text-primary text-xs">High-Priority Alert Feed</span>
-              <span className="rounded-full bg-bg-base border border-border-subtle px-2 py-0.2 text-[10px] text-text-muted">
-                {recentAlerts.length} Recorded
-              </span>
-            </div>
-            <Link
-              to="/findings"
-              className="press text-[11px] text-accent hover:underline inline-flex items-center gap-1"
-            >
-              <span>Full Queue</span>
-              <Icon name="arrowRight" size={10} />
-            </Link>
-          </div>
-
-          <div className="flex-1 overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-bg-elevated/60 border-b border-border-subtle text-[10px] uppercase text-text-faint">
-                <tr>
-                  <th className="px-4 py-2">Sev</th>
-                  <th className="px-4 py-2">Rule Signature / Technique</th>
-                  <th className="px-4 py-2">Host</th>
-                  <th className="px-4 py-2">Observed</th>
-                  <th className="px-4 py-2 text-right">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border-subtle/40">
-                {recentAlerts.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="px-4 py-10 text-center text-text-muted">
-                      No security alerts triggered in the selected time window.
-                    </td>
-                  </tr>
-                ) : (
-                  recentAlerts.slice(0, 6).map((a, idx) => {
-                    const meta = ruleMap.get(a.rule_id);
-                    const isMalicious = a.severity === "malicious";
-                    return (
-                      <tr
-                        key={idx}
-                        onClick={() => setInspectAlert({ alert: a, ruleMeta: meta })}
-                        className="cursor-pointer hover:bg-bg-elevated/40 transition group"
-                      >
-                        <td className="px-4 py-2.5">
-                          <span
-                            className={`rounded px-1.5 py-0.2 text-[9px] uppercase font-bold ${
-                              isMalicious
-                                ? "bg-risk-malicious/20 text-risk-malicious"
-                                : "bg-risk-suspicious/20 text-risk-suspicious"
-                            }`}
-                          >
-                            {a.severity.slice(0, 4)}
-                          </span>
-                        </td>
-                        <td className="px-4 py-2.5 min-w-48">
-                          <div className="font-bold text-text-primary group-hover:text-accent transition truncate" title={a.rule_name}>
-                            {a.rule_name}
-                          </div>
-                          {meta && (
-                            <div className="text-[10px] text-text-faint mt-0.5">
-                              {meta.technique} · {meta.tactic}
-                            </div>
-                          )}
-                        </td>
-                        <td className="px-4 py-2.5 text-text-muted text-[11px]">
-                          {a.related_ip || "fleet-host"}
-                        </td>
-                        <td className="px-4 py-2.5 text-text-faint text-[11px] whitespace-nowrap">
-                          {relativeTime(a.triggered_at)}
-                        </td>
-                        <td className="px-4 py-2.5 text-right" onClick={(e) => e.stopPropagation()}>
-                          <button
-                            onClick={() => setInspectAlert({ alert: a, ruleMeta: meta })}
-                            className="press rounded border border-border-subtle bg-bg-base px-2 py-0.5 text-[10px] text-text-muted hover:border-accent/40 hover:text-accent"
-                          >
-                            Inspect
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {/* Quadrant 2: MITRE ATT&CK Kill-Chain Progression (5 cols) */}
-        <div className="lg:col-span-5 rounded-xl border border-border-subtle bg-bg-surface p-4 shadow-xs flex flex-col justify-between">
-          <div>
-            <div className="flex items-center justify-between border-b border-border-subtle/60 pb-2.5 mb-3">
-              <div>
-                <span className="text-[10px] uppercase font-bold text-text-faint tracking-wider">
-                  Threat Progression
+        {/* Column 1 (Left 7 cols): High-Priority Alert Feed & Live Telemetry Stream */}
+        <div className="lg:col-span-7 space-y-5">
+          {/* High-Priority Security Alerts */}
+          <div className="rounded-xl border border-border-subtle bg-bg-surface overflow-hidden shadow-xs flex flex-col">
+            <div className="p-3.5 border-b border-border-subtle bg-bg-elevated/40 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-text-primary text-xs">High-Priority Alert Feed</span>
+                <span className="rounded-full bg-bg-base border border-border-subtle px-2 py-0.2 font-mono text-[10px] tabular-nums text-text-muted">
+                  {recentAlerts.length}
                 </span>
-                <h3 className="font-bold text-text-primary text-xs">
-                  MITRE ATT&amp;CK Active Kill-Chain
-                </h3>
               </div>
-              <Link to="/coverage" className="text-[11px] text-accent hover:underline">
-                Matrix →
+              <Link
+                to="/findings"
+                className="press text-[11px] font-semibold text-accent hover:underline inline-flex items-center gap-1"
+              >
+                <span>Full Queue</span>
+                <Icon name="arrowRight" size={10} />
               </Link>
             </div>
 
-            <p className="text-[11px] text-text-muted leading-relaxed mb-3">
-              Tactics actively triggered by correlated detections in the current observation window:
-            </p>
-
-            <div className="grid grid-cols-2 gap-1.5">
-              {ATTACK_TACTICS.map((t) => {
-                const count = activeTactics.get(t.id) || 0;
-                const isActive = count > 0;
-                return (
-                  <Link
-                    key={t.id}
-                    to={`/coverage?tactic=${t.id}`}
-                    className={`rounded-lg border p-2 flex items-center justify-between transition ${
-                      isActive
-                        ? "border-risk-malicious/50 bg-risk-malicious/10 text-risk-malicious font-bold"
-                        : "border-border-subtle/60 bg-bg-base/50 text-text-muted hover:border-border-strong hover:text-text-primary"
-                    }`}
-                  >
-                    <span className="text-[11px] truncate">{t.label}</span>
-                    {isActive && (
-                      <span className="rounded bg-risk-malicious/20 px-1.5 py-0.2 text-[9px] text-risk-malicious">
-                        {count} hits
-                      </span>
-                    )}
-                  </Link>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="mt-4 pt-3 border-t border-border-subtle/50 flex items-center justify-between text-[10px] text-text-faint">
-            <span>Red indicates active adversarial technique detections</span>
-            <Link to="/rules" className="text-accent hover:underline">
-              Rule IDE →
-            </Link>
-          </div>
-        </div>
-
-        {/* Quadrant 3: Live EDR Telemetry Event Stream (7 cols) */}
-        <div className="lg:col-span-7 rounded-xl border border-border-subtle bg-bg-surface overflow-hidden shadow-xs">
-          <div className="p-3.5 border-b border-border-subtle bg-bg-elevated/40 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="h-2 w-2 rounded-full bg-signal animate-outpost-pulse" />
-              <span className="font-bold text-text-primary text-xs">Live Telemetry Event Stream</span>
-            </div>
-            <Link to="/events" className="press text-[11px] text-accent hover:underline inline-flex items-center gap-1">
-              <span>Full Sensor Stream</span>
-              <Icon name="arrowRight" size={10} />
-            </Link>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-bg-elevated/60 border-b border-border-subtle text-[10px] uppercase text-text-faint">
-                <tr>
-                  <th className="px-4 py-2">Timestamp</th>
-                  <th className="px-4 py-2">Host</th>
-                  <th className="px-4 py-2">Event Action</th>
-                  <th className="px-4 py-2">Process / Context</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border-subtle/40">
-                {(!telemetryEvents || !telemetryEvents.events || telemetryEvents.events.length === 0) ? (
+            <div className="flex-1 overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-bg-elevated/60 border-b border-border-subtle text-[10px] uppercase font-semibold text-text-faint">
                   <tr>
-                    <td colSpan={4} className="px-4 py-8 text-center text-text-muted">
-                      No raw telemetry ingested yet. Run a simulation or enroll an agent sensor.
-                    </td>
+                    <th className="px-4 py-2">Sev</th>
+                    <th className="px-4 py-2">Rule Signature / Technique</th>
+                    <th className="px-4 py-2">Host</th>
+                    <th className="px-4 py-2">Observed</th>
+                    <th className="px-4 py-2 text-right">Action</th>
                   </tr>
-                ) : (
-                  telemetryEvents.events.slice(0, 5).map((e: any, idx: number) => (
-                    <tr key={idx} className="hover:bg-bg-elevated/30 transition">
-                      <td className="px-4 py-2.5 text-text-faint text-[10px] whitespace-nowrap">
-                        {e.timestamp ? e.timestamp.slice(11, 19) : "just now"}
-                      </td>
-                      <td className="px-4 py-2.5 text-text-muted text-[11px] whitespace-nowrap">
-                        {e.host_id || "endpoint-01"}
-                      </td>
-                      <td className="px-4 py-2.5">
-                        <span className="rounded bg-bg-base border border-border-subtle px-1.5 py-0.5 text-[10px] text-accent">
-                          {e.event_type || e.type || "process_create"}
-                        </span>
-                      </td>
-                      <td className="px-4 py-2.5 text-text-primary text-[11px] truncate max-w-xs" title={e.command_line || e.process_name || e.details}>
-                        {e.process_name || e.command_line || e.details || "Telemetry record"}
+                </thead>
+                <tbody className="divide-y divide-border-subtle/40">
+                  {recentAlerts.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="px-4 py-10 text-center text-text-muted">
+                        No security alerts triggered in the selected observation window.
                       </td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+                  ) : (
+                    recentAlerts.slice(0, 6).map((a, idx) => {
+                      const meta = ruleMap.get(a.rule_id);
+                      const isMalicious = a.severity === "malicious";
+                      return (
+                        <tr
+                          key={idx}
+                          onClick={() => setInspectAlert({ alert: a, ruleMeta: meta })}
+                          className="cursor-pointer hover:bg-bg-elevated/40 transition group"
+                        >
+                          <td className="px-4 py-2.5">
+                            <span
+                              className={`rounded px-1.5 py-0.2 text-[9px] uppercase font-bold ${
+                                isMalicious
+                                  ? "bg-risk-malicious/20 text-risk-malicious border border-risk-malicious/30"
+                                  : "bg-risk-suspicious/20 text-risk-suspicious border border-risk-suspicious/30"
+                              }`}
+                            >
+                              {a.severity.slice(0, 4)}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2.5 min-w-48">
+                            <div className="font-semibold text-text-primary group-hover:text-accent transition truncate" title={a.rule_name}>
+                              {a.rule_name}
+                            </div>
+                            {meta && (
+                              <div className="text-[10px] font-mono text-text-faint mt-0.5">
+                                {meta.technique} · {meta.tactic}
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-4 py-2.5 text-text-muted text-[11px] font-mono">
+                            {a.related_ip || "fleet-host"}
+                          </td>
+                          <td className="px-4 py-2.5 text-text-faint text-[11px] whitespace-nowrap">
+                            {relativeTime(a.triggered_at)}
+                          </td>
+                          <td className="px-4 py-2.5 text-right" onClick={(e) => e.stopPropagation()}>
+                            <button
+                              onClick={() => setInspectAlert({ alert: a, ruleMeta: meta })}
+                              className="press rounded border border-border-subtle bg-bg-base px-2 py-0.5 text-[10px] font-semibold text-text-muted hover:border-accent/40 hover:text-accent transition shadow-xs"
+                            >
+                              Inspect
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Live Telemetry Event Stream */}
+          <div className="rounded-xl border border-border-subtle bg-bg-surface overflow-hidden shadow-xs">
+            <div className="p-3.5 border-b border-border-subtle bg-bg-elevated/40 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="h-2 w-2 rounded-full bg-signal" />
+                <span className="font-bold text-text-primary text-xs">Live Telemetry Event Stream</span>
+              </div>
+              <Link to="/events" className="press text-[11px] font-semibold text-accent hover:underline inline-flex items-center gap-1">
+                <span>Full Telemetry Feed</span>
+                <Icon name="arrowRight" size={10} />
+              </Link>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-bg-elevated/60 border-b border-border-subtle text-[10px] uppercase font-semibold text-text-faint">
+                  <tr>
+                    <th className="px-4 py-2">Timestamp</th>
+                    <th className="px-4 py-2">Host</th>
+                    <th className="px-4 py-2">Event Type</th>
+                    <th className="px-4 py-2">Process / Context</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border-subtle/40">
+                  {(!telemetryEvents || !telemetryEvents.events || telemetryEvents.events.length === 0) ? (
+                    <tr>
+                      <td colSpan={4} className="px-4 py-8 text-center text-text-muted">
+                        No telemetry events recorded yet. Enrolled agent sensors push events in real time.
+                      </td>
+                    </tr>
+                  ) : (
+                    telemetryEvents.events.slice(0, 5).map((e: any, idx: number) => (
+                      <tr key={idx} className="hover:bg-bg-elevated/30 transition">
+                        <td className="px-4 py-2.5 font-mono tabular-nums text-text-faint text-[10px] whitespace-nowrap">
+                          {e.timestamp ? e.timestamp.slice(11, 19) : "just now"}
+                        </td>
+                        <td className="px-4 py-2.5 text-text-muted text-[11px] font-mono whitespace-nowrap">
+                          {e.host_id ? (
+                            <Link to={`/hosts/${encodeURIComponent(e.host_id)}`} className="text-accent hover:underline">
+                              {e.host_id}
+                            </Link>
+                          ) : (
+                            "local"
+                          )}
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <span className="rounded bg-bg-base border border-border-subtle px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wide text-accent">
+                            {e.event_type || e.type || "process_create"}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5 text-text-primary text-[11px] font-mono truncate max-w-xs" title={e.command_line || e.process_name || e.details}>
+                          {e.process_name || e.command_line || e.details || "Telemetry record"}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
 
-        {/* Quadrant 4: Fleet Sensor Distribution & Telemetry Posture (5 cols) */}
-        <div className="lg:col-span-5 rounded-xl border border-border-subtle bg-bg-surface p-4 shadow-xs space-y-4">
-          <div className="flex items-center justify-between border-b border-border-subtle/60 pb-2.5">
+        {/* Column 2 (Right 5 cols): ATT&CK Kill-Chain & Sensor Fleet Status */}
+        <div className="lg:col-span-5 space-y-5">
+          {/* MITRE ATT&CK Active Kill-Chain */}
+          <div className="rounded-xl border border-border-subtle bg-bg-surface p-4 shadow-xs flex flex-col justify-between">
             <div>
-              <span className="text-[10px] uppercase font-bold text-text-faint tracking-wider">
-                Fleet Posture
-              </span>
-              <h3 className="font-bold text-text-primary text-xs">
-                Sensor Fleet Distribution
-              </h3>
+              <div className="flex items-center justify-between border-b border-border-subtle/60 pb-2.5 mb-3">
+                <div>
+                  <span className="text-[10px] uppercase font-semibold text-text-faint tracking-wider">
+                    Threat Progression
+                  </span>
+                  <h3 className="font-bold text-text-primary text-xs">
+                    MITRE ATT&amp;CK Active Kill-Chain
+                  </h3>
+                </div>
+                <Link to="/coverage" className="text-[11px] font-semibold text-accent hover:underline">
+                  Matrix →
+                </Link>
+              </div>
+
+              <p className="text-[11px] text-text-muted leading-relaxed mb-3">
+                Tactics actively triggered by correlated detections in the current observation window:
+              </p>
+
+              <div className="grid grid-cols-2 gap-1.5">
+                {ATTACK_TACTICS.map((t) => {
+                  const count = activeTactics.get(t.id) || 0;
+                  const isActive = count > 0;
+                  return (
+                    <Link
+                      key={t.id}
+                      to={`/coverage?tactic=${t.id}`}
+                      className={`rounded-lg border p-2 flex items-center justify-between transition ${
+                        isActive
+                          ? "border-risk-malicious/50 bg-risk-malicious/10 text-risk-malicious font-bold"
+                          : "border-border-subtle/60 bg-bg-base/50 text-text-muted hover:border-border-strong hover:text-text-primary"
+                      }`}
+                    >
+                      <span className="text-[11px] truncate font-medium">{t.label}</span>
+                      {isActive && (
+                        <span className="rounded bg-risk-malicious/20 px-1.5 py-0.2 font-mono text-[9px] tabular-nums text-risk-malicious">
+                          {count}
+                        </span>
+                      )}
+                    </Link>
+                  );
+                })}
+              </div>
             </div>
-            <Link to="/agents" className="text-[11px] text-accent hover:underline">
-              Manage Fleet →
-            </Link>
+
+            <div className="mt-4 pt-3 border-t border-border-subtle/50 flex items-center justify-between text-[10px] text-text-faint">
+              <span>Active adversarial technique hits</span>
+              <Link to="/rules" className="text-accent font-semibold hover:underline">
+                Rule Studio →
+              </Link>
+            </div>
           </div>
 
-          {/* Active Sensor Hosts */}
-          <div className="space-y-2">
-            <span className="text-[10px] uppercase font-bold text-text-faint">Enrolled Endpoint Hosts:</span>
-            {(!fleet || fleet.agents.length === 0) ? (
-              <p className="py-4 text-center text-text-muted text-[11px]">
-                No sensor endpoints enrolled yet.
-              </p>
-            ) : (
-              <div className="space-y-1.5">
-                {fleet.agents.slice(0, 4).map((a) => (
-                  <Link
-                    key={a.host_id}
-                    to={`/hosts/${encodeURIComponent(a.host_id)}`}
-                    className="flex items-center justify-between rounded-lg border border-border-subtle bg-bg-base p-2.5 hover:border-accent/40 transition group"
-                  >
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={`h-2 w-2 rounded-full ${
-                          a.online ? "bg-signal" : a.silent ? "bg-risk-malicious" : "bg-text-faint"
-                        }`}
-                      />
-                      <div>
-                        <span className="font-bold text-text-primary group-hover:text-accent transition">
-                          {a.host_id}
-                        </span>
-                        <div className="flex items-center gap-1 mt-0.5">
-                          {a.platforms.map((p) => (
-                            <span key={p} className="text-[10px] text-text-faint capitalize">
-                              {p}
-                            </span>
-                          ))}
+          {/* Enrolled Sensor Fleet Status */}
+          <div className="rounded-xl border border-border-subtle bg-bg-surface p-4 shadow-xs space-y-3">
+            <div className="flex items-center justify-between border-b border-border-subtle/60 pb-2.5">
+              <div>
+                <span className="text-[10px] uppercase font-semibold text-text-faint tracking-wider">
+                  Fleet Posture
+                </span>
+                <h3 className="font-bold text-text-primary text-xs">
+                  Enrolled Endpoint Fleet
+                </h3>
+              </div>
+              <Link to="/agents" className="text-[11px] font-semibold text-accent hover:underline">
+                Manage Fleet →
+              </Link>
+            </div>
+
+            <div className="space-y-2">
+              {(!fleet || fleet.agents.length === 0) ? (
+                <p className="py-4 text-center text-text-muted text-[11px]">
+                  No sensor endpoints enrolled yet.
+                </p>
+              ) : (
+                <div className="space-y-1.5">
+                  {fleet.agents.slice(0, 4).map((a) => (
+                    <Link
+                      key={a.host_id}
+                      to={`/hosts/${encodeURIComponent(a.host_id)}`}
+                      className="flex items-center justify-between rounded-lg border border-border-subtle bg-bg-base p-2.5 hover:border-accent/40 transition group shadow-xs"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`h-2 w-2 rounded-full ${
+                            a.online ? "bg-signal" : a.silent ? "bg-risk-malicious" : "bg-text-faint"
+                          }`}
+                        />
+                        <div>
+                          <span className="font-semibold text-text-primary group-hover:text-accent transition font-mono">
+                            {a.host_id}
+                          </span>
+                          <div className="flex items-center gap-1 mt-0.5">
+                            {a.platforms.map((p) => (
+                              <span key={p} className="text-[10px] text-text-faint capitalize">
+                                {p}
+                              </span>
+                            ))}
+                          </div>
                         </div>
                       </div>
-                    </div>
 
-                    <div className="text-right text-[11px]">
-                      <span className="text-text-primary font-bold">{a.event_count.toLocaleString()}</span>
-                      <span className="text-text-faint block text-[9px]">events</span>
-                    </div>
-                  </Link>
-                ))}
-              </div>
-            )}
+                      <div className="text-right text-[11px]">
+                        <span className="text-text-primary font-bold font-mono tabular-nums">{a.event_count.toLocaleString()}</span>
+                        <span className="text-text-faint block text-[9px]">events</span>
+                      </div>
+                    </Link>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
