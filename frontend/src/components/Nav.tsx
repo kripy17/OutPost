@@ -125,7 +125,7 @@ export function getNavigationGroups(
       label: "Live Operations",
       links: [
         { to: "/", label: "Overview", iconName: "grid", end: true },
-        { to: "/events", label: "Host Forensics & Pulse", iconName: "activity" },
+        { to: "/events", label: "Telemetry & Host Forensics", iconName: "activity" },
         {
           to: "/findings",
           label: "Incident Findings",
@@ -151,13 +151,6 @@ export function getNavigationGroups(
           iconName: "shield",
           badge: onlineAgents > 0 ? `${onlineAgents} on` : null,
           badgeTone: "clean",
-        },
-        {
-          to: "/tasks",
-          label: "Live Task Manager",
-          iconName: "activity",
-          badge: "LIVE",
-          badgeTone: "accent",
         },
       ],
     },

@@ -92,7 +92,6 @@ export default function EventsPage() {
   const [inspectTelemetryEvent, setInspectTelemetryEvent] = useState<EventFeedEvent | null>(null);
   const [copiedPayload, setCopiedPayload] = useState(false);
   const [isExportingCsv, setIsExportingCsv] = useState(false);
-  const [showStreamExplainer, setShowStreamExplainer] = useState(false);
 
   // Fetch real Host X-Ray snapshot (metrics, processes, sockets)
   const {
@@ -333,15 +332,15 @@ export default function EventsPage() {
               Live Real-Time
             </span>
           </h1>
-          <p className="mt-1 text-xs text-text-muted max-w-3xl">
-            Live hardware resource pulse, process causality hierarchy, active listening sockets, and security context across monitored endpoints with 100% real OS data.
+          <p className="mt-1 text-xs text-text-muted max-w-3xl font-sans">
+            Live hardware resource metrics, process execution hierarchy, listening sockets, and security audit telemetry across monitored endpoints.
           </p>
         </div>
 
         {/* Action Controls: Live Polling, Interval, Refresh, Host Badge */}
         <div className="flex flex-wrap items-center gap-2">
           {/* Host OS Identity Badge */}
-          <div className="flex items-center gap-2 rounded-xl border border-border-subtle bg-bg-surface px-3 py-1.5 font-mono text-xs shadow-sm">
+          <div className="flex items-center gap-2 rounded-xl border border-border-subtle bg-bg-surface px-3 py-1.5 font-mono text-xs shadow-xs">
             <Icon name={platformIcon(metrics.platform)} size={15} className="text-accent" />
             <div className="flex flex-col">
               <span className="font-bold text-text-primary capitalize leading-none">
@@ -359,7 +358,7 @@ export default function EventsPage() {
               if (!isLive) setBufferedCount(0);
               setIsLive(!isLive);
             }}
-            className={`press flex items-center gap-1.5 rounded-xl border px-3 py-1.5 font-mono text-xs font-semibold transition ${
+            className={`press flex items-center gap-1.5 rounded-xl border px-3 py-1.5 font-mono text-xs font-semibold transition shadow-xs ${
               isLive
                 ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20"
                 : "border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20"
@@ -374,7 +373,7 @@ export default function EventsPage() {
           <select
             value={pollInterval}
             onChange={(e) => setPollInterval(Number(e.target.value))}
-            className="rounded-xl border border-border-subtle bg-bg-surface px-2.5 py-1.5 font-mono text-xs text-text-primary outline-hidden focus:border-accent"
+            className="rounded-xl border border-border-subtle bg-bg-surface px-2.5 py-1.5 font-mono text-xs text-text-primary outline-hidden focus:border-accent shadow-xs"
             title="Telemetry polling frequency"
           >
             <option value={1000}>1s (Fast)</option>
@@ -386,21 +385,11 @@ export default function EventsPage() {
           <button
             onClick={() => void refetchSnapshot()}
             disabled={isSnapshotFetching}
-            className="press flex items-center gap-1 rounded-xl border border-border-subtle bg-bg-surface px-2.5 py-1.5 font-mono text-xs text-text-muted hover:text-text-primary transition"
+            className="press flex items-center gap-1 rounded-xl border border-border-subtle bg-bg-surface px-2.5 py-1.5 font-mono text-xs text-text-muted hover:text-text-primary transition shadow-xs"
             title="Trigger instant snapshot refresh"
           >
             <Icon name="refresh" size={13} className={isSnapshotFetching ? "animate-spin text-accent" : ""} />
             <span className="hidden sm:inline">Refresh</span>
-          </button>
-
-          {/* Live Forensic Triage Pack */}
-          <button
-            onClick={() => setShowTriageModal(true)}
-            className="press flex items-center gap-1.5 rounded-xl border border-cyan-500/40 bg-cyan-500/10 px-3 py-1.5 font-mono text-xs font-bold text-cyan-400 hover:bg-cyan-500/20 transition shadow-xs"
-            title="Acquire live endpoint forensic triage pack"
-          >
-            <Icon name="zap" size={14} className="text-cyan-400" />
-            <span>⚡ Live Triage Pack</span>
           </button>
         </div>
       </header>
@@ -537,42 +526,27 @@ export default function EventsPage() {
       {/* ── Fleet Sensor Telemetry & Security Audit Stream ────────── */}
       <section className="rounded-2xl border border-border-subtle bg-bg-surface/80 p-4 font-mono text-xs backdrop-blur-sm space-y-3 shadow-sm">
         {/* Stream Header & Telemetry Ingestion Scope */}
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border-subtle pb-3">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border-subtle pb-3 font-sans">
           <div className="flex items-center gap-2.5">
-            <span className="relative flex h-2.5 w-2.5">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-cyan-400/50" />
-              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-cyan-400" />
-            </span>
-            <span className="font-bold text-text-primary uppercase tracking-wider text-[11px] flex items-center gap-2">
+            <span className="h-2 w-2 rounded-full bg-signal" />
+            <span className="font-bold text-text-primary uppercase tracking-wider text-[11px] flex items-center gap-2 font-mono">
               <Icon name="activity" size={14} className="text-cyan-400" />
-              <span>Fleet Sensor Telemetry &amp; Security Audit Stream</span>
+              <span>Fleet Telemetry &amp; Security Audit Stream</span>
             </span>
-            <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2 py-0.5 text-[10px] font-semibold text-cyan-400">
-              {fleetEventsData?.total ?? 0} Recorded Events
-            </span>
-            <span className="hidden sm:inline-flex rounded-full border border-border-subtle bg-bg-base/70 px-2 py-0.5 text-[9px] text-text-muted">
-              Live Ingest Active
+            <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2 py-0.5 text-[10px] font-semibold text-cyan-400 font-mono tabular-nums">
+              {fleetEventsData?.total ?? 0} Events
             </span>
             {isEventsFetching && (
-              <span className="text-[10px] text-text-faint animate-pulse">Syncing...</span>
+              <span className="text-[10px] text-text-faint animate-pulse font-sans">Syncing...</span>
             )}
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              onClick={() => setShowStreamExplainer((v) => !v)}
-              className="press flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-base/80 px-2.5 py-1 text-[11px] text-text-muted hover:text-text-primary transition"
-              title="Learn how OutPost ingests and correlates fleet telemetry"
-            >
-              <Icon name="notes" size={11} className="text-accent" />
-              <span>Telemetry Source Guide</span>
-            </button>
-
+          <div className="flex flex-wrap items-center gap-2 font-sans">
             {/* Quick CSV Export */}
             <button
               onClick={handleExportEventsCsv}
               disabled={isExportingCsv || !fleetEventsData?.events?.length}
-              className="press flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-base/80 px-2.5 py-1 text-[11px] font-semibold text-text-secondary hover:text-text-primary hover:border-accent/40 transition disabled:opacity-40"
+              className="press flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-base/80 px-2.5 py-1 text-[11px] font-semibold text-text-secondary hover:text-text-primary hover:border-accent/40 transition disabled:opacity-40 shadow-xs"
               title="Export filtered security telemetry to CSV"
             >
               <Icon name="download" size={12} className={isExportingCsv ? "animate-spin" : ""} />
@@ -583,53 +557,12 @@ export default function EventsPage() {
             <button
               onClick={() => void refetchEvents()}
               disabled={isEventsFetching}
-              className="press flex items-center gap-1 rounded-lg border border-border-subtle bg-bg-base/80 px-2 py-1 text-[11px] text-text-muted hover:text-text-primary transition"
+              className="press flex items-center gap-1 rounded-lg border border-border-subtle bg-bg-base/80 px-2 py-1 text-[11px] text-text-muted hover:text-text-primary transition shadow-xs"
               title="Refresh security audit stream"
             >
               <Icon name="refresh" size={11} className={isEventsFetching ? "animate-spin text-accent" : ""} />
             </button>
           </div>
-        </div>
-
-        {/* Ingestion Status & Sensor Provenance Strip */}
-        <div className="rounded-xl border border-border-subtle/80 bg-bg-base/70 p-3 space-y-2 text-[11px]">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-              <span className="text-text-faint uppercase font-bold text-[10px]">Active Sensor Channels:</span>
-              <span className="inline-flex items-center gap-1.5 rounded bg-bg-surface px-2 py-0.5 border border-border-subtle text-text-secondary">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                <span>eBPF / auditd (Linux)</span>
-              </span>
-              <span className="inline-flex items-center gap-1.5 rounded bg-bg-surface px-2 py-0.5 border border-border-subtle text-text-secondary">
-                <span className="h-1.5 w-1.5 rounded-full bg-cyan-400" />
-                <span>Sysmon v15 (Windows)</span>
-              </span>
-              <span className="inline-flex items-center gap-1.5 rounded bg-bg-surface px-2 py-0.5 border border-border-subtle text-text-secondary">
-                <span className="h-1.5 w-1.5 rounded-full bg-indigo-400" />
-                <span>Procfs Live Poller</span>
-              </span>
-            </div>
-            <div className="flex items-center gap-1.5 text-text-faint text-[10px]">
-              <Icon name="shield" size={11} className="text-accent" />
-              <span>Real DB store: <code className="text-text-muted">/api/events</code> · 38 MITRE ATT&amp;CK rules active</span>
-            </div>
-          </div>
-          {showStreamExplainer && (
-            <div className="rounded-lg bg-bg-surface/90 p-3 border border-accent/30 text-text-muted text-[11px] leading-relaxed animate-fade-in space-y-1.5">
-              <p className="font-semibold text-text-primary flex items-center gap-1.5">
-                <Icon name="shield" size={12} className="text-accent" />
-                <span>Why this telemetry stream exists and how OutPost verifies it:</span>
-              </p>
-              <p>
-                This stream is your central endpoint security audit log. Every row below is an authentic security record persisted in OutPost's SQLite database—originating from enrolled kernel sensors (Linux eBPF/auditd), Windows Sysmon event logs, and local procfs telemetry.
-              </p>
-              <p className="text-text-faint">
-                • <strong>Process Executions:</strong> Captures binary path, parent-child lineage (PPID), and command-line flags.<br />
-                • <strong>Network Sockets:</strong> Logs outbound connections, destination IPs, ports, and external C2 beacons.<br />
-                • <strong>Rule Correlation:</strong> Events are evaluated continuously against OutPost's 38 MITRE ATT&amp;CK detection rules to trigger actionable incident findings.
-              </p>
-            </div>
-          )}
         </div>
 
         {/* Telemetry Query Ribbon & Filters */}
@@ -748,7 +681,7 @@ export default function EventsPage() {
                           <span className="text-text-faint">local</span>
                         )}
                         <span className="rounded bg-bg-elevated px-1.5 py-0.2 text-[9px] uppercase tracking-wider text-text-faint border border-border-subtle">
-                          {ev.log_source || (ev.platform === "windows" ? "sysmon" : ev.platform === "linux" ? "auditd" : "ebpf")}
+                          {ev.log_source || ev.source || "sensor"}
                         </span>
                       </div>
                     </td>
