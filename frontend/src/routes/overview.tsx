@@ -294,6 +294,10 @@ export default function OverviewPage() {
     return counts;
   }, [recentAlerts, ruleMap]);
 
+  const triggeredTactics = useMemo(() => {
+    return ATTACK_TACTICS.filter((t) => (activeTactics.get(t.id) || 0) > 0);
+  }, [activeTactics]);
+
   return (
     <div className="mx-auto max-w-7xl px-6 py-6 lg:px-10 space-y-6 font-sans text-xs">
       {/* Header Bar */}
@@ -557,63 +561,8 @@ export default function OverviewPage() {
           </div>
         </div>
 
-        {/* Column 2 (Right 5 cols): ATT&CK Kill-Chain & Sensor Fleet Status */}
+        {/* Column 2 (Right 5 cols): Enrolled Endpoint Fleet & ATT&CK Detection Posture */}
         <div className="lg:col-span-5 space-y-5">
-          {/* MITRE ATT&CK Active Kill-Chain */}
-          <div className="rounded-xl border border-border-subtle bg-bg-surface p-4 shadow-xs flex flex-col justify-between">
-            <div>
-              <div className="flex items-center justify-between border-b border-border-subtle/60 pb-2.5 mb-3">
-                <div>
-                  <span className="text-[10px] uppercase font-semibold text-text-faint tracking-wider">
-                    Threat Progression
-                  </span>
-                  <h3 className="font-bold text-text-primary text-xs">
-                    MITRE ATT&amp;CK Active Kill-Chain
-                  </h3>
-                </div>
-                <Link to="/coverage" className="text-[11px] font-semibold text-accent hover:underline">
-                  Matrix →
-                </Link>
-              </div>
-
-              <p className="text-[11px] text-text-muted leading-relaxed mb-3">
-                Tactics actively triggered by correlated detections in the current observation window:
-              </p>
-
-              <div className="grid grid-cols-2 gap-1.5">
-                {ATTACK_TACTICS.map((t) => {
-                  const count = activeTactics.get(t.id) || 0;
-                  const isActive = count > 0;
-                  return (
-                    <Link
-                      key={t.id}
-                      to={`/coverage?tactic=${t.id}`}
-                      className={`rounded-lg border p-2 flex items-center justify-between transition ${
-                        isActive
-                          ? "border-risk-malicious/50 bg-risk-malicious/10 text-risk-malicious font-bold"
-                          : "border-border-subtle/60 bg-bg-base/50 text-text-muted hover:border-border-strong hover:text-text-primary"
-                      }`}
-                    >
-                      <span className="text-[11px] truncate font-medium">{t.label}</span>
-                      {isActive && (
-                        <span className="rounded bg-risk-malicious/20 px-1.5 py-0.2 font-mono text-[9px] tabular-nums text-risk-malicious">
-                          {count}
-                        </span>
-                      )}
-                    </Link>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="mt-4 pt-3 border-t border-border-subtle/50 flex items-center justify-between text-[10px] text-text-faint">
-              <span>Active adversarial technique hits</span>
-              <Link to="/rules" className="text-accent font-semibold hover:underline">
-                Rule Studio →
-              </Link>
-            </div>
-          </div>
-
           {/* Enrolled Sensor Fleet Status */}
           <div className="rounded-xl border border-border-subtle bg-bg-surface p-4 shadow-xs space-y-3">
             <div className="flex items-center justify-between border-b border-border-subtle/60 pb-2.5">
@@ -671,6 +620,63 @@ export default function OverviewPage() {
                   ))}
                 </div>
               )}
+            </div>
+          </div>
+
+          {/* ATT&CK Adversarial Tactics & Detections */}
+          <div className="rounded-xl border border-border-subtle bg-bg-surface p-4 shadow-xs space-y-3">
+            <div className="flex items-center justify-between border-b border-border-subtle/60 pb-2.5">
+              <div>
+                <span className="text-[10px] uppercase font-semibold text-text-faint tracking-wider">
+                  Threat Framework
+                </span>
+                <h3 className="font-bold text-text-primary text-xs">
+                  MITRE ATT&amp;CK Detections
+                </h3>
+              </div>
+              <Link to="/coverage" className="text-[11px] font-semibold text-accent hover:underline">
+                Matrix →
+              </Link>
+            </div>
+
+            {triggeredTactics.length > 0 ? (
+              <div className="space-y-1.5">
+                {triggeredTactics.map((t) => (
+                  <Link
+                    key={t.id}
+                    to={`/coverage?tactic=${t.id}`}
+                    className="flex items-center justify-between rounded-lg border border-risk-malicious/40 bg-risk-malicious/10 p-2.5 text-xs font-semibold text-risk-malicious hover:bg-risk-malicious/15 transition shadow-xs"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Icon name="target" size={13} className="text-risk-malicious" />
+                      <span>{t.label}</span>
+                    </div>
+                    <span className="font-mono text-[11px] tabular-nums font-bold">
+                      {activeTactics.get(t.id)} detections
+                    </span>
+                  </Link>
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-lg border border-border-subtle bg-bg-base/50 p-4 text-center space-y-1.5">
+                <div className="flex items-center justify-center gap-1.5 text-signal font-semibold text-xs">
+                  <Icon name="check" size={13} />
+                  <span>Clean Operational Baseline</span>
+                </div>
+                <p className="text-[11px] text-text-muted">
+                  Zero active adversary tactics triggered in this observation window. {ruleMetaList.length} detection heuristics actively monitoring sensor telemetry.
+                </p>
+                <Link to="/coverage" className="inline-block mt-1 text-[11px] font-semibold text-accent hover:underline">
+                  Inspect Coverage Matrix →
+                </Link>
+              </div>
+            )}
+
+            <div className="pt-2 border-t border-border-subtle/50 flex items-center justify-between text-[10px] text-text-faint">
+              <span>{ruleMetaList.length} heuristic signatures enrolled</span>
+              <Link to="/rules" className="text-accent font-semibold hover:underline">
+                Rule Studio →
+              </Link>
             </div>
           </div>
         </div>

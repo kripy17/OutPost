@@ -48,6 +48,7 @@ const SampleDetailPage = lazy(() => import("./routes/sampleDetail"));
 const SamplesPage = lazy(() => import("./routes/samples"));
 const SearchPage = lazy(() => import("./routes/search"));
 const SettingsPage = lazy(() => import("./routes/settings"));
+const TasksPage = lazy(() => import("./routes/tasks"));
 const WatchlistPage = lazy(() => import("./routes/watchlist"));
 const WelcomePage = lazy(() => import("./routes/welcome"));
 
@@ -273,7 +274,7 @@ export const router = createBrowserRouter([
       { path: "/search", element: <SearchPage /> },
       { path: "/watchlist", element: <WatchlistPage /> },
       { path: "/agents", element: <AgentsPage /> },
-      { path: "/tasks", element: <Navigate to="/events" replace /> },
+      { path: "/tasks", element: <TasksPage /> },
       { path: "/hosts/:hostId", element: <HostDetailPage /> },
       { path: "/audit", element: <AuditPage /> },
       { path: "/findings", element: <FindingsPage /> },

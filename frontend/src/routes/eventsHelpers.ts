@@ -43,3 +43,14 @@ export function resolveSavedFilters(
     return null;
   }
 }
+
+export function writeSavedFilters(
+  filters: SavedFilters,
+  writeStorage: (data: string) => void,
+): void {
+  try {
+    writeStorage(JSON.stringify(filters));
+  } catch {
+    // ignore
+  }
+}
