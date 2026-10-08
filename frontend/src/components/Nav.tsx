@@ -556,7 +556,7 @@ export default function Nav() {
                       className={({ isActive }) =>
                         `relative flex items-center gap-2.5 rounded-lg transition-all duration-150 ${railCollapsed ? "justify-center px-0 py-2" : "px-2.5 py-1.5 text-[13px]"} ${
                           isActive
-                            ? "bg-accent/15 font-semibold text-text-primary border-l-2 border-accent shadow-[inset_2px_0_8px_rgba(99,102,241,0.25)]"
+                            ? "bg-accent/15 font-semibold text-text-primary border-l-2 border-accent"
                             : "font-medium text-text-muted hover:bg-bg-elevated hover:text-text-primary border-l-2 border-transparent"
                         }`
                       }
@@ -565,7 +565,7 @@ export default function Nav() {
                         <>
                           {/* Collapsed: an accent indicator bar marks the active page. */}
                           {railCollapsed && isActive && (
-                            <span className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-full bg-accent shadow-[0_0_8px_var(--accent)]" aria-hidden />
+                            <span className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-full bg-accent" aria-hidden />
                           )}
                           <span className="relative flex h-6 w-6 shrink-0 items-center justify-center">
                             <Icon name={link.iconName} size={railCollapsed ? 18 : 16} />
@@ -573,10 +573,10 @@ export default function Nav() {
                               <span
                                 className={`absolute -top-1 -right-1 h-2 w-2 rounded-full ring-2 ring-bg-surface ${
                                   link.badgeTone === "malicious"
-                                    ? "bg-risk-malicious shadow-[0_0_6px_var(--risk-malicious)]"
+                                    ? "bg-risk-malicious"
                                     : link.badgeTone === "clean"
-                                      ? "bg-risk-clean shadow-[0_0_6px_var(--risk-clean)]"
-                                      : "bg-accent shadow-[0_0_6px_var(--accent)]"
+                                      ? "bg-risk-clean"
+                                      : "bg-accent"
                                 }`}
                                 aria-hidden
                               />
@@ -589,10 +589,10 @@ export default function Nav() {
                                 <span
                                   className={`ml-auto rounded-full px-1.5 py-0.5 font-mono text-[10px] font-bold leading-none ${
                                     link.badgeTone === "malicious"
-                                      ? "bg-risk-malicious/15 text-risk-malicious border border-risk-malicious/30 shadow-[0_0_6px_rgba(239,68,68,0.2)]"
+                                      ? "bg-risk-malicious/15 text-risk-malicious border border-risk-malicious/30"
                                       : link.badgeTone === "clean"
-                                        ? "bg-risk-clean/15 text-risk-clean border border-risk-clean/30 shadow-[0_0_6px_rgba(16,185,129,0.2)]"
-                                        : "bg-accent/15 text-accent border border-accent/30 shadow-[0_0_6px_rgba(99,102,241,0.2)]"
+                                        ? "bg-risk-clean/15 text-risk-clean border border-risk-clean/30"
+                                        : "bg-accent/15 text-accent border border-accent/30"
                                   }`}
                                 >
                                   {link.badge}

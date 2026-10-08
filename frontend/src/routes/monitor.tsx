@@ -1031,7 +1031,7 @@ export default function MonitorPage() {
   }, [hasActiveSession, displayName, isStepModeActive, activeResult, attackPhases.length, displayFiles.length, displayProcesses.length, displayNetwork.length, displayAlerts.length, displayThreatVerdict]);
 
   return (
-    <div className="mx-auto max-w-[1440px] px-6 py-8 lg:px-8 space-y-8">
+    <div className="mx-auto max-w-[1440px] px-6 py-8 lg:px-8 space-y-8 font-sans">
       {/* ── Page Header & Architecture Status Strip ───────────────────────── */}
       <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
         <PageHeader
@@ -1061,17 +1061,17 @@ export default function MonitorPage() {
       </div>
 
       {/* ── SOC Guidance & Role Separation Banner ──────────────────────────── */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-accent/30 bg-accent/5 p-4 font-mono text-xs shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-accent/30 bg-accent/5 p-4 font-sans text-xs shadow-sm">
         <div className="flex items-center gap-3">
-          <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-accent/40 bg-accent/15 text-accent shadow-[var(--glow-accent)]">
+          <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-accent/40 bg-accent/15 text-accent shadow-xs">
             <Icon name="activity" size={18} />
           </span>
           <div>
             <div className="flex items-center gap-2">
               <span className="font-bold text-text-primary text-sm">Adversary Simulation Lab</span>
-              <span className="rounded bg-accent/20 px-2 py-0.5 text-[10px] font-bold text-accent uppercase">DEMO &amp; DETECTION VALIDATION</span>
+              <span className="rounded bg-accent/20 px-2 py-0.5 text-[10px] font-bold text-accent uppercase font-mono">DEMO &amp; DETECTION VALIDATION</span>
             </div>
-            <p className="text-[11px] text-text-muted">
+            <p className="text-xs text-text-muted mt-0.5">
               Pre-existing demonstration attack playbooks, multi-stage campaigns, and MITRE ATT&amp;CK unit tests. To upload and detonate your own untrusted live malware samples, visit the Dynamic Malware Vault.
             </p>
           </div>
@@ -1079,7 +1079,7 @@ export default function MonitorPage() {
         <div className="flex items-center gap-2">
           <Link
             to="/samples"
-            className="press inline-flex items-center gap-2 rounded-xl border border-border-subtle bg-bg-surface px-3.5 py-2 font-bold text-text-primary transition hover:border-accent hover:text-accent"
+            className="press inline-flex items-center gap-2 rounded-xl border border-border-subtle bg-bg-surface px-3.5 py-2 font-semibold text-text-primary transition hover:border-accent hover:text-accent"
           >
             <Icon name="box" size={13} />
             <span>Upload Untrusted Malware Sample</span>
@@ -1089,13 +1089,13 @@ export default function MonitorPage() {
 
       {/* ── EXECUTIVE SOC THREAT & DETECTION VERDICT BANNER (Active Session) ── */}
       {hasActiveSession && (
-        <div className="rounded-2xl border border-border-subtle bg-bg-surface/90 p-5 shadow-xl backdrop-blur font-mono text-xs space-y-4">
+        <div className="rounded-2xl border border-border-subtle bg-bg-surface/90 p-5 shadow-xl backdrop-blur font-sans text-xs space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-4 border-b border-border-subtle/60 pb-3">
             <div className="flex items-center gap-3">
               <span
-                className={`flex h-10 w-10 items-center justify-center rounded-xl border text-base font-bold ${
+                className={`flex h-10 w-10 items-center justify-center rounded-xl border text-base font-bold shadow-xs ${
                   displayThreatVerdict === "MALICIOUS"
-                    ? "border-risk-malicious/50 bg-risk-malicious/15 text-risk-malicious shadow-[0_0_15px_rgba(239,68,68,0.25)]"
+                    ? "border-risk-malicious/50 bg-risk-malicious/15 text-risk-malicious"
                     : "border-risk-suspicious/50 bg-risk-suspicious/15 text-risk-suspicious"
                 }`}
               >
@@ -1262,7 +1262,7 @@ export default function MonitorPage() {
 
       {/* Execution Error Banner */}
       {executionError && (
-        <div className="rounded-2xl border border-risk-malicious/50 bg-risk-malicious/10 p-4 font-mono text-xs text-risk-malicious flex items-start gap-3 shadow-sm">
+        <div className="rounded-2xl border border-risk-malicious/50 bg-risk-malicious/10 p-4 font-sans text-xs text-risk-malicious flex items-start gap-3 shadow-sm">
           <Icon name="alert" size={16} className="shrink-0 mt-0.5" />
           <div className="flex-1">
             <span className="font-bold">Sandbox Execution Error</span>

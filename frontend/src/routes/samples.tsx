@@ -282,7 +282,7 @@ export default function SamplesPage() {
             </button>
             <Link
               to="/monitor"
-              className="press inline-flex items-center gap-2 rounded-lg border border-accent/60 bg-accent/10 px-4 py-2 font-mono text-xs font-semibold text-accent transition-colors duration-150 hover:bg-accent/20"
+              className="press inline-flex items-center gap-2 rounded-lg border border-accent/60 bg-accent/10 px-4 py-2 font-sans text-xs font-semibold text-accent transition-colors duration-150 hover:bg-accent/20"
               title="Open the Adversary Simulation Lab to test pre-configured campaigns"
             >
               <Icon name="play" size={13} />
@@ -293,24 +293,24 @@ export default function SamplesPage() {
       />
 
       {/* Role Distinction Banner: Uploaded Vault vs. Simulation Demo Lab */}
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border-subtle bg-bg-surface/80 p-4 font-mono text-xs shadow-sm">
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border-subtle bg-bg-surface/80 p-4 font-sans text-xs shadow-sm">
         <div className="flex items-center gap-3">
-          <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-accent/40 bg-accent/15 text-accent shadow-[var(--glow-accent)]">
+          <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-accent/40 bg-accent/15 text-accent shadow-xs">
             <Icon name="box" size={18} />
           </span>
           <div>
             <div className="flex items-center gap-2">
               <span className="font-bold text-text-primary text-sm">Dynamic Malware Vault</span>
-              <span className="rounded bg-accent/20 px-2 py-0.5 text-[10px] font-bold text-accent uppercase">ANALYSIS VAULT</span>
+              <span className="rounded bg-accent/20 px-2 py-0.5 text-[10px] font-bold text-accent uppercase font-mono">ANALYSIS VAULT</span>
             </div>
-            <p className="text-[11px] text-text-muted">
+            <p className="text-xs text-text-muted mt-0.5">
               Upload custom, untrusted adversary binaries (.exe, .elf, scripts) for Layer 1 static threat forecasting and Layer 2 live sandbox cage detonation.
             </p>
           </div>
         </div>
         <Link
           to="/monitor"
-          className="press inline-flex items-center gap-1.5 rounded-xl border border-accent/40 bg-accent/10 px-3.5 py-2 font-bold text-accent transition hover:bg-accent/20"
+          className="press inline-flex items-center gap-1.5 rounded-xl border border-accent/40 bg-accent/10 px-3.5 py-2 font-semibold text-accent transition hover:bg-accent/20"
         >
           <Icon name="activity" size={12} />
           <span>Go to Simulation Lab (Demo Playbooks)</span>
@@ -318,12 +318,12 @@ export default function SamplesPage() {
       </div>
 
       {/* Main Tab Switcher */}
-      <div className="mb-8 flex rounded-xl border border-border-subtle bg-bg-surface p-1 font-mono text-xs shadow-sm">
+      <div className="mb-8 flex rounded-xl border border-border-subtle bg-bg-surface p-1 font-sans text-xs shadow-sm">
         <button
           onClick={() => setActiveTab("samples")}
           className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-medium transition ${
             activeTab === "samples"
-              ? "bg-accent/15 font-bold text-accent shadow-sm"
+              ? "bg-accent/15 font-semibold text-accent shadow-sm"
               : "text-text-muted hover:text-text-primary"
           }`}
         >
@@ -334,7 +334,7 @@ export default function SamplesPage() {
           onClick={() => setActiveTab("analysis")}
           className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-medium transition ${
             activeTab === "analysis"
-              ? "bg-accent/15 font-bold text-accent shadow-sm"
+              ? "bg-accent/15 font-semibold text-accent shadow-sm"
               : "text-text-muted hover:text-text-primary"
           }`}
         >

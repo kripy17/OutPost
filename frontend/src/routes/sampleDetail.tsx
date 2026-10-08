@@ -3338,8 +3338,8 @@ export default function SampleDetailPage() {
   const platIcon = sample.detected_platform === "macos" || sample.detected_platform === "windows" || sample.detected_platform === "linux" ? platformIconName(sample.detected_platform) : "terminal";
 
   return (
-    <div className="mx-auto max-w-[1440px] px-6 py-8 lg:px-8">
-      <nav className="mb-6 flex items-center gap-2 font-mono text-xs text-text-muted">
+    <div className="mx-auto max-w-[1440px] px-6 py-8 lg:px-8 font-sans">
+      <nav className="mb-6 flex items-center gap-2 font-sans text-xs text-text-muted">
         <Link to="/" className="transition-colors hover:text-accent">
           Overview
         </Link>
@@ -3348,7 +3348,7 @@ export default function SampleDetailPage() {
           Malware Vault
         </Link>
         <span aria-hidden>/</span>
-        <span className="text-text-primary">{sample.original_name}</span>
+        <span className="text-text-primary font-mono">{sample.original_name}</span>
       </nav>
 
       <PageHeader
@@ -3361,7 +3361,7 @@ export default function SampleDetailPage() {
         }
         lede={`Detected ${sample.detected_platform} from magic bytes · ${formatBytes(sample.size)} · uploaded ${sample.created_at.slice(0, 19).replace("T", " ")} UTC`}
         actions={
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 font-sans text-xs">
             <button
               onClick={async () => {
                 setDetonationError(null);
@@ -3376,7 +3376,7 @@ export default function SampleDetailPage() {
                 }
               }}
               disabled={detonating}
-              className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/15 px-4 py-2 font-mono text-xs font-semibold text-accent transition-all duration-150 hover:bg-accent/25 hover:shadow-[var(--glow-accent)] disabled:opacity-50"
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-accent bg-accent px-4 py-2 font-semibold text-white shadow-xs hover:brightness-110 disabled:opacity-50"
               title="Detonate sample in local isolated dynamic sandbox"
             >
               <Icon name="play" size={12} />
@@ -3384,7 +3384,7 @@ export default function SampleDetailPage() {
             </button>
             <Link
               to={`/footprint?sample=${sample.sample_id}`}
-              className="press inline-flex items-center gap-1.5 rounded border border-border-subtle px-4 py-2 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-surface px-4 py-2 font-medium text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
             >
               Digital footprint
               <Icon name="arrowRight" size={12} />
@@ -3394,16 +3394,16 @@ export default function SampleDetailPage() {
               {detonationError && <span className="font-mono text-[10px] text-risk-malicious">{detonationError}</span>}
               <button
                 onClick={() => void downloadSample(sample.sample_id, sample.original_name).catch(() => setDownloadError("Download failed — bytes not stored?"))}
-                className="press inline-flex items-center gap-1.5 rounded border border-border-subtle px-4 py-2 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
+                className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-surface px-4 py-2 font-medium text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
                 title={`Download ${sample.original_name}`}
               >
                 <Icon name="download" size={12} />
-                download
+                Download
               </button>
             </span>
             <button
               onClick={handleExportStix}
-              className="press inline-flex items-center gap-1.5 rounded border border-border-subtle px-3.5 py-2 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-surface px-3.5 py-2 font-medium text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
               title="Export sample indicators as STIX 2.1 JSON bundle"
             >
               <Icon name="shield" size={12} />
@@ -3411,11 +3411,11 @@ export default function SampleDetailPage() {
             </button>
             <button
               onClick={() => void copyHash()}
-              className="press inline-flex items-center gap-1.5 rounded border border-accent/60 px-4 py-2 font-mono text-xs text-accent transition-colors duration-150 hover:bg-accent/10"
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/10 px-4 py-2 font-semibold text-accent transition-colors duration-150 hover:bg-accent/20"
               title={sample.sha256}
             >
               <Icon name={copied ? "check" : "copy"} size={12} />
-              {copied ? "copied" : "copy hash"}
+              {copied ? "Copied" : "Copy Hash"}
             </button>
             <button
               onClick={async () => {
@@ -3427,11 +3427,11 @@ export default function SampleDetailPage() {
                   setDownloadError("Delete failed");
                 }
               }}
-              className="press inline-flex items-center gap-1.5 rounded border border-risk-malicious/40 bg-risk-malicious/10 px-4 py-2 font-mono text-xs text-risk-malicious transition-colors duration-150 hover:bg-risk-malicious/20"
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-risk-malicious/40 bg-risk-malicious/10 px-4 py-2 font-semibold text-risk-malicious transition-colors duration-150 hover:bg-risk-malicious/20"
               title={`Delete ${sample.original_name}`}
             >
               <Icon name="x" size={12} />
-              delete
+              Delete
             </button>
           </div>
         }
@@ -3500,26 +3500,26 @@ export default function SampleDetailPage() {
       </div>
 
       {/* Analysis Workspace Mode Switcher */}
-      <div className="mt-8 rounded-2xl border border-border-subtle bg-bg-surface/80 p-2 shadow-sm font-mono">
+      <div className="mt-8 rounded-2xl border border-border-subtle bg-bg-surface/80 p-2 shadow-sm font-sans">
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
           <button
             onClick={() => setDossierTab("static")}
             className={`flex flex-col items-start gap-1 rounded-xl p-3 text-left transition ${
               dossierTab === "static"
-                ? "border border-accent/60 bg-accent/15 text-accent shadow-[var(--glow-accent)]"
+                ? "border border-accent/60 bg-accent/15 text-accent shadow-xs"
                 : "border border-transparent bg-bg-base/40 text-text-muted hover:bg-bg-elevated hover:text-text-primary"
             }`}
           >
             <div className="flex w-full items-center justify-between">
-              <span className="flex items-center gap-1.5 text-xs font-bold">
+              <span className="flex items-center gap-1.5 text-xs font-semibold">
                 <Icon name="box" size={14} />
                 Mode 1: Static Triage
               </span>
-              <span className="rounded bg-emerald-500/20 px-1.5 py-0.2 text-[9px] font-bold text-emerald-400 uppercase">
+              <span className="rounded bg-emerald-500/20 px-1.5 py-0.2 text-[9px] font-semibold text-emerald-400 uppercase font-mono">
                 Safe · No Exec
               </span>
             </div>
-            <p className="text-[11px] text-text-muted">
+            <p className="text-xs text-text-muted mt-0.5">
               Raw bytes inspection, Shannon entropy, YARA rules &amp; VirusTotal pivots.
             </p>
           </button>
@@ -3528,20 +3528,20 @@ export default function SampleDetailPage() {
             onClick={() => setDossierTab("dynamic")}
             className={`flex flex-col items-start gap-1 rounded-xl p-3 text-left transition ${
               dossierTab === "dynamic"
-                ? "border border-accent/60 bg-accent/15 text-accent shadow-[var(--glow-accent)]"
+                ? "border border-accent/60 bg-accent/15 text-accent shadow-xs"
                 : "border border-transparent bg-bg-base/40 text-text-muted hover:bg-bg-elevated hover:text-text-primary"
             }`}
           >
             <div className="flex w-full items-center justify-between">
-              <span className="flex items-center gap-1.5 text-xs font-bold">
+              <span className="flex items-center gap-1.5 text-xs font-semibold">
                 <Icon name="play" size={14} />
                 Mode 2: Dynamic Sandbox
               </span>
-              <span className="rounded bg-accent/20 px-1.5 py-0.2 text-[9px] font-bold text-accent uppercase">
+              <span className="rounded bg-accent/20 px-1.5 py-0.2 text-[9px] font-semibold text-accent uppercase font-mono">
                 Double-Layer
               </span>
             </div>
-            <p className="text-[11px] text-text-muted">
+            <p className="text-xs text-text-muted mt-0.5">
               Layer 1 zero-execution behavioral forecast followed by Layer 2 live sandbox execution &amp; verification matrix.
             </p>
           </button>
@@ -3550,20 +3550,20 @@ export default function SampleDetailPage() {
             onClick={() => setDossierTab("history")}
             className={`flex flex-col items-start gap-1 rounded-xl p-3 text-left transition ${
               dossierTab === "history"
-                ? "border border-accent/60 bg-accent/15 text-accent shadow-[var(--glow-accent)]"
+                ? "border border-accent/60 bg-accent/15 text-accent shadow-xs"
                 : "border border-transparent bg-bg-base/40 text-text-muted hover:bg-bg-elevated hover:text-text-primary"
             }`}
           >
             <div className="flex w-full items-center justify-between">
-              <span className="flex items-center gap-1.5 text-xs font-bold">
+              <span className="flex items-center gap-1.5 text-xs font-semibold">
                 <Icon name="activity" size={14} />
                 Detonation Runs ({runs.length})
               </span>
-              <span className="rounded bg-bg-elevated px-1.5 py-0.2 text-[9px] font-bold text-text-faint uppercase">
+              <span className="rounded bg-bg-elevated px-1.5 py-0.2 text-[9px] font-semibold text-text-faint uppercase font-mono">
                 History
               </span>
             </div>
-            <p className="text-[11px] text-text-muted">
+            <p className="text-xs text-text-muted mt-0.5">
               Historical sandbox runs, risk scores, and protocol network forensics.
             </p>
           </button>
@@ -3572,12 +3572,12 @@ export default function SampleDetailPage() {
             onClick={() => setDossierTab("similarity")}
             className={`flex flex-col items-start gap-1 rounded-xl p-3 text-left transition ${
               dossierTab === "similarity"
-                ? "border border-accent/60 bg-accent/15 text-accent shadow-[var(--glow-accent)]"
+                ? "border border-accent/60 bg-accent/15 text-accent shadow-xs"
                 : "border border-transparent bg-bg-base/40 text-text-muted hover:bg-bg-elevated hover:text-text-primary"
             }`}
           >
             <div className="flex w-full items-center justify-between">
-              <span className="flex items-center gap-1.5 text-xs font-bold">
+              <span className="flex items-center gap-1.5 text-xs font-semibold">
                 <Icon name="copy" size={14} />
                 Binary Similarity
               </span>

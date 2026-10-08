@@ -21,6 +21,7 @@ import {
   validateTechniqueMatrix,
 } from "../lib/api";
 import { PageHeader, Panel } from "../components/ui";
+import MitreAttackMatrixGrid from "../components/MitreAttackMatrixGrid";
 import { buildCoverage, severityTone, TACTICS, TACTIC_BLURB } from "./coverageHelpers";
 import type { RuleMeta, TechniqueRunResult, TechniqueTestItem, TechniqueValidationScorecard } from "../types";
 
@@ -256,7 +257,7 @@ function SimulationTacticColumn({
 
 export default function CoveragePage() {
   const [searchQuery, setSearchQuery] = useState("");
-  const [coverageMode, setCoverageMode] = useState<"rules" | "simulations">("rules");
+  const [coverageMode, setCoverageMode] = useState<"matrix" | "rules" | "simulations">("matrix");
   const [simPlatform, setSimPlatform] = useState<string>("all");
   const [runningTestId, setRunningTestId] = useState<string | null>(null);
   const [activeTestResult, setActiveTestResult] = useState<TechniqueRunResult | null>(null);
@@ -355,12 +356,21 @@ export default function CoveragePage() {
             <div className="inline-flex rounded-lg border border-border-subtle bg-bg-surface p-0.5 text-xs font-semibold">
               <button
                 type="button"
+                onClick={() => setCoverageMode("matrix")}
+                className={`rounded-md px-3 py-1 transition ${
+                  coverageMode === "matrix" ? "bg-accent text-bg-base font-bold shadow-xs" : "text-text-muted hover:text-text"
+                }`}
+              >
+                Interactive Matrix
+              </button>
+              <button
+                type="button"
                 onClick={() => setCoverageMode("rules")}
                 className={`rounded-md px-3 py-1 transition ${
                   coverageMode === "rules" ? "bg-accent text-bg-base font-bold shadow-xs" : "text-text-muted hover:text-text"
                 }`}
               >
-                Detection Rules
+                Tactic Columns
               </button>
               <button
                 type="button"
@@ -377,51 +387,51 @@ export default function CoveragePage() {
       />
 
       {/* Executive MITRE ATT&CK Scorecard Strip */}
-      <section className="grid grid-cols-2 gap-3 sm:grid-cols-4" aria-label="ATT&CK Coverage Metrics">
+      <section className="grid grid-cols-2 gap-3 sm:grid-cols-4 font-sans" aria-label="ATT&CK Coverage Metrics">
         <div className="rounded-xl border border-border-subtle bg-bg-surface p-3.5 shadow-xs">
           <div className="flex items-center justify-between text-text-muted">
-            <span className="font-mono text-[10px] uppercase tracking-wider font-semibold">Tactics Covered</span>
+            <span className="text-[10px] uppercase tracking-wider font-semibold text-text-faint">Tactics Covered</span>
             <Icon name="target" size={14} className="text-accent" />
           </div>
           <div className="mt-1 font-mono text-2xl font-bold tabular-nums text-text-primary">
             {covered.length} <span className="text-sm font-normal text-text-muted">/ {TACTICS.length}</span>
           </div>
-          <p className="mt-0.5 font-mono text-[10px] text-text-faint">
+          <p className="mt-0.5 text-[11px] text-text-muted">
             {Math.round((covered.length / TACTICS.length) * 100)}% enterprise tactics observed
           </p>
         </div>
 
         <div className="rounded-xl border border-accent/25 bg-accent/5 p-3.5 shadow-xs">
           <div className="flex items-center justify-between text-accent">
-            <span className="font-mono text-[10px] uppercase tracking-wider font-semibold">Mapped Techniques</span>
+            <span className="text-[10px] uppercase tracking-wider font-semibold">Mapped Techniques</span>
             <Icon name="shield" size={14} />
           </div>
           <div className="mt-1 font-mono text-2xl font-bold tabular-nums text-accent">
             {techniques}
           </div>
-          <p className="mt-0.5 font-mono text-[10px] text-accent/70">Unique ATT&CK technique IDs</p>
+          <p className="mt-0.5 text-[11px] text-accent/80">Unique ATT&CK technique IDs</p>
         </div>
 
         <div className="rounded-xl border border-border-subtle bg-bg-surface p-3.5 shadow-xs">
           <div className="flex items-center justify-between text-text-muted">
-            <span className="font-mono text-[10px] uppercase tracking-wider font-semibold">Detection Rules</span>
+            <span className="text-[10px] uppercase tracking-wider font-semibold text-text-faint">Detection Rules</span>
             <Icon name="sliders" size={14} className="text-emerald-400" />
           </div>
           <div className="mt-1 font-mono text-2xl font-bold tabular-nums text-emerald-400">
             {data.length}
           </div>
-          <p className="mt-0.5 font-mono text-[10px] text-text-faint">Active Sigma & behavioral heuristics</p>
+          <p className="mt-0.5 text-[11px] text-text-muted">Active Sigma &amp; behavioral heuristics</p>
         </div>
 
         <div className="rounded-xl border border-amber-500/25 bg-amber-500/5 p-3.5 shadow-xs">
           <div className="flex items-center justify-between text-amber-400">
-            <span className="font-mono text-[10px] uppercase tracking-wider font-semibold">Tactic Blind Spots</span>
+            <span className="text-[10px] uppercase tracking-wider font-semibold">Tactic Blind Spots</span>
             <Icon name="alert" size={14} />
           </div>
           <div className="mt-1 font-mono text-2xl font-bold tabular-nums text-amber-400">
             {gaps.length}
           </div>
-          <p className="mt-0.5 font-mono text-[10px] text-amber-400/70">Uncovered candidate tactics</p>
+          <p className="mt-0.5 text-[11px] text-amber-400/80">Uncovered candidate tactics</p>
         </div>
       </section>
 
@@ -485,7 +495,11 @@ export default function CoveragePage() {
         </p>
       )}
 
-      {!isLoading && !isError && (
+      {!isLoading && !isError && coverageMode === "matrix" && (
+        <MitreAttackMatrixGrid ruleMetaList={data} className="mt-6" />
+      )}
+
+      {!isLoading && !isError && coverageMode !== "matrix" && (
         <>
           {/* Controls Strip */}
           <div className="mt-6 flex flex-wrap items-center justify-between gap-4 font-mono text-[11px] text-text-faint">

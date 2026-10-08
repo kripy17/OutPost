@@ -160,7 +160,7 @@ export default function TopCommandBar() {
   };
 
   return (
-    <header className="sticky top-0 z-20 hidden h-11 items-center justify-between border-b border-border-subtle bg-bg-surface/90 px-4 backdrop-blur-xl lg:flex shadow-xs font-mono text-xs">
+    <header className="sticky top-0 z-20 hidden h-11 items-center justify-between border-b border-border-subtle bg-bg-surface/90 px-4 backdrop-blur-xl lg:flex shadow-xs font-sans text-xs">
       {/* Left: Breadcrumbs navigation and Scope Indicator */}
       <nav aria-label="Breadcrumbs" className="flex items-center gap-2 text-xs min-w-0">
         <div className="flex items-center gap-1.5 shrink-0">

@@ -571,7 +571,7 @@ function YaraLab() {
           <button
             onClick={() => runTest.mutate()}
             disabled={runTest.isPending || !ruleText.trim()}
-            className="press inline-flex items-center gap-1.5 rounded border border-accent/60 bg-accent/10 px-4 py-1.5 font-mono text-xs text-accent transition-colors duration-150 hover:shadow-[var(--glow-accent)] disabled:cursor-not-allowed disabled:opacity-40"
+            className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/15 px-4 py-1.5 font-sans text-xs font-semibold text-accent transition-colors duration-150 hover:bg-accent/25 disabled:cursor-not-allowed disabled:opacity-40"
           >
             <Icon name={runTest.isPending ? "refresh" : "play"} size={12} className={runTest.isPending ? "animate-spin" : ""} />
             {runTest.isPending ? "Scanning…" : "Test against vault"}
@@ -612,7 +612,7 @@ function YaraLab() {
           <button
             onClick={() => save.mutate()}
             disabled={save.isPending || !ruleText.trim()}
-            className="press inline-flex items-center gap-1.5 rounded border border-risk-clean/60 bg-risk-clean/10 px-3 py-1.5 font-mono text-xs text-risk-clean transition-colors duration-150 hover:shadow-[var(--glow-clean)] disabled:cursor-not-allowed disabled:opacity-40"
+            className="press inline-flex items-center gap-1.5 rounded-lg border border-risk-clean/60 bg-risk-clean/15 px-3 py-1.5 font-sans text-xs font-semibold text-risk-clean transition-colors duration-150 hover:bg-risk-clean/25 disabled:cursor-not-allowed disabled:opacity-40"
           >
             <Icon name="check" size={12} />
             {save.isPending ? "Saving…" : "Save rule"}
@@ -831,17 +831,17 @@ function RulePackPanel() {
           rule revisions, and roll back by re-importing an earlier export. Import applies tuning as a full sync,
           suppressions additively (never clobbers live triage), and enum tables + threshold wholesale.
         </p>
-        <div className="mt-4 flex flex-wrap items-center gap-2">
+        <div className="mt-4 flex flex-wrap items-center gap-2 font-sans text-xs">
           <button
             onClick={() => void doExport()}
-            className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/50 bg-accent/10 px-3 py-2 font-mono text-xs font-medium text-accent transition-all duration-150 hover:shadow-[var(--glow-accent)]"
+            className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/50 bg-accent/10 px-3 py-2 font-sans text-xs font-semibold text-accent transition-all duration-150 hover:bg-accent/20"
           >
             <Icon name="download" size={12} />
             Export pack (JSON)
           </button>
           <button
             onClick={() => void doExportSigma()}
-            className="press inline-flex items-center gap-1.5 rounded-lg border border-cyan-500/50 bg-cyan-500/10 px-3 py-2 font-mono text-xs font-medium text-cyan-400 transition-all duration-150 hover:bg-cyan-500/20"
+            className="press inline-flex items-center gap-1.5 rounded-lg border border-cyan-500/50 bg-cyan-500/10 px-3 py-2 font-sans text-xs font-semibold text-cyan-400 transition-all duration-150 hover:bg-cyan-500/20"
             title="Download multi-document Sigma YAML bundle for Splunk / Elastic / Sentinel"
           >
             <Icon name="terminal" size={12} />
@@ -849,7 +849,7 @@ function RulePackPanel() {
           </button>
           <button
             onClick={() => fileRef.current?.click()}
-            className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-2 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
+            className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-2 font-sans text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
           >
             <Icon name="download" size={12} className="rotate-180" />
             Import pack (JSON)
@@ -2863,7 +2863,7 @@ export default function RulesPage() {
   const cleanSignalPct = fp && fp.rules.length > 0 ? Math.round(((fp.rules.filter((r) => !r.over_threshold).length) / fp.rules.length) * 100) : 98;
 
   return (
-    <div className="mx-auto max-w-7xl px-6 py-8 lg:px-10 space-y-6">
+    <div className="mx-auto max-w-7xl px-6 py-8 lg:px-10 space-y-6 font-sans">
       <PageHeader
         kicker="Detection Engineering &amp; Threat Intelligence"
         title="Detection Engineering Studio"
@@ -2926,7 +2926,7 @@ export default function RulesPage() {
       </div>
 
       {/* Main Tab Switcher */}
-      <div className="flex rounded-xl border border-border-subtle bg-bg-surface p-1 font-mono text-xs shadow-sm">
+      <div className="flex rounded-xl border border-border-subtle bg-bg-surface p-1 font-sans text-xs shadow-sm">
         <button
           onClick={() => setActiveTab("rules")}
           className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-medium transition ${

@@ -46,12 +46,12 @@
   --shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.6);
   --shadow-raised: 0 4px 12px rgba(0, 0, 0, 0.55), 0 18px 44px -14px rgba(0, 0, 0, 0.8);
 
-  /* ── Glows — crisp laser halos ───────────────────────────────────────── */
-  --glow-accent: 0 0 0 1px rgba(99, 102, 241, 0.35), 0 0 16px rgba(99, 102, 241, 0.25);
-  --glow-signal: 0 0 0 1px rgba(6, 182, 212, 0.35), 0 0 14px rgba(6, 182, 212, 0.22);
-  --glow-amber: 0 0 0 1px rgba(245, 158, 11, 0.35), 0 0 12px rgba(245, 158, 11, 0.2);
-  --glow-malicious: 0 0 0 1px rgba(239, 68, 68, 0.35), 0 0 16px rgba(239, 68, 68, 0.26);
-  --glow-clean: 0 0 0 1px rgba(16, 185, 129, 0.35), 0 0 12px rgba(16, 185, 129, 0.2);
+  /* ── Glows — crisp precision rings & subtle elevation ──────────────── */
+  --glow-accent: 0 0 0 1px rgba(99, 102, 241, 0.45), 0 1px 2px rgba(0, 0, 0, 0.4);
+  --glow-signal: 0 0 0 1px rgba(6, 182, 212, 0.45), 0 1px 2px rgba(0, 0, 0, 0.4);
+  --glow-amber: 0 0 0 1px rgba(245, 158, 11, 0.45), 0 1px 2px rgba(0, 0, 0, 0.4);
+  --glow-malicious: 0 0 0 1px rgba(239, 68, 68, 0.45), 0 1px 2px rgba(0, 0, 0, 0.4);
+  --glow-clean: 0 0 0 1px rgba(16, 185, 129, 0.45), 0 1px 2px rgba(0, 0, 0, 0.4);
 }
 
 /* Light — the secondary opt-in theme. */
@@ -83,11 +83,11 @@
   --shadow-panel: 0 1px 2px rgba(23, 25, 31, 0.04), 0 1px 3px rgba(23, 25, 31, 0.05);
   --shadow-raised: 0 2px 4px rgba(23, 25, 31, 0.06), 0 8px 24px -8px rgba(23, 25, 31, 0.12);
 
-  --glow-accent: 0 0 0 1px rgba(37, 99, 235, 0.25), 0 0 14px rgba(37, 99, 235, 0.14);
-  --glow-signal: 0 0 0 1px rgba(14, 116, 144, 0.25), 0 0 12px rgba(14, 116, 144, 0.14);
-  --glow-amber: 0 0 0 1px rgba(161, 98, 7, 0.25), 0 0 12px rgba(161, 98, 7, 0.13);
-  --glow-malicious: 0 0 0 1px rgba(178, 60, 51, 0.28), 0 0 14px rgba(178, 60, 51, 0.16);
-  --glow-clean: 0 0 0 1px rgba(15, 118, 110, 0.22), 0 0 10px rgba(15, 118, 110, 0.12);
+  --glow-accent: 0 0 0 1px rgba(37, 99, 235, 0.4), 0 1px 2px rgba(23, 25, 31, 0.08);
+  --glow-signal: 0 0 0 1px rgba(14, 116, 144, 0.4), 0 1px 2px rgba(23, 25, 31, 0.08);
+  --glow-amber: 0 0 0 1px rgba(161, 98, 7, 0.4), 0 1px 2px rgba(23, 25, 31, 0.08);
+  --glow-malicious: 0 0 0 1px rgba(178, 60, 51, 0.4), 0 1px 2px rgba(23, 25, 31, 0.08);
+  --glow-clean: 0 0 0 1px rgba(15, 118, 110, 0.4), 0 1px 2px rgba(23, 25, 31, 0.08);
 }
 
 /* ⚡ Phosphor Matrix — CRT terminal green & deep obsidian */
@@ -119,11 +119,11 @@
   --shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.6), 0 1px 3px rgba(0, 0, 0, 0.8);
   --shadow-raised: 0 4px 12px rgba(0, 0, 0, 0.7), 0 18px 44px -14px rgba(0, 0, 0, 0.9);
 
-  --glow-accent: 0 0 0 1px rgba(16, 185, 129, 0.35), 0 0 16px rgba(16, 185, 129, 0.25);
-  --glow-signal: 0 0 0 1px rgba(110, 231, 183, 0.32), 0 0 14px rgba(110, 231, 183, 0.22);
-  --glow-amber: 0 0 0 1px rgba(245, 158, 11, 0.35), 0 0 12px rgba(245, 158, 11, 0.2);
-  --glow-malicious: 0 0 0 1px rgba(239, 68, 68, 0.35), 0 0 16px rgba(239, 68, 68, 0.26);
-  --glow-clean: 0 0 0 1px rgba(16, 185, 129, 0.35), 0 0 12px rgba(16, 185, 129, 0.2);
+  --glow-accent: 0 0 0 1px rgba(16, 185, 129, 0.45), 0 1px 2px rgba(0, 0, 0, 0.5);
+  --glow-signal: 0 0 0 1px rgba(110, 231, 183, 0.45), 0 1px 2px rgba(0, 0, 0, 0.5);
+  --glow-amber: 0 0 0 1px rgba(245, 158, 11, 0.45), 0 1px 2px rgba(0, 0, 0, 0.5);
+  --glow-malicious: 0 0 0 1px rgba(239, 68, 68, 0.45), 0 1px 2px rgba(0, 0, 0, 0.5);
+  --glow-clean: 0 0 0 1px rgba(16, 185, 129, 0.45), 0 1px 2px rgba(0, 0, 0, 0.5);
 }
 
 /* 🌆 Cyberpunk Neon — Synthwave purple abyss & electric rose */
@@ -155,11 +155,11 @@
   --shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.6), 0 1px 3px rgba(0, 0, 0, 0.8);
   --shadow-raised: 0 4px 12px rgba(0, 0, 0, 0.7), 0 18px 44px -14px rgba(0, 0, 0, 0.9);
 
-  --glow-accent: 0 0 0 1px rgba(244, 63, 94, 0.38), 0 0 18px rgba(244, 63, 94, 0.28);
-  --glow-signal: 0 0 0 1px rgba(6, 182, 212, 0.35), 0 0 14px rgba(6, 182, 212, 0.24);
-  --glow-amber: 0 0 0 1px rgba(245, 158, 11, 0.35), 0 0 12px rgba(245, 158, 11, 0.2);
-  --glow-malicious: 0 0 0 1px rgba(244, 63, 94, 0.38), 0 0 18px rgba(244, 63, 94, 0.28);
-  --glow-clean: 0 0 0 1px rgba(6, 182, 212, 0.35), 0 0 12px rgba(6, 182, 212, 0.2);
+  --glow-accent: 0 0 0 1px rgba(244, 63, 94, 0.45), 0 1px 2px rgba(0, 0, 0, 0.5);
+  --glow-signal: 0 0 0 1px rgba(6, 182, 212, 0.45), 0 1px 2px rgba(0, 0, 0, 0.5);
+  --glow-amber: 0 0 0 1px rgba(245, 158, 11, 0.45), 0 1px 2px rgba(0, 0, 0, 0.5);
+  --glow-malicious: 0 0 0 1px rgba(244, 63, 94, 0.45), 0 1px 2px rgba(0, 0, 0, 0.5);
+  --glow-clean: 0 0 0 1px rgba(6, 182, 212, 0.45), 0 1px 2px rgba(0, 0, 0, 0.5);
 }
 
 /* 🛰️ Mission Control — Aerospace telemetry & command gold */
@@ -191,11 +191,11 @@
   --shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.7);
   --shadow-raised: 0 4px 12px rgba(0, 0, 0, 0.6), 0 18px 44px -14px rgba(0, 0, 0, 0.85);
 
-  --glow-accent: 0 0 0 1px rgba(245, 158, 11, 0.35), 0 0 16px rgba(245, 158, 11, 0.25);
-  --glow-signal: 0 0 0 1px rgba(56, 189, 248, 0.35), 0 0 14px rgba(56, 189, 248, 0.22);
-  --glow-amber: 0 0 0 1px rgba(245, 158, 11, 0.35), 0 0 12px rgba(245, 158, 11, 0.2);
-  --glow-malicious: 0 0 0 1px rgba(239, 68, 68, 0.35), 0 0 16px rgba(239, 68, 68, 0.25);
-  --glow-clean: 0 0 0 1px rgba(56, 189, 248, 0.35), 0 0 12px rgba(56, 189, 248, 0.2);
+  --glow-accent: 0 0 0 1px rgba(245, 158, 11, 0.45), 0 1px 2px rgba(0, 0, 0, 0.5);
+  --glow-signal: 0 0 0 1px rgba(56, 189, 248, 0.45), 0 1px 2px rgba(0, 0, 0, 0.5);
+  --glow-amber: 0 0 0 1px rgba(245, 158, 11, 0.45), 0 1px 2px rgba(0, 0, 0, 0.5);
+  --glow-malicious: 0 0 0 1px rgba(239, 68, 68, 0.45), 0 1px 2px rgba(0, 0, 0, 0.5);
+  --glow-clean: 0 0 0 1px rgba(56, 189, 248, 0.45), 0 1px 2px rgba(0, 0, 0, 0.5);
 }
 
 /* ❄️ Nordic Polar — Nord frost snow & aurora cyan */
@@ -227,11 +227,11 @@
   --shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.5);
   --shadow-raised: 0 4px 12px rgba(0, 0, 0, 0.45), 0 18px 44px -14px rgba(0, 0, 0, 0.65);
 
-  --glow-accent: 0 0 0 1px rgba(136, 192, 208, 0.35), 0 0 16px rgba(136, 192, 208, 0.24);
-  --glow-signal: 0 0 0 1px rgba(129, 161, 193, 0.35), 0 0 14px rgba(129, 161, 193, 0.22);
-  --glow-amber: 0 0 0 1px rgba(235, 203, 139, 0.35), 0 0 12px rgba(235, 203, 139, 0.2);
-  --glow-malicious: 0 0 0 1px rgba(191, 97, 106, 0.35), 0 0 16px rgba(191, 97, 106, 0.25);
-  --glow-clean: 0 0 0 1px rgba(163, 190, 140, 0.35), 0 0 12px rgba(163, 190, 140, 0.2);
+  --glow-accent: 0 0 0 1px rgba(136, 192, 208, 0.45), 0 1px 2px rgba(0, 0, 0, 0.5);
+  --glow-signal: 0 0 0 1px rgba(129, 161, 193, 0.45), 0 1px 2px rgba(0, 0, 0, 0.5);
+  --glow-amber: 0 0 0 1px rgba(235, 203, 139, 0.45), 0 1px 2px rgba(0, 0, 0, 0.5);
+  --glow-malicious: 0 0 0 1px rgba(191, 97, 106, 0.45), 0 1px 2px rgba(0, 0, 0, 0.5);
+  --glow-clean: 0 0 0 1px rgba(163, 190, 140, 0.45), 0 1px 2px rgba(0, 0, 0, 0.5);
 }
 
 /* 🪵 Monokai Pro — Dark carbon & warm studio yellow */
@@ -263,11 +263,11 @@
   --shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.6);
   --shadow-raised: 0 4px 12px rgba(0, 0, 0, 0.55), 0 18px 44px -14px rgba(0, 0, 0, 0.75);
 
-  --glow-accent: 0 0 0 1px rgba(234, 179, 8, 0.35), 0 0 16px rgba(234, 179, 8, 0.24);
-  --glow-signal: 0 0 0 1px rgba(34, 197, 94, 0.35), 0 0 14px rgba(34, 197, 94, 0.22);
-  --glow-amber: 0 0 0 1px rgba(234, 179, 8, 0.35), 0 0 12px rgba(234, 179, 8, 0.2);
-  --glow-malicious: 0 0 0 1px rgba(239, 68, 68, 0.35), 0 0 16px rgba(239, 68, 68, 0.25);
-  --glow-clean: 0 0 0 1px rgba(34, 197, 94, 0.35), 0 0 12px rgba(34, 197, 94, 0.2);
+  --glow-accent: 0 0 0 1px rgba(234, 179, 8, 0.45), 0 1px 2px rgba(0, 0, 0, 0.5);
+  --glow-signal: 0 0 0 1px rgba(34, 197, 94, 0.45), 0 1px 2px rgba(0, 0, 0, 0.5);
+  --glow-amber: 0 0 0 1px rgba(234, 179, 8, 0.45), 0 1px 2px rgba(0, 0, 0, 0.5);
+  --glow-malicious: 0 0 0 1px rgba(239, 68, 68, 0.45), 0 1px 2px rgba(0, 0, 0, 0.5);
+  --glow-clean: 0 0 0 1px rgba(34, 197, 94, 0.45), 0 1px 2px rgba(0, 0, 0, 0.5);
 }
 
 /* 🟣 Amethyst Void — Deep cyber violet & radiant magenta */
@@ -299,11 +299,11 @@
   --shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.6), 0 1px 3px rgba(0, 0, 0, 0.8);
   --shadow-raised: 0 4px 12px rgba(0, 0, 0, 0.7), 0 18px 44px -14px rgba(0, 0, 0, 0.9);
 
-  --glow-accent: 0 0 0 1px rgba(168, 85, 247, 0.4), 0 0 18px rgba(168, 85, 247, 0.28);
-  --glow-signal: 0 0 0 1px rgba(56, 189, 248, 0.35), 0 0 14px rgba(56, 189, 248, 0.22);
-  --glow-amber: 0 0 0 1px rgba(251, 191, 36, 0.35), 0 0 12px rgba(251, 191, 36, 0.2);
-  --glow-malicious: 0 0 0 1px rgba(244, 63, 94, 0.38), 0 0 18px rgba(244, 63, 94, 0.28);
-  --glow-clean: 0 0 0 1px rgba(52, 211, 153, 0.35), 0 0 12px rgba(52, 211, 153, 0.2);
+  --glow-accent: 0 0 0 1px rgba(168, 85, 247, 0.45), 0 1px 2px rgba(0, 0, 0, 0.5);
+  --glow-signal: 0 0 0 1px rgba(56, 189, 248, 0.45), 0 1px 2px rgba(0, 0, 0, 0.5);
+  --glow-amber: 0 0 0 1px rgba(251, 191, 36, 0.45), 0 1px 2px rgba(0, 0, 0, 0.5);
+  --glow-malicious: 0 0 0 1px rgba(244, 63, 94, 0.45), 0 1px 2px rgba(0, 0, 0, 0.5);
+  --glow-clean: 0 0 0 1px rgba(52, 211, 153, 0.45), 0 1px 2px rgba(0, 0, 0, 0.5);
 }
 
 /* ── Left rail — the workspace shell. --rail-w drives BOTH the rail width and
@@ -370,12 +370,10 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* The field — deep slate-black with glowing ambient aura */
+/* The field — deep slate-black with refined ambient vignette */
 body {
   background-image:
-    radial-gradient(1200px 500px at 15% -5%, rgba(217, 164, 65, 0.08), transparent 70%),
-    radial-gradient(900px 500px at 85% 10%, rgba(79, 209, 197, 0.05), transparent 65%),
-    radial-gradient(1000px 600px at 50% 110%, rgba(196, 69, 59, 0.04), transparent 70%);
+    radial-gradient(1200px 600px at 50% 0%, rgba(30, 41, 59, 0.2) 0%, transparent 70%);
   background-attachment: fixed;
   min-height: 100vh;
 }
@@ -879,8 +877,8 @@ html[data-theme="dark"][data-palette="slate"] {
   --signal: #22d3ee;
   --border-subtle: #212b3a;
   --border-strong: #2f3b4e;
-  --glow-accent: 0 0 0 1px rgba(139, 124, 246, 0.3), 0 0 16px rgba(139, 124, 246, 0.22);
-  --glow-signal: 0 0 0 1px rgba(34, 211, 238, 0.3), 0 0 14px rgba(34, 211, 238, 0.2);
+  --glow-accent: 0 0 0 1px rgba(139, 124, 246, 0.45), 0 1px 2px rgba(0, 0, 0, 0.4);
+  --glow-signal: 0 0 0 1px rgba(34, 211, 238, 0.45), 0 1px 2px rgba(0, 0, 0, 0.4);
 }
 
 .palette-root[data-palette="ocean"],
@@ -900,8 +898,8 @@ html[data-theme="dark"][data-palette="ocean"] {
   --signal: #22d3ee;
   --border-subtle: #1d2b44;
   --border-strong: #2b3d5c;
-  --glow-accent: 0 0 0 1px rgba(90, 162, 255, 0.35), 0 0 16px rgba(90, 162, 255, 0.25);
-  --glow-signal: 0 0 0 1px rgba(34, 211, 238, 0.3), 0 0 14px rgba(34, 211, 238, 0.2);
+  --glow-accent: 0 0 0 1px rgba(90, 162, 255, 0.45), 0 1px 2px rgba(0, 0, 0, 0.4);
+  --glow-signal: 0 0 0 1px rgba(34, 211, 238, 0.45), 0 1px 2px rgba(0, 0, 0, 0.4);
 }
 
 .palette-root[data-palette="teal"],
@@ -921,8 +919,8 @@ html[data-theme="dark"][data-palette="teal"] {
   --signal: #67e8f9;
   --border-subtle: #1d2431;
   --border-strong: #2a3242;
-  --glow-accent: 0 0 0 1px rgba(45, 212, 191, 0.32), 0 0 16px rgba(45, 212, 191, 0.24);
-  --glow-signal: 0 0 0 1px rgba(103, 232, 249, 0.32), 0 0 14px rgba(103, 232, 249, 0.22);
+  --glow-accent: 0 0 0 1px rgba(45, 212, 191, 0.45), 0 1px 2px rgba(0, 0, 0, 0.4);
+  --glow-signal: 0 0 0 1px rgba(103, 232, 249, 0.45), 0 1px 2px rgba(0, 0, 0, 0.4);
 }
 
 .palette-root[data-palette="emerald"],
@@ -942,8 +940,8 @@ html[data-theme="dark"][data-palette="emerald"] {
   --signal: #6ee7b7;
   --border-subtle: #163828;
   --border-strong: #1e4d37;
-  --glow-accent: 0 0 0 1px rgba(16, 185, 129, 0.35), 0 0 16px rgba(16, 185, 129, 0.25);
-  --glow-signal: 0 0 0 1px rgba(110, 231, 183, 0.32), 0 0 14px rgba(110, 231, 183, 0.22);
+  --glow-accent: 0 0 0 1px rgba(16, 185, 129, 0.45), 0 1px 2px rgba(0, 0, 0, 0.4);
+  --glow-signal: 0 0 0 1px rgba(110, 231, 183, 0.45), 0 1px 2px rgba(0, 0, 0, 0.4);
 }
 
 .palette-root[data-palette="amber"],
@@ -963,8 +961,8 @@ html[data-theme="dark"][data-palette="amber"] {
   --signal: #fde047;
   --border-subtle: #3a3216;
   --border-strong: #4d431d;
-  --glow-accent: 0 0 0 1px rgba(245, 158, 11, 0.35), 0 0 16px rgba(245, 158, 11, 0.25);
-  --glow-signal: 0 0 0 1px rgba(253, 224, 71, 0.32), 0 0 14px rgba(253, 224, 71, 0.22);
+  --glow-accent: 0 0 0 1px rgba(245, 158, 11, 0.45), 0 1px 2px rgba(0, 0, 0, 0.4);
+  --glow-signal: 0 0 0 1px rgba(253, 224, 71, 0.45), 0 1px 2px rgba(0, 0, 0, 0.4);
 }
 
 .palette-root[data-palette="amethyst"],
@@ -984,8 +982,8 @@ html[data-theme="dark"][data-palette="amethyst"] {
   --signal: #e879f9;
   --border-subtle: #3b1d5a;
   --border-strong: #4c2674;
-  --glow-accent: 0 0 0 1px rgba(168, 85, 247, 0.35), 0 0 16px rgba(168, 85, 247, 0.25);
-  --glow-signal: 0 0 0 1px rgba(232, 121, 249, 0.32), 0 0 14px rgba(232, 121, 249, 0.22);
+  --glow-accent: 0 0 0 1px rgba(168, 85, 247, 0.45), 0 1px 2px rgba(0, 0, 0, 0.4);
+  --glow-signal: 0 0 0 1px rgba(232, 121, 249, 0.45), 0 1px 2px rgba(0, 0, 0, 0.4);
 }
 
 .palette-root[data-palette="rose"],
@@ -1005,8 +1003,8 @@ html[data-theme="dark"][data-palette="rose"] {
   --signal: #f472b6;
   --border-subtle: #3d1722;
   --border-strong: #501e2c;
-  --glow-accent: 0 0 0 1px rgba(244, 63, 94, 0.35), 0 0 16px rgba(244, 63, 94, 0.25);
-  --glow-signal: 0 0 0 1px rgba(244, 114, 182, 0.32), 0 0 14px rgba(244, 114, 182, 0.22);
+  --glow-accent: 0 0 0 1px rgba(244, 63, 94, 0.45), 0 1px 2px rgba(0, 0, 0, 0.4);
+  --glow-signal: 0 0 0 1px rgba(244, 114, 182, 0.45), 0 1px 2px rgba(0, 0, 0, 0.4);
 }
 
 /* Narrow-window notice — desk tool, best viewed wide (spec). Shown only
