@@ -61,7 +61,7 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={busy || !password}
-            className="press inline-flex w-full items-center justify-center gap-2 rounded-lg border border-accent/60 bg-accent/10 px-4 py-2.5 font-mono text-sm font-medium text-accent transition-all duration-150 hover:shadow-[var(--glow-accent)] disabled:cursor-default disabled:opacity-50"
+            className="press inline-flex w-full items-center justify-center gap-2 rounded-lg border border-accent/60 bg-accent/10 px-4 py-2.5 font-sans text-sm font-semibold text-accent transition-all duration-150 hover:bg-accent/20 focus:ring-1 focus:ring-accent/40 disabled:cursor-default disabled:opacity-50"
           >
             <Icon name={busy ? "refresh" : "arrowRight"} size={13} className={busy ? "animate-spin" : ""} />
             {busy ? "Signing in…" : "Sign in"}

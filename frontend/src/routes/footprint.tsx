@@ -507,9 +507,9 @@ function EvidenceMatrix({
   };
 
   return (
-    <div className="rounded-xl border border-border-subtle bg-bg-surface overflow-hidden shadow-xs font-mono">
+    <div className="rounded-xl border border-border-subtle bg-bg-surface overflow-hidden shadow-xs font-sans">
       {/* Evidence Tab Bar */}
-      <div className="flex items-center gap-1 overflow-x-auto border-b border-border-subtle bg-bg-elevated/40 p-2 text-xs">
+      <div className="flex items-center gap-1 overflow-x-auto border-b border-border-subtle bg-bg-elevated/40 p-2 text-xs font-semibold">
         <button
           onClick={() => setActiveTab("resolutions")}
           className={`press inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-medium transition ${
@@ -1090,7 +1090,7 @@ export default function FootprintPage() {
 
       {/* Metric HUD Strip */}
       {footprint && (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 font-mono">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 font-sans text-xs">
           <div className="rounded-xl border border-border-subtle bg-bg-surface p-3.5">
             <span className="text-[10px] uppercase text-text-faint font-bold tracking-wider">Active Target</span>
             <p className="mt-1 text-sm font-bold text-text-primary truncate" title={footprint.sample.name}>

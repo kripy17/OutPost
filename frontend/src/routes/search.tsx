@@ -377,7 +377,7 @@ export default function SearchPage() {
       />
 
       {/* Main Workspace Tab Switcher */}
-      <div className="mb-8 flex rounded-xl border border-border-subtle bg-bg-surface p-1 font-mono text-xs shadow-sm">
+      <div className="mb-8 flex rounded-xl border border-border-subtle bg-bg-surface p-1 font-sans text-xs shadow-xs">
         <button
           onClick={() => {
             setActiveTab("search");
@@ -386,9 +386,9 @@ export default function SearchPage() {
               return p;
             });
           }}
-          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-medium transition ${
+          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-semibold transition ${
             activeTab === "search"
-              ? "bg-accent/15 font-bold text-accent shadow-sm"
+              ? "bg-accent/15 text-accent shadow-xs"
               : "text-text-muted hover:text-text-primary"
           }`}
         >
@@ -403,9 +403,9 @@ export default function SearchPage() {
               return p;
             });
           }}
-          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-medium transition ${
+          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-semibold transition ${
             activeTab === "watchlist"
-              ? "bg-accent/15 font-bold text-accent shadow-sm"
+              ? "bg-accent/15 text-accent shadow-xs"
               : "text-text-muted hover:text-text-primary"
           }`}
         >
@@ -420,9 +420,9 @@ export default function SearchPage() {
               return p;
             });
           }}
-          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-medium transition ${
+          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-semibold transition ${
             activeTab === "workbench"
-              ? "border border-cyan-500/40 bg-cyan-500/15 font-bold text-cyan-400 shadow-sm"
+              ? "border border-cyan-500/40 bg-cyan-500/15 text-cyan-400 shadow-xs"
               : "text-text-muted hover:text-text-primary"
           }`}
         >
@@ -437,9 +437,9 @@ export default function SearchPage() {
               return p;
             });
           }}
-          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-medium transition ${
+          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-semibold transition ${
             activeTab === "decoder"
-              ? "border border-amber-500/40 bg-amber-500/15 font-bold text-amber-400 shadow-sm"
+              ? "border border-amber-500/40 bg-amber-500/15 text-amber-400 shadow-xs"
               : "text-text-muted hover:text-text-primary"
           }`}
         >

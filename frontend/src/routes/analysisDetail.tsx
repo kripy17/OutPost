@@ -66,10 +66,10 @@ function ObservationRow({ obs }: { obs: AnalysisObservation }) {
       <div className="rounded-xl border border-border-subtle bg-bg-surface overflow-hidden shadow-xs">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle bg-bg-elevated/40 px-4 py-3">
           <div className="flex items-center gap-2">
-            <span className="font-mono text-xs font-bold uppercase tracking-wider text-text-primary">
+            <span className="font-sans text-xs font-semibold uppercase tracking-wider text-text-primary">
               Extracted &amp; Deobfuscated Strings
             </span>
-            <span className="rounded-full border border-border-subtle bg-bg-base px-2 py-0.5 font-mono text-[10px] text-text-faint">
+            <span className="rounded-full border border-border-subtle bg-bg-base px-2 py-0.5 font-mono text-[10px] tabular-nums text-text-faint">
               {rawStrings.length} strings
             </span>
           </div>
@@ -85,7 +85,7 @@ function ObservationRow({ obs }: { obs: AnalysisObservation }) {
             </div>
             <button
               onClick={copyAll}
-              className="press rounded-lg border border-border-subtle bg-bg-surface px-2.5 py-1 font-mono text-[11px] text-text-secondary hover:text-text-primary hover:border-accent/40 transition"
+              className="press rounded-lg border border-border-subtle bg-bg-surface px-2.5 py-1 font-sans text-[11px] font-semibold text-text-secondary hover:text-text-primary hover:border-accent/40 transition shadow-xs"
             >
               {copiedStrings ? "Copied ✓" : "Copy All"}
             </button>
@@ -119,16 +119,16 @@ function ObservationRow({ obs }: { obs: AnalysisObservation }) {
     return (
       <div className="rounded-xl border border-border-subtle bg-bg-surface overflow-hidden shadow-xs">
         <div className="border-b border-border-subtle bg-bg-elevated/40 px-4 py-3 flex items-center justify-between">
-          <span className="font-mono text-xs font-bold uppercase tracking-wider text-text-primary">
+          <span className="font-sans text-xs font-semibold uppercase tracking-wider text-text-primary">
             Extracted Indicators of Compromise (IOCs)
           </span>
-          <span className="text-[10px] font-mono text-text-faint">Network &amp; Host Forensics</span>
+          <span className="text-[10px] font-sans font-medium text-text-faint">Network &amp; Host Forensics</span>
         </div>
         <div className="p-4 space-y-4">
           {cats.map(([cat, values]) => (
             <div key={cat} className="space-y-1.5">
               <div className="flex items-center gap-2">
-                <span className="font-mono text-[10px] font-bold uppercase tracking-wider text-accent">
+                <span className="font-sans text-[10px] font-semibold uppercase tracking-wider text-accent">
                   {cat} ({values.length})
                 </span>
               </div>
@@ -141,7 +141,7 @@ function ObservationRow({ obs }: { obs: AnalysisObservation }) {
                     <span className="select-all font-semibold">{v}</span>
                     <Link
                       to={`/watchlist`}
-                      className="text-[9px] uppercase tracking-wider rounded border border-border-subtle bg-bg-surface px-1.5 py-0.5 text-text-faint hover:text-accent hover:border-accent/50"
+                      className="text-[9px] font-sans font-semibold uppercase tracking-wider rounded border border-border-subtle bg-bg-surface px-1.5 py-0.5 text-text-faint hover:text-accent hover:border-accent/50"
                       title="Add to Watchlist"
                     >
                       Watchlist
@@ -163,7 +163,7 @@ function ObservationRow({ obs }: { obs: AnalysisObservation }) {
     return (
       <div className="rounded-xl border border-border-subtle bg-bg-surface overflow-hidden shadow-xs space-y-4 p-4">
         <div>
-          <span className="font-mono text-xs font-bold uppercase tracking-wider text-text-primary">
+          <span className="font-sans text-xs font-semibold uppercase tracking-wider text-text-primary">
             Binary Header &amp; Executable Architecture ({obs.kind.toUpperCase()})
           </span>
           <dl className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4 font-mono text-xs">
@@ -171,7 +171,7 @@ function ObservationRow({ obs }: { obs: AnalysisObservation }) {
               .filter(([k]) => k !== "sections" && k !== "imports")
               .map(([k, v]) => (
                 <div key={k} className="rounded-lg border border-border-subtle bg-bg-base p-2.5">
-                  <dt className="text-[10px] uppercase tracking-wider text-text-faint font-semibold">{k}</dt>
+                  <dt className="text-[10px] uppercase tracking-wider text-text-faint font-sans font-semibold">{k}</dt>
                   <dd className="mt-1 truncate font-mono text-[11px] font-bold text-text-primary">
                     {String(v ?? "—")}
                   </dd>
@@ -182,7 +182,7 @@ function ObservationRow({ obs }: { obs: AnalysisObservation }) {
 
         {imports.length > 0 && (
           <div className="border-t border-border-subtle/60 pt-3">
-            <span className="font-mono text-[10px] font-bold uppercase tracking-wider text-text-faint">
+            <span className="font-sans text-[10px] font-semibold uppercase tracking-wider text-text-faint">
               Imported Libraries &amp; API Dependencies ({imports.length})
             </span>
             <div className="mt-2 flex flex-wrap gap-1.5">
@@ -397,7 +397,7 @@ export default function AnalysisDetailPage() {
           <>
             <Link
               to={`/investigations?create=1&title=${encodeURIComponent(`Analysis Job — ${j.sample_name || j.run_id}`)}&evidence_type=run&evidence_id=${encodeURIComponent(runId ?? "")}`}
-              className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/40 bg-accent/10 px-3 py-1.5 font-mono text-[11px] font-semibold text-accent hover:bg-accent/20"
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/40 bg-accent/10 px-3 py-1.5 font-sans text-xs font-semibold text-accent hover:bg-accent/20 shadow-xs"
               title="Escalate this analysis job into a formal incident dossier"
             >
               Escalate Case
@@ -417,12 +417,12 @@ export default function AnalysisDetailPage() {
 
       {/* Executive Threat Verdict Banner */}
       {j.status === "completed" && (
-        <div className={`rounded-2xl border p-5 backdrop-blur-sm shadow-sm font-mono ${
+        <div className={`rounded-2xl border p-5 backdrop-blur-sm shadow-xs ${
           j.risk_score >= 7
-            ? "border-risk-malicious/50 bg-risk-malicious/10"
+            ? "border-risk-malicious/50 bg-risk-malicious/10 ring-1 ring-risk-malicious/30"
             : j.risk_score >= 4
-              ? "border-risk-suspicious/50 bg-risk-suspicious/10"
-              : "border-risk-clean/40 bg-risk-clean/10"
+              ? "border-risk-suspicious/50 bg-risk-suspicious/10 ring-1 ring-risk-suspicious/30"
+              : "border-risk-clean/40 bg-risk-clean/10 ring-1 ring-risk-clean/30"
         }`}>
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-3">
@@ -437,16 +437,16 @@ export default function AnalysisDetailPage() {
               </span>
               <div>
                 <div className="flex items-center gap-2">
-                  <span className={`text-base font-bold uppercase tracking-wide ${
+                  <span className={`text-base font-sans font-bold uppercase tracking-wide ${
                     j.risk_score >= 7 ? "text-risk-malicious" : j.risk_score >= 4 ? "text-risk-suspicious" : "text-risk-clean"
                   }`}>
                     {j.risk_score >= 7 ? "MALICIOUS SPECIMEN" : j.risk_score >= 4 ? "SUSPICIOUS BEHAVIOR" : "BENIGN / CLEAN"}
                   </span>
-                  <span className="rounded bg-bg-surface/80 border border-border-subtle px-2 py-0.5 text-[10px] text-text-muted">
+                  <span className="rounded bg-bg-surface/80 border border-border-subtle px-2 py-0.5 text-[10px] font-sans font-semibold text-text-muted">
                     Automated Triage Verdict
                   </span>
                 </div>
-                <p className="text-xs text-text-muted mt-0.5">
+                <p className="text-xs text-text-muted mt-0.5 font-sans">
                   Static analysis &amp; heuristic triage evaluated against 38 MITRE ATT&amp;CK rules.
                 </p>
               </div>
@@ -454,8 +454,8 @@ export default function AnalysisDetailPage() {
 
             <div className="flex items-center gap-4">
               <div className="text-right">
-                <span className="text-[10px] uppercase tracking-wider text-text-faint block">Threat Score</span>
-                <span className={`text-2xl font-bold ${
+                <span className="text-[10px] uppercase tracking-wider text-text-faint block font-sans font-semibold">Threat Score</span>
+                <span className={`text-2xl font-bold font-mono tabular-nums ${
                   j.risk_score >= 7 ? "text-risk-malicious" : j.risk_score >= 4 ? "text-risk-suspicious" : "text-risk-clean"
                 }`}>
                   Level {j.risk_score} / 10

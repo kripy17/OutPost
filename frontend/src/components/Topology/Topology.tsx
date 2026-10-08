@@ -10,7 +10,7 @@
 // table). Node count drives the SVG height; the viewBox scales it to the
 // panel width.
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type { NetworkConnection, ProcessNode, Reputation } from "../../types";
 
@@ -59,6 +59,8 @@ export default function Topology({
   connections: NetworkConnection[];
 }) {
   const nav = useNavigate();
+  const [hoveredProc, setHoveredProc] = useState<number | null>(null);
+  const [hoveredIp, setHoveredIp] = useState<number | null>(null);
 
   const { procs, ips, edges } = useMemo(() => {
     const procs: FlatProc[] = [];
@@ -102,82 +104,134 @@ export default function Topology({
   return (
     <div>
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="Connection topology: processes to destination IPs">
-        {/* Edges — reputation-colored bezier curves, process → IP */}
+        {/* Edges — reputation-colored bezier curves with animated telemetry flow */}
         {edges.map((e, k) => {
           const x1 = LX + LW;
           const y1 = rowY(e.p);
           const x2 = RX;
           const y2 = rowY(e.i);
+          const pathD = `M ${x1} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${x2} ${y2}`;
+          const isHovered = hoveredProc === e.p || hoveredIp === e.i;
+          const isDimmed = (hoveredProc !== null && hoveredProc !== e.p) || (hoveredIp !== null && hoveredIp !== e.i);
+          const color = REP_FILL[e.rep];
+
           return (
-            <path
-              key={k}
-              d={`M ${x1} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${x2} ${y2}`}
-              fill="none"
-              stroke={REP_FILL[e.rep]}
-              strokeOpacity="0.5"
-              strokeWidth="1.5"
-            />
+            <g key={k} opacity={isDimmed ? 0.15 : 1} className="transition-opacity duration-150">
+              {/* Subtle halo backdrop */}
+              <path
+                d={pathD}
+                fill="none"
+                stroke={color}
+                strokeOpacity={isHovered ? 0.4 : 0.12}
+                strokeWidth={isHovered ? 4 : 2.5}
+                strokeLinecap="round"
+              />
+              {/* Core connection bezier */}
+              <path
+                d={pathD}
+                fill="none"
+                stroke={color}
+                strokeOpacity={isHovered ? 0.95 : 0.6}
+                strokeWidth={isHovered ? 2 : 1.5}
+                strokeLinecap="round"
+              />
+              {/* Animated telemetry flow particle */}
+              <circle r={isHovered ? 3 : 2} fill={color}>
+                <animateMotion
+                  path={pathD}
+                  dur={e.rep === "malicious" ? "2.2s" : "3.6s"}
+                  repeatCount="indefinite"
+                />
+              </circle>
+            </g>
           );
         })}
 
-        {/* Processes — left column */}
-        {procs.map((p, i) => (
-          <g key={p.pid}>
-            <rect
-              x={LX}
-              y={rowY(i) - 13}
-              width={LW}
-              height={26}
-              rx={6}
-              fill="var(--bg-elevated)"
-              stroke={p.rep ? REP_FILL[p.rep] : "var(--border-subtle)"}
-              strokeOpacity={p.rep ? 0.85 : 1}
-              strokeWidth={p.rep ? 1.5 : 1}
-            />
-            <text x={LX + 10} y={rowY(i) + 4} fontSize={11} fill="var(--text-primary)" fontFamily="var(--font-mono)" style={{ fontFamily: "var(--font-mono)" }}>
-              {p.name}
-            </text>
-            <text x={LX + LW - 10} y={rowY(i) + 4} textAnchor="end" fontSize={9} fill="var(--text-faint)" style={{ fontFamily: "var(--font-mono)" }}>
-              {p.pid}
-            </text>
-          </g>
-        ))}
+        {/* Processes — left column with interactive hover highlighting */}
+        {procs.map((p, i) => {
+          const isHovered = hoveredProc === i;
+          const isDimmed = (hoveredProc !== null && hoveredProc !== i) || (hoveredIp !== null && !edges.some((e) => e.p === i && e.i === hoveredIp));
+          return (
+            <g
+              key={p.pid}
+              opacity={isDimmed ? 0.35 : 1}
+              className="cursor-pointer transition-opacity duration-150"
+              onMouseEnter={() => setHoveredProc(i)}
+              onMouseLeave={() => setHoveredProc(null)}
+            >
+              <rect
+                x={LX}
+                y={rowY(i) - 13}
+                width={LW}
+                height={26}
+                rx={6}
+                fill="var(--bg-elevated)"
+                stroke={isHovered ? "var(--accent)" : p.rep ? REP_FILL[p.rep] : "var(--border-subtle)"}
+                strokeOpacity={isHovered ? 1 : p.rep ? 0.85 : 1}
+                strokeWidth={isHovered ? 2 : p.rep ? 1.5 : 1}
+              />
+              <text x={LX + 10} y={rowY(i) + 4} fontSize={11} fill="var(--text-primary)" fontFamily="var(--font-mono)" style={{ fontFamily: "var(--font-mono)" }}>
+                {p.name}
+              </text>
+              <text x={LX + LW - 10} y={rowY(i) + 4} textAnchor="end" fontSize={9} fill="var(--text-faint)" style={{ fontFamily: "var(--font-mono)" }}>
+                {p.pid}
+              </text>
+            </g>
+          );
+        })}
 
         {/* Destinations — right column, clickable to IOC search */}
-        {ips.map((ip, j) => (
-          <g
-            key={`${ip.ip}:${ip.port ?? ""}`}
-            role="link"
-            tabIndex={0}
-            className="cursor-pointer"
-            onClick={() => nav(`/search?q=${encodeURIComponent(ip.ip)}`)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") nav(`/search?q=${encodeURIComponent(ip.ip)}`);
-            }}
-          >
-            <title>{`${ip.ip}:${ip.port ?? "?"} · ${ip.rep}${ip.abuse !== null ? ` · abuse ${ip.abuse}` : ""}${ip.vt !== null ? ` · vt ${ip.vt}` : ""} — open in IOC search`}</title>
-            <rect x={RX} y={rowY(j) - 13} width={RW} height={26} rx={6} fill="var(--bg-elevated)" stroke={REP_FILL[ip.rep]} strokeWidth={1.5} strokeOpacity={0.9} />
-            <text x={RX + 10} y={rowY(j) + 4} fontSize={11} fill={REP_FILL[ip.rep]} style={{ fontFamily: "var(--font-mono)" }}>
-              {ip.ip}
-            </text>
-            <text x={RX + RW - 10} y={rowY(j) + 4} textAnchor="end" fontSize={9} fill="var(--text-faint)" style={{ fontFamily: "var(--font-mono)" }}>
-              :{ip.port ?? "?"}
-              {ip.vt !== null && ip.vt > 0 ? ` vt${ip.vt}` : ""}
-            </text>
-          </g>
-        ))}
+        {ips.map((ip, j) => {
+          const isHovered = hoveredIp === j;
+          const isDimmed = (hoveredIp !== null && hoveredIp !== j) || (hoveredProc !== null && !edges.some((e) => e.i === j && e.p === hoveredProc));
+          return (
+            <g
+              key={`${ip.ip}:${ip.port ?? ""}`}
+              role="link"
+              tabIndex={0}
+              opacity={isDimmed ? 0.35 : 1}
+              className="cursor-pointer transition-opacity duration-150"
+              onMouseEnter={() => setHoveredIp(j)}
+              onMouseLeave={() => setHoveredIp(null)}
+              onClick={() => nav(`/search?q=${encodeURIComponent(ip.ip)}`)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") nav(`/search?q=${encodeURIComponent(ip.ip)}`);
+              }}
+            >
+              <title>{`${ip.ip}:${ip.port ?? "?"} · ${ip.rep}${ip.abuse !== null ? ` · abuse ${ip.abuse}` : ""}${ip.vt !== null ? ` · vt ${ip.vt}` : ""} — open in IOC search`}</title>
+              <rect
+                x={RX}
+                y={rowY(j) - 13}
+                width={RW}
+                height={26}
+                rx={6}
+                fill="var(--bg-elevated)"
+                stroke={isHovered ? "var(--accent)" : REP_FILL[ip.rep]}
+                strokeWidth={isHovered ? 2 : 1.5}
+                strokeOpacity={isHovered ? 1 : 0.9}
+              />
+              <text x={RX + 10} y={rowY(j) + 4} fontSize={11} fill={REP_FILL[ip.rep]} style={{ fontFamily: "var(--font-mono)" }}>
+                {ip.ip}
+              </text>
+              <text x={RX + RW - 10} y={rowY(j) + 4} textAnchor="end" fontSize={9} fill="var(--text-faint)" style={{ fontFamily: "var(--font-mono)" }}>
+                :{ip.port ?? "?"}
+                {ip.vt !== null && ip.vt > 0 ? ` vt${ip.vt}` : ""}
+              </text>
+            </g>
+          );
+        })}
       </svg>
 
       {/* Legend — reputation never encoded by color alone */}
       <div className="mt-2 flex flex-wrap items-center gap-3 border-t border-border-subtle pt-2">
-        <span className="text-[10px] font-semibold uppercase tracking-wide text-text-faint">legend</span>
+        <span className="text-[10px] font-sans font-semibold uppercase tracking-wider text-text-faint">legend</span>
         {LEGEND.map((l) => (
-          <span key={l.rep} className="inline-flex items-center gap-1.5 text-[10px] text-text-muted">
+          <span key={l.rep} className="inline-flex items-center gap-1.5 text-[10px] font-sans font-medium text-text-muted">
             <span className="h-2 w-2 rounded-full" style={{ background: REP_FILL[l.rep] }} aria-hidden />
             {l.label}
           </span>
         ))}
-        <span className="ml-auto font-mono text-[10px] text-text-faint">
+        <span className="ml-auto font-mono text-[10px] text-text-faint tabular-nums">
           {procs.length} process{procs.length === 1 ? "" : "es"} → {ips.length} destination{ips.length === 1 ? "" : "s"} · {edges.length} connection{edges.length === 1 ? "" : "s"}
         </span>
       </div>

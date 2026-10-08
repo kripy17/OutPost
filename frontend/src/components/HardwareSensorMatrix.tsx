@@ -92,7 +92,7 @@ export function HardwareSensorMatrix({ deviceAccess, metrics }: HardwareSensorMa
             </div>
             <span
               className={`h-2 w-2 rounded-full ${
-                s.active ? "bg-accent animate-pulse shadow-[var(--glow-accent)]" : "bg-text-faint/30"
+                s.active ? "bg-accent ring-2 ring-accent/30 animate-pulse" : "bg-text-faint/30"
               }`}
             />
           </div>

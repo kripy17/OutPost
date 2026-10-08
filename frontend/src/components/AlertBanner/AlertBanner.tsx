@@ -239,7 +239,7 @@ export default function AlertBanner({
           <div
             key={aid ?? `${alert.rule_id}-${alert.triggered_at}`}
             className={`rounded-lg border border-border-subtle border-l-2 bg-bg-surface p-3 transition-colors duration-150 hover:bg-bg-elevated/40 ${accent} ${
-              bulkMode && aid !== null && bulkSelect.has(aid) ? "border-accent/70 shadow-[var(--glow-accent)]" : ""
+              bulkMode && aid !== null && bulkSelect.has(aid) ? "border-accent ring-1 ring-accent/40 shadow-xs" : ""
             }`}
           >
             <div className="flex flex-wrap items-center gap-2">

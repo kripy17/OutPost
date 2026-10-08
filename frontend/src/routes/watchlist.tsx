@@ -98,7 +98,7 @@ export default function WatchlistPage() {
         />
         <button
           type="submit"
-          className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 px-4 py-2 font-mono text-xs text-accent transition-colors duration-150 hover:bg-accent/10"
+          className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 px-4 py-2 font-sans text-xs font-semibold text-accent transition-colors duration-150 hover:bg-accent/10"
         >
           <Icon name="plus" size={12} />
           Add
@@ -110,21 +110,21 @@ export default function WatchlistPage() {
       <div className="mt-6 flex flex-wrap items-center gap-2">
         <button
           onClick={() => void watchlistExport("json").then((b) => download(b, "outpost-watchlist.json"))}
-          className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-1.5 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
+          className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-1.5 font-sans text-xs font-semibold text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
         >
           <Icon name="download" size={12} />
           export JSON
         </button>
         <button
           onClick={() => void watchlistExport("csv").then((b) => download(b, "outpost-watchlist.csv"))}
-          className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-1.5 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
+          className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-1.5 font-sans text-xs font-semibold text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
         >
           <Icon name="download" size={12} />
           export CSV
         </button>
         <button
           onClick={() => fileRef.current?.click()}
-          className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-1.5 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
+          className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-1.5 font-sans text-xs font-semibold text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
         >
           <Icon name="plus" size={12} />
           import…
@@ -145,7 +145,7 @@ export default function WatchlistPage() {
 
       {entries.length > 0 && (
         <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-border-subtle/50 pt-4">
-          <div className="flex items-center gap-1 font-mono text-[11px]">
+          <div className="flex items-center gap-1 font-sans text-xs font-semibold">
             {(
               [
                 { id: "all", label: "All" },
@@ -159,7 +159,7 @@ export default function WatchlistPage() {
                 onClick={() => setFilterType(chip.id)}
                 className={`rounded-lg border px-2.5 py-1 transition-all ${
                   filterType === chip.id
-                    ? "border-accent/60 bg-accent/15 font-semibold text-accent"
+                    ? "border-accent/60 bg-accent/15 text-accent"
                     : "border-border-subtle text-text-muted hover:border-accent/40"
                 }`}
               >

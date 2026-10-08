@@ -109,10 +109,10 @@ export function Chip({
   // runtime-built `shadow-[var(--glow-…)]` would never be scanned (the same
   // dynamic-class bug we fixed in ProcessTree).
   const glows: Record<string, string> = {
-    clean: "shadow-[var(--glow-clean)]",
-    suspicious: "shadow-[var(--glow-amber)]",
-    malicious: "shadow-[var(--glow-malicious)]",
-    accent: "shadow-[var(--glow-accent)]",
+    clean: "ring-1 ring-risk-clean/30 shadow-xs",
+    suspicious: "ring-1 ring-risk-suspicious/30 shadow-xs",
+    malicious: "ring-1 ring-risk-malicious/40 shadow-xs",
+    accent: "ring-1 ring-accent/40 shadow-xs",
     muted: "",
   };
   return (

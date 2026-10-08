@@ -259,9 +259,9 @@ export default function AnalysisPage() {
             <button
               key={t.value}
               onClick={() => setStatus(t.value)}
-              className={`rounded-full border px-3 py-1 text-[11px] font-medium transition-colors ${
+              className={`rounded-full border px-3 py-1 text-[11px] font-sans font-semibold transition-colors shadow-xs ${
                 status === t.value
-                  ? "border-accent/50 bg-accent/10 text-accent"
+                  ? "border-accent/50 bg-accent/10 text-accent ring-1 ring-accent/30"
                   : "border-border-subtle text-text-muted hover:border-accent/30"
               }`}
             >

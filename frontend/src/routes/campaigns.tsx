@@ -388,12 +388,12 @@ export default function CampaignsPage() {
       />
 
       {/* Main Tab Switcher */}
-      <div className="mb-8 flex rounded-xl border border-border-subtle bg-bg-surface p-1 font-mono text-xs shadow-sm">
+      <div className="mb-8 flex rounded-xl border border-border-subtle bg-bg-surface p-1 font-sans text-xs shadow-xs">
         <button
           onClick={() => setActiveTab("campaigns")}
-          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-medium transition ${
+          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-semibold transition ${
             activeTab === "campaigns"
-              ? "bg-accent/15 font-bold text-accent shadow-sm"
+              ? "bg-accent/15 text-accent shadow-xs"
               : "text-text-muted hover:text-text-primary"
           }`}
         >
@@ -402,9 +402,9 @@ export default function CampaignsPage() {
         </button>
         <button
           onClick={() => setActiveTab("watchlist")}
-          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-medium transition ${
+          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-semibold transition ${
             activeTab === "watchlist"
-              ? "bg-accent/15 font-bold text-accent shadow-sm"
+              ? "bg-accent/15 text-accent shadow-xs"
               : "text-text-muted hover:text-text-primary"
           }`}
         >
@@ -413,9 +413,9 @@ export default function CampaignsPage() {
         </button>
         <button
           onClick={() => setActiveTab("footprint")}
-          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-medium transition ${
+          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-semibold transition ${
             activeTab === "footprint"
-              ? "bg-accent/15 font-bold text-accent shadow-sm"
+              ? "bg-accent/15 text-accent shadow-xs"
               : "text-text-muted hover:text-text-primary"
           }`}
         >
@@ -464,7 +464,7 @@ export default function CampaignsPage() {
       {!isLoading && !isError && campaigns.length > 0 && (
         <div className="mt-6 flex flex-wrap items-center justify-between gap-4">
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-            <span className="font-mono text-[10px] uppercase tracking-wide text-text-faint">Sort</span>
+            <span className="font-sans text-[11px] font-semibold uppercase tracking-wider text-text-faint">Sort</span>
             <div className="flex items-center overflow-hidden rounded-lg border border-border-subtle" role="group" aria-label="Sort campaigns">
               {CAMPAIGN_SORTS.map((s) => (
                 <button
@@ -472,8 +472,8 @@ export default function CampaignsPage() {
                   onClick={() => setSort(s.key)}
                   aria-pressed={sort === s.key}
                   title={s.title}
-                  className={`px-3 py-1.5 font-mono text-[11px] transition-colors duration-150 ${
-                    sort === s.key ? "bg-accent/10 font-medium text-accent" : "text-text-muted hover:bg-bg-elevated hover:text-text-primary"
+                  className={`px-3 py-1.5 font-sans text-xs font-semibold transition-colors duration-150 ${
+                    sort === s.key ? "bg-accent/15 text-accent" : "text-text-muted hover:bg-bg-elevated hover:text-text-primary"
                   }`}
                 >
                   {s.label}
@@ -488,8 +488,8 @@ export default function CampaignsPage() {
                   ? "Hide demo/synthetic campaign members again"
                   : "Include campaigns built from seeded demo runs and webapp-synthetic detonations"
               }
-              className={`press rounded-lg border px-3 py-1.5 font-mono text-[11px] transition-colors duration-150 ${
-                showSynthetic ? "border-accent/50 bg-accent/10 text-accent" : "border-border-subtle text-text-faint hover:text-text-primary"
+              className={`press rounded-lg border px-3 py-1.5 font-sans text-xs font-semibold transition-colors duration-150 ${
+                showSynthetic ? "border-accent/50 bg-accent/15 text-accent" : "border-border-subtle text-text-muted hover:text-text-primary"
               }`}
             >
               {showSynthetic ? "Show synthetic · on" : "Show synthetic"}

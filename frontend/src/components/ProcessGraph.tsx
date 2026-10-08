@@ -249,11 +249,11 @@ export function ProcessGraph({
                 const isSuspicious = gn.reputation === "suspicious";
 
                 const borderCls = isSelected
-                  ? "border-accent ring-2 ring-accent/50 shadow-[var(--glow-accent)] bg-bg-elevated"
+                  ? "border-accent ring-2 ring-accent/50 shadow-xs bg-bg-elevated"
                   : isMalicious
-                    ? "border-risk-malicious/60 bg-risk-malicious/10 hover:border-risk-malicious shadow-[var(--glow-malicious)]"
+                    ? "border-risk-malicious/60 bg-risk-malicious/10 hover:border-risk-malicious ring-1 ring-risk-malicious/30"
                     : isSuspicious
-                      ? "border-risk-suspicious/60 bg-risk-suspicious/10 hover:border-risk-suspicious shadow-[var(--glow-amber)]"
+                      ? "border-risk-suspicious/60 bg-risk-suspicious/10 hover:border-risk-suspicious ring-1 ring-risk-suspicious/30"
                       : "border-border-subtle bg-bg-surface/90 hover:border-border-strong hover:bg-bg-elevated";
 
                 return (

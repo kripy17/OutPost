@@ -198,7 +198,7 @@ export function ProcessContextModal({
         {/* Header Bar */}
         <div className="flex flex-wrap items-center justify-between border-b border-border-subtle bg-bg-elevated/50 px-6 py-4">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-accent/40 bg-accent/15 text-accent shadow-[var(--glow-accent)]">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-accent/40 bg-accent/15 text-accent ring-1 ring-accent/30 shadow-xs">
               <Icon name="process" size={20} />
             </div>
             <div>
@@ -459,7 +459,7 @@ export function ProcessContextModal({
                               key={i}
                               className={`flex items-center gap-3 rounded-lg border p-3 ${
                                 isSelf
-                                  ? "border-accent/60 bg-accent/15 text-text-primary shadow-[var(--glow-accent)]"
+                                  ? "border-accent/60 bg-accent/15 text-text-primary ring-1 ring-accent/30 shadow-xs"
                                   : "border-border-subtle bg-bg-surface text-text-muted"
                               }`}
                               style={{ marginLeft: `${i * 18}px` }}

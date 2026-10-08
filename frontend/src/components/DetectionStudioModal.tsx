@@ -93,7 +93,7 @@ export function DetectionStudioModal({ runId, isOpen, onClose }: DetectionStudio
         {/* Header */}
         <div className="flex items-center justify-between border-b border-border-subtle px-6 py-4">
           <div className="flex items-center gap-3">
-            <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-accent/40 bg-accent/15 text-accent shadow-[var(--glow-accent)]">
+            <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-accent/40 bg-accent/15 text-accent ring-1 ring-accent/30 shadow-xs">
               <Icon name="shield" size={18} />
             </span>
             <div>
@@ -119,9 +119,9 @@ export function DetectionStudioModal({ runId, isOpen, onClose }: DetectionStudio
           <div className="flex items-center gap-2">
             <button
               onClick={() => setActiveTab("sigma")}
-              className={`press inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-mono text-xs transition-all ${
+              className={`press inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-sans text-xs transition-all ${
                 activeTab === "sigma"
-                  ? "border border-accent/50 bg-accent/20 font-semibold text-accent shadow-[var(--glow-accent)]"
+                  ? "border border-accent/50 bg-accent/20 font-semibold text-accent ring-1 ring-accent/30 shadow-xs"
                   : "text-text-muted hover:bg-bg-elevated hover:text-text-primary"
               }`}
             >
@@ -130,9 +130,9 @@ export function DetectionStudioModal({ runId, isOpen, onClose }: DetectionStudio
             </button>
             <button
               onClick={() => setActiveTab("suricata")}
-              className={`press inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-mono text-xs transition-all ${
+              className={`press inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-sans text-xs transition-all ${
                 activeTab === "suricata"
-                  ? "border border-signal/50 bg-signal/20 font-semibold text-signal shadow-[var(--glow-signal)]"
+                  ? "border border-signal/50 bg-signal/20 font-semibold text-signal ring-1 ring-signal/30 shadow-xs"
                   : "text-text-muted hover:bg-bg-elevated hover:text-text-primary"
               }`}
             >
@@ -141,9 +141,9 @@ export function DetectionStudioModal({ runId, isOpen, onClose }: DetectionStudio
             </button>
             <button
               onClick={() => setActiveTab("yara")}
-              className={`press inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-mono text-xs transition-all ${
+              className={`press inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-sans text-xs transition-all ${
                 activeTab === "yara"
-                  ? "border border-risk-clean/50 bg-risk-clean/20 font-semibold text-risk-clean shadow-[var(--glow-clean)]"
+                  ? "border border-risk-clean/50 bg-risk-clean/20 font-semibold text-risk-clean ring-1 ring-risk-clean/30"
                   : "text-text-muted hover:bg-bg-elevated hover:text-text-primary"
               }`}
             >
@@ -152,7 +152,7 @@ export function DetectionStudioModal({ runId, isOpen, onClose }: DetectionStudio
             </button>
             <button
               onClick={() => setActiveTab("all")}
-              className={`press inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-mono text-xs transition-all ${
+              className={`press inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-sans text-xs transition-all ${
                 activeTab === "all"
                   ? "border border-border-strong bg-bg-elevated font-semibold text-text-primary"
                   : "text-text-muted hover:bg-bg-elevated hover:text-text-primary"
@@ -166,7 +166,7 @@ export function DetectionStudioModal({ runId, isOpen, onClose }: DetectionStudio
             <Link
               to="/rules?create=1"
               onClick={onClose}
-              className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/50 bg-accent/15 px-3 py-1.5 font-mono text-xs font-semibold text-accent transition-all hover:bg-accent/25"
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/50 bg-accent/15 px-3 py-1.5 font-sans text-xs font-semibold text-accent transition-all hover:bg-accent/25"
               title="Open detection rule workbench to author and test rules"
             >
               <Icon name="shield" size={13} />
@@ -174,14 +174,14 @@ export function DetectionStudioModal({ runId, isOpen, onClose }: DetectionStudio
             </Link>
             <button
               onClick={handleCopy}
-              className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-surface px-3 py-1.5 font-mono text-xs text-text-muted transition-colors hover:border-accent/60 hover:text-accent"
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-surface px-3 py-1.5 font-sans text-xs text-text-muted transition-colors hover:border-accent/60 hover:text-accent"
             >
               <Icon name={copied ? "check" : "copy"} size={13} />
               {copied ? "Copied to clipboard" : "Copy"}
             </button>
             <button
               onClick={handleDownload}
-              className="press inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 font-mono text-xs font-semibold text-bg-base transition-all hover:bg-accent-soft shadow-[var(--glow-accent)]"
+              className="press inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 font-sans text-xs font-semibold text-bg-base transition-all hover:bg-accent-soft shadow-xs"
             >
               <Icon name="download" size={13} />
               Export

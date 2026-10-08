@@ -82,7 +82,7 @@ export function ProcessCausalityTree({
             onClick={() => onSelectPid && onSelectPid(node.pid)}
             className={`group flex items-center justify-between rounded-lg border px-2.5 py-1.5 font-mono text-xs transition cursor-pointer ${
               isSelected
-                ? "border-accent/70 bg-accent/15 shadow-[var(--glow-accent)] text-accent font-bold"
+                ? "border-accent/70 bg-accent/15 ring-1 ring-accent/40 shadow-xs text-accent font-bold"
                 : "border-border-subtle bg-bg-surface hover:border-border-strong hover:bg-bg-elevated/40 text-text-primary"
             }`}
             style={{ marginLeft: `${depth * 20}px` }}

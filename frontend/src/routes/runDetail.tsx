@@ -556,7 +556,7 @@ export default function RunDetailPage() {
           {campaign && (
             <Link
               to="/campaigns"
-              className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-accent/50 bg-accent/10 px-2.5 py-1 font-mono text-[10px] text-accent transition-all duration-150 hover:bg-accent/20 hover:shadow-[var(--glow-accent)]"
+              className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-accent/50 bg-accent/10 px-2.5 py-1 font-mono text-[10px] text-accent transition-all duration-150 hover:bg-accent/20 ring-1 ring-accent/30"
               title={`Member of the campaign clustering around ${campaign.key}`}
             >
               <Icon name="flag" size={11} />
@@ -569,7 +569,7 @@ export default function RunDetailPage() {
           <div className="flex items-center gap-2">
             <button
               onClick={() => setShowAttachCase(true)}
-              className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/40 bg-bg-surface px-3 py-2 font-mono text-xs text-text-primary transition-all duration-150 hover:border-accent/80 hover:text-accent"
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/40 bg-bg-surface px-3 py-2 font-sans text-xs font-semibold text-text-primary transition-all duration-150 hover:border-accent/80 hover:text-accent"
               title="Attach this run as evidence to an incident investigation case"
             >
               <Icon name="notes" size={12} />
@@ -577,7 +577,7 @@ export default function RunDetailPage() {
             </button>
             <button
               onClick={() => setShowRulesStudio(true)}
-              className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/50 bg-accent/15 px-3 py-2 font-mono text-xs font-semibold text-accent shadow-[var(--glow-accent)] transition-all duration-150 hover:bg-accent/25 hover:border-accent"
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/50 bg-accent/15 px-3 py-2 font-sans text-xs font-semibold text-accent ring-1 ring-accent/40 shadow-xs transition-all duration-150 hover:bg-accent/25 hover:border-accent"
               title="Open Detection Rule Synthesis Studio (Sigma, Suricata, YARA)"
             >
               <Icon name="shield" size={12} />

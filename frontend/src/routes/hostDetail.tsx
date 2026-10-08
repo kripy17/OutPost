@@ -317,7 +317,7 @@ export default function HostDetailPage() {
           <div className="flex items-center gap-2">
             <Link
               to={`/investigations?create=1&title=${encodeURIComponent(`Host Incident — ${hostId}`)}&evidence_type=host&evidence_id=${encodeURIComponent(hostId ?? "")}`}
-              className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/40 bg-accent/10 px-3 py-1.5 font-mono text-[11px] font-semibold text-accent hover:bg-accent/20"
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/40 bg-accent/10 px-3 py-1.5 font-sans text-xs font-semibold text-accent hover:bg-accent/20"
               title="Escalate this host and its timeline into a formal incident dossier"
             >
               <Icon name="notes" size={12} />
@@ -326,7 +326,7 @@ export default function HostDetailPage() {
             <button
               onClick={() => toggleIsolation.mutate(!isIsolated)}
               disabled={toggleIsolation.isPending}
-              className={`press inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 font-mono text-[11px] font-semibold transition-colors duration-150 ${
+              className={`press inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 font-sans text-xs font-semibold transition-colors duration-150 ${
                 isIsolated
                   ? "border-signal/60 bg-signal/10 text-signal hover:bg-signal/20"
                   : "border-risk-malicious/60 bg-risk-malicious/10 text-risk-malicious hover:bg-risk-malicious/20"
@@ -337,7 +337,7 @@ export default function HostDetailPage() {
             </button>
             <button
               onClick={() => setShowTriageModal(true)}
-              className="press inline-flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-3 py-1.5 font-mono text-[11px] font-semibold text-cyan-400 hover:bg-cyan-500/20 shadow-xs"
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-3 py-1.5 font-sans text-xs font-semibold text-cyan-400 hover:bg-cyan-500/20 shadow-xs"
               title="Acquire live endpoint forensic triage pack for this host"
             >
               <Icon name="zap" size={12} className="text-cyan-400" />
@@ -345,7 +345,7 @@ export default function HostDetailPage() {
             </button>
             <Link
               to={`/events?q=${encodeURIComponent(hostId ?? "")}`}
-              className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-1.5 font-mono text-[11px] text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-1.5 font-sans text-xs font-semibold text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
             >
               <Icon name="list" size={12} />
               Event Stream
@@ -358,7 +358,7 @@ export default function HostDetailPage() {
         <div className="mb-5 flex items-center justify-between rounded-xl border border-risk-malicious/60 bg-risk-malicious/15 p-3.5 text-risk-malicious">
           <div className="flex items-center gap-2">
             <Icon name="alert" size={16} />
-            <span className="font-mono text-xs font-bold uppercase tracking-wider">
+            <span className="font-sans text-xs font-bold uppercase tracking-wider">
               HOST IS CURRENTLY NETWORK ISOLATED / CONTAINED
             </span>
           </div>
@@ -390,12 +390,12 @@ export default function HostDetailPage() {
       </div>
 
       {/* Primary Workspace View Switcher */}
-      <div className="mb-6 flex rounded-xl border border-border-subtle bg-bg-surface p-1 font-mono text-xs shadow-sm">
+      <div className="mb-6 flex rounded-xl border border-border-subtle bg-bg-surface p-1 font-sans text-xs shadow-xs">
         <button
           onClick={() => setActiveView("timeline")}
-          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-medium transition ${
+          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-semibold transition ${
             activeView === "timeline"
-              ? "bg-accent/15 font-bold text-accent shadow-sm"
+              ? "bg-accent/15 text-accent shadow-xs"
               : "text-text-muted hover:text-text-primary"
           }`}
         >
@@ -404,9 +404,9 @@ export default function HostDetailPage() {
         </button>
         <button
           onClick={() => setActiveView("delta")}
-          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-medium transition ${
+          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-semibold transition ${
             activeView === "delta"
-              ? "bg-accent/15 font-bold text-accent shadow-sm"
+              ? "bg-accent/15 text-accent shadow-xs"
               : "text-text-muted hover:text-text-primary"
           }`}
         >
@@ -415,9 +415,9 @@ export default function HostDetailPage() {
         </button>
         <button
           onClick={() => setActiveView("tree")}
-          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-medium transition ${
+          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-semibold transition ${
             activeView === "tree"
-              ? "bg-accent/15 font-bold text-accent shadow-sm"
+              ? "bg-accent/15 text-accent shadow-xs"
               : "text-text-muted hover:text-text-primary"
           }`}
         >
@@ -426,9 +426,9 @@ export default function HostDetailPage() {
         </button>
         <button
           onClick={() => setActiveView("network")}
-          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-medium transition ${
+          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-semibold transition ${
             activeView === "network"
-              ? "bg-accent/15 font-bold text-accent shadow-sm"
+              ? "bg-accent/15 text-accent shadow-xs"
               : "text-text-muted hover:text-text-primary"
           }`}
         >
@@ -437,9 +437,9 @@ export default function HostDetailPage() {
         </button>
         <button
           onClick={() => setActiveView("sensors")}
-          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-medium transition ${
+          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-semibold transition ${
             activeView === "sensors"
-              ? "bg-accent/15 font-bold text-accent shadow-sm"
+              ? "bg-accent/15 text-accent shadow-xs"
               : "text-text-muted hover:text-text-primary"
           }`}
         >
@@ -448,9 +448,9 @@ export default function HostDetailPage() {
         </button>
         <button
           onClick={() => setActiveView("hunts")}
-          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-medium transition ${
+          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-semibold transition ${
             activeView === "hunts"
-              ? "bg-accent/15 font-bold text-accent shadow-sm"
+              ? "bg-accent/15 text-accent shadow-xs"
               : "text-text-muted hover:text-text-primary"
           }`}
         >
