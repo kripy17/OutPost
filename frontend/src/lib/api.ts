@@ -1067,7 +1067,7 @@ export async function reopenInvestigation(investigationId: string): Promise<Inve
 }
 
 /** Export investigation case brief URL and loader (GET /investigations/{id}/export). */
-export function getInvestigationExportUrl(investigationId: string, format: "markdown" | "json" | "stix" = "markdown"): string {
+export function getInvestigationExportUrl(investigationId: string, format: "markdown" | "json" | "stix" | "csv" = "markdown"): string {
   return `${BASE_URL}/investigations/${encodeURIComponent(investigationId)}/export?format=${format}`;
 }
 

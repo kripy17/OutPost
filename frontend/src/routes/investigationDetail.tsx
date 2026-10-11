@@ -157,12 +157,12 @@ export default function InvestigationDetailPage() {
 
   const sev = inv.severity;
 
-  const handleExportIncidentReport = (format: "markdown" | "json" | "stix" = "markdown") => {
+  const handleExportIncidentReport = (format: "markdown" | "json" | "stix" | "csv" = "markdown") => {
     if (!inv) return;
     const downloadUrl = getInvestigationExportUrl(inv.id, format);
     const a = document.createElement("a");
     a.href = downloadUrl;
-    const ext = format === "markdown" ? "md" : format === "stix" ? "stix.json" : "json";
+    const ext = format === "markdown" ? "md" : format === "stix" ? "stix.json" : format === "csv" ? "csv" : "json";
     a.download = `outpost-incident-${inv.id}.${ext}`;
     document.body.appendChild(a);
     a.click();
@@ -221,6 +221,14 @@ export default function InvestigationDetailPage() {
                 title="Download OASIS STIX 2.1 Threat Intel Bundle (.stix.json)"
               >
                 STIX 2.1
+              </button>
+              <div className="w-[1px] bg-border-subtle" />
+              <button
+                className="px-2.5 py-1.5 text-xs font-semibold text-sky-400 hover:text-sky-300 hover:bg-bg-elevated transition"
+                onClick={() => handleExportIncidentReport("csv")}
+                title="Download Timesketch / Plaso Forensic Timeline (.csv)"
+              >
+                CSV Timeline
               </button>
             </div>
             <div className="inline-flex rounded-lg border border-border-subtle bg-bg-surface overflow-hidden">
