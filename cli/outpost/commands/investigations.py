@@ -512,6 +512,7 @@ def investigations_export(
     else:
         if fmt == "json":
             import json
+
             from rich.syntax import Syntax
             try:
                 parsed = json.loads(text)

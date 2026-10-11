@@ -1,11 +1,9 @@
-import pytest
 from fastapi.testclient import TestClient
-from ..main import app
+
 from ..core.db import db_session
-from ..services.dynamic_sandbox import extract_syscalls_from_trace, extract_c2_sinkhole_events
-from ..services.detection import backtest_rule
-from ..services.report import synthesize_investigation_narrative
+from ..main import app
 from ..models import investigation as inv_store
+from ..services.dynamic_sandbox import extract_c2_sinkhole_events, extract_syscalls_from_trace
 
 client = TestClient(app)
 

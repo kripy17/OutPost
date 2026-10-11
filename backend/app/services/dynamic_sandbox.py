@@ -1305,7 +1305,7 @@ async def execute_simulation_scenario_stage(
     # Evaluate detection rules
     alerts: list[dict[str, Any]] = []
     with db_session() as conn:
-        new_alerts = detection.evaluate_batch(conn, run_id, events)
+        detection.evaluate_batch(conn, run_id, events)
         alert_rows = conn.execute("SELECT * FROM alerts WHERE run_id = ?", (run_id,)).fetchall()
         alerts = [dict(r) for r in alert_rows]
 

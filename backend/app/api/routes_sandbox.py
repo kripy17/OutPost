@@ -13,19 +13,16 @@ background task the frontend polls.
 """
 
 import asyncio
-import datetime
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
 from fastapi.responses import FileResponse, Response
+from pydantic import BaseModel
 
 from ..core import config
 from ..core.db import db_session
 from ..core.schema import Platform, SandboxDetonateIn, SandboxTaskOut
-from ..models import event as event_store
 from ..models import run as run_store
 from ..models import samples as samples_store
-from ..services import detection
 from ..services import sandbox as sandbox_service
 from ..services import screenshots as ss
 
@@ -260,8 +257,8 @@ def get_techniques(tactic: str | None = None, platform: str | None = None, q: st
 @router.get("/sandbox/techniques/matrix", response_model=None)
 def get_technique_matrix_endpoint() -> dict:
     """Continuous Detection Validation Scorecard & Matrix across all techniques."""
-    from ..services.technique_catalog import get_technique_validation_matrix
     from ..core.db import db_session
+    from ..services.technique_catalog import get_technique_validation_matrix
     with db_session() as conn:
         return get_technique_validation_matrix(conn)
 
@@ -296,9 +293,9 @@ class ValidateMatrixIn(BaseModel):
 @router.post("/sandbox/techniques/validate-matrix", response_model=None)
 async def validate_matrix_endpoint(body: ValidateMatrixIn | None = None) -> dict:
     """Run batch continuous detection validation sweep across matching adversary techniques."""
-    from ..services.technique_catalog import list_technique_tests, get_technique_validation_matrix
-    from ..services.dynamic_sandbox import execute_technique_test
     from ..core.db import db_session
+    from ..services.dynamic_sandbox import execute_technique_test
+    from ..services.technique_catalog import get_technique_validation_matrix, list_technique_tests
 
     tactic = body.tactic if body else None
     plat = body.platform if body else None

@@ -7,6 +7,7 @@ later runs — mirroring the webapp's per-tab memory — until wiped via
 """
 
 import time
+
 import typer
 from rich.table import Table
 

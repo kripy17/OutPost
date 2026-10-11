@@ -30,7 +30,7 @@ def test_custom_sigma_rules_lifecycle(client):
     # 1. Initially empty or listable
     resp = client.get("/rules/sigma/custom")
     assert resp.status_code == 200
-    initial_count = len(resp.json())
+    len(resp.json())
 
     # 2. Import custom rule
     resp = client.post("/rules/sigma/import", json={"sigma_yaml": SAMPLE_SIGMA_YAML, "enabled": True})

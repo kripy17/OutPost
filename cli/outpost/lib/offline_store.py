@@ -446,6 +446,7 @@ def add_offline_watchlist(value: str, label: str) -> dict[str, Any] | None:
     _ensure_backend_on_path()
     try:
         import datetime
+
         from app.core.db import db_session
         from app.models import watchlist as wl_store
         with db_session() as conn:

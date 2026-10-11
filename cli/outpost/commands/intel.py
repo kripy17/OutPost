@@ -7,11 +7,10 @@ runs already touch an imported value, so a fresh feed can be triaged
 immediately.
 """
 
-import ipaddress
 import json
-from pathlib import Path
 import re
 import sys
+from pathlib import Path
 from typing import Optional
 
 import typer

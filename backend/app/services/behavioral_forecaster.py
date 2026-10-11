@@ -41,7 +41,7 @@ def generate_behavioral_forecast(
     entropy = static_data.get("entropy", 0.0)
     is_packed = static_data.get("is_packed", False)
     static_risk = static_data.get("static_risk_score", 0)
-    capabilities = static_data.get("capabilities", [])
+    static_data.get("capabilities", [])
     elf_info = static_data.get("elf") or {}
     pe_info = static_data.get("pe") or {}
 

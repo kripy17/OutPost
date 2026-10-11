@@ -1,8 +1,9 @@
 """Tests for Adversary Technique Simulation Catalog & Execution."""
 
 import pytest
+
 from app.services import technique_catalog
-from app.services.dynamic_sandbox import execute_technique_test, execute_simulation_scenario_stage
+from app.services.dynamic_sandbox import execute_simulation_scenario_stage, execute_technique_test
 
 
 def test_technique_catalog_queries():

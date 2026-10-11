@@ -1,14 +1,12 @@
 """Tests for Network Protocol & C2 Beaconing Analytics Engine."""
 
-import pytest
 from starlette.testclient import TestClient
 
-from app.main import app
 from app.core.db import db_session
+from app.main import app
 from app.services.network_protocol_analyzer import (
     analyze_beaconing_intervals,
     analyze_run_network_telemetry,
-    calculate_string_entropy,
     evaluate_dga_score,
 )
 

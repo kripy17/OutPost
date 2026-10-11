@@ -5,12 +5,11 @@ and DFIR teams. Each playbook provides phase-structured containment and remediat
 task checklists, recommended endpoint forensic hunts, and threat hunting queries.
 """
 
-from typing import Any, Dict, List
 import sqlite3
 from datetime import datetime, timezone
+from typing import Any, Dict, List
 
 from ..models import investigation as inv_model
-
 
 IR_PLAYBOOKS: List[Dict[str, Any]] = [
     {

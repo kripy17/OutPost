@@ -631,7 +631,7 @@ def test_resolve_creates_fresh_run_when_none_open(monkeypatch):
 
     monkeypatch.setattr("shipper.requests.get", fake_get)
     monkeypatch.setattr("shipper.requests.post", fake_post)
-    rid = resolve_live_run_id("http://backend:8001", "linux")
+    resolve_live_run_id("http://backend:8001", "linux")
     assert posted["json"]["session_type"] == "live"
     assert posted["json"]["source"] == "agent"
     assert posted["json"]["sample_name"].startswith("agent-")

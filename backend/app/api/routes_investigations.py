@@ -22,6 +22,7 @@ from pydantic import BaseModel
 from ..core import auth
 from ..core.db import db_session
 from ..core.schema import (
+    ApplyPlaybookIn,
     InvestigationCloseIn,
     InvestigationCreateIn,
     InvestigationDetailDTO,
@@ -34,7 +35,6 @@ from ..core.schema import (
     InvestigationTaskDTO,
     InvestigationTaskIn,
     InvestigationTaskPatchIn,
-    ApplyPlaybookIn,
 )
 from ..models import audit
 from ..models import investigation as inv_store
@@ -316,11 +316,12 @@ def export_investigation(
 ):
     """Export an executive Incident Response Case Brief in Markdown, JSON, or OASIS STIX 2.1 Bundle format."""
     from fastapi.responses import PlainTextResponse
+
+    from ..services import stix as stix_service
     from ..services.report import (
         build_investigation_json_export,
         build_investigation_markdown_export,
     )
-    from ..services import stix as stix_service
 
     with db_session() as conn:
         _require_investigation(conn, investigation_id)
@@ -531,7 +532,7 @@ def execute_investigation_task(
         )
 
         # Append note to investigation timeline
-        inv_store.add_note(conn, investigation_id, actor, f"⚡ [SOAR Action Executed]: {action_output}")
+        inv_store.add_note(conn, investigation_id, note=f"⚡ [SOAR Action Executed]: {action_output}", actor=actor)
 
     return {
         "status": "executed",

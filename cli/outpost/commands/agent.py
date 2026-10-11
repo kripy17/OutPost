@@ -621,6 +621,7 @@ def containment_status(
     """View active network isolation status and pending remediation actions for a host."""
     from rich.panel import Panel
     from rich.table import Table
+
     from ..lib import api_client
 
     try:
@@ -683,8 +684,8 @@ def setup(
         console.print("\n[dim]This automatically provisions Sysmon, applies SwiftOnSecurity sysmonconfig-export.xml, and starts telemetry streaming.[/dim]")
     else:
         console.print(f"[bold yellow]{target_plat.capitalize()} Sensor Deployment:[/bold yellow]")
-        console.print(f"1. Run 1-click installer:")
+        console.print("1. Run 1-click installer:")
         console.print(f"   [bold green]curl -sSL {url}/api/agents/install.sh | sudo bash[/bold green]")
-        console.print(f"2. Or run live sensor locally:")
+        console.print("2. Or run live sensor locally:")
         console.print(f"   [bold green]python collectors/{target_plat}/collector_{target_plat}.py --backend-url \"{url}\" --mode live[/bold green]")
 

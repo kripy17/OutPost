@@ -1,11 +1,9 @@
 """Tests for Incident Response Tasks, Causality Timeline, and Remediation Scripts."""
 
-import pytest
 from starlette.testclient import TestClient
 
-from app.main import app
 from app.core.db import db_session
-from app.models import investigation as inv_store
+from app.main import app
 from app.models import run as run_store
 
 

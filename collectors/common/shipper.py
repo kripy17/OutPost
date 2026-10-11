@@ -447,7 +447,7 @@ class Shipper:
                                 os.kill(pid_int, signal.SIGTERM)
                             except AttributeError:
                                 import subprocess
-                                subprocess.run(["taskkill", "/F", "/PID", str(pid_int)], capture_output=True, timeout=5)
+                                subprocess.run(["taskkill", "/F", "/PID", str(pid_int)], capture_output=True, timeout=5, check=False)
                             log.info("Terminated process PID %d (%s) as instructed by OutPost controller", pid_int, proc_name)
                     except (ProcessLookupError, OSError) as err:
                         log.debug("Process PID %s could not be terminated: %s", pid, err)

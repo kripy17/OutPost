@@ -47,7 +47,6 @@ export function Panel({
   bodyClassName = "",
   pad = true,
   id,
-  tactical = false,
 }: {
   title?: ReactNode;
   kicker?: string;
@@ -57,7 +56,6 @@ export function Panel({
   bodyClassName?: string;
   pad?: boolean;
   id?: string;
-  tactical?: boolean;
 }) {
   return (
     <section id={id} className={`panel ${className}`}>

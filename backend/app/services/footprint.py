@@ -1175,7 +1175,7 @@ async def build_indicator_footprint(conn, indicator: str, mock: bool = False) ->
                 "hits": len(local_events) or 1,
                 "first_seen": local_events[-1]["timestamp"] if local_events else datetime.now(timezone.utc).isoformat(),
                 "last_seen": local_events[0]["timestamp"] if local_events else datetime.now(timezone.utc).isoformat(),
-                "run_count": len(set(e["run_id"] for e in local_events)) or 1,
+                "run_count": len({e["run_id"] for e in local_events}) or 1,
                 "reputation": cached["reputation"] if cached else "suspicious",
                 "abuse_score": cached["abuse_score"] if cached else None,
                 "vt_malicious_count": cached["vt_malicious_count"] if cached else None,

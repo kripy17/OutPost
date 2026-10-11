@@ -13,12 +13,10 @@ from __future__ import annotations
 
 import math
 import re
-from collections import Counter, defaultdict
-from datetime import datetime, timezone
 import sqlite3
+from collections import Counter, defaultdict
+from datetime import datetime
 from typing import Any
-
-from ..core.schema import Reputation
 
 # Suspicious Top-Level Domains frequently abused by threat actors
 SUSPICIOUS_TLDS = {

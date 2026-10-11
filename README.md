@@ -366,14 +366,13 @@ OutPost enforces automated test coverage across all subsystems:
 npm --prefix frontend test -- --run
 ```
 
-| Subsystem | Test Framework | Tests Passed | Status |
-|---|---|---|---|
-| **Backend Core, Forensics & APIs** | Pytest | **864** | ✅ Passing |
-| **Advanced Host Forensics & Capabilities** | Pytest | **16** | ✅ Passing |
-| **Telemetry Collectors (Linux, Win, Mac)** | Pytest | **47** | ✅ Passing |
-| **CLI & SOC Terminal Console** | Pytest | **204** | ✅ Passing |
-| **Frontend Web Console (React 19)** | Vitest | **402** | ✅ Passing |
-| **Total Test Suite Coverage** | | **1,533** | **✅ 100% Green** |
+| Suite | Count | Status |
+|---|---|---|
+| Backend pytest | **886** | ✅ Passing |
+| Collector pytest | **51** | ✅ Passing |
+| CLI pytest | **204** | ✅ Passing |
+| Frontend | **406** | ✅ Passing |
+| **Total Test Suite Coverage** | **1,547** | **✅ 100% Green** |
 
 ---
 

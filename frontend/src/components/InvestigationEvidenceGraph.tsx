@@ -543,7 +543,7 @@ export default function InvestigationEvidenceGraph({
                       <Icon name="external" size={11} className="text-accent/70" />
                     </Link>
                     <Link
-                      to={`/forensics?q=${encodeURIComponent(selectedNode.metadata?.ref_id || selectedNode.label)}`}
+                      to={`/search?q=${encodeURIComponent(selectedNode.metadata?.ref_id || selectedNode.label)}`}
                       className="press inline-flex items-center justify-between rounded-lg border border-border-subtle bg-panel-muted px-2.5 py-1.5 text-xs font-sans font-medium text-text hover:bg-panel transition"
                     >
                       <span className="flex items-center gap-1.5">
@@ -595,7 +595,7 @@ export default function InvestigationEvidenceGraph({
 
                 {selectedNode.type === "finding" && (
                   <Link
-                    to="/alerts"
+                    to="/findings"
                     className="press inline-flex items-center justify-between rounded-lg border border-risk-malicious/40 bg-risk-malicious/10 px-2.5 py-1.5 text-xs font-sans font-medium text-risk-malicious hover:bg-risk-malicious/20 transition"
                   >
                     <span className="flex items-center gap-1.5">

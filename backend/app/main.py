@@ -27,6 +27,7 @@ from .api.routes_events import router as events_router
 from .api.routes_findings import router as findings_router
 from .api.routes_footprint import router as footprint_router
 from .api.routes_health import router as health_router
+from .api.routes_host_forensics import router as host_forensics_router
 from .api.routes_hosts import router as hosts_router
 from .api.routes_ingest import router as ingest_router
 from .api.routes_intel import router as intel_router
@@ -42,7 +43,6 @@ from .api.routes_samples import router as samples_router
 from .api.routes_sandbox import router as sandbox_router
 from .api.routes_search import router as search_router
 from .api.routes_setup import router as setup_router
-from .api.routes_host_forensics import router as host_forensics_router
 from .api.routes_watchlist import router as watchlist_router
 from .api.routes_yara import router as yara_router
 from .core import auth as auth_service

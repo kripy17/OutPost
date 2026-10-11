@@ -281,9 +281,9 @@ def build_campaign_stix_bundle(campaign_key: str) -> dict:
 def build_investigation_stix_bundle(investigation_id: str) -> dict:
     """Return a STIX 2.1 Bundle dict representing an entire Incident Investigation Case."""
     from datetime import datetime, timezone
+
     from ..core.db import db_session
     from ..models import investigation as inv_store
-
     from ..models import iocs as ioc_store
 
     with db_session() as conn:

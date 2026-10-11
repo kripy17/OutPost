@@ -32,7 +32,8 @@ from ..models import audit
 from ..models import event as event_store
 from ..models import run as run_store
 from ..models import samples as samples_store
-from ..services import events_stream, static_analysis, sandbox as sandbox_service
+from ..services import events_stream, static_analysis
+from ..services import sandbox as sandbox_service
 
 router = APIRouter(tags=["analysis"])
 

@@ -914,7 +914,7 @@ def ack_host_actions(host_id: str, request: Request, payload: dict | None = None
     from ..models import audit
 
     payload = payload or {}
-    action_ids = set(str(x) for x in (payload.get("action_ids") or []))
+    action_ids = {str(x) for x in (payload.get("action_ids") or [])}
 
     with db_session() as conn:
         row = conn.execute(

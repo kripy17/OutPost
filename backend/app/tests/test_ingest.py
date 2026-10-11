@@ -218,8 +218,8 @@ def test_ingest_batch_gzip_compressed(client):
 
 
 def test_ingest_batch_deflate_compressed(client):
-    import zlib
     import json
+    import zlib
     from datetime import datetime, timezone
 
     run_id = make_run(client)

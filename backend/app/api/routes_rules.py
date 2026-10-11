@@ -958,6 +958,7 @@ class RuleTestTriggerIn(BaseModel):
 def post_rule_test_trigger(body: RuleTestTriggerIn, request: Request) -> dict:
     """Deploy and fire an ad-hoc test event into live engine, verifying end-to-end alert generation."""
     import uuid
+
     from ..models import event as event_store
     from ..models import run as run_store
     from ..services import normalizer
@@ -1076,6 +1077,7 @@ def post_rule_backtest(rule_id: str, max_events: int = Query(2000, ge=10, le=100
 def export_sigma_rules_bundle():
     """Export all OutPost detection rules and Sigma catalog as standard multi-document Sigma YAML bundle."""
     from fastapi.responses import Response
+
     from ..services.rule_generator import get_community_sigma_rules
 
     docs = []

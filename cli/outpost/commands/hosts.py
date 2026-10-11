@@ -13,7 +13,6 @@ Terminal parity for:
   - `outpost hosts timeline <host_id>`
 """
 
-from typing import Optional
 
 import typer
 from rich.panel import Panel

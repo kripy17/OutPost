@@ -11,7 +11,6 @@ Includes offline SQLite fallback and JSON/CSV export support.
 import csv
 import io
 import json
-from typing import Optional
 
 import typer
 from rich.table import Table
@@ -46,7 +45,7 @@ def search(
             source = "offline"
 
     if matches is None:
-        console.print(f"[bold #C4453B]Search failed: backend offline and local database unavailable.[/bold #C4453B]")
+        console.print("[bold #C4453B]Search failed: backend offline and local database unavailable.[/bold #C4453B]")
         raise typer.Exit(1)
 
     if as_json:

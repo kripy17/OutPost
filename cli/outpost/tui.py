@@ -16,7 +16,6 @@ Global Navigation & Controls:
 """
 
 import json
-import os
 import platform
 import shlex
 import subprocess
@@ -24,7 +23,6 @@ import sys
 import time
 import webbrowser
 from pathlib import Path
-from typing import Any
 
 from rich.align import Align
 from rich.box import ROUNDED
@@ -60,10 +58,7 @@ def _open_browser(url: str = "http://localhost:5174") -> None:
 
 def _is_api_online() -> bool:
     try:
-        import requests
-        base = api_client.get_base_url()
-        r = requests.get(f"{base}/health", timeout=0.8)
-        return r.ok
+        return api_client.is_online()
     except Exception:
         return False
 
@@ -448,6 +443,7 @@ class OutPostTUI:
         # Execute general CLI command in-process
         try:
             from typer.testing import CliRunner
+
             from .main import app
 
             runner = CliRunner(env={"TERM": "xterm-256color"})
@@ -530,7 +526,7 @@ class OutPostTUI:
     def start_stack(self):
         dev_sh = _get_root_path() / "scripts" / "dev.sh"
         if dev_sh.exists():
-            subprocess.Popen(["bash", str(dev_sh), "start"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.Popen([str(dev_sh), "start"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             self.status_msg = "Started OutPost stack in background! Web: http://localhost:5174, API: :8001"
         else:
             self.status_msg = "scripts/dev.sh not found."
@@ -538,8 +534,8 @@ class OutPostTUI:
     def stop_stack(self):
         dev_sh = _get_root_path() / "scripts" / "dev.sh"
         if dev_sh.exists():
-            subprocess.run(["bash", str(dev_sh), "stop"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            subprocess.run(["pkill", "-f", "collectors.common.collector_local"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run([str(dev_sh), "stop"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+            subprocess.run(["pkill", "-f", "collectors.common.collector_local"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
             self.status_msg = "OutPost background services stopped."
         else:
             self.status_msg = "scripts/dev.sh not found."
@@ -639,8 +635,8 @@ class OutPostTUI:
                     try:
                         from .lib.offline_store import _ensure_backend_on_path
                         _ensure_backend_on_path()
-                        from app.services import rule_generator
                         from app.core.db import db_session
+                        from app.services import rule_generator
                         with db_session() as conn:
                             self.generated_rules_text = rule_generator.generate_rules_for_run(conn, self.selected_run_id, "all")
                         self.status_msg = "Detection suite synthesized directly from offline run telemetry."
@@ -852,6 +848,7 @@ class OutPostTUI:
                         from .lib.offline_store import _ensure_backend_on_path
                         _ensure_backend_on_path()
                         import asyncio
+
                         from app.services.dynamic_sandbox import execute_simulation_scenario_live
                         res = asyncio.run(execute_simulation_scenario_live(pb["id"]))
                         self.selected_run_id = res["run_id"]
@@ -882,8 +879,8 @@ class OutPostTUI:
                         try:
                             from .lib.offline_store import _ensure_backend_on_path
                             _ensure_backend_on_path()
-                            from app.services import rule_generator
                             from app.core.db import db_session
+                            from app.services import rule_generator
                             with db_session() as conn:
                                 self.generated_rules_text = rule_generator.generate_rules_for_run(conn, self.selected_run_id, "all")
                         except Exception:
@@ -1322,6 +1319,7 @@ class OutPostTUI:
         target = target or "."
         try:
             from typer.testing import CliRunner
+
             from .main import app
             runner = CliRunner()
             res = runner.invoke(app, ["yara", "scan", target])
@@ -1493,6 +1491,7 @@ class OutPostTUI:
     def run_doctor_modal(self):
         try:
             from typer.testing import CliRunner
+
             from .main import app
             runner = CliRunner()
             res = runner.invoke(app, ["doctor"])
@@ -1509,6 +1508,7 @@ class OutPostTUI:
             return
         try:
             from typer.testing import CliRunner
+
             from .main import app
             runner = CliRunner()
             res = runner.invoke(app, ["decode", payload])
@@ -1521,6 +1521,7 @@ class OutPostTUI:
     def generate_triage_pack(self):
         try:
             from typer.testing import CliRunner
+
             from .main import app
             runner = CliRunner()
             res = runner.invoke(app, ["forensics", "triage-pack"])
@@ -1533,6 +1534,7 @@ class OutPostTUI:
     def run_system_audit(self):
         try:
             from typer.testing import CliRunner
+
             from .main import app
             runner = CliRunner()
             res = runner.invoke(app, ["audit", "summary"])

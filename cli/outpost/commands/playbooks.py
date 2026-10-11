@@ -79,6 +79,7 @@ def run_playbook(
             from ..lib.offline_store import _ensure_backend_on_path
             _ensure_backend_on_path()
             import asyncio
+
             from app.services.dynamic_sandbox import execute_simulation_scenario_live
             res = asyncio.run(execute_simulation_scenario_live(playbook_id))
             console.print("[dim]Notice: Backend unreachable — executed playbook directly in local simulation sandbox.[/dim]\n")

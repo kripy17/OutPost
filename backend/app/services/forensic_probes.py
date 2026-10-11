@@ -9,7 +9,6 @@ Provides targeted on-demand forensic inspection queries against live endpoints:
 """
 
 import os
-import re
 import socket
 import sys
 import uuid
@@ -473,6 +472,164 @@ def hunt_kernel_modules() -> List[Dict[str, Any]]:
     return results[:25]
 
 
+def hunt_rwx_memory_injection() -> List[Dict[str, Any]]:
+    """Hunt for processes harboring executable and writable (RWX) memory pages or fileless injection (T1055)."""
+    results: List[Dict[str, Any]] = []
+    proc_root = Path("/proc")
+    if not proc_root.exists():
+        return results
+
+    # Binaries where JIT compilers legitimately map RWX pages
+    jit_known_processes = {"node", "js", "chrome", "firefox", "java", "qemu-system"}
+
+    for entry in proc_root.iterdir():
+        if not entry.name.isdigit():
+            continue
+        pid = int(entry.name)
+        maps_file = entry / "maps"
+        if not maps_file.is_file():
+            continue
+        try:
+            comm = (entry / "comm").read_text(errors="ignore").strip() if (entry / "comm").exists() else "unknown"
+            content = maps_file.read_text(errors="ignore")
+            for line in content.splitlines():
+                parts = line.split()
+                if len(parts) >= 2:
+                    addr_range = parts[0]
+                    perms = parts[1]
+                    pathname = parts[5] if len(parts) >= 6 else ""
+
+                    is_rwx = perms.startswith("rwx")
+                    is_exec_stack_heap = "x" in perms and pathname in ("[stack]", "[heap]")
+                    is_memfd_exec = "x" in perms and ("memfd:" in pathname or "/memfd:" in pathname)
+
+                    if is_rwx or is_exec_stack_heap or is_memfd_exec:
+                        is_jit = any(j in comm.lower() for j in jit_known_processes)
+                        severity = "info" if is_jit else ("critical" if (is_exec_stack_heap or is_memfd_exec) else "suspicious")
+                        details = (
+                            f"Process {comm} (PID {pid}) contains anonymous RWX memory ({addr_range})"
+                            if is_rwx else
+                            f"Process {comm} (PID {pid}) contains executable {pathname} memory region ({addr_range})"
+                        )
+                        results.append({
+                            "location": f"/proc/{pid}/maps",
+                            "entry": f"PID {pid} ({comm}) [{perms}] {addr_range} {pathname}".strip(),
+                            "pid": pid,
+                            "process_name": comm,
+                            "permissions": perms,
+                            "address_range": addr_range,
+                            "mapping": pathname or "anonymous",
+                            "is_suspicious": not is_jit,
+                            "severity": severity,
+                            "details": details,
+                        })
+                        if len(results) >= 25:
+                            return results
+        except Exception:
+            pass
+
+    return results[:25]
+
+
+def hunt_dns_hosts_hijack() -> List[Dict[str, Any]]:
+    """Hunt for local DNS redirection, /etc/hosts poisoning, and name resolution hijacking (T1565.001 / T1556)."""
+    results: List[Dict[str, Any]] = []
+
+    # 1. Inspect /etc/hosts for redirection of public/critical domains
+    hosts_path = Path("/etc/hosts")
+    critical_domains = {
+        "microsoft.com", "google.com", "github.com", "virustotal.com",
+        "update.microsoft.com", "security.ubuntu.com", "archive.ubuntu.com",
+        "cloudflare.com", "aws.amazon.com", "azure.com",
+    }
+    if hosts_path.is_file():
+        try:
+            content = hosts_path.read_text(errors="ignore")
+            for line in content.splitlines():
+                clean = line.strip()
+                if not clean or clean.startswith("#"):
+                    continue
+                parts = clean.split()
+                if len(parts) >= 2:
+                    ip = parts[0]
+                    domains = parts[1:]
+                    for d in domains:
+                        d_lower = d.lower()
+                        if any(c in d_lower for c in critical_domains):
+                            results.append({
+                                "location": "/etc/hosts",
+                                "entry": f"{ip} -> {d}",
+                                "type": "hosts_poisoning",
+                                "ip": ip,
+                                "domain": d,
+                                "is_suspicious": True,
+                                "severity": "critical",
+                                "details": f"/etc/hosts redirects critical domain '{d}' to '{ip}'",
+                            })
+                        elif not (ip.startswith("127.") or ip == "::1" or ip.startswith("fe00:") or ip.startswith("ff0")):
+                            results.append({
+                                "location": "/etc/hosts",
+                                "entry": f"{ip} -> {d}",
+                                "type": "static_host_mapping",
+                                "ip": ip,
+                                "domain": d,
+                                "is_suspicious": False,
+                                "severity": "info",
+                                "details": f"Static host definition for {d}",
+                            })
+        except Exception:
+            pass
+
+    # 2. Inspect /etc/resolv.conf for rogue nameservers
+    resolv_path = Path("/etc/resolv.conf")
+    known_public_resolvers = {"1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4", "9.9.9.9", "127.0.0.53", "127.0.0.1"}
+    if resolv_path.is_file():
+        try:
+            content = resolv_path.read_text(errors="ignore")
+            for line in content.splitlines():
+                clean = line.strip()
+                if clean.startswith("nameserver "):
+                    ns = clean.split()[1].strip()
+                    is_unusual = ns not in known_public_resolvers and not (ns.startswith("10.") or ns.startswith("192.168.") or ns.startswith("172."))
+                    results.append({
+                        "location": "/etc/resolv.conf",
+                        "entry": f"nameserver {ns}",
+                        "type": "dns_nameserver",
+                        "nameserver": ns,
+                        "is_suspicious": is_unusual,
+                        "severity": "suspicious" if is_unusual else "info",
+                        "details": f"Configured recursive DNS nameserver ({ns})" + (" [Unrecognized public resolver]" if is_unusual else ""),
+                    })
+        except Exception:
+            pass
+
+    # 3. Inspect /etc/nsswitch.conf for hijacked hosts resolver
+    nsswitch_path = Path("/etc/nsswitch.conf")
+    if nsswitch_path.is_file():
+        try:
+            content = nsswitch_path.read_text(errors="ignore")
+            for line in content.splitlines():
+                clean = line.strip()
+                if clean.startswith("hosts:"):
+                    directives = clean.split(":", 1)[1].strip()
+                    standard_modules = {"files", "dns", "myhostname", "mymachines", "resolve", "mdns4_minimal", "[notfound=return]"}
+                    unknown_mods = [m for m in directives.split() if m.lower() not in standard_modules]
+                    if unknown_mods:
+                        results.append({
+                            "location": "/etc/nsswitch.conf",
+                            "entry": clean,
+                            "type": "nsswitch_hijack",
+                            "unknown_modules": unknown_mods,
+                            "is_suspicious": True,
+                            "severity": "critical",
+                            "details": f"Unrecognized NSS host resolution module(s) detected: {', '.join(unknown_mods)}",
+                        })
+        except Exception:
+            pass
+
+    return results[:25]
+
+
 PROBE_REGISTRY = {
     "crontab_persistence": {
         "id": "crontab_persistence",
@@ -545,6 +702,22 @@ PROBE_REGISTRY = {
         "technique": "T1547.006",
         "description": "Audits /proc/modules and kernel taint flags for malicious out-of-tree loadable kernel modules and rootkits.",
         "handler": hunt_kernel_modules,
+    },
+    "rwx_memory_injection": {
+        "id": "rwx_memory_injection",
+        "name": "RWX Memory Mappings & Fileless Injection",
+        "tactic": "Defense Evasion",
+        "technique": "T1055",
+        "description": "Scans /proc/*/maps across active processes for executable & writable (RWX) memory pages and fileless injection.",
+        "handler": hunt_rwx_memory_injection,
+    },
+    "dns_hosts_hijack": {
+        "id": "dns_hosts_hijack",
+        "name": "DNS Nameservers & /etc/hosts Hijacking",
+        "tactic": "Impact",
+        "technique": "T1565.001",
+        "description": "Audits /etc/hosts, /etc/resolv.conf, and /etc/nsswitch.conf for domain redirection and rogue resolver injection.",
+        "handler": hunt_dns_hosts_hijack,
     },
 }
 

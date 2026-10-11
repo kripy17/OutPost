@@ -121,6 +121,7 @@ def scan_path(
     import hashlib
     import sys
     from pathlib import Path
+
     from rich.panel import Panel
 
     show_banner(primary=False)

@@ -4,7 +4,6 @@ Starts the collector in analysis mode, executes the sample, observes for the
 timeout window, stops, marks the run complete, and prints the full report.
 """
 
-import os
 import subprocess
 import sys
 import time

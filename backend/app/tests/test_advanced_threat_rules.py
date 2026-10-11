@@ -5,8 +5,9 @@
 """
 
 import datetime
-from .conftest import make_run
+
 from ..services.risk import RULE_META, RULE_NAMES
+from .conftest import make_run
 
 
 def _ts(offset_seconds: int = 0) -> str:

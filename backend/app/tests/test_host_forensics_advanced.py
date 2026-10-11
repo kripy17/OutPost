@@ -1,8 +1,8 @@
 """Tests for advanced host forensics features: capabilities, security posture, target resolver, lifecycle controls, forensic capsules."""
 
 import os
+
 from fastapi.testclient import TestClient
-import pytest
 
 from app.main import app
 from app.services import host_forensics

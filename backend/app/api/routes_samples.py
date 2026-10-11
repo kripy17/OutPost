@@ -10,11 +10,13 @@ The webapp Monitor page uploads here to pre-fill the detonation platform and
 sample name — the "sample binary auto-detection (OS sniffing)" roadmap item.
 """
 
+import asyncio
 import csv
 import hashlib
 import io
 import json
 import uuid
+from typing import Any
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query, Request, Response
@@ -633,6 +635,7 @@ async def detonate_sample_stream_endpoint(
         raise HTTPException(status_code=400, detail="Sample binary payload is not stored or unavailable for detonation.")
 
     from fastapi.responses import StreamingResponse
+
     from ..services import behavioral_forecaster, dynamic_sandbox
 
     async def event_generator():

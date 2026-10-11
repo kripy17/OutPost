@@ -19,7 +19,6 @@ import platform
 import shutil
 import socket
 import subprocess
-import sys
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -63,7 +62,6 @@ def _resolve_backend_ip(backend_url: str) -> tuple[str, int]:
 
 def get_containment_status() -> dict[str, Any]:
     """Return the active containment state from memory or persistent state file."""
-    global _CURRENT_STATE
     sf = _state_file()
     if sf.exists():
         try:

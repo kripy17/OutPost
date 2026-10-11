@@ -283,6 +283,8 @@ export const router = createBrowserRouter([
       { path: "/hosts/:hostId", element: <HostDetailPage /> },
       { path: "/audit", element: <AuditPage /> },
       { path: "/findings", element: <FindingsPage /> },
+      { path: "/alerts", element: <Navigate to="/findings" replace /> }, // alias redirect to findings
+      { path: "/forensics", element: <Navigate to="/tasks" replace /> }, // alias redirect to host tasks & forensics
       { path: "/investigations", element: <InvestigationsPage /> },
       { path: "/investigations/:investigationId", element: <InvestigationDetailPage /> },
       { path: "/triage", element: <Navigate to="/findings" replace /> }, // the queue moved to its own page

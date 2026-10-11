@@ -1,12 +1,10 @@
 """Unit tests for macOS detection rules: TCC tampering, LaunchAgent persistence, DYLD injection, Gatekeeper bypass."""
 
-import sqlite3
 from app.services.detection import (
-    check_macos_tcc_bypass,
-    check_macos_launchagent_persistence,
     check_macos_dylib_hijack,
     check_macos_gatekeeper_bypass,
-    evaluate_batch,
+    check_macos_launchagent_persistence,
+    check_macos_tcc_bypass,
 )
 from app.services.risk import RULE_META, compute_risk_score
 

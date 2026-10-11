@@ -10,12 +10,28 @@ from urllib.parse import quote
 
 import requests
 
-def _probe_url(url: str) -> bool:
+
+def _probe_url(base: str) -> bool:
     try:
-        r = requests.get(f"{url}/health", timeout=0.25)
+        r = requests.get(f"{base}/health", timeout=0.25)
         return r.status_code == 200
     except Exception:
         return False
+
+
+def is_online() -> bool:
+    return _probe_url(get_base_url())
+
+
+def check_web_online(port: int = 5174) -> bool:
+    for base in [f"http://localhost:{port}", f"http://127.0.0.1:{port}", f"http://[::1]:{port}"]:
+        try:
+            resp = requests.get(base, timeout=1.0)
+            if resp.ok or resp.status_code in (200, 304):
+                return True
+        except Exception:
+            pass
+    return False
 
 
 def resolve_base_url() -> str:
@@ -68,7 +84,7 @@ def _get(path: str) -> Any:
     base = get_base_url()
     try:
         resp = requests.get(f"{base}{path}", headers=_auth_headers(), timeout=15)
-    except requests.RequestException as exc:
+    except requests.RequestException:
         raise APIError(f"Backend unreachable at {base} — is OutPost running? Start it with `./outpost.sh start`") from None
     if not resp.ok:
         raise APIError(f"GET {path} → {resp.status_code}: {resp.text[:200]}")

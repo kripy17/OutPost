@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query, Request, Response
+from pydantic import BaseModel
 
 from ..core import auth
 from ..core.db import db_session
@@ -28,7 +29,6 @@ from ..models import audit
 from ..models import event as event_store
 from ..models import run as run_store
 from ..models import run_notes as notes_store
-from pydantic import BaseModel
 from ..services import enrichment, killchain, memory_forensics, network_protocol_analyzer, process_tree
 from ..services.detection import allowlist_matches, load_run_sample_sha256
 
@@ -371,7 +371,6 @@ def export_run(run_id: str, format: str = "json") -> dict | Response:
         return bundle
 
     if format == "pcap":
-        from pathlib import Path
         from ..core import config
         from ..services import sandbox_forensics
 

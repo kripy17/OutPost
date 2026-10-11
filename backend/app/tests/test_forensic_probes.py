@@ -1,6 +1,7 @@
 """Tests for live host forensic hunting probes."""
 
 import pytest
+
 from app.services import forensic_probes
 
 
@@ -65,6 +66,24 @@ def test_run_kernel_modules_probe():
     assert res["probe_id"] == "kernel_rootkits"
     assert res["tactic"] == "Persistence"
     assert res["technique"] == "T1547.006"
+    assert "findings" in res
+    assert isinstance(res["findings"], list)
+
+
+def test_run_rwx_memory_probe():
+    res = forensic_probes.run_forensic_probe("rwx_memory_injection")
+    assert res["probe_id"] == "rwx_memory_injection"
+    assert res["tactic"] == "Defense Evasion"
+    assert res["technique"] == "T1055"
+    assert "findings" in res
+    assert isinstance(res["findings"], list)
+
+
+def test_run_dns_hosts_probe():
+    res = forensic_probes.run_forensic_probe("dns_hosts_hijack")
+    assert res["probe_id"] == "dns_hosts_hijack"
+    assert res["tactic"] == "Impact"
+    assert res["technique"] == "T1565.001"
     assert "findings" in res
     assert isinstance(res["findings"], list)
 

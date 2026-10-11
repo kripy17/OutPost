@@ -25,7 +25,8 @@ def _register_commands() -> None:
     from .commands.campaigns import campaigns
     from .commands.compare import compare
     from .commands.coverage import coverage
-    from .commands.decode import app as decode_app, hash_command
+    from .commands.decode import app as decode_app
+    from .commands.decode import hash_command
     from .commands.export import export
     from .commands.footprint import app as footprint_app
     from .commands.forensics import app as forensics_app
@@ -42,7 +43,8 @@ def _register_commands() -> None:
     from .commands.search import search
     from .commands.settings import app as settings_app
     from .commands.show import show
-    from .commands.status import app as status_app, doctor
+    from .commands.status import app as status_app
+    from .commands.status import doctor
     from .commands.watch import watch
     from .commands.watchlist import app as watchlist_app
     from .commands.yara import app as yara_app
@@ -86,6 +88,7 @@ def _register_commands() -> None:
     @app.command("version", help="Show OutPost version and platform metadata")
     def version_command() -> None:
         import platform
+
         from .rendering.banners import show_banner
         from .rendering.terminal_views import console
         show_banner(primary=False)
@@ -99,9 +102,9 @@ def _register_commands() -> None:
 
     @app.command("seed", help="Seed realistic labeled demo telemetry, campaigns, and cases into SQLite")
     def seed_command() -> None:
+        from .lib import offline_store
         from .rendering.banners import show_banner
         from .rendering.terminal_views import console
-        from .lib import offline_store
         show_banner(primary=False)
         console.print("[dim]Seeding realistic labeled demo runs, campaign clusters, investigations, and watchlist into SQLite...[/dim]")
         res = offline_store.seed_offline_demo()
@@ -120,6 +123,7 @@ def main(
 ) -> None:
     if version:
         import platform
+
         from .rendering.banners import show_banner
         from .rendering.terminal_views import console
         show_banner(primary=False)

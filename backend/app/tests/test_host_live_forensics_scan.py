@@ -3,8 +3,7 @@
 from starlette.testclient import TestClient
 
 from app.main import app
-from app.services.host_forensics import scan_live_memory_yara, get_enriched_live_sockets
-from app.core.db import db_session
+from app.services.host_forensics import scan_live_memory_yara
 
 
 def test_scan_live_memory_yara():

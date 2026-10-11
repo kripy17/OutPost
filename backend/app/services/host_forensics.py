@@ -17,7 +17,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-from ..core import auth
 from ..core.db import db_session
 from ..models import audit
 
@@ -86,7 +85,7 @@ def check_package_provenance(exe_path: str) -> dict[str, Any]:
     if exe_path.startswith(("/usr/bin", "/usr/sbin", "/bin", "/sbin", "/usr/lib", "/usr/libexec")):
         if os.path.isdir("/var/lib/pacman/local"):
             try:
-                out = subprocess.run(["pacman", "-Qo", exe_path], capture_output=True, text=True, timeout=1.0)
+                out = subprocess.run(["pacman", "-Qo", exe_path], capture_output=True, text=True, timeout=1.0, check=False)
                 if out.returncode == 0 and "is owned by" in out.stdout:
                     pkg = out.stdout.split("is owned by")[-1].strip()
                     return {"status": "managed_package", "label": f"Package: {pkg}", "managed": True, "package": pkg}
@@ -95,7 +94,7 @@ def check_package_provenance(exe_path: str) -> dict[str, Any]:
 
         if os.path.exists("/usr/bin/dpkg-query"):
             try:
-                out = subprocess.run(["dpkg-query", "-S", exe_path], capture_output=True, text=True, timeout=1.0)
+                out = subprocess.run(["dpkg-query", "-S", exe_path], capture_output=True, text=True, timeout=1.0, check=False)
                 if out.returncode == 0 and ":" in out.stdout:
                     pkg = out.stdout.split(":")[0].strip()
                     return {"status": "managed_package", "label": f"Debian/Ubuntu: {pkg}", "managed": True, "package": pkg}
@@ -1692,7 +1691,6 @@ def capture_baseline_snapshot() -> dict[str, Any]:
 
 def compute_snapshot_diff(baseline: dict[str, Any] | None = None, current: dict[str, Any] | None = None) -> dict[str, Any]:
     """Compute differential changes (+/-) between baseline snapshot and current live state."""
-    global _LAST_BASELINE_SNAPSHOT
     base = baseline or _LAST_BASELINE_SNAPSHOT
     if not base or not base.get("processes"):
         # Auto-capture baseline if none exists
@@ -1810,13 +1808,13 @@ def compare_two_capsules(capsule_a: dict[str, Any], capsule_b: dict[str, Any]) -
             "seccomp": sec_b.get("seccomp"),
         },
         "capabilities_diff": {
-            "only_in_a": sorted(list(caps_a - caps_b)),
-            "only_in_b": sorted(list(caps_b - caps_a)),
-            "common": sorted(list(caps_a & caps_b)),
+            "only_in_a": sorted(caps_a - caps_b),
+            "only_in_b": sorted(caps_b - caps_a),
+            "common": sorted(caps_a & caps_b),
         },
         "libraries_diff": {
-            "only_in_a": sorted(list(libs_a - libs_b)),
-            "only_in_b": sorted(list(libs_b - libs_a)),
+            "only_in_a": sorted(libs_a - libs_b),
+            "only_in_b": sorted(libs_b - libs_a),
             "common_count": len(libs_a & libs_b),
         },
         "seccomp_match": sec_a.get("seccomp") == sec_b.get("seccomp"),

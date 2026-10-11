@@ -8,16 +8,14 @@ Validates the full dynamic sandbox stack with genuine process execution,
 4. Air-gapped containment -> kernel namespace network isolation
 """
 
-import os
 import shutil
 import struct
-import subprocess
+
 import pytest
 from fastapi.testclient import TestClient
 
 from ..core import config
-from ..core.db import db_session
-from ..services import dynamic_sandbox, sandbox_forensics
+from ..services import dynamic_sandbox
 
 
 @pytest.fixture()

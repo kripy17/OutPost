@@ -3212,7 +3212,7 @@ def backtest_rule(conn: sqlite3.Connection, rule_id: str, max_events: int = 2000
             cmd = ev.get("command_line") or ""
             pname = ev.get("process_name") or ""
             fpath = ev.get("file_path") or ""
-            dip = ev.get("dest_ip") or ""
+            ev.get("dest_ip") or ""
             dport = ev.get("dest_port")
 
             is_match = False
@@ -3349,7 +3349,8 @@ def backtest_rule_yaml(conn: sqlite3.Connection, rule_def: dict, max_events: int
             matching_events.append({
                 "timestamp": ev.get("timestamp"),
                 "event_type": ev.get("event_type"),
-                "process_name": ev.get("process_name"),
+                "process_name": _proc_name(ev) or ev.get("process_name"),
+                "exe_path": ev.get("exe_path"),
                 "command_line": ev.get("command_line"),
                 "dest_ip": ev.get("dest_ip"),
                 "file_path": ev.get("file_path"),

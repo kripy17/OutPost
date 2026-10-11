@@ -15,7 +15,6 @@ import ipaddress
 import math
 import os
 import re
-import shutil
 import struct
 import time
 from pathlib import Path
@@ -184,7 +183,7 @@ async def poll_sandbox_process_tree(
                         pass
 
             # 2. Inspect FDs of all tracked PIDs for deleted inodes & sockets
-            for p in list(seen_pids):
+            for p in seen_pids:
                 fd_dir = Path(f"/proc/{p}/fd")
                 if not fd_dir.exists():
                     continue
@@ -300,7 +299,7 @@ async def poll_sandbox_process_tree(
                     pass
 
             # 3. Check memory maps for RWX pages & carve in-memory payloads
-            for p in list(seen_pids):
+            for p in seen_pids:
                 maps_file = Path(f"/proc/{p}/maps")
                 if maps_file.exists():
                     try:
@@ -329,7 +328,7 @@ async def poll_sandbox_process_tree(
                                         carve_size = min(end_addr - start_addr, 512 * 1024)
                                         mem_path = Path(f"/proc/{p}/mem")
                                         if mem_path.exists() and carve_size > 0:
-                                            with open(mem_path, "rb") as mf:
+                                            with open(mem_path, "rb") as mf:  # noqa: ASYNC230
                                                 mf.seek(start_addr)
                                                 carved = mf.read(carve_size)
                                                 if carved and any(b != 0 for b in carved[:256]):
@@ -393,7 +392,7 @@ def extract_malware_config(sample_bytes: bytes, text_content: str = "") -> dict[
         indicators.append(f"Embedded URLs identified ({len(urls)})")
     if wallets:
         score += 35
-        indicators.append(f"Cryptocurrency extortion wallet address identified")
+        indicators.append("Cryptocurrency extortion wallet address identified")
     if found_ransom:
         score += 25
         indicators.append(f"Ransomware terminology identified: {', '.join(found_ransom[:3])}")

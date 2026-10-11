@@ -226,7 +226,7 @@ def _detonate_dynamic(sample_id: str, timeout: int = 15, yes: bool = False) -> N
             return
 
     # ── Layer 2: Live Dynamic Sandbox Detonation ────────────────────────
-    console.print(f"\n[bold green]═══ Layer 2: Live Dynamic Sandbox Execution ═══[/bold green]")
+    console.print("\n[bold green]═══ Layer 2: Live Dynamic Sandbox Execution ═══[/bold green]")
     console.print(f"[dim]Executing in isolated sandbox with process tracing (timeout: {timeout}s)...[/dim]")
     try:
         data = api_client.detonate_sample(sample_id, timeout=timeout)
@@ -294,9 +294,9 @@ def _detonate_dynamic(sample_id: str, timeout: int = 15, yes: bool = False) -> N
 
 
 def _upload_sample(file_path: str) -> None:
-    from pathlib import Path
     import hashlib
     import math
+    from pathlib import Path
 
     path = Path(file_path)
     if not path.is_file():
@@ -375,7 +375,7 @@ def samples(
     stat = static_id if isinstance(static_id, str) else ""
     fore = forecast_id if isinstance(forecast_id, str) else ""
     det = detonate_id if isinstance(detonate_id, str) else ""
-    query = q if isinstance(q, str) else ""
+    q if isinstance(q, str) else ""
     thresh = threshold if isinstance(threshold, int) else 20
     tout = timeout if isinstance(timeout, int) else 15
 
@@ -403,7 +403,7 @@ def samples(
         data = api_client.list_samples(q.strip() if isinstance(q, str) else "")
         rows = data.get("samples", [])
         total_count = data.get("total", len(rows))
-    except api_client.APIError as exc:
+    except api_client.APIError:
         from ..lib import offline_store
         offline_samples = offline_store.get_offline_samples()
         if offline_samples is not None:

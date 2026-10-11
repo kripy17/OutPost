@@ -1,15 +1,12 @@
 """`outpost status` and `outpost doctor` — system health, connectivity, and diagnostics."""
 
 import os
-import platform
 import shutil
-import socket
 import sqlite3
 import sys
 from pathlib import Path
 from typing import Any
 
-import requests
 import typer
 from rich.panel import Panel
 from rich.table import Table
@@ -19,25 +16,6 @@ from ..rendering.banners import show_banner
 from ..rendering.terminal_views import console
 
 app = typer.Typer(help="System status, component health, and diagnostics", add_completion=False)
-
-
-def _check_port_open(host: str, port: int, timeout: float = 0.5) -> bool:
-    try:
-        with socket.create_connection((host, port), timeout=timeout):
-            return True
-    except (OSError, ConnectionRefusedError):
-        return False
-
-
-def _check_web_online(port: int) -> bool:
-    for url in [f"http://localhost:{port}", f"http://127.0.0.1:{port}", f"http://[::1]:{port}"]:
-        try:
-            resp = requests.get(url, timeout=1.0)
-            if resp.ok or resp.status_code in (200, 304):
-                return True
-        except Exception:
-            pass
-    return False
 
 
 def _get_db_stats() -> dict[str, Any]:
@@ -89,21 +67,14 @@ def status(ctx: typer.Context) -> None:
     api_meta: dict[str, Any] = {}
 
     try:
-        resp = requests.get(f"{api_url}/health", timeout=1.5)
-        if resp.ok:
-            api_online = True
-            try:
-                meta_resp = requests.get(f"{api_url}/meta", timeout=1.5)
-                if meta_resp.ok:
-                    api_meta = meta_resp.json()
-            except Exception:
-                pass
+        api_meta = api_client.get_meta()
+        api_online = True
     except Exception:
-        api_online = False
+        api_online = api_client.is_online()
 
     # Check Web Console
     web_port = int(os.getenv("OUTPOST_FE_PORT", "5174"))
-    web_online = _check_web_online(web_port)
+    web_online = api_client.check_web_online(web_port)
 
     # Check Database
     db_stats = _get_db_stats()
@@ -203,9 +174,9 @@ def doctor() -> None:
     dirs_ok = data_dir.exists() and (data_dir / "samples").exists()
     checks.append(("Data Storage Directories", dirs_ok, f"{data_dir}"))
 
-    # 7. Network ports
-    port_8001_in_use = _check_port_open("127.0.0.1", 8001, timeout=0.5)
-    port_5174_in_use = _check_port_open("127.0.0.1", 5174, timeout=0.5)
+    # 7. Network services
+    port_8001_in_use = api_client.is_online()
+    port_5174_in_use = api_client.check_web_online(5174)
     checks.append((":8001 API Port", True, "In use (Service active)" if port_8001_in_use else "Available (Ready)"))
     checks.append((":5174 Web Port", True, "In use (Service active)" if port_5174_in_use else "Available (Ready)"))
 

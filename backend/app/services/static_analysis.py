@@ -520,7 +520,6 @@ def parse_elf(data: bytes) -> dict | None:
 # ---------------------------------------------------------------------------
 
 from collections import Counter
-from typing import Any
 
 
 def calculate_entropy(data: bytes) -> float:

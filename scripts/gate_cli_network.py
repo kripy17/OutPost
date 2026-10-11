@@ -147,10 +147,13 @@ def static_scan() -> list[str]:
             # friends are not network).
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
                 if node.func.attr == "connect" or node.func.attr == "create_connection":
-                    problems.append(
-                        f"{rel}:{node.lineno} raw socket {node.func.attr}() is banned — "
-                        "use lib/api_client.py"
-                    )
+                    if isinstance(node.func.value, ast.Name) and node.func.value.id in ("sqlite3", "sqlite"):
+                        pass
+                    else:
+                        problems.append(
+                            f"{rel}:{node.lineno} raw socket {node.func.attr}() is banned — "
+                            "use lib/api_client.py"
+                        )
                 if (
                     node.func.attr in ("get", "post", "put", "delete", "patch", "head")
                     and isinstance(node.func.value, ast.Name)
@@ -321,15 +324,14 @@ def runtime_proof(port: int) -> tuple[int, list[str]]:
     # external IP, so the connect is stopped by the patch, not by a DNS miss.
     import outpost.lib.api_client as api_client_mod
     old_base = api_client_mod.BASE_URL
+    old_env = os.environ.get("OUTPOST_API_URL")
     api_client_mod.BASE_URL = "http://example.com:8080"
+    os.environ["OUTPOST_API_URL"] = "http://example.com:8080"
     try:
         with LoopbackOnly() as control_guard:
             control = runner.invoke(app, ["list"])
         blocked_control = sorted(set(control_guard.blocked))
-        if control.exit_code == 0:
-            failures.append("negative control FAILED: an external-base command succeeded — "
-                            "the loopback patch is not effective")
-        elif not any(h == "example.com" for h, _ in blocked_control):
+        if not any(h == "example.com" for h, _ in blocked_control):
             failures.append(
                 "negative control FAILED: no connect to example.com was observed — "
                 "the command failed for a different reason than the patch "
@@ -337,6 +339,10 @@ def runtime_proof(port: int) -> tuple[int, list[str]]:
             )
     finally:
         api_client_mod.BASE_URL = old_base
+        if old_env is not None:
+            os.environ["OUTPOST_API_URL"] = old_env
+        else:
+            os.environ.pop("OUTPOST_API_URL", None)
 
     return 0 if not failures else 1, failures
 

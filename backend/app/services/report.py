@@ -443,7 +443,7 @@ def build_investigation_markdown_export(conn, investigation_id: str) -> str:
         f"**Classification / Max Severity:** `{narrative['max_severity'].upper()}`  ",
         f"**Current Status:** `{inv['status'].upper()}`  ",
         f"**Report Generated:** {now_utc}  ",
-        f"**Traffic Light Protocol (TLP):** `AMBER+STRICT`  ",
+        "**Traffic Light Protocol (TLP):** `AMBER+STRICT`  ",
         f"**Lead Investigator / Actor:** `{inv.get('created_by') or 'operator'}`  ",
         f"**Tags:** {', '.join(inv.get('tags') or ['general-incident'])}  ",
         "",

@@ -664,11 +664,12 @@ def test_dynamic_detonation_isolation_driver(client):
 
 
 def test_pcap_capture_generation_and_download(client):
-    from ..services import sandbox_forensics
-    from ..core import config
-    import struct
     import shutil
+    import struct
     import subprocess
+
+    from ..core import config
+    from ..services import sandbox_forensics
 
     run_id = "test_pcap_run_01"
     events = [
@@ -715,7 +716,7 @@ def test_pcap_capture_generation_and_download(client):
 
     # If tshark is installed on this test machine, assert that tshark parses it cleanly
     if shutil.which("tshark"):
-        proc = subprocess.run(["tshark", "-r", str(pcap_path)], capture_output=True, text=True)
+        proc = subprocess.run(["tshark", "-r", str(pcap_path)], capture_output=True, text=True, check=False)
         assert proc.returncode == 0
         assert "198.51.100.25" in proc.stdout or "443" in proc.stdout
 
