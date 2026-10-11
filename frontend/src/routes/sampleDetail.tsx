@@ -1501,12 +1501,8 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
     setError(null);
     setExecutionTimer(0);
     const initialLogs = [
-      `[*] [00:00.000] INITIALIZING ISOLATED SANDBOX JAIL (Driver: ${isolationDriver.toUpperCase()})...`,
-      `[*] [00:00.035] Applying kernel namespace containment: unshare-pid, unshare-ipc, ro-bind /usr /lib`,
-      `[*] [00:00.075] Staging payload to ephemeral sandbox directory: /tmp/outpost_sandbox_${sample.sample_id}/`,
-      `[*] [00:00.110] Attaching /proc process tree poller & network socket monitor...`,
-      `[+] [00:00.180] Executing target: ${sample.original_name}`,
-      `[*] Awaiting execution completion and kernel telemetry stream...`,
+      `[*] Initializing sandbox isolation runtime (Driver: ${isolationDriver.toUpperCase()}, Network: ${networkMode.toUpperCase()})...`,
+      `[*] Attaching real-time telemetry stream for ${sample.original_name}...`,
     ];
     setLiveLogs(initialLogs);
 

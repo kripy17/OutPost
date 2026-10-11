@@ -1,7 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Icon } from "../components/Icon";
+import { platformIconName } from "../components/iconMeta";
+import { RiskGauge, RiskTrendBars, SeverityDonut } from "../components/Posture/Posture";
 import { copyToClipboard } from "../lib/clipboard";
 import { useSocTimeRange } from "../lib/useSocTimeRange";
 import {
@@ -9,12 +12,24 @@ import {
   getAgents,
   getAlertQueue,
   getEvents,
+  getHealth,
+  getPlatform,
+  getProcessSummary,
   getRecentAlerts,
   getRuleMeta,
+  getRuns,
   listInvestigations,
 } from "../lib/api";
 import { useEventStream } from "../lib/useEventStream";
-import type { GlobalAlert, QueueAlert } from "../types";
+import {
+  ageBucket,
+  aggregateTrend,
+  collapseFindings,
+  openSince,
+  overviewRunParams,
+  sortFindingsRiskFirst,
+} from "./overviewHelpers";
+import type { GlobalAlert, ProcessSummary, QueueAlert, Severity } from "../types";
 
 const ATTACK_TACTICS = [
   { id: "initial-access", label: "Initial Access" },
@@ -194,12 +209,45 @@ function AlertInspectorDrawer({
   );
 }
 
+const ACTIONS: { to: string; label: string; desc: string; icon: ReactNode }[] = [
+  { to: "/monitor", label: "Detonate Sample", desc: "Dynamic sandbox analysis on local OS host", icon: <Icon name="play" size={13} /> },
+  { to: "/events", label: "Telemetry Lake", desc: "Browse every raw kernel and socket event", icon: <Icon name="list" size={13} /> },
+  { to: "/history", label: "Compare Sessions", desc: "Cross-run differential forensics analysis", icon: <Icon name="compare" size={13} /> },
+  { to: "/watchlist", label: "IOC Watchlist", desc: "Track known-bad IPs, hashes, and domains", icon: <Icon name="star" size={13} /> },
+];
+
 export default function OverviewPage() {
   const queryClient = useQueryClient();
   const { preset } = useSocTimeRange();
 
   const [inspectAlert, setInspectAlert] = useState<AlertDrawerState | null>(null);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
+  const [sevFilter, setSevFilter] = useState<Severity | "all">("all");
+
+  // Process-jump hover preview card state
+  const [preview, setPreview] = useState<{ x: number; y: number; data: ProcessSummary } | null>(null);
+  const previewTimer = useRef<number | null>(null);
+
+  const showPreview = (e: ReactMouseEvent<HTMLAnchorElement>, pid: number) => {
+    if (previewTimer.current !== null) window.clearTimeout(previewTimer.current);
+    const r = e.currentTarget.getBoundingClientRect();
+    previewTimer.current = window.setTimeout(() => {
+      void getProcessSummary(pid)
+        .then((data) =>
+          setPreview({
+            x: Math.max(8, Math.min(r.left, window.innerWidth - 336)),
+            y: Math.max(8, Math.min(r.bottom + 8, window.innerHeight - 180)),
+            data,
+          }),
+        )
+        .catch(() => setPreview(null));
+    }, 250);
+  };
+
+  const hidePreview = () => {
+    if (previewTimer.current !== null) window.clearTimeout(previewTimer.current);
+    setPreview(null);
+  };
 
   // Real-time Event Stream Listener
   useEventStream(() => {
@@ -216,8 +264,8 @@ export default function OverviewPage() {
   });
 
   const { data: recentAlerts = [] } = useQuery({
-    queryKey: ["alerts", "recent", 15],
-    queryFn: () => getRecentAlerts(15),
+    queryKey: ["alerts", "recent", 25],
+    queryFn: () => getRecentAlerts(25),
     refetchInterval: 10_000,
   });
 
@@ -228,14 +276,14 @@ export default function OverviewPage() {
   });
 
   const { data: telemetryEvents } = useQuery({
-    queryKey: ["events", "recent", 8],
-    queryFn: () => getEvents({ limit: 8 }),
+    queryKey: ["events", "recent", 6],
+    queryFn: () => getEvents({ limit: 6 }),
     refetchInterval: 5_000,
   });
 
   const { data: investigations } = useQuery({
-    queryKey: ["investigations", "count"],
-    queryFn: () => listInvestigations({ limit: 100 }),
+    queryKey: ["investigations", "overview"],
+    queryFn: () => listInvestigations({ limit: 4 }),
     refetchInterval: 30_000,
   });
 
@@ -243,6 +291,24 @@ export default function OverviewPage() {
     queryKey: ["rules", "meta"],
     queryFn: getRuleMeta,
     staleTime: 60_000,
+  });
+
+  const { data: runs = [] } = useQuery({
+    queryKey: ["runs", "overview"],
+    queryFn: () => getRuns(overviewRunParams()),
+    refetchInterval: 15_000,
+  });
+
+  const { data: hostPlatform } = useQuery({
+    queryKey: ["platform"],
+    queryFn: getPlatform,
+    staleTime: Infinity,
+  });
+
+  const { data: engineHealth } = useQuery({
+    queryKey: ["health"],
+    queryFn: getHealth,
+    refetchInterval: 10_000,
   });
 
   const ruleMap = useMemo(() => {
@@ -261,7 +327,7 @@ export default function OverviewPage() {
       if (inspectAlert && inspectAlert.alert.id) {
         setInspectAlert(null);
       }
-      setActionNotice("Alert acknowledged");
+      setActionNotice("Alert acknowledged successfully");
       setTimeout(() => setActionNotice(null), 2500);
     },
   });
@@ -274,12 +340,18 @@ export default function OverviewPage() {
 
   const totalAgents = (fleet?.agents ?? []).length;
   const onlineAgents = (fleet?.agents ?? []).filter((a) => a.online).length;
-  const coveragePct = totalAgents > 0 ? Math.round((onlineAgents / totalAgents) * 100) : 100;
+  const totalEventsIngested = (fleet?.agents ?? []).reduce((acc, a) => acc + (a.event_count || 0), 0);
 
   const activeCases = (investigations?.investigations ?? []).filter(
     (i) => i.status !== "closed" && i.status !== "resolved"
   ).length;
-  const totalEventsIngested = (fleet?.agents ?? []).reduce((acc, a) => acc + (a.event_count || 0), 0);
+
+  // Visual Posture Calculations
+  const trendBars = useMemo(() => aggregateTrend(runs), [runs]);
+  const peakRisk = useMemo(() => Math.max(0, ...runs.map((r) => r.risk_score ?? 0)), [runs]);
+  const maliciousRuns = runs.filter((r) => r.highest_severity === "malicious").length;
+  const suspiciousRuns = runs.filter((r) => r.highest_severity === "suspicious").length;
+  const cleanRuns = Math.max(0, runs.length - maliciousRuns - suspiciousRuns);
 
   // Active ATT&CK Tactics Map
   const activeTactics = useMemo(() => {
@@ -298,26 +370,38 @@ export default function OverviewPage() {
     return ATTACK_TACTICS.filter((t) => (activeTactics.get(t.id) || 0) > 0);
   }, [activeTactics]);
 
+  // Collapsed & Filtered Findings
+  const collapsedFindings = useMemo(() => {
+    const groups = collapseFindings(recentAlerts as GlobalAlert[]);
+    const filtered = sevFilter === "all" ? groups : groups.filter((g) => g.first.severity === sevFilter);
+    return sortFindingsRiskFirst(filtered, ruleMap as any);
+  }, [recentAlerts, sevFilter, ruleMap]);
+
+  const now = Date.now();
+
+  const platIcon = hostPlatform ? platformIconName(hostPlatform.os) : "terminal";
+  const platLabel = hostPlatform ? hostPlatform.name || hostPlatform.os : "detecting…";
+
   return (
     <div className="mx-auto max-w-7xl px-6 py-6 lg:px-10 space-y-6 font-sans text-xs">
       {/* Header Bar */}
       <div className="flex flex-wrap items-center justify-between gap-4 border-b border-border-subtle pb-4">
         <div>
           <span className="text-[10px] uppercase font-semibold tracking-wider text-text-faint">
-            Operations Overview · Time Window: {preset.label}
+            Operations Workstation · Observation Window: {preset.label}
           </span>
           <h1 className="text-xl font-bold text-text-primary tracking-tight">
             Security Operations Overview
           </h1>
           <p className="text-xs text-text-muted mt-0.5">
-            Enterprise threat detection posture, sensor fleet status, and active security findings.
+            Enterprise threat detection triage, sensor fleet posture, and host telemetry lake.
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
           <div className="flex items-center gap-2 rounded-lg border border-border-subtle bg-bg-surface px-3 py-1.5 text-xs text-text-muted shadow-xs">
-            <span className="h-2 w-2 rounded-full bg-signal" />
-            <span className="font-semibold text-text-primary">Engine Online</span>
+            <span className={`h-2 w-2 rounded-full ${engineHealth ? "bg-signal" : "bg-risk-malicious"}`} />
+            <span className="font-semibold text-text-primary">{engineHealth ? "Engine Online" : "Engine Degraded"}</span>
             <span className="text-text-faint">· Live Ingest</span>
           </div>
 
@@ -325,7 +409,7 @@ export default function OverviewPage() {
             to="/findings"
             className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-surface px-3 py-1.5 text-text-muted hover:border-accent/40 hover:text-text-primary font-semibold transition shadow-xs"
           >
-            <span>Triage Queue</span>
+            <span>Triage Queue ({openAlerts.length})</span>
             <Icon name="arrowRight" size={11} />
           </Link>
         </div>
@@ -339,172 +423,314 @@ export default function OverviewPage() {
         </div>
       )}
 
-      {/* KPI Metric Strip (5 Cards) */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-        <Link
-          to="/investigations"
-          className="rounded-xl border border-border-subtle bg-bg-surface p-3.5 shadow-xs hover:border-accent/40 transition group"
-        >
-          <span className="text-[10px] uppercase font-semibold text-text-faint tracking-wider">Active Cases</span>
-          <p className="mt-1 text-lg font-bold text-text-primary font-mono tabular-nums">{activeCases}</p>
-          <span className="text-[10px] text-text-faint group-hover:text-accent transition">
-            {activeCases === 0 ? "Zero open escalations" : "Open incident dossiers"}
-          </span>
-        </Link>
+      {/* Operational Telemetry Summary Ribbon (3 Cards) */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {/* Host Fleet Telemetry */}
+        <div className="flex flex-col justify-between rounded-2xl border border-border-subtle bg-bg-surface p-5 shadow-xs transition hover:border-accent/40">
+          <div className="flex items-center justify-between">
+            <span className="font-mono text-[10px] uppercase font-bold tracking-wider text-text-faint">Host Telemetry</span>
+            <span className="flex items-center gap-1.5 font-mono text-[10px] text-risk-clean">
+              <span className="h-1.5 w-1.5 rounded-full bg-risk-clean animate-pulse" />
+              ingestion active
+            </span>
+          </div>
+          <div className="my-3 flex items-baseline gap-3">
+            <span className="font-mono text-3xl font-bold tracking-tight text-text-primary">{runs.length}</span>
+            <span className="text-xs text-text-muted">monitored sessions</span>
+          </div>
+          <div className="flex flex-wrap items-center justify-between border-t border-border-subtle/60 pt-3 font-mono text-[11px] text-text-muted">
+            <div className="flex items-center gap-2">
+              <Link to="/agents" className="hover:text-accent font-semibold">
+                {totalAgents || 1} host{totalAgents === 1 ? "" : "s"} enrolled
+              </Link>
+              <span className="text-text-faint">·</span>
+              <span className="text-risk-clean">{onlineAgents || (runs.length > 0 ? 1 : 0)} online</span>
+            </div>
+            <Link to="/events" className="text-accent hover:underline text-[10px]">
+              {totalEventsIngested.toLocaleString()} events →
+            </Link>
+          </div>
+        </div>
 
-        <Link
-          to="/findings"
-          className="rounded-xl border border-border-subtle bg-bg-surface p-3.5 shadow-xs hover:border-accent/40 transition group"
-        >
-          <span className="text-[10px] uppercase font-semibold text-text-faint tracking-wider">Unresolved Findings</span>
-          <p className="mt-1 text-lg font-bold font-mono tabular-nums">
-            <span className={criticalCount > 0 ? "text-risk-malicious" : "text-text-primary"}>
+        {/* Detection Queue */}
+        <div className="flex flex-col justify-between rounded-2xl border border-border-subtle bg-bg-surface p-5 shadow-xs transition hover:border-risk-suspicious/40">
+          <div className="flex items-center justify-between">
+            <span className="font-mono text-[10px] uppercase font-bold tracking-wider text-text-faint">Detection Queue</span>
+            <Link to="/findings" className="font-mono text-[10px] text-accent hover:underline">
+              triage queue →
+            </Link>
+          </div>
+          <div className="my-3 flex items-baseline gap-3">
+            <span className={`font-mono text-3xl font-bold tracking-tight ${criticalCount > 0 ? "text-risk-malicious" : "text-text-primary"}`}>
               {openAlerts.length}
             </span>
-            <span className="text-[11px] text-text-faint font-normal font-sans ml-1.5">
-              ({criticalCount} crit · {highCount} high)
+            <span className="text-xs text-text-muted">active unacknowledged alerts</span>
+          </div>
+          <div className="flex items-center gap-2 border-t border-border-subtle/60 pt-3 font-mono text-[11px]">
+            <span className="inline-flex items-center gap-1 rounded bg-risk-malicious/15 px-2 py-0.5 font-semibold text-risk-malicious border border-risk-malicious/30">
+              {criticalCount} critical
             </span>
-          </p>
-          <span className="text-[10px] text-text-faint group-hover:text-accent transition">Awaiting analyst triage</span>
-        </Link>
-
-        <Link
-          to="/agents"
-          className="rounded-xl border border-border-subtle bg-bg-surface p-3.5 shadow-xs hover:border-accent/40 transition group"
-        >
-          <span className="text-[10px] uppercase font-semibold text-text-faint tracking-wider">Sensor Fleet</span>
-          <p className="mt-1 text-lg font-bold text-risk-clean font-mono tabular-nums">
-            {coveragePct}%
-            <span className="text-[11px] text-text-faint font-normal font-sans ml-1.5">
-              ({onlineAgents}/{totalAgents} online)
+            <span className="inline-flex items-center gap-1 rounded bg-risk-suspicious/15 px-2 py-0.5 font-semibold text-risk-suspicious border border-risk-suspicious/30">
+              {highCount} suspicious
             </span>
-          </p>
-          <span className="text-[10px] text-text-faint group-hover:text-accent transition">Monitored endpoints</span>
-        </Link>
+            <span className="ml-auto text-[10px] text-text-faint font-sans">
+              {ruleMetaList.length} heuristics
+            </span>
+          </div>
+        </div>
 
-        <Link
-          to="/events"
-          className="rounded-xl border border-border-subtle bg-bg-surface p-3.5 shadow-xs hover:border-accent/40 transition group"
-        >
-          <span className="text-[10px] uppercase font-semibold text-text-faint tracking-wider">Telemetry Ingested</span>
-          <p className="mt-1 text-lg font-bold text-accent font-mono tabular-nums">
-            {totalEventsIngested.toLocaleString()}
-          </p>
-          <span className="text-[10px] text-text-faint group-hover:text-accent transition">Events processed</span>
-        </Link>
-
-        <Link
-          to="/coverage"
-          className="rounded-xl border border-border-subtle bg-bg-surface p-3.5 shadow-xs hover:border-accent/40 transition group"
-        >
-          <span className="text-[10px] uppercase font-semibold text-text-faint tracking-wider">ATT&amp;CK Techniques</span>
-          <p className="mt-1 text-lg font-bold text-text-primary font-mono tabular-nums">
-            {ruleMetaList.length}
-          </p>
-          <span className="text-[10px] text-text-faint group-hover:text-accent transition">Active detection rules</span>
-        </Link>
+        {/* Incident Investigations */}
+        <div className="flex flex-col justify-between rounded-2xl border border-border-subtle bg-bg-surface p-5 shadow-xs transition hover:border-accent/40 sm:col-span-2 lg:col-span-1">
+          <div className="flex items-center justify-between">
+            <span className="font-mono text-[10px] uppercase font-bold tracking-wider text-text-faint">Investigations</span>
+            <Link to="/investigations" className="font-mono text-[10px] text-accent hover:underline">
+              case files →
+            </Link>
+          </div>
+          <div className="my-3 flex items-baseline gap-3">
+            <span className="font-mono text-3xl font-bold tracking-tight text-text-primary">{activeCases}</span>
+            <span className="text-xs text-text-muted">active case dossiers</span>
+          </div>
+          <div className="flex items-center justify-between border-t border-border-subtle/60 pt-3 font-mono text-[11px] text-text-muted">
+            <span>{cleanRuns} clean baseline sessions</span>
+            <span className="text-text-faint">IR SLA tracked</span>
+          </div>
+        </div>
       </div>
 
-      {/* 2-Column Operations Layout */}
+      {/* Threat Posture Visual Deck: Peak Risk Gauge, Severity Donut, and Risk Trend */}
+      <div className="rounded-2xl border border-border-subtle bg-bg-surface p-5 shadow-xs">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle/60 pb-3">
+          <div>
+            <span className="font-mono text-[10px] uppercase font-bold tracking-wider text-text-faint">Threat Posture Telemetry</span>
+            <h2 className="text-sm font-bold text-text-primary">Fleet Threat Score &amp; Session Distribution</h2>
+          </div>
+          <Link to="/history" className="font-mono text-[10px] text-accent hover:underline">
+            session archive →
+          </Link>
+        </div>
+
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-12 items-center">
+          <div className="lg:col-span-3 flex justify-center lg:justify-start border-b lg:border-b-0 lg:border-r border-border-subtle/60 pb-4 lg:pb-0 lg:pr-6">
+            <RiskGauge score={peakRisk} />
+          </div>
+
+          <div className="lg:col-span-4 flex justify-center lg:justify-start border-b lg:border-b-0 lg:border-r border-border-subtle/60 pb-4 lg:pb-0 lg:pr-6">
+            <SeverityDonut malicious={maliciousRuns} suspicious={suspiciousRuns} clean={cleanRuns} />
+          </div>
+
+          <div className="lg:col-span-5">
+            <RiskTrendBars bars={trendBars} />
+          </div>
+        </div>
+      </div>
+
+      {/* 2-Column High-Density Operations Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
         {/* Column 1 (Left 7 cols): High-Priority Alert Feed & Live Telemetry Stream */}
         <div className="lg:col-span-7 space-y-5">
-          {/* High-Priority Security Alerts */}
+          {/* Live Findings Feed */}
           <div className="rounded-xl border border-border-subtle bg-bg-surface overflow-hidden shadow-xs flex flex-col">
-            <div className="p-3.5 border-b border-border-subtle bg-bg-elevated/40 flex items-center justify-between">
+            <div className="p-3.5 border-b border-border-subtle bg-bg-elevated/40 flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
-                <span className="font-bold text-text-primary text-xs">High-Priority Alert Feed</span>
+                <span className="font-bold text-text-primary text-xs">Live Findings Stream</span>
                 <span className="rounded-full bg-bg-base border border-border-subtle px-2 py-0.2 font-mono text-[10px] tabular-nums text-text-muted">
-                  {recentAlerts.length}
+                  {collapsedFindings.length}
+                </span>
+                <span className="inline-flex items-center gap-1.5 font-mono text-[10px] text-signal ml-1">
+                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-signal" />
+                  live · SSE
                 </span>
               </div>
-              <Link
-                to="/findings"
-                className="press text-[11px] font-semibold text-accent hover:underline inline-flex items-center gap-1"
-              >
-                <span>Full Queue</span>
-                <Icon name="arrowRight" size={10} />
-              </Link>
+
+              <div className="flex items-center gap-2">
+                {/* Severity Filter Toggle */}
+                <div className="flex overflow-hidden rounded-md border border-border-subtle font-mono text-[10px]">
+                  {(["all", "malicious", "suspicious"] as const).map((s) => (
+                    <button
+                      key={s}
+                      onClick={() => setSevFilter(s)}
+                      className={`px-2 py-0.5 transition-colors ${
+                        sevFilter === s
+                          ? s === "malicious"
+                            ? "bg-risk-malicious/20 text-risk-malicious font-semibold"
+                            : s === "suspicious"
+                              ? "bg-risk-suspicious/20 text-risk-suspicious font-semibold"
+                              : "bg-accent/15 text-accent font-semibold"
+                          : "text-text-faint hover:text-text-muted"
+                      }`}
+                    >
+                      {s === "all" ? "all" : s.slice(0, 4)}
+                    </button>
+                  ))}
+                </div>
+
+                <Link
+                  to="/findings"
+                  className="press text-[11px] font-semibold text-accent hover:underline inline-flex items-center gap-1"
+                >
+                  <span>Full Queue</span>
+                  <Icon name="arrowRight" size={10} />
+                </Link>
+              </div>
             </div>
 
-            <div className="flex-1 overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-bg-elevated/60 border-b border-border-subtle text-[10px] uppercase font-semibold text-text-faint">
-                  <tr>
-                    <th className="px-4 py-2">Sev</th>
-                    <th className="px-4 py-2">Rule Signature / Technique</th>
-                    <th className="px-4 py-2">Host</th>
-                    <th className="px-4 py-2">Observed</th>
-                    <th className="px-4 py-2 text-right">Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border-subtle/40">
-                  {recentAlerts.length === 0 ? (
-                    <tr>
-                      <td colSpan={5} className="px-4 py-10 text-center text-text-muted">
-                        No security alerts triggered in the selected observation window.
-                      </td>
-                    </tr>
-                  ) : (
-                    recentAlerts.slice(0, 6).map((a, idx) => {
-                      const meta = ruleMap.get(a.rule_id);
-                      const isMalicious = a.severity === "malicious";
-                      return (
-                        <tr
-                          key={idx}
-                          onClick={() => setInspectAlert({ alert: a, ruleMeta: meta })}
-                          className="cursor-pointer hover:bg-bg-elevated/40 transition group"
+            <div className="divide-y divide-border-subtle/40">
+              {collapsedFindings.length === 0 ? (
+                <div className="px-4 py-12 text-center font-mono text-xs text-text-muted">
+                  <p className="font-semibold text-text-primary">Monitoring active — 0 matching findings</p>
+                  <p className="mt-1 text-[11px] text-text-faint">
+                    No security heuristics or IOC alerts have triggered across ingested host telemetry in this window.
+                  </p>
+                </div>
+              ) : (
+                collapsedFindings.slice(0, 7).map((g) => {
+                  const a = g.first;
+                  const rule = ruleMap.get(a.rule_id);
+                  const isMalicious = a.severity === "malicious";
+                  const pids = a.related_pids ?? [];
+                  const pid = a.related_pid ?? pids[0] ?? null;
+
+                  return (
+                    <div
+                      key={g.key}
+                      onClick={() => setInspectAlert({ alert: a, ruleMeta: rule })}
+                      className="cursor-pointer p-3.5 hover:bg-bg-elevated/40 transition group flex flex-col gap-1.5"
+                    >
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span
+                          className={`rounded px-1.5 py-0.2 text-[9px] uppercase font-bold shrink-0 ${
+                            isMalicious
+                              ? "bg-risk-malicious/20 text-risk-malicious border border-risk-malicious/30"
+                              : "bg-risk-suspicious/20 text-risk-suspicious border border-risk-suspicious/30"
+                          }`}
                         >
-                          <td className="px-4 py-2.5">
+                          {a.severity.slice(0, 4)}
+                        </span>
+
+                        {/* Process Link with Hover Preview */}
+                        {(() => {
+                          if (a.rule_id === "enumeration-burst" && pids.length > 1) {
+                            return (
+                              <Link
+                                to={`/events?pid=${pids.join(",")}`}
+                                onMouseEnter={(e) => showPreview(e, pids[0])}
+                                onMouseLeave={hidePreview}
+                                onClick={(e) => e.stopPropagation()}
+                                className="press inline-flex items-center gap-1 font-mono text-xs font-semibold text-risk-suspicious hover:underline"
+                                title={`Recon sweep — ${pids.length} enumerating processes`}
+                              >
+                                {a.sample_name || "fleet-agent"}
+                                <Icon name="terminal" size={11} className="opacity-80" />
+                                <span className="rounded border border-risk-suspicious/50 bg-risk-suspicious/10 px-1 py-px text-[9px] uppercase tracking-wide">
+                                  recon · {pids.length}
+                                </span>
+                              </Link>
+                            );
+                          }
+                          return pid ? (
+                            <Link
+                              to={`/events?pid=${pid}`}
+                              onMouseEnter={(e) => showPreview(e, pid)}
+                              onMouseLeave={hidePreview}
+                              onClick={(e) => e.stopPropagation()}
+                              className="press inline-flex items-center gap-1 font-mono text-xs font-semibold text-text-primary hover:text-accent"
+                              title={`Drill down into process ${pid} telemetry`}
+                            >
+                              {a.sample_name || `PID ${pid}`}
+                              <Icon name="process" size={11} className="text-text-faint group-hover:text-accent" />
+                            </Link>
+                          ) : (
+                            <span className="font-mono text-xs font-semibold text-text-primary">
+                              {a.sample_name || "fleet-host"}
+                            </span>
+                          );
+                        })()}
+
+                        {/* Duplicate collapse badge */}
+                        {g.count > 1 && (
+                          <span
+                            className="rounded-full border border-border-subtle bg-bg-elevated/70 px-1.5 py-px font-mono text-[10px] tabular-nums text-text-muted"
+                            title={`${g.count} identical detections across ${g.runs.size} session(s) in 5 minutes`}
+                          >
+                            ×{g.count}
+                          </span>
+                        )}
+
+                        <span className="text-xs font-semibold text-text-muted truncate max-w-xs group-hover:text-accent transition">
+                          {a.rule_name}
+                        </span>
+
+                        {rule && (
+                          <span
+                            className="rounded border border-border-subtle bg-bg-base px-1.5 py-0.5 font-mono text-[10px] text-text-faint ml-auto hidden sm:inline-block"
+                            title={`MITRE ATT&CK ${rule.tactic}`}
+                          >
+                            {rule.technique} · {rule.tactic}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5 text-[11px] font-mono text-text-faint">
+                        <p className="truncate max-w-md text-text-muted leading-tight" title={a.details}>
+                          {a.details || "Behavioral anomaly matched signature criteria."}
+                        </p>
+
+                        <div className="flex items-center gap-2 ml-auto" onClick={(e) => e.stopPropagation()}>
+                          {a.status === "open" && a.id != null && (
+                            <button
+                              onClick={() => ackMutation.mutate(a.id!)}
+                              className="press inline-flex items-center gap-1 rounded border border-border-subtle bg-bg-base px-1.5 py-0.5 text-[10px] text-text-muted hover:border-signal/50 hover:text-signal transition"
+                              title="Acknowledge alert from dashboard"
+                            >
+                              <Icon name="check" size={9} />
+                              <span>ack</span>
+                            </button>
+                          )}
+
+                          {a.status === "open" ? (
                             <span
-                              className={`rounded px-1.5 py-0.2 text-[9px] uppercase font-bold ${
-                                isMalicious
-                                  ? "bg-risk-malicious/20 text-risk-malicious border border-risk-malicious/30"
-                                  : "bg-risk-suspicious/20 text-risk-suspicious border border-risk-suspicious/30"
+                              className={`rounded-full border px-1.5 py-px text-[9px] ${
+                                ageBucket(a, now) === 2
+                                  ? "border-risk-malicious/40 bg-risk-malicious/10 text-risk-malicious"
+                                  : ageBucket(a, now) === 1
+                                    ? "border-risk-suspicious/40 bg-risk-suspicious/10 text-risk-suspicious"
+                                    : "border-border-subtle text-text-faint"
                               }`}
                             >
-                              {a.severity.slice(0, 4)}
+                              {openSince(a, now)}
                             </span>
-                          </td>
-                          <td className="px-4 py-2.5 min-w-48">
-                            <div className="font-semibold text-text-primary group-hover:text-accent transition truncate" title={a.rule_name}>
-                              {a.rule_name}
-                            </div>
-                            {meta && (
-                              <div className="text-[10px] font-mono text-text-faint mt-0.5">
-                                {meta.technique} · {meta.tactic}
-                              </div>
-                            )}
-                          </td>
-                          <td className="px-4 py-2.5 text-text-muted text-[11px] font-mono">
-                            {a.related_ip || "fleet-host"}
-                          </td>
-                          <td className="px-4 py-2.5 text-text-faint text-[11px] whitespace-nowrap">
+                          ) : (
+                            <span className="text-text-faint uppercase font-bold text-[9px] px-1.5 py-0.5 rounded bg-bg-base border border-border-subtle">
+                              {a.status}
+                            </span>
+                          )}
+
+                          <span className="text-[10px] tabular-nums whitespace-nowrap">
                             {relativeTime(a.triggered_at)}
-                          </td>
-                          <td className="px-4 py-2.5 text-right" onClick={(e) => e.stopPropagation()}>
-                            <button
-                              onClick={() => setInspectAlert({ alert: a, ruleMeta: meta })}
-                              className="press rounded border border-border-subtle bg-bg-base px-2 py-0.5 text-[10px] font-semibold text-text-muted hover:border-accent/40 hover:text-accent transition shadow-xs"
-                            >
-                              Inspect
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
+                          </span>
+
+                          <button
+                            onClick={() => setInspectAlert({ alert: a, ruleMeta: rule })}
+                            className="press rounded border border-border-subtle bg-bg-base px-2 py-0.5 text-[10px] font-semibold text-text-muted hover:border-accent/40 hover:text-accent transition shadow-xs"
+                          >
+                            Inspect
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
             </div>
           </div>
 
-          {/* Live Telemetry Event Stream */}
+          {/* Live Ingest Lake Stream */}
           <div className="rounded-xl border border-border-subtle bg-bg-surface overflow-hidden shadow-xs">
             <div className="p-3.5 border-b border-border-subtle bg-bg-elevated/40 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <span className="h-2 w-2 rounded-full bg-signal" />
-                <span className="font-bold text-text-primary text-xs">Live Telemetry Event Stream</span>
+                <span className="font-bold text-text-primary text-xs">Live Telemetry Lake Ingest</span>
               </div>
               <Link to="/events" className="press text-[11px] font-semibold text-accent hover:underline inline-flex items-center gap-1">
                 <span>Full Telemetry Feed</span>
@@ -525,12 +751,12 @@ export default function OverviewPage() {
                 <tbody className="divide-y divide-border-subtle/40">
                   {(!telemetryEvents || !telemetryEvents.events || telemetryEvents.events.length === 0) ? (
                     <tr>
-                      <td colSpan={4} className="px-4 py-8 text-center text-text-muted">
+                      <td colSpan={4} className="px-4 py-8 text-center text-text-muted font-mono">
                         No telemetry events recorded yet. Enrolled agent sensors push events in real time.
                       </td>
                     </tr>
                   ) : (
-                    telemetryEvents.events.slice(0, 5).map((e: any, idx: number) => (
+                    telemetryEvents.events.slice(0, 6).map((e: any, idx: number) => (
                       <tr key={idx} className="hover:bg-bg-elevated/30 transition">
                         <td className="px-4 py-2.5 font-mono tabular-nums text-text-faint text-[10px] whitespace-nowrap">
                           {e.timestamp ? e.timestamp.slice(11, 19) : "just now"}
@@ -561,7 +787,7 @@ export default function OverviewPage() {
           </div>
         </div>
 
-        {/* Column 2 (Right 5 cols): Enrolled Endpoint Fleet & ATT&CK Detection Posture */}
+        {/* Column 2 (Right 5 cols): Sensor Fleet, Threat Posture, & Active Dossiers */}
         <div className="lg:col-span-5 space-y-5">
           {/* Enrolled Sensor Fleet Status */}
           <div className="rounded-xl border border-border-subtle bg-bg-surface p-4 shadow-xs space-y-3">
@@ -581,7 +807,7 @@ export default function OverviewPage() {
 
             <div className="space-y-2">
               {(!fleet || fleet.agents.length === 0) ? (
-                <p className="py-4 text-center text-text-muted text-[11px]">
+                <p className="py-4 text-center text-text-muted text-[11px] font-mono">
                   No sensor endpoints enrolled yet.
                 </p>
               ) : (
@@ -679,8 +905,164 @@ export default function OverviewPage() {
               </Link>
             </div>
           </div>
+
+          {/* Active Investigations Dossiers */}
+          <div className="rounded-xl border border-border-subtle bg-bg-surface p-4 shadow-xs space-y-3">
+            <div className="flex items-center justify-between border-b border-border-subtle/60 pb-2.5">
+              <div>
+                <span className="text-[10px] uppercase font-semibold text-text-faint tracking-wider">
+                  Case Management
+                </span>
+                <h3 className="font-bold text-text-primary text-xs">
+                  Active Incident Investigations
+                </h3>
+              </div>
+              <Link to="/investigations" className="text-[11px] font-semibold text-accent hover:underline">
+                All Cases ({activeCases}) →
+              </Link>
+            </div>
+
+            {(!investigations || !investigations.investigations || investigations.investigations.length === 0) ? (
+              <div className="rounded-lg border border-border-subtle bg-bg-base/50 p-4 text-center">
+                <p className="font-mono text-xs text-text-muted">No open investigation dossiers.</p>
+                <p className="mt-1 text-[10px] text-text-faint">
+                  Promote alerts from the triage queue into an investigation case dossier.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                {investigations.investigations.slice(0, 3).map((inv) => (
+                  <Link
+                    key={inv.id}
+                    to={`/investigations/${inv.id}`}
+                    className="flex items-center justify-between rounded-lg border border-border-subtle bg-bg-base p-2.5 hover:border-accent/40 transition group shadow-xs"
+                  >
+                    <div className="min-w-0 pr-2">
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-text-primary group-hover:text-accent transition truncate text-xs">
+                          {inv.title || `Case #${inv.id.slice(0, 8)}`}
+                        </span>
+                        <span className="rounded bg-bg-surface border border-border-subtle px-1.5 py-0.2 font-mono text-[9px] uppercase tracking-wide text-text-muted">
+                          {inv.status}
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-text-faint block mt-0.5 font-mono">
+                        Updated {relativeTime(inv.updated_at || inv.created_at)}
+                      </span>
+                    </div>
+
+                    <Icon name="arrowRight" size={11} className="text-text-faint group-hover:text-accent shrink-0" />
+                  </Link>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
+
+      {/* Host Environment & Quick Action Strip */}
+      <section className="rounded-xl border border-border-subtle bg-bg-surface p-4 shadow-xs" aria-label="Actions and environment">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:gap-6">
+          {/* Quick actions */}
+          <div className="flex flex-wrap items-center gap-2">
+            {ACTIONS.map((a) => (
+              <Link
+                key={a.to}
+                to={a.to}
+                title={a.desc}
+                className="press group inline-flex items-center gap-2 rounded-lg border border-border-subtle bg-bg-base px-3 py-2 text-xs font-semibold text-text-muted transition hover:border-accent/40 hover:text-text-primary shadow-xs"
+              >
+                <span className="text-accent">{a.icon}</span>
+                <span>{a.label}</span>
+                <Icon
+                  name="arrowRight"
+                  size={10}
+                  className="text-text-faint transition group-hover:translate-x-0.5 group-hover:text-accent"
+                />
+              </Link>
+            ))}
+          </div>
+
+          {/* Host system environment telemetry */}
+          <div className="flex items-center gap-3 border-t border-border-subtle pt-3 lg:ml-auto lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-accent shadow-xs">
+              <Icon name={platIcon} size={15} />
+            </span>
+            <div className="min-w-0">
+              <p className="truncate text-xs font-semibold text-text-primary">{platLabel}</p>
+              <p className="truncate font-mono text-[10px] text-text-faint">
+                {hostPlatform ? `${hostPlatform.os} ${hostPlatform.release} · ${hostPlatform.machine}` : "detecting…"}
+              </p>
+            </div>
+            <span className="rounded border border-accent/40 bg-accent/10 px-1.5 py-0.5 font-mono text-[10px] text-accent font-semibold">
+              {hostPlatform?.collector ?? "local"}
+            </span>
+            <span
+              className={`flex items-center gap-1.5 text-[10px] font-medium font-mono ${
+                engineHealth ? "text-risk-clean" : "text-risk-malicious"
+              }`}
+            >
+              <span className={`h-1.5 w-1.5 rounded-full ${engineHealth ? "animate-pulse bg-risk-clean" : "bg-risk-malicious"}`} />
+              {engineHealth ? "online" : "offline"}
+            </span>
+          </div>
+        </div>
+      </section>
+
+      {/* Floating Process Hover Preview Card */}
+      {preview && (
+        <div
+          role="tooltip"
+          className="pointer-events-none fixed z-50 w-80 overflow-hidden rounded-xl border border-border-subtle bg-bg-surface shadow-2xl font-sans"
+          style={{ left: preview.x, top: preview.y }}
+        >
+          <div className="flex items-center gap-2 border-b border-border-subtle bg-bg-elevated/40 px-3 py-2">
+            <Icon name="process" size={13} className="shrink-0 text-accent" />
+            <span className="truncate font-mono text-xs font-semibold text-text-primary">
+              {preview.data.process_name ?? `pid ${preview.data.pid}`}
+            </span>
+            <span className="ml-auto shrink-0 font-mono text-[10px] text-text-faint">pid {preview.data.pid}</span>
+          </div>
+          <div className="space-y-2 px-3 py-2.5">
+            {preview.data.command_line && (
+              <p className="truncate font-mono text-[10px] text-text-muted" title={preview.data.command_line}>
+                {preview.data.command_line}
+              </p>
+            )}
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[10px] text-text-faint">
+              <span className="inline-flex items-center gap-1">
+                <Icon name={platformIconName(preview.data.platform)} size={10} />
+                {preview.data.platform}
+              </span>
+              <span>
+                {preview.data.event_count} event{preview.data.event_count === 1 ? "" : "s"}
+              </span>
+              {(preview.data.children?.length ?? 0) > 0 && (
+                <span>
+                  {preview.data.children!.length} child{preview.data.children!.length === 1 ? "" : "ren"}
+                </span>
+              )}
+              {(preview.data.network_connections?.length ?? 0) > 0 && (
+                <span>
+                  {preview.data.network_connections!.length} socket{preview.data.network_connections!.length === 1 ? "" : "s"}
+                </span>
+              )}
+              <span className={preview.data.alert_count > 0 ? "text-risk-suspicious font-semibold" : ""}>
+                {preview.data.alert_count} alert{preview.data.alert_count === 1 ? "" : "s"}
+              </span>
+            </div>
+            {preview.data.run_id && (
+              <Link
+                to={`/runs/${preview.data.run_id}`}
+                className="press inline-flex items-center gap-1 font-mono text-[10px] text-accent hover:underline"
+              >
+                {preview.data.sample_name || "run details"}
+                <Icon name="arrowRight" size={9} className="opacity-60" />
+              </Link>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Slide-over Alert Inspector Drawer */}
       {inspectAlert && (

@@ -31,7 +31,6 @@ import { LiveTriageModal } from "../components/LiveTriageModal";
 import { ProcessCausalityTree } from "../components/ProcessCausalityTree";
 import { ProcessNetworkMatrix } from "../components/ProcessNetworkMatrix";
 import { relativeTime } from "./agentsHelpers";
-import { HardwareSensorMatrix } from "../components/HardwareSensorMatrix";
 import { HostDifferentialDelta } from "../components/HostDifferentialDelta";
 import HostXRayMonitor from "../components/HostXRayMonitor";
 
@@ -163,7 +162,7 @@ function EntryRow({
 export default function HostDetailPage() {
   const { hostId } = useParams<{ hostId: string }>();
   const queryClient = useQueryClient();
-  const [activeView, setActiveView] = useState<"timeline" | "forensics" | "delta" | "tree" | "network" | "sensors" | "hunts">("timeline");
+  const [activeView, setActiveView] = useState<"timeline" | "forensics" | "delta" | "tree" | "network" | "hunts">("timeline");
   const [activeProbeResult, setActiveProbeResult] = useState<ForensicProbeResult | null>(null);
   const [runningProbeId, setRunningProbeId] = useState<string | null>(null);
 
@@ -446,17 +445,6 @@ export default function HostDetailPage() {
         >
           <Icon name="network" size={13} />
           <span>Network Sockets</span>
-        </button>
-        <button
-          onClick={() => setActiveView("sensors")}
-          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 font-semibold transition ${
-            activeView === "sensors"
-              ? "bg-accent/15 text-accent shadow-xs"
-              : "text-text-muted hover:text-text-primary"
-          }`}
-        >
-          <Icon name="sliders" size={13} />
-          <span>Hardware & Sensors</span>
         </button>
         <button
           onClick={() => setActiveView("hunts")}
@@ -776,23 +764,6 @@ export default function HostDetailPage() {
 
       {activeView === "network" && (
         <ProcessNetworkMatrix onInspectIp={(ip) => setInspectIp(ip)} />
-      )}
-
-      {activeView === "sensors" && (
-        <HardwareSensorMatrix
-          deviceAccess={{
-            microphone: { in_use: false, label: "Silent / No active capture" },
-            camera: { in_use: false, label: "Optical sensors standby" },
-            screen_capture: { in_use: false, label: "Display server clean" },
-            gpu: { in_use: true, label: "Active hardware acceleration" },
-          }}
-          metrics={{
-            cpu_percent: 4.2,
-            memory_mb: 5120,
-            listening_sockets: 6,
-            gpu_clients: 2,
-          }}
-        />
       )}
 
       {activeView === "timeline" && (
