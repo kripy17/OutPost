@@ -60,7 +60,7 @@ export function Panel({
   tactical?: boolean;
 }) {
   return (
-    <section id={id} className={`panel ${tactical ? "hud-card hud-corner" : ""} ${className}`}>
+    <section id={id} className={`panel ${className}`}>
       {(title || kicker || right) && (
         <header className="panel-header">
           <div className="min-w-0">
@@ -333,21 +333,6 @@ export function DefconBadge({
         <span className={`relative inline-flex h-2 w-2 rounded-full ${isSevere ? "bg-risk-malicious" : isGuarded ? "bg-risk-suspicious" : "bg-risk-clean"}`} />
       </span>
       <span>{level}</span>
-    </div>
-  );
-}
-
-/** Tactical Frame with laser corner accents */
-export function TacticalFrame({
-  children,
-  className = "",
-}: {
-  children: ReactNode;
-  className?: string;
-}) {
-  return (
-    <div className={`hud-card hud-corner p-4 ${className}`}>
-      {children}
     </div>
   );
 }

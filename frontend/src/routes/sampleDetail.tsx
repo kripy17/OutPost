@@ -386,7 +386,7 @@ const SECURITY_API_CATEGORIES = [
   },
 ];
 
-function SecurityApisIntentCockpit({ st }: { st?: SampleStatic }) {
+function SecurityApisIntentInspector({ st }: { st?: SampleStatic }) {
   if (!st || !st.available) return null;
 
   const observedStrings = new Set([
@@ -801,8 +801,8 @@ function StaticAnalysis({ sample }: { sample: { sample_id: string; sha256: strin
         </Panel>
       )}
 
-      {/* Security API & Threat Intent Cockpit */}
-      {st && st.available && <SecurityApisIntentCockpit st={st} />}
+      {/* Security API & Threat Intent Matrix */}
+      {st && st.available && <SecurityApisIntentInspector st={st} />}
     </div>
   );
 }

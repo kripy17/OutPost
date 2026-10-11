@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { Chip, PageHeader } from "../components/ui";
@@ -17,14 +17,6 @@ import {
 import { intelAgeLabel } from "../lib/constants";
 import type { Footprint, FootprintSeedIp } from "../types";
 import { buildTopology, MAP, regTimeline, whoisTimeline } from "./footprintHelpers";
-
-const SUGGESTED_INDICATORS = [
-  { label: "198.51.100.44", type: "IP · Staging C2" },
-  { label: "c2-tracker.org", type: "FQDN · Beacon Host" },
-  { label: "203.0.113.204", type: "IP · Exfil Gateway" },
-  { label: "api.update-telemetry.com", type: "FQDN · Fake CDN" },
-  { label: "93.184.216.34", type: "IP · Anycast Edge" },
-];
 
 export interface SelectedIndicatorState {
   value: string;
@@ -1022,6 +1014,20 @@ export default function FootprintPage() {
     queryFn: getFootprintTopology,
   });
 
+  const suggestedIndicators = useMemo(() => {
+    if (topology?.clusters && topology.clusters.length > 0) {
+      return topology.clusters.slice(0, 5).map((c) => ({
+        label: c.ip,
+        type: `IP · ${c.sample_count} sample${c.sample_count === 1 ? "" : "s"} (${c.reputation})`,
+      }));
+    }
+    return [
+      { label: "1.1.1.1", type: "IP · Cloudflare Anycast" },
+      { label: "8.8.8.8", type: "IP · Google Public DNS" },
+      { label: "9.9.9.9", type: "IP · Quad9 Clean" },
+    ];
+  }, [topology]);
+
   const handleIndicatorSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!indicatorInput.trim()) return;
@@ -1277,7 +1283,7 @@ export default function FootprintPage() {
           {mode === "indicator" && (
             <div className="flex flex-wrap items-center gap-1.5 font-mono text-[11px]">
               <span className="text-text-faint text-[10px] uppercase">Pivots:</span>
-              {SUGGESTED_INDICATORS.map((item) => (
+              {suggestedIndicators.map((item) => (
                 <button
                   key={item.label}
                   onClick={() => {
