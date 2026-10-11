@@ -22,7 +22,7 @@ export const THEMES: ThemeDef[] = [
   },
   {
     id: "glass",
-    name: "Glass Cockpit",
+    name: "Glass Workstation",
     note: "violet night · frosted neon panels",
     swatch: ["#150f2b", "#b18bff", "#22d3ee"],
   },

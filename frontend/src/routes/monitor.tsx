@@ -1035,7 +1035,7 @@ export default function MonitorPage() {
       {/* ── Page Header & Architecture Status Strip ───────────────────────── */}
       <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
         <PageHeader
-          kicker="Simulation Lab · Dynamic Behavior & Canary Cockpit"
+          kicker="Simulation Lab · Dynamic Behavior & Canary Execution Console"
           title="Adversary Simulation & Dynamic Behavioral Sandbox"
           lede="Detonate safe non-destructive behavioral canaries and vault samples in an isolated sandbox. Watch live command execution in the terminal alongside dynamic tracking of processes spawned, files created, network sockets, and detection rule hits."
         />
@@ -1325,7 +1325,7 @@ export default function MonitorPage() {
                 <button
                   onClick={handleResetCockpit}
                   className="press inline-flex items-center gap-1 rounded-lg border border-border-subtle bg-bg-surface px-2.5 py-1 text-[11px] text-text-muted hover:text-rose-400 hover:border-rose-400/50"
-                  title="Reset cockpit and clear output"
+                  title="Reset execution terminal and clear output"
                 >
                   <Icon name="refresh" size={11} />
                   <span>Reset Lab</span>

@@ -1764,7 +1764,7 @@ export async function getXRayTargetCatalog(): Promise<{
   return get<any>("/system/xray/catalog");
 }
 
-/** Unified full target dossier for Host Forensics Command Cockpit. */
+/** Unified full target dossier for Host Forensics X-Ray Monitor. */
 export async function getXRayFullTargetDossier(pid: number): Promise<{
   target: {
     pid: number;

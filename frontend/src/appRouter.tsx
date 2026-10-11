@@ -114,6 +114,7 @@ function Layout() {
           i: "/investigations",
           c: "/campaigns",
           h: "/history",
+          t: "/tasks",
         };
         if (map[e.key.toLowerCase()]) {
           e.preventDefault();
@@ -237,6 +238,10 @@ function Layout() {
               <div className="flex justify-between items-center py-2 border-b border-border-subtle/50">
                 <span>Go to Campaigns</span>
                 <kbd className="rounded border border-border-subtle bg-bg-elevated px-2 py-0.5 text-text-primary">g c</kbd>
+              </div>
+              <div className="flex justify-between items-center py-2 border-b border-border-subtle/50">
+                <span>Go to Host Tasks &amp; Forensics</span>
+                <kbd className="rounded border border-border-subtle bg-bg-elevated px-2 py-0.5 text-text-primary">g t</kbd>
               </div>
               <div className="flex justify-between items-center py-2">
                 <span>Toggle Shortcuts Help</span>

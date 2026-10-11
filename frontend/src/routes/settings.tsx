@@ -223,7 +223,7 @@ function ThemePalettePanel() {
         </div>
         <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
           <span className="font-mono text-[10px] text-text-faint">Presets:</span>
-          {["OutPost SOC", "Red Team Operations", "Sentinel Threat Lab", "Incident Response Cockpit"].map((p) => (
+          {["OutPost SOC", "Red Team Operations", "Sentinel Threat Lab", "Incident Response Console"].map((p) => (
             <button
               key={p}
               onClick={() => saveCustomTitle(p)}

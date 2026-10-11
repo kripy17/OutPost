@@ -152,6 +152,11 @@ export function getNavigationGroups(
           badge: onlineAgents > 0 ? `${onlineAgents} on` : null,
           badgeTone: "clean",
         },
+        {
+          to: "/tasks",
+          label: "Host Process Forensics",
+          iconName: "process",
+        },
       ],
     },
     {

@@ -5,7 +5,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { platformIconName } from "../components/iconMeta";
 import { IocFleetHuntModal } from "../components/IocFleetHuntModal";
-import { EndpointTaskManager } from "../components/EndpointTaskManager";
+import HostXRayMonitor from "../components/HostXRayMonitor";
 import {
   getAgentBootstrapCommands,
   getAgents,
@@ -930,7 +930,7 @@ export default function AgentsPage() {
       </div>
 
       {activeDeck === "task_manager" ? (
-        <EndpointTaskManager hostId="local" />
+        <HostXRayMonitor hostId="local" />
       ) : (
         <>
           {/* Beginner Operational Posture Guide */}
