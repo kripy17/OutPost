@@ -530,6 +530,105 @@ detection:
 level: high
 """,
     },
+    {
+        "id": "sigma-lnx-sudoers-tampering",
+        "title": "Sudoers File Modification & Privilege Escalation",
+        "platform": "linux",
+        "level": "critical",
+        "severity": "malicious",
+        "mitre_tactics": ["privilege-escalation", "persistence"],
+        "mitre_techniques": ["T1548.003"],
+        "description": "Detects modification or command appending to /etc/sudoers or /etc/sudoers.d configuration to establish unprivileged NOPASSWD root execution.",
+        "sigma_yaml": """title: Sudoers File Modification
+id: fa871f30-61d0-4bf8-bfa3-e4d6a67f1390
+status: stable
+description: Detects command-line operations modifying or appending NOPASSWD entries to sudoers.
+author: OutPost Community, SigmaHQ
+tags:
+    - attack.privilege_escalation
+    - attack.t1548.003
+    - attack.persistence
+logsource:
+    category: process_creation
+    product: linux
+detection:
+    selection:
+        CommandLine|contains:
+            - 'NOPASSWD:'
+            - '/etc/sudoers'
+            - '/etc/sudoers.d/'
+            - 'visudo -c'
+    condition: selection
+level: critical
+""",
+    },
+    {
+        "id": "sigma-lnx-interactive-reverse-shell",
+        "title": "Interactive Reverse Shell Execution via Network Sockets",
+        "platform": "linux",
+        "level": "critical",
+        "severity": "malicious",
+        "mitre_tactics": ["execution", "command-and-control"],
+        "mitre_techniques": ["T1059.004", "T1071"],
+        "description": "Detects interactive shell redirection to network sockets via /dev/tcp, mkfifo named pipes, socat, or netcat.",
+        "sigma_yaml": """title: Interactive Reverse Shell Execution
+id: 5a8e27c1-2f3b-410a-8bf8-d510c4f80a31
+status: stable
+description: Detects interactive shell execution redirecting stdin/stdout across network descriptors.
+author: OutPost Community, SigmaHQ
+tags:
+    - attack.execution
+    - attack.t1059.004
+    - attack.command_and_control
+logsource:
+    category: process_creation
+    product: linux
+detection:
+    selection:
+        CommandLine|contains:
+            - '/dev/tcp/'
+            - '/dev/udp/'
+            - 'mkfifo /tmp/'
+            - 'socat exec:'
+            - 'nc -e /bin/'
+            - 'ncat -e /bin/'
+    condition: selection
+level: critical
+""",
+    },
+    {
+        "id": "sigma-win-rundll32-scriptlet",
+        "title": "Rundll32 Inline Scriptlet & Proxy Execution",
+        "platform": "windows",
+        "level": "high",
+        "severity": "malicious",
+        "mitre_tactics": ["defense-evasion"],
+        "mitre_techniques": ["T1218.011"],
+        "description": "Detects execution of rundll32.exe with inline scriptlet protocols (javascript:, vbscript:) or loading DLLs from untrusted directories.",
+        "sigma_yaml": """title: Rundll32 Inline Scriptlet Execution
+id: c18d9b23-6e3e-4d56-9a2f-e89839441ecb
+status: stable
+description: Detects rundll32 executing inline scriptlets or unmanaged payload DLLs.
+author: Florian Roth, SigmaHQ
+tags:
+    - attack.defense_evasion
+    - attack.t1218.011
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Image|endswith:
+            - '\\rundll32.exe'
+        CommandLine|contains:
+            - 'javascript:'
+            - 'vbscript:'
+            - 'mshtml,RunHTMLApplication'
+            - 'AppData\\Local\\Temp'
+    condition: selection
+level: high
+""",
+    },
 ]
 
 

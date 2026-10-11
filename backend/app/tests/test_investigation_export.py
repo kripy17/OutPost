@@ -87,3 +87,22 @@ def test_investigation_export_stix(client):
     assert any(r["target_ref"] == incident["id"] and r["relationship_type"] == "indicates" for r in relationships)
     assert any(r["target_ref"] == incident["id"] and r["relationship_type"] == "related-to" for r in relationships)
 
+
+def test_investigation_export_csv(client):
+    resp = client.post("/investigations", json={"title": "Timesketch Incident Alpha", "tags": ["intrusion"]})
+    assert resp.status_code == 201
+    inv_id = resp.json()["id"]
+
+    client.post(f"/investigations/{inv_id}/notes", json={"note": "Initial access triage completed"})
+
+    exp_resp = client.get(f"/investigations/{inv_id}/export?format=csv")
+    assert exp_resp.status_code == 200
+    assert "text/csv" in exp_resp.headers.get("content-type", "")
+    assert f"outpost-timeline-{inv_id}.csv" in exp_resp.headers.get("content-disposition", "")
+
+    csv_text = exp_resp.text
+    assert "datetime,timestamp_desc,message,source,source_type,severity,event_type,actor,ref_id" in csv_text
+    assert "Timesketch Incident Alpha" in csv_text
+    assert "Initial access triage completed" in csv_text
+
+

@@ -312,13 +312,14 @@ def synthesize_case_narrative(investigation_id: str) -> dict:
 @router.get("/investigations/{investigation_id}/export")
 def export_investigation(
     investigation_id: str,
-    format: str = Query("markdown", description="markdown | json | stix"),
+    format: str = Query("markdown", description="markdown | json | stix | csv"),
 ):
-    """Export an executive Incident Response Case Brief in Markdown, JSON, or OASIS STIX 2.1 Bundle format."""
+    """Export an executive Incident Response Case Brief in Markdown, JSON, OASIS STIX 2.1 Bundle, or Timesketch CSV format."""
     from fastapi.responses import PlainTextResponse
 
     from ..services import stix as stix_service
     from ..services.report import (
+        build_investigation_csv_timeline,
         build_investigation_json_export,
         build_investigation_markdown_export,
     )
@@ -330,6 +331,15 @@ def export_investigation(
             return stix_service.build_investigation_stix_bundle(investigation_id)
         elif fmt == "json":
             return build_investigation_json_export(conn, investigation_id)
+        elif fmt in ("csv", "timeline"):
+            csv_text = build_investigation_csv_timeline(conn, investigation_id)
+            return PlainTextResponse(
+                content=csv_text,
+                media_type="text/csv",
+                headers={
+                    "Content-Disposition": f'attachment; filename="outpost-timeline-{investigation_id}.csv"'
+                },
+            )
         else:
             md_text = build_investigation_markdown_export(conn, investigation_id)
             return PlainTextResponse(

@@ -547,3 +547,40 @@ def build_investigation_json_export(conn, investigation_id: str) -> dict:
     }
 
 
+def build_investigation_csv_timeline(conn, investigation_id: str) -> str:
+    """Export investigation causality events in standard Timesketch/Plaso CSV timeline format."""
+    import csv
+
+    from ..models import investigation as inv_store
+
+    timeline = inv_store.build_investigation_timeline(conn, investigation_id)
+    output = io.StringIO()
+    writer = csv.writer(output, quoting=csv.QUOTE_MINIMAL)
+    writer.writerow([
+        "datetime",
+        "timestamp_desc",
+        "message",
+        "source",
+        "source_type",
+        "severity",
+        "event_type",
+        "actor",
+        "ref_id",
+    ])
+    for event in timeline:
+        msg = f"{event.get('title', '')}: {event.get('description', '')}".strip(": ")
+        writer.writerow([
+            event.get("timestamp") or "",
+            "Event Triggered / Recorded",
+            msg,
+            event.get("actor") or "outpost",
+            event.get("event_type") or "telemetry",
+            str(event.get("severity") or "info").upper(),
+            event.get("event_type") or "",
+            event.get("actor") or "",
+            event.get("ref_id") or "",
+        ])
+    return output.getvalue()
+
+
+
