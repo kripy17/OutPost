@@ -19,7 +19,10 @@
  * at least two open alerts (verify.sh's layout step seeds that state).
  */
 
+import { existsSync } from "node:fs";
 import { chromium } from "playwright";
+
+const sysChrome = process.env.CHROMIUM_PATH || ["/usr/bin/chromium", "/usr/bin/google-chrome", "/usr/bin/google-chrome-stable"].find(existsSync);
 
 const args = process.argv.slice(2);
 const getArg = (name, def) => {
@@ -79,7 +82,7 @@ console.log(`run ${target.runId} — ${target.open.length} open alerts`);
 ok("found a run with >= 2 open, id-bearing alerts");
 
 // 2. Drive the triage UI.
-const browser = await chromium.launch({ headless: HEADLESS });
+const browser = await chromium.launch({ headless: HEADLESS, executablePath: sysChrome, args: ["--no-sandbox"] });
 const page = await browser.newPage();
 const pageErrors = [];
 page.on("pageerror", (e) => pageErrors.push(String(e)));

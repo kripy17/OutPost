@@ -1068,7 +1068,7 @@ export default function MonitorPage() {
           </span>
           <div>
             <div className="flex items-center gap-2">
-              <span className="font-bold text-text-primary text-sm">Adversary Simulation Lab</span>
+              <span className="font-bold text-text-primary text-sm">Adversary Simulation Lab Environment</span>
               <span className="rounded bg-accent/20 px-2 py-0.5 text-[10px] font-bold text-accent uppercase font-mono">DEMO &amp; DETECTION VALIDATION</span>
             </div>
             <p className="text-xs text-text-muted mt-0.5">
@@ -2327,6 +2327,8 @@ export default function MonitorPage() {
                         <button
                           onClick={() => void handleRunFullPlaybook(pb)}
                           disabled={isExecuting}
+                          aria-label="Execute Simulation · Detonate Sample"
+                          title="Execute Simulation · Detonate Sample"
                           className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/15 px-3 py-1 text-[11px] font-bold text-accent transition hover:bg-accent/25 focus:ring-1 focus:ring-accent/40 disabled:opacity-50"
                         >
                           <Icon
@@ -2334,7 +2336,7 @@ export default function MonitorPage() {
                             size={11}
                             className={isDetonating ? "animate-spin" : ""}
                           />
-                          <span>{isDetonating ? "Detonating…" : "Detonate Sample"}</span>
+                          <span>{isDetonating ? "Executing…" : "Execute Simulation · Detonate Sample"}</span>
                         </button>
                       </div>
                     </div>

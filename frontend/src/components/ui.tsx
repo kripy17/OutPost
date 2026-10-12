@@ -31,7 +31,7 @@ export function PageHeader({
           <h1 className="display mt-2 font-sans tracking-tight text-text-primary">{title}</h1>
           {lede && <p className="mt-2.5 max-w-3xl text-pretty text-sm font-normal leading-relaxed text-text-muted">{lede}</p>}
         </div>
-        {actions && <div className="flex shrink-0 items-center gap-2.5">{actions}</div>}
+        {actions && <div className="flex flex-wrap items-center gap-2.5">{actions}</div>}
       </div>
     </header>
   );
@@ -65,7 +65,7 @@ export function Panel({
             {kicker && <Kicker className="mb-1">{kicker}</Kicker>}
             {title && <h2 className="panel-title">{title}</h2>}
           </div>
-          {right && <div className="flex shrink-0 items-center gap-2">{right}</div>}
+          {right && <div className="flex flex-wrap items-center gap-2">{right}</div>}
         </header>
       )}
       <div className={pad ? `p-4 ${bodyClassName}` : bodyClassName}>{children}</div>

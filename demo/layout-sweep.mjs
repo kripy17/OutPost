@@ -20,7 +20,10 @@
  * route at any width. Prints a per-route PASS/FAIL table.
  */
 
+import { existsSync } from "node:fs";
 import { chromium } from "playwright";
+
+const sysChrome = process.env.CHROMIUM_PATH || ["/usr/bin/chromium", "/usr/bin/google-chrome", "/usr/bin/google-chrome-stable"].find(existsSync);
 
 const args = process.argv.slice(2);
 const getArg = (name, def) => {
@@ -195,7 +198,7 @@ async function sweepRoute(browser, route, width) {
 
 const routes = [...STATIC_ROUTES, ...(await dynamicRoutes())];
 
-const browser = await chromium.launch({ headless: HEADLESS, args: ["--no-sandbox"] });
+const browser = await chromium.launch({ headless: HEADLESS, executablePath: sysChrome, args: ["--no-sandbox"] });
 for (const route of routes) {
   for (const width of WIDTHS) {
     await sweepRoute(browser, route, width);

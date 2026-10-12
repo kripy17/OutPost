@@ -17,7 +17,10 @@
  * pass cleanly; exit 1 = any step failed.
  */
 
+import { existsSync } from "node:fs";
 import { chromium } from "playwright";
+
+const sysChrome = process.env.CHROMIUM_PATH || ["/usr/bin/chromium", "/usr/bin/google-chrome", "/usr/bin/google-chrome-stable"].find(existsSync);
 
 const args = process.argv.slice(2);
 const getArg = (name, def) => {
@@ -57,7 +60,7 @@ const fail = (msg) => {
 };
 const ok = (msg) => console.log(`  ✓ ${msg}`);
 
-const browser = await chromium.launch({ headless: HEADLESS });
+const browser = await chromium.launch({ headless: HEADLESS, executablePath: sysChrome, args: ["--no-sandbox"] });
 const page = await browser.newPage();
 const pageErrors = [];
 page.on("pageerror", (e) => pageErrors.push(String(e)));

@@ -41,7 +41,9 @@
 
 ## 🛡️ What is OutPost?
 
-**OutPost** is a self-hosted security operations workstation built for SOC analysts, incident responders, and detection engineers. It continuously ingests endpoint telemetry, flags suspicious activity across 48 behavioral heuristics mapped to all 14 MITRE ATT&CK tactics, and enables automated investigation and containment from either a rich web dashboard or a high-speed terminal TUI console.
+**OutPost** is a self-hosted security operations workstation built for SOC analysts, incident responders, and detection engineers. It continuously ingests endpoint telemetry, flags suspicious activity across **48 rules** mapped to all 14 MITRE ATT&CK tactics, and enables automated investigation and containment from either a rich web dashboard or a high-speed terminal TUI console.
+
+
 
 OutPost is organized around **Five Core Operational Pillars**:
 
