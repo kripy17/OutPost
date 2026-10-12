@@ -819,6 +819,7 @@ def get_host_containment(host_id: str) -> dict:
 def set_host_isolation(host_id: str, request: Request, payload: dict | None = None) -> dict:
     """Toggle host network isolation status (active containment)."""
     from ..core import auth as auth_service
+    from ..models import audit
     from ..services import events_stream
 
     payload = payload or {}
@@ -841,6 +842,15 @@ def set_host_isolation(host_id: str, request: Request, payload: dict | None = No
             """,
             (host_id, 1 if isolated else 0, now, actor, reason, now),
         )
+        action_name = "agent.isolate" if isolated else "agent.unisolate"
+        audit.log(
+            conn,
+            actor,
+            action_name,
+            target_type="host",
+            target_id=host_id,
+            detail=f"{'isolated' if isolated else 'unisolated'} host {host_id}: {reason}",
+        )
 
     events_stream.publish_fleet_update(host_id, online=True, silent=False, last_heartbeat=now)
     return {
@@ -857,10 +867,12 @@ def set_host_isolation(host_id: str, request: Request, payload: dict | None = No
 def queue_process_kill(host_id: str, request: Request, payload: dict | None = None) -> dict:
     """Queue a process kill action to be executed by the target host collector."""
     from ..core import auth as auth_service
+    from ..models import audit
 
     payload = payload or {}
     pid = payload.get("pid")
     process_name = payload.get("process_name", "")
+    expected_create_time = payload.get("expected_create_time")
     if not pid and not process_name:
         raise HTTPException(status_code=422, detail="Either 'pid' or 'process_name' is required.")
 
@@ -872,6 +884,7 @@ def queue_process_kill(host_id: str, request: Request, payload: dict | None = No
         "action": "kill_process",
         "pid": pid,
         "process_name": process_name,
+        "expected_create_time": expected_create_time,
         "requested_by": actor,
         "requested_at": now,
     }
@@ -897,6 +910,14 @@ def queue_process_kill(host_id: str, request: Request, payload: dict | None = No
                 updated_at = excluded.updated_at
             """,
             (host_id, json.dumps(actions), now),
+        )
+        audit.log(
+            conn,
+            actor,
+            "agent.process.kill_queued",
+            target_type="host",
+            target_id=host_id,
+            detail=f"queued kill for PID {pid} ({process_name or 'unnamed'}) on host {host_id}",
         )
 
     return {

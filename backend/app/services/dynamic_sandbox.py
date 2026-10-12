@@ -237,22 +237,15 @@ async def execute_bytes_sandbox(
                 "--new-session",
                 "--cap-drop", "ALL",
             ])
-            if network_mode in ("airgap", "isolated", "zero_egress"):
+            if network_mode not in ("bridge", "host", "allow_net"):
                 bwrap_prefix.append("--unshare-net")
             bwrap_prefix.append("--die-with-parent")
             exec_cmd = bwrap_prefix + exec_cmd
 
-        child_env = {
-            k: v
-            for k, v in os.environ.items()
-            if not (
-                k.endswith("_KEY")
-                or k.endswith("_SECRET")
-                or k.endswith("_TOKEN")
-                or k.endswith("_PASSWORD")
-                or k in ("VT_API_KEY", "ABUSEIPDB_API_KEY", "SHODAN_API_KEY", "GREYNOISE_API_KEY")
-            )
+        ALLOWED_ENV_VARS = {
+            "PATH", "TERM", "LANG", "LC_ALL", "USER", "LOGNAME", "HOME", "TMPDIR", "TZ", "SHELL",
         }
+        child_env = {k: v for k, v in os.environ.items() if k in ALLOWED_ENV_VARS}
         child_env["OUTPOST_SANDBOX"] = "1"
         child_env["OUTPOST_RUN_ID"] = run_id
 

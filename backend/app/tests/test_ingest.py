@@ -247,3 +247,32 @@ def test_ingest_batch_deflate_compressed(client):
     assert resp.status_code == 202
     assert resp.json()["accepted"] == 1
 
+
+def test_ingest_batch_decompression_bomb_rejected(client):
+    """Decompression bombs exceeding the 50MB safety ceiling are aborted with HTTP 400."""
+    import gzip
+
+    # Generate 52 MB of zeroes that compress to ~50 KB
+    huge_payload = b"0" * (52 * 1024 * 1024)
+    compressed_bomb = gzip.compress(huge_payload)
+
+    resp = client.post(
+        "/ingest/batch",
+        content=compressed_bomb,
+        headers={"Content-Encoding": "gzip", "Content-Type": "application/json"},
+    )
+    assert resp.status_code == 400
+    assert "exceeds" in resp.json()["detail"].lower() or "error" in resp.json()["detail"].lower()
+
+
+def test_ingest_batch_corrupted_gzip_rejected(client):
+    """Corrupted compressed payload streams are safely rejected with HTTP 400."""
+    resp = client.post(
+        "/ingest/batch",
+        content=b"\x1f\x8b\x08corrupted_stream_data_here",
+        headers={"Content-Encoding": "gzip", "Content-Type": "application/json"},
+    )
+    assert resp.status_code == 400
+    assert "decompression error" in resp.json()["detail"].lower()
+
+

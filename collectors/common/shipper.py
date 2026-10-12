@@ -443,6 +443,24 @@ class Shipper:
                     try:
                         pid_int = int(pid)
                         if pid_int > 1 and pid_int != os.getpid():
+                            expected_create_time = act.get("expected_create_time")
+                            if expected_create_time is not None:
+                                try:
+                                    import psutil
+                                    p = psutil.Process(pid_int)
+                                    p_create = p.create_time()
+                                    if abs(p_create - float(expected_create_time)) > 3.0:
+                                        log.warning(
+                                            "PID %d start time mismatch (%s vs expected %s) — aborting kill to prevent PID reuse collision",
+                                            pid_int,
+                                            p_create,
+                                            expected_create_time,
+                                        )
+                                        if action_id:
+                                            executed_ids.append(action_id)
+                                        continue
+                                except (ImportError, ValueError, Exception) as proc_check_err:
+                                    log.debug("Process start-time check skipped: %s", proc_check_err)
                             try:
                                 os.kill(pid_int, signal.SIGTERM)
                             except AttributeError:

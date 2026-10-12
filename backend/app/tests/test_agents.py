@@ -559,3 +559,97 @@ def test_agent_heartbeat_with_live_telemetry_metrics(client):
     assert target["metrics"] == metrics_payload
     assert target["agent_id"] == "agt_testmetric123"
 
+
+def test_agent_token_forbidden_from_containment_and_kill(client, monkeypatch):
+    """Agent tokens are restricted to telemetry and cannot trigger containment or kill processes."""
+    monkeypatch.setenv("OUTPOST_AUTH_REQUIRED", "1")
+    monkeypatch.setenv("OUTPOST_ADMIN_PASSWORD", "admin-pass-xyz")
+    monkeypatch.setenv("OUTPOST_AGENT_TOKEN", "agent-tok-xyz")
+
+    agent_headers = {"Authorization": "Bearer agent-tok-xyz"}
+
+    # Attempting to isolate via agent token fails with 403
+    iso_res = client.post("/agents/victim-host/isolate", json={"isolated": True}, headers=agent_headers)
+    assert iso_res.status_code == 403
+    assert "telemetry endpoints" in iso_res.json()["detail"]
+
+    # Attempting to queue process kill via agent token fails with 403
+    kill_res = client.post("/agents/victim-host/kill-process", json={"pid": 1234}, headers=agent_headers)
+    assert kill_res.status_code == 403
+    assert "telemetry endpoints" in kill_res.json()["detail"]
+
+    # Attempting to view enrolled secrets fails with 403
+    enrolled_res = client.get("/agents/enrolled", headers=agent_headers)
+    assert enrolled_res.status_code == 403
+
+    # Admin login succeeds and can execute containment
+    login_res = client.post("/auth/login", json={"password": "admin-pass-xyz"})
+    assert login_res.status_code == 200
+    admin_token = login_res.json()["token"]
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+    iso_admin = client.post("/agents/victim-host/isolate", json={"isolated": True}, headers=admin_headers)
+    assert iso_admin.status_code == 200
+    assert iso_admin.json()["isolated"] is True
+
+
+def test_agent_containment_audit_logging(client):
+    """Containment isolation changes and process kill actions are recorded in the audit log."""
+    from app.core.db import db_session
+
+    client.post(
+        "/agents/audit-host-99/isolate",
+        json={"isolated": True, "reason": "Active C2 beaconing observed"},
+    )
+    client.post(
+        "/agents/audit-host-99/kill-process",
+        json={"pid": 5432, "process_name": "mimikatz.exe"},
+    )
+
+    with db_session() as conn:
+        rows = conn.execute(
+            "SELECT action, target_type, target_id, detail FROM audit_log WHERE target_id = 'audit-host-99' ORDER BY id ASC"
+        ).fetchall()
+        assert len(rows) >= 2
+        actions = [r["action"] for r in rows]
+        assert "agent.isolate" in actions
+        assert "agent.process.kill_queued" in actions
+        iso_row = next(r for r in rows if r["action"] == "agent.isolate")
+        assert "Active C2 beaconing" in iso_row["detail"]
+        kill_row = next(r for r in rows if r["action"] == "agent.process.kill_queued")
+        assert "5432" in kill_row["detail"]
+        assert "mimikatz.exe" in kill_row["detail"]
+
+
+def test_agent_hmac_anti_replay_protection(client, monkeypatch):
+    """Replaying the exact same HMAC signature within the active window is blocked."""
+    import hashlib
+    import hmac
+    import time
+
+    reg = client.post("/agents/register", json={"host_id": "replay-host-01", "platform": "linux"}).json()
+    agent_id = reg["agent_id"]
+    secret = reg["agent_secret"]
+
+    now_ts = str(int(time.time()))
+    path = "/agents/replay-host-01/heartbeat"
+    canonical = f"{agent_id}:{now_ts}:POST:{path}"
+    valid_sig = hmac.new(secret.encode(), canonical.encode(), hashlib.sha256).hexdigest()
+
+    headers = {
+        "X-OutPost-Agent-Id": agent_id,
+        "X-OutPost-Timestamp": now_ts,
+        "X-OutPost-Signature": valid_sig,
+    }
+
+    # First request succeeds
+    r1 = client.post(path, json={"platform": "linux"}, headers=headers)
+    assert r1.status_code == 200
+
+    # Immediate replay of the exact same signature must fail
+    monkeypatch.setenv("OUTPOST_AUTH_REQUIRED", "1")
+    monkeypatch.setenv("OUTPOST_ADMIN_PASSWORD", "test-admin")
+    r2 = client.post(path, json={"platform": "linux"}, headers=headers)
+    assert r2.status_code == 401
+
+

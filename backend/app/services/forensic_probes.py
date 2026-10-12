@@ -663,10 +663,18 @@ def hunt_pam_backdoors() -> List[Dict[str, Any]]:
                         tokens = clean.split()
                         if len(tokens) >= 3:
                             mod_type = tokens[0].lower()
+                            control_flag = tokens[1].lower()
                             mod_path = tokens[2]
 
-                            # Check for auth sufficient pam_permit.so in sensitive services (instant root bypass)
-                            if service_name in sensitive_services and mod_type == "auth" and "pam_permit.so" in mod_path:
+                            # Check for auth sufficient pam_permit.so in sensitive services (instant root/credential bypass).
+                            # Standard Ubuntu/Debian common-auth uses 'auth required pam_permit.so' as a terminal anchor
+                            # which does NOT bypass authentication. Only 'sufficient' or early-exit control flags bypass.
+                            is_permissive_control = (
+                                control_flag in ("sufficient", "optional")
+                                or "success=done" in control_flag
+                                or "default=done" in control_flag
+                            )
+                            if service_name in sensitive_services and mod_type == "auth" and "pam_permit.so" in mod_path and is_permissive_control:
                                 results.append({
                                     "location": str(p_file),
                                     "entry": clean,
@@ -674,7 +682,7 @@ def hunt_pam_backdoors() -> List[Dict[str, Any]]:
                                     "module": mod_path,
                                     "is_suspicious": True,
                                     "severity": "critical",
-                                    "details": f"Authentication bypass: 'pam_permit.so' configured in {service_name} auth stack permits any credential",
+                                    "details": f"Authentication bypass: permissive control '{tokens[1]}' on pam_permit.so configured in {service_name} auth stack permits unauthenticated access",
                                 })
                             # Check for pam_exec executing scripts from suspicious directories
                             elif "pam_exec.so" in mod_path or (len(tokens) > 3 and "pam_exec" in clean):

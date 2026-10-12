@@ -206,6 +206,7 @@ CREATE TABLE IF NOT EXISTS enrichment_cache (
 CREATE INDEX IF NOT EXISTS idx_events_run_id ON events(run_id);
 CREATE INDEX IF NOT EXISTS idx_events_dest_ip ON events(dest_ip);
 CREATE INDEX IF NOT EXISTS idx_events_run_type ON events(run_id, event_type);
+CREATE INDEX IF NOT EXISTS idx_events_run_timestamp ON events(run_id, timestamp);
 CREATE INDEX IF NOT EXISTS idx_alerts_run_id ON alerts(run_id);
 
 -- Write-through copy of the in-memory process map (persisted at completion)
@@ -834,6 +835,12 @@ def _migrate_samples_platform_unknown(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _migrate_events_run_timestamp(conn: sqlite3.Connection) -> None:
+    """Idempotent: ensure composite index on events(run_id, timestamp) exists."""
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_events_run_timestamp ON events(run_id, timestamp)")
+    conn.commit()
+
+
 def get_connection():
     """Open a connection with a Row factory and foreign keys on.
 
@@ -848,6 +855,9 @@ def get_connection():
     conn = sqlite3.connect(config.DATABASE_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA busy_timeout = 5000")
+    conn.execute("PRAGMA synchronous = NORMAL")
     return conn
 
 
@@ -881,6 +891,7 @@ def init_db() -> None:
         _migrate_events_exe_path(conn)
         _migrate_events_query(conn)
         _migrate_events_tls_sni(conn)
+        _migrate_events_run_timestamp(conn)
         _migrate_runs_suppressed_alerts(conn)
         _migrate_rule_suppressions_value(conn)
 

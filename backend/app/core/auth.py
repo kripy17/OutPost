@@ -31,6 +31,7 @@ import hashlib
 import hmac
 import json
 import os
+import threading
 import time
 
 TOKEN_TTL_SECONDS = 60 * 60 * 24  # 24h
@@ -38,6 +39,21 @@ PBKDF2_ITERATIONS = 210_000  # OWASP-flavored for PBKDF2-HMAC-SHA256
 _HASH_ALGO = "pbkdf2_sha256"
 
 _ROLES = ("admin", "analyst")
+
+_SEEN_SIGNATURES: dict[str, float] = {}
+_SEEN_LOCK = threading.Lock()
+
+
+def _check_and_record_signature(sig_key: str, now: float) -> bool:
+    with _SEEN_LOCK:
+        cutoff = now - 360.0
+        expired = [k for k, v in _SEEN_SIGNATURES.items() if v < cutoff]
+        for k in expired:
+            _SEEN_SIGNATURES.pop(k, None)
+        if sig_key in _SEEN_SIGNATURES:
+            return False
+        _SEEN_SIGNATURES[sig_key] = now
+        return True
 
 
 def _stored_agent_token() -> str:
@@ -90,11 +106,13 @@ def verify_agent_hmac_headers(
     signature: str,
     method: str = "GET",
     path: str = "/",
+    body_digest: str | None = None,
+    nonce: str | None = None,
 ) -> bool:
     """Verify HMAC-SHA256 request signature for an enrolled agent.
 
-    Format: HMAC-SHA256(agent_secret, f"{agent_id}:{timestamp_str}:{method}:{path}")
-    Includes anti-replay drift check (abs(now - ts) <= 300s).
+    Format: HMAC-SHA256(agent_secret, f"{agent_id}:{timestamp_str}:{method}:{path}" [+ f":{nonce}" + f":{body_digest}"])
+    Includes anti-replay drift check (abs(now - ts) <= 300s) and single-use signature tracking.
     """
     if not agent_id or not timestamp_str or not signature:
         return False
@@ -134,8 +152,20 @@ def verify_agent_hmac_headers(
     method_clean = (method or "GET").upper()
     path_clean = path or "/"
     canonical = f"{agent_id}:{timestamp_str}:{method_clean}:{path_clean}"
+    if nonce:
+        canonical += f":{nonce}"
+    if body_digest:
+        canonical += f":{body_digest}"
+
     expected = hmac.new(secret.encode("utf-8"), canonical.encode("utf-8"), hashlib.sha256).hexdigest()
-    return hmac.compare_digest(signature.lower(), expected.lower())
+    if not hmac.compare_digest(signature.lower(), expected.lower()):
+        return False
+
+    replay_key = f"{agent_id}:{signature.lower()}"
+    if not _check_and_record_signature(replay_key, time.time()):
+        return False
+
+    return True
 
 
 def _env_hash(role: str) -> str:
@@ -406,11 +436,13 @@ def role_from_request(request) -> str:
     agent_id = headers.get("x-outpost-agent-id")
     ts = headers.get("x-outpost-timestamp")
     sig = headers.get("x-outpost-signature")
+    nonce = headers.get("x-outpost-nonce")
+    digest = headers.get("x-outpost-digest")
     if agent_id and ts and sig:
         method = getattr(request, "method", "GET")
         url = getattr(request, "url", None)
         path = url.path if url and hasattr(url, "path") else "/"
-        if verify_agent_hmac_headers(agent_id, ts, sig, method, path):
+        if verify_agent_hmac_headers(agent_id, ts, sig, method, path, body_digest=digest, nonce=nonce):
             return "agent"
 
     if not auth_enabled():

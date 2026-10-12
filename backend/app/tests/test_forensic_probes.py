@@ -117,3 +117,29 @@ def test_collect_host_triage_pack_manifest():
 def test_unknown_probe_raises():
     with pytest.raises(ValueError):
         forensic_probes.run_forensic_probe("non_existent_probe_xyz")
+
+
+def test_pam_probe_ignores_stock_common_auth(tmp_path, monkeypatch):
+    """Stock Ubuntu common-auth ('auth required pam_permit.so') must NOT false-positive as backdoor."""
+    from pathlib import Path
+    pam_mock = tmp_path / "pam.d"
+    pam_mock.mkdir()
+
+    # Stock Ubuntu common-auth
+    (pam_mock / "common-auth").write_text(
+        "auth [success=1 default=ignore] pam_unix.so nullok\n"
+        "auth requisite pam_deny.so\n"
+        "auth required pam_permit.so\n"
+    )
+    # Malicious backdoor in sudo
+    (pam_mock / "sudo").write_text(
+        "auth sufficient pam_permit.so\n"
+    )
+
+    monkeypatch.setattr(forensic_probes, "Path", lambda p: pam_mock if p == "/etc/pam.d" else Path(p))
+    results = forensic_probes.hunt_pam_backdoors()
+    assert len(results) == 1
+    assert results[0]["service"] == "sudo"
+    assert "pam_permit.so" in results[0]["module"]
+    assert results[0]["severity"] == "critical"
+

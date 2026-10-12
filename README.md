@@ -370,11 +370,11 @@ npm --prefix frontend test -- --run
 
 | Suite | Count | Status |
 |---|---|---|
-| Backend pytest | **889** | ✅ Passing |
+| Backend pytest | **895** | ✅ Passing |
 | Collector pytest | **51** | ✅ Passing |
 | CLI pytest | **208** | ✅ Passing |
 | Frontend | **410** | ✅ Passing |
-| **Total Test Suite Coverage** | **1,558** | **✅ 100% Green** |
+| **Total Test Suite Coverage** | **1,564** | **✅ 100% Green** |
 
 
 ---

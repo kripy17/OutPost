@@ -87,14 +87,21 @@ app = FastAPI(
 
 
 def _agent_allowed(method: str, path: str) -> bool:
-    """Endpoints the agent credential may use: the collector/shipper surface.
+    """Endpoints the agent credential may use: telemetry shipping and heartbeat only.
 
-    Writes: event + snapshot ingestion, heartbeats, session creation and
-    completion. Reads: run data (the agent lists/claims sessions and the
-    daily summary reads its own runs' alerts). Everything else is off-limits.
+    Writes: event + snapshot ingestion, heartbeats, agent enrollment, session creation/completion,
+    and action acknowledgment. Reads: run data (the agent lists/claims sessions).
+    Containment actions (host isolation, process termination) and administrative
+    endpoints are strictly forbidden for agent credentials.
     """
-    if path.startswith("/ingest/") or path.startswith("/agents/"):
+    if path.startswith("/ingest/"):
         return method in ("GET", "POST")
+    if path == "/agents/register":
+        return method == "POST"
+    if path == "/agents/heartbeat":
+        return method == "POST"
+    if path.startswith("/agents/") and (path.endswith("/heartbeat") or path.endswith("/actions/ack")):
+        return method == "POST"
     if path.startswith("/runs"):
         if method == "GET":
             return True
@@ -108,7 +115,7 @@ class DecompressionMiddleware:
 
     async def __call__(self, scope, receive, send):
         if scope["type"] == "http":
-            import gzip as _gzip
+            import json as _json
             import zlib as _zlib
 
             headers = dict(scope.get("headers", []))
@@ -129,12 +136,16 @@ class DecompressionMiddleware:
                 if raw_body:
                     try:
                         if encoding == "gzip":
-                            decompressed = _gzip.decompress(raw_body)
-                            if len(decompressed) > _MAX_DECOMPRESS:
-                                decompressed = decompressed[:_MAX_DECOMPRESS]
+                            # 16 + MAX_WBITS handles gzip header & streaming CRC validation
+                            decompressor = _zlib.decompressobj(16 + _zlib.MAX_WBITS)
+                            decompressed = decompressor.decompress(raw_body, _MAX_DECOMPRESS + 1)
+                            if len(decompressed) > _MAX_DECOMPRESS or decompressor.unconsumed_tail:
+                                raise ValueError("Decompressed payload exceeds 50MB ceiling")
                         elif encoding in ("deflate", "zlib"):
                             decompressor = _zlib.decompressobj()
-                            decompressed = decompressor.decompress(raw_body, _MAX_DECOMPRESS)
+                            decompressed = decompressor.decompress(raw_body, _MAX_DECOMPRESS + 1)
+                            if len(decompressed) > _MAX_DECOMPRESS or decompressor.unconsumed_tail:
+                                raise ValueError("Decompressed payload exceeds 50MB ceiling")
                         elif encoding == "zstd":
                             try:
                                 import zstandard as _zstd
@@ -144,8 +155,22 @@ class DecompressionMiddleware:
                                 decompressed = raw_body
                         else:
                             decompressed = raw_body
-                    except Exception:
-                        decompressed = raw_body
+                    except Exception as exc:
+                        err_bytes = _json.dumps({"detail": f"Payload decompression error: {exc}"}).encode("utf-8")
+                        await send({
+                            "type": "http.response.start",
+                            "status": 400,
+                            "headers": [
+                                (b"content-type", b"application/json"),
+                                (b"content-length", str(len(err_bytes)).encode("latin1")),
+                            ],
+                        })
+                        await send({
+                            "type": "http.response.body",
+                            "body": err_bytes,
+                            "more_body": False,
+                        })
+                        return
                 else:
                     decompressed = b""
 
@@ -183,9 +208,13 @@ async def auth_gate(request: Request, call_next):
     agent_id = headers.get("x-outpost-agent-id")
     ts = headers.get("x-outpost-timestamp")
     sig = headers.get("x-outpost-signature")
+    nonce = headers.get("x-outpost-nonce")
+    digest = headers.get("x-outpost-digest")
     role = None
     if agent_id and ts and sig:
-        if auth_service.verify_agent_hmac_headers(agent_id, ts, sig, request.method, path):
+        if auth_service.verify_agent_hmac_headers(
+            agent_id, ts, sig, request.method, path, body_digest=digest, nonce=nonce
+        ):
             role = "agent"
 
     if role is None:
