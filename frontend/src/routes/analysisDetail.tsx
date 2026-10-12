@@ -415,7 +415,7 @@ export default function AnalysisDetailPage() {
         }
       />
 
-      {/* Executive Threat Verdict Banner */}
+      {/* Threat Verdict Summary Banner */}
       {j.status === "completed" && (
         <div className={`rounded-2xl border p-5 backdrop-blur-sm shadow-xs ${
           j.risk_score >= 7

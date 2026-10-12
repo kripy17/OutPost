@@ -1033,61 +1033,44 @@ export default function MonitorPage() {
   return (
     <div className="mx-auto max-w-[1440px] px-6 py-8 lg:px-8 space-y-8 font-sans">
       {/* ── Page Header & Architecture Status Strip ───────────────────────── */}
-      <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-        <PageHeader
-          kicker="Simulation Lab · Dynamic Behavior & Canary Execution Console"
-          title="Adversary Simulation & Dynamic Behavioral Sandbox"
-          lede="Detonate safe non-destructive behavioral canaries and vault samples in an isolated sandbox. Watch live command execution in the terminal alongside dynamic tracking of processes spawned, files created, network sockets, and detection rule hits."
-        />
-        <div className="flex shrink-0 items-center gap-2 font-mono text-xs">
-          <div className="flex items-center gap-2 rounded-xl border border-accent/40 bg-accent/10 px-3.5 py-2 text-accent shadow-sm">
-            <span className="h-2 w-2 rounded-full bg-accent animate-pulse" />
-            <span className="font-bold">Sandbox Driver:</span>
-            <select
-              value={isolationDriver}
-              onChange={(e) => setIsolationDriver(e.target.value)}
-              className="bg-transparent font-bold text-accent outline-none cursor-pointer border-b border-accent/40 text-xs"
-              title="Select sandbox isolation driver"
+      <PageHeader
+        kicker="Simulation Lab · Dynamic Behavior & Canary Execution Console"
+        title="Adversary Simulation & Dynamic Behavioral Sandbox"
+        lede="Detonate safe non-destructive behavioral canaries and vault samples in an isolated sandbox. Watch live command execution in the terminal alongside dynamic tracking of processes spawned, files created, network sockets, and detection rule hits."
+        actions={
+          <div className="flex flex-wrap items-center gap-2 font-mono text-xs">
+            <span className="rounded border border-accent/40 bg-accent/10 px-2.5 py-1 text-[10px] font-bold text-accent uppercase font-mono">
+              Simulation Lab Environment
+            </span>
+            <Link
+              to="/samples"
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-surface px-3 py-1.5 font-sans text-xs font-semibold text-text-primary transition hover:border-accent hover:text-accent shadow-xs"
             >
-              <option value="auto" className="bg-bg-surface text-text-primary">Auto (Kernel Namespaces / Micro-Sandbox)</option>
-              {drivers.map((d) => (
-                <option key={d.id} value={d.id} className="bg-bg-surface text-text-primary">
-                  {d.name} {d.available ? "✓" : "(unavailable)"}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-      </div>
-
-      {/* ── SOC Guidance & Role Separation Banner ──────────────────────────── */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-accent/30 bg-accent/5 p-4 font-sans text-xs shadow-sm">
-        <div className="flex items-center gap-3">
-          <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-accent/40 bg-accent/15 text-accent shadow-xs">
-            <Icon name="activity" size={18} />
-          </span>
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="font-bold text-text-primary text-sm">Adversary Simulation Lab Environment</span>
-              <span className="rounded bg-accent/20 px-2 py-0.5 text-[10px] font-bold text-accent uppercase font-mono">DEMO &amp; DETECTION VALIDATION</span>
+              <Icon name="box" size={13} />
+              <span>Upload Untrusted Malware Sample</span>
+            </Link>
+            <div className="flex items-center gap-2 rounded-lg border border-accent/40 bg-accent/10 px-3 py-1.5 text-accent shadow-xs">
+              <span className="h-1.5 w-1.5 rounded-full bg-accent" />
+              <span className="font-bold">Sandbox Driver:</span>
+              <select
+                value={isolationDriver}
+                onChange={(e) => setIsolationDriver(e.target.value)}
+                className="bg-transparent font-bold text-accent outline-none cursor-pointer border-b border-accent/40 text-xs"
+                title="Select sandbox isolation driver"
+              >
+                <option value="auto" className="bg-bg-surface text-text-primary">Auto (Kernel Namespaces / Micro-Sandbox)</option>
+                {drivers.map((d) => (
+                  <option key={d.id} value={d.id} className="bg-bg-surface text-text-primary">
+                    {d.name} {d.available ? "✓" : "(unavailable)"}
+                  </option>
+                ))}
+              </select>
             </div>
-            <p className="text-xs text-text-muted mt-0.5">
-              Pre-existing demonstration attack playbooks, multi-stage campaigns, and MITRE ATT&amp;CK unit tests. To upload and detonate your own untrusted live malware samples, visit the Dynamic Malware Vault.
-            </p>
           </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <Link
-            to="/samples"
-            className="press inline-flex items-center gap-2 rounded-xl border border-border-subtle bg-bg-surface px-3.5 py-2 font-semibold text-text-primary transition hover:border-accent hover:text-accent"
-          >
-            <Icon name="box" size={13} />
-            <span>Upload Untrusted Malware Sample</span>
-          </Link>
-        </div>
-      </div>
+        }
+      />
 
-      {/* ── EXECUTIVE SOC THREAT & DETECTION VERDICT BANNER (Active Session) ── */}
+      {/* ── Threat Verdict & Forensics Assessment Banner (Active Session) ── */}
       {hasActiveSession && (
         <div className="rounded-2xl border border-border-subtle bg-bg-surface/90 p-5 shadow-xl backdrop-blur font-sans text-xs space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-4 border-b border-border-subtle/60 pb-3">
@@ -1117,7 +1100,7 @@ export default function MonitorPage() {
                   </span>
                 </div>
                 <p className="text-[11px] text-text-muted mt-0.5">
-                  Automated Tier-3 SOC Dynamic Forensics Assessment · Session: <span className="text-accent">{displayRunId || "Active Stepper"}</span>
+                  Dynamic Forensics Assessment · Session: <span className="text-accent">{displayRunId || "Active Stepper"}</span>
                 </p>
               </div>
             </div>
@@ -1158,7 +1141,7 @@ export default function MonitorPage() {
                     type="button"
                     onClick={() => setShowIncidentBrief(true)}
                     className="press inline-flex items-center gap-1.5 rounded-xl border border-border-subtle bg-bg-base/80 px-3 py-2.5 font-bold text-text-primary shadow-sm hover:border-accent hover:text-accent"
-                    title="Export complete SOC Incident Dossier & Markdown Brief"
+                    title="Export Incident Markdown Brief"
                   >
                     <Icon name="file" size={13} />
                     <span>Incident Brief</span>
@@ -1542,12 +1525,12 @@ export default function MonitorPage() {
               ) : leftDeckMode === "story" ? (
                 /* Attack Chain & Behavioral Execution Story Mode */
                 <div className="flex-1 rounded-xl border border-border-subtle/60 bg-[#06080d] p-3 overflow-y-auto max-h-[460px] shadow-inner space-y-3">
-                  {/* Executive Narrative Card */}
+                  {/* Causality Narrative Card */}
                   <div className="rounded-xl border border-accent/30 bg-accent/5 p-3.5 space-y-2">
                     <div className="flex items-center justify-between text-xs font-bold text-accent">
                       <span className="flex items-center gap-1.5">
                         <Icon name="activity" size={13} />
-                        Executive Causality &amp; Behavioral Attack Narrative
+                        Causality &amp; Behavioral Attack Narrative
                       </span>
                       <span className="text-[10px] text-text-faint uppercase">
                         {displayThreatVerdict} · Score {displayThreatScore}/100
@@ -2739,7 +2722,7 @@ export default function MonitorPage() {
         />
       )}
 
-      {/* SOC Incident Brief & Executive Dossier Modal */}
+      {/* Incident Brief Report Modal */}
       {showIncidentBrief && (
         <IncidentBriefModal
           data={{

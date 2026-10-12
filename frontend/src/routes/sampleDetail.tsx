@@ -152,9 +152,9 @@ function HexPreviewViewer({ preview }: { preview?: Array<{ offset: string; hex: 
   );
 }
 
-/* ── Executive Threat Triage & DFIR Posture Card ────────────────────────── */
+/* ── Static Threat Triage & DFIR Posture Card ────────────────────────── */
 
-function ExecutiveThreatTriageCard({
+function StaticThreatTriageCard({
   sample,
   st,
 }: {
@@ -211,7 +211,7 @@ function ExecutiveThreatTriageCard({
       : "Raw Binary Stream";
 
   return (
-    <Panel kicker="Executive DFIR Triage" title="Static Threat Verdict & Binary Posture">
+    <Panel kicker="Static Threat Triage" title="Static Threat Verdict & Binary Posture">
       <div className="space-y-4 font-mono">
         {/* Main Verdict & Gauge Bar */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 rounded-xl border border-border-subtle bg-bg-base/70 p-4">
@@ -564,7 +564,7 @@ function StaticAnalysis({ sample }: { sample: { sample_id: string; sha256: strin
         </div>
       </div>
 
-      {st && st.available && <ExecutiveThreatTriageCard sample={sample} st={st} />}
+      {st && st.available && <StaticThreatTriageCard sample={sample} st={st} />}
 
       <CryptographicHashesCard sample={sample} st={st} />
 
@@ -2628,7 +2628,7 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
         <Tier3MicroVmModal onClose={() => setShowTier3Modal(false)} />
       )}
 
-      {/* SOC Incident Brief & Executive Dossier Modal */}
+      {/* Incident Brief Report Modal */}
       {showIncidentBrief && result && (
         <IncidentBriefModal
           data={{

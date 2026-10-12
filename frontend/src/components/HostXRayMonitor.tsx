@@ -317,7 +317,7 @@ export default function HostXRayMonitor({ hostId = "local", initialPid = null }:
         </div>
       </header>
 
-      {/* ── Executive Pulse HUD (4 KPI Gauges) ───────────────────────── */}
+      {/* ── Host Telemetry Gauges (4 KPI Gauges) ───────────────────────── */}
       <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 font-sans text-xs">
         {/* 1. CPU Utilization */}
         <div className="rounded-2xl border border-border-subtle bg-bg-surface/80 p-4 shadow-sm backdrop-blur-sm relative overflow-hidden flex flex-col justify-between">

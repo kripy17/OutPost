@@ -252,7 +252,7 @@ export default function InvestigationDetailPage() {
             <button
               className="px-3 py-1.5 text-xs font-semibold text-text rounded-lg border border-border-subtle bg-bg-surface hover:bg-bg-elevated transition flex items-center gap-1.5 print:hidden"
               onClick={() => window.print()}
-              title="Print Executive Incident Dossier / Save as PDF"
+              title="Print Incident Case Summary / Save as PDF"
             >
               <Icon name="download" size={12} className="text-amber-400" />
               <span>Print Dossier (PDF)</span>
@@ -351,10 +351,10 @@ export default function InvestigationDetailPage() {
 
       {/* Synthesized Incident Narrative & Remediation Action Card */}
       {narrative && (
-        <Panel kicker="AI Incident Response Copilot · Synthesis" title="Executive Incident Narrative & Containment Plan" className="mb-6">
+        <Panel kicker="Incident Correlation · Synthesis" title="Causality Summary & Containment Plan" className="mb-6">
           <div className="space-y-4">
             <div className="rounded-xl border border-accent/30 bg-accent/5 p-4">
-              <span className="font-sans text-[11px] uppercase font-bold tracking-wider text-accent">Executive Summary</span>
+              <span className="font-sans text-[11px] uppercase font-bold tracking-wider text-accent">Synthesis Overview</span>
               <p className="mt-1 text-xs leading-relaxed text-text-primary">{narrative.executive_summary}</p>
               {narrative.tactics_involved.length > 0 && (
                 <div className="mt-3 flex flex-wrap items-center gap-1.5">

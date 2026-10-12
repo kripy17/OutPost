@@ -110,7 +110,7 @@ describe("MonitorPage Live Cockpit", () => {
     await waitFor(() => {
       expect(screen.getByText("Attack Chain & Execution Story")).toBeInTheDocument();
     });
-    expect(screen.getByText(/Executive Causality & Behavioral Attack Narrative/i)).toBeInTheDocument();
+    expect(screen.getByText(/Causality & Behavioral Attack Narrative/i)).toBeInTheDocument();
     expect(screen.getByText(/Host Fingerprinting & OS Architecture Discovery/i)).toBeInTheDocument();
     expect(screen.getByText(/Executed Subprocess Command/i)).toBeInTheDocument();
     expect(screen.getByText("Raw Terminal Logs")).toBeInTheDocument();

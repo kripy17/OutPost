@@ -343,7 +343,7 @@ export default function InvestigationsPage() {
     });
   }, [allInvestigations, severityFilter]);
 
-  // Executive SLA metrics
+  // Incident response metrics
   const metrics = useMemo(() => {
     const total = allInvestigations.length;
     const active = allInvestigations.filter((i) => i.status === "active" || i.status === "triage" || i.status === "created").length;
@@ -359,7 +359,7 @@ export default function InvestigationsPage() {
       <PageHeader
         kicker="Incident Response & Case Management"
         title="Investigations"
-        lede="Enterprise cross-workflow incident dossiers. Connect alerts, endpoint processes, network C2 beacons, IOC evidence, and response playbooks into defensible investigation records."
+        lede="Incident response and case management console. Connect alerts, endpoint processes, network C2 beacons, IOC evidence, and response playbooks into auditable investigation records."
         actions={
           <button
             onClick={() => setIsDrawerOpen(true)}
@@ -371,7 +371,7 @@ export default function InvestigationsPage() {
         }
       />
 
-      {/* Executive Case Posture Strip */}
+      {/* Incident Posture Strip */}
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-5 font-sans" aria-label="Incident Posture Metrics">
         <div className="rounded-xl border border-border-subtle bg-bg-surface p-3.5 shadow-xs">
           <div className="flex items-center justify-between text-text-muted">

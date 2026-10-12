@@ -55,7 +55,7 @@ export function IncidentBriefModal({ data, onClose }: IncidentBriefModalProps) {
 
 ---
 
-## 1. Executive Incident Summary
+## 1. Incident Overview & Triage Summary
 During automated behavioral execution within OutPost's isolated sandbox cage, sample/scenario \`${data.title}\` exhibited behavior characteristic of **${data.threatFamily}**. The detection engine evaluated **${data.eventsCount} telemetry events**, triggering **${data.alerts.length} detection rules** with an efficacy rating of **${data.detectionEfficacyPct}%**.
 
 ---
@@ -129,7 +129,7 @@ ${data.syscalls.length > 0 ? data.syscalls.slice(0, 10).map((s) => `[PID ${s.pid
     <div
       role="dialog"
       aria-modal="true"
-      aria-label="SOC Incident Brief & Forensic Dossier"
+      aria-label="Incident Brief & Forensic Report"
       className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-xs transition-opacity font-mono"
       onClick={onClose}
     >

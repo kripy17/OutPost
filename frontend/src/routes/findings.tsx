@@ -738,7 +738,7 @@ export default function FindingsPage() {
         <InvestigationsPage />
       ) : (
         <>
-      {/* ── Executive Triage KPI Ribbon ─────────────────────────────── */}
+      {/* ── Triage KPI Ribbon ─────────────────────────────── */}
       <section className="mb-4 grid grid-cols-2 sm:grid-cols-4 gap-3 font-sans text-xs">
         <div className="rounded-xl border border-border-subtle bg-bg-surface/80 p-3 shadow-xs">
           <div className="flex items-center justify-between text-text-faint text-[10px] uppercase tracking-wider font-medium">

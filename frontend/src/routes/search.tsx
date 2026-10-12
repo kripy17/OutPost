@@ -766,7 +766,7 @@ export default function SearchPage() {
                 <span>Global Search Qualifiers</span>
               </div>
               <p className="mt-1 text-xs text-text-muted">
-                Use smart search qualifiers to target specific resources across OutPost:
+                Use search qualifiers to target specific resources across OutPost:
               </p>
               <div className="mt-4 grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3 font-mono text-xs">
                 <div className="rounded-lg border border-border-subtle bg-bg-elevated/40 p-2.5">

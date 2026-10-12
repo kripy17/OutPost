@@ -386,7 +386,7 @@ export default function CoveragePage() {
         }
       />
 
-      {/* Executive MITRE ATT&CK Scorecard Strip */}
+      {/* MITRE ATT&CK Matrix Scorecard Strip */}
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-4 font-sans" aria-label="ATT&CK Coverage Metrics">
         <div className="rounded-xl border border-border-subtle bg-bg-surface p-3.5 shadow-xs">
           <div className="flex items-center justify-between text-text-muted">
