@@ -27,6 +27,7 @@ demo/.deck-video/
 outpost-report-*
 outpost-stix-*
 outpost-iocs-*
+*.zip
 *.jpeg
 *.jpg
 backend/data/sandbox_artifacts/
