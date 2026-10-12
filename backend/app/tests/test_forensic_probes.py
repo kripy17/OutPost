@@ -18,6 +18,7 @@ def test_list_forensic_probes():
     assert "shell_profiles" in probe_ids
     assert "ld_preload_hijack" in probe_ids
     assert "kernel_rootkits" in probe_ids
+    assert "pam_backdoors" in probe_ids
 
 
 def test_run_suid_probe():
@@ -86,6 +87,31 @@ def test_run_dns_hosts_probe():
     assert res["technique"] == "T1565.001"
     assert "findings" in res
     assert isinstance(res["findings"], list)
+
+
+def test_run_pam_backdoors_probe():
+    res = forensic_probes.run_forensic_probe("pam_backdoors")
+    assert res["probe_id"] == "pam_backdoors"
+    assert res["tactic"] == "Credential Access"
+    assert res["technique"] == "T1556"
+    assert "findings" in res
+    assert isinstance(res["findings"], list)
+
+
+def test_collect_host_triage_pack_manifest():
+    pack = forensic_probes.collect_host_triage_pack(include_yara=False)
+    assert "triage_id" in pack
+    assert "manifest" in pack
+    manifest = pack["manifest"]
+    assert manifest["collector"] == "OutPost Sovereign DFIR Engine 1.0"
+    assert manifest["standard"] == "NIST SP 800-86 Cryptographic Evidence Integrity"
+    assert "manifest_sha256" in manifest
+    assert len(manifest["manifest_sha256"]) == 64
+    assert "section_hashes" in manifest
+    assert "metrics" in manifest["section_hashes"]
+    assert "probe_results" in manifest["section_hashes"]
+    assert "chain_of_custody" in manifest
+    assert manifest["chain_of_custody"]["acquired_by"] == "OutPost Sovereign Workstation"
 
 
 def test_unknown_probe_raises():

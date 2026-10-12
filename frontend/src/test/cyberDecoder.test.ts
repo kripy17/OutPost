@@ -4,10 +4,14 @@ import {
   decodeBase64Utf16Le,
   decodeBase64Utf8,
   decodeHex,
+  decodeJwt,
+  decodeRot13,
+  decodeUnixTimestamp,
   decodeUrl,
   defangIoc,
   extractIocs,
   refangIoc,
+  scanSingleByteXor,
 } from "../lib/cyberDecoder";
 
 describe("CyberDecoder — Payload Deobfuscation & Analysis", () => {
@@ -72,4 +76,40 @@ describe("CyberDecoder — Payload Deobfuscation & Analysis", () => {
     const analysis = analyzeAndDecode(psCommand);
     expect(analysis.candidates.some((c) => c.id === "b64_utf16" && c.decoded === "whoami")).toBe(true);
   });
+
+  it("decodes RFC 7519 JSON Web Tokens (JWT) and extracts claims", () => {
+    const jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhZG1pbiIsIm5hbWUiOiJKb2huIERvZSIsImV4cCI6MTczMDAwMDAwMH0.dummy_sig";
+    const res = decodeJwt(jwt);
+    expect(res).not.toBeNull();
+    expect(res?.id).toBe("jwt");
+    expect(res?.decoded).toContain("[JWT HEADER]");
+    expect(res?.decoded).toContain("[JWT CLAIMS / PAYLOAD]");
+    expect(res?.decoded).toContain('"sub": "admin"');
+    expect(res?.decoded).toContain("[EXPIRATION]: 2024-10-27T03:33:20.000Z");
+  });
+
+  it("decodes ROT13 cipher payloads", () => {
+    const rot = "cbjrefuryy -rap";
+    const res = decodeRot13(rot);
+    expect(res).toBe("powershell -enc");
+  });
+
+  it("scans and decrypts single-byte XOR obfuscated commands", () => {
+    // "http://evil.com" XOR with key 0x5A
+    const xorHex = "322e2e2a6075753f2c333674393537";
+    const res = scanSingleByteXor(xorHex);
+    expect(res).not.toBeNull();
+    expect(res?.id).toBe("xor_single_byte");
+    expect(res?.name).toBe("XOR Decrypted (Key: 0x5A)");
+    expect(res?.decoded).toBe("http://evil.com");
+  });
+
+  it("decodes 10-digit Unix epoch timestamps", () => {
+    const ts = "1730000000";
+    const res = decodeUnixTimestamp(ts);
+    expect(res).not.toBeNull();
+    expect(res?.id).toBe("timestamp");
+    expect(res?.decoded).toContain("2024-10-27T03:33:20.000Z");
+  });
 });
+

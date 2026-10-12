@@ -8,7 +8,10 @@ Provides targeted on-demand forensic inspection queries against live endpoints:
 - SUID executable audit
 """
 
+import hashlib
+import json
 import os
+import platform
 import socket
 import sys
 import uuid
@@ -630,6 +633,80 @@ def hunt_dns_hosts_hijack() -> List[Dict[str, Any]]:
     return results[:25]
 
 
+def hunt_pam_backdoors() -> List[Dict[str, Any]]:
+    """Hunt for PAM (Pluggable Authentication Modules) backdoors and auth bypasses (T1556).
+
+    Audits:
+    1. /etc/pam.d/* service files for permissive auth bypasses (e.g. pam_permit.so in auth stack,
+       unauthorized pam_exec.so executing external scripts/payloads).
+    2. Unusual file paths referenced in PAM configurations (/tmp, /dev/shm, /opt, hidden paths).
+    3. Staged PAM module hooks designed to grant unconditional root access.
+    """
+    results: List[Dict[str, Any]] = []
+    pam_dir = Path("/etc/pam.d")
+
+    sus_module_patterns = ["/tmp/", "/dev/shm/", "/opt/", "/var/tmp/", "/root/"]
+    sensitive_services = {"sudo", "su", "sshd", "login", "passwd", "common-auth", "system-auth"}
+
+    if pam_dir.is_dir():
+        try:
+            for p_file in sorted(pam_dir.iterdir()):
+                if not p_file.is_file():
+                    continue
+                service_name = p_file.name
+                try:
+                    content = p_file.read_text(errors="ignore")
+                    for line in content.splitlines():
+                        clean = line.strip()
+                        if not clean or clean.startswith("#"):
+                            continue
+                        tokens = clean.split()
+                        if len(tokens) >= 3:
+                            mod_type = tokens[0].lower()
+                            mod_path = tokens[2]
+
+                            # Check for auth sufficient pam_permit.so in sensitive services (instant root bypass)
+                            if service_name in sensitive_services and mod_type == "auth" and "pam_permit.so" in mod_path:
+                                results.append({
+                                    "location": str(p_file),
+                                    "entry": clean,
+                                    "service": service_name,
+                                    "module": mod_path,
+                                    "is_suspicious": True,
+                                    "severity": "critical",
+                                    "details": f"Authentication bypass: 'pam_permit.so' configured in {service_name} auth stack permits any credential",
+                                })
+                            # Check for pam_exec executing scripts from suspicious directories
+                            elif "pam_exec.so" in mod_path or (len(tokens) > 3 and "pam_exec" in clean):
+                                is_sus_exec = any(p in clean for p in sus_module_patterns) or "sh " in clean or "bash " in clean or "python" in clean
+                                results.append({
+                                    "location": str(p_file),
+                                    "entry": clean,
+                                    "service": service_name,
+                                    "module": "pam_exec.so",
+                                    "is_suspicious": True,
+                                    "severity": "critical" if is_sus_exec else "suspicious",
+                                    "details": f"PAM execution hook in {service_name}: triggers external command on authentication",
+                                })
+                            # Check for non-standard path loading
+                            elif any(pat in mod_path for pat in sus_module_patterns) or mod_path.startswith("."):
+                                results.append({
+                                    "location": str(p_file),
+                                    "entry": clean,
+                                    "service": service_name,
+                                    "module": mod_path,
+                                    "is_suspicious": True,
+                                    "severity": "critical",
+                                    "details": f"Staged PAM module loaded from non-standard directory: {mod_path}",
+                                })
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    return results[:25]
+
+
 PROBE_REGISTRY = {
     "crontab_persistence": {
         "id": "crontab_persistence",
@@ -718,6 +795,14 @@ PROBE_REGISTRY = {
         "technique": "T1565.001",
         "description": "Audits /etc/hosts, /etc/resolv.conf, and /etc/nsswitch.conf for domain redirection and rogue resolver injection.",
         "handler": hunt_dns_hosts_hijack,
+    },
+    "pam_backdoors": {
+        "id": "pam_backdoors",
+        "name": "PAM Authentication Backdoors & Bypasses",
+        "tactic": "Credential Access",
+        "technique": "T1556",
+        "description": "Audits /etc/pam.d/ for rogue PAM modules, password bypasses (pam_permit), and unauthorized pam_exec hooks.",
+        "handler": hunt_pam_backdoors,
     },
 }
 
@@ -811,6 +896,51 @@ def collect_host_triage_pack(include_yara: bool = True, host_id: str = "local") 
     threat_count = yara_results.get("threat_count", 0)
     severity = "critical" if (threat_count > 0 or total_anomalies >= 3) else ("suspicious" if total_anomalies > 0 else "clean")
 
+    # Cryptographic section digests and manifest for chain-of-custody (NIST SP 800-86)
+    def _hash_section(obj: Any) -> str:
+        try:
+            serialized = json.dumps(obj, sort_keys=True, default=str).encode("utf-8")
+            return hashlib.sha256(serialized).hexdigest()
+        except Exception:
+            return hashlib.sha256(str(obj).encode("utf-8")).hexdigest()
+
+    section_hashes = {
+        "metrics": _hash_section(metrics),
+        "probe_results": _hash_section(probe_results),
+        "active_processes": _hash_section(processes[:100]),
+        "active_sockets": _hash_section(sockets[:100]),
+        "memory_yara": _hash_section(yara_results),
+    }
+    manifest_raw = "|".join(f"{k}:{v}" for k, v in sorted(section_hashes.items()))
+    manifest_sha256 = hashlib.sha256(manifest_raw.encode("utf-8")).hexdigest()
+
+    # Read machine-id if available
+    machine_id = "unknown"
+    for m_path in [Path("/etc/machine-id"), Path("/var/lib/dbus/machine-id")]:
+        if m_path.is_file():
+            try:
+                machine_id = m_path.read_text().strip()
+                if machine_id:
+                    break
+            except Exception:
+                pass
+
+    manifest = {
+        "collector": "OutPost Sovereign DFIR Engine 1.0",
+        "schema_version": "1.0.0",
+        "standard": "NIST SP 800-86 Cryptographic Evidence Integrity",
+        "manifest_sha256": manifest_sha256,
+        "section_hashes": section_hashes,
+        "chain_of_custody": {
+            "acquired_by": "OutPost Sovereign Workstation",
+            "hostname": socket.gethostname(),
+            "machine_id": machine_id,
+            "kernel_release": platform.release(),
+            "platform": sys.platform,
+            "acquisition_timestamp": ts_now.isoformat(),
+        },
+    }
+
     return {
         "triage_id": triage_id,
         "collected_at": ts_now.isoformat(),
@@ -830,4 +960,6 @@ def collect_host_triage_pack(include_yara: bool = True, host_id: str = "local") 
         "active_processes": processes[:100],
         "active_sockets": sockets[:100],
         "memory_yara": yara_results,
+        "manifest": manifest,
     }
+

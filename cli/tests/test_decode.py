@@ -61,3 +61,37 @@ def test_hash_file():
         assert "File:" in result.stdout
     finally:
         Path(f_path).unlink(missing_ok=True)
+
+
+def test_decode_jwt():
+    jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhZG1pbiIsIm5hbWUiOiJKb2huIERvZSIsImV4cCI6MTczMDAwMDAwMH0.dummy_sig"
+    result = runner.invoke(app, ["decode", jwt])
+    assert result.exit_code == 0
+    assert "JWT Header" in result.stdout
+    assert "JWT Payload" in result.stdout
+    assert "admin" in result.stdout
+
+
+def test_decode_rot13():
+    rot = "cbjrefuryy -rap"
+    result = runner.invoke(app, ["decode", rot])
+    assert result.exit_code == 0
+    assert "ROT13" in result.stdout
+    assert "powershell -enc" in result.stdout
+
+
+def test_decode_single_byte_xor():
+    xor_hex = "322e2e2a6075753f2c333674393537"
+    result = runner.invoke(app, ["decode", xor_hex])
+    assert result.exit_code == 0
+    assert "XOR Decrypted" in result.stdout
+    assert "http://evil.com" in result.stdout
+
+
+def test_decode_unix_timestamp():
+    ts = "1730000000"
+    result = runner.invoke(app, ["decode", ts])
+    assert result.exit_code == 0
+    assert "Unix Epoch Timestamp" in result.stdout
+    assert "2024-10-27" in result.stdout
+

@@ -11,8 +11,10 @@ Multi-stage forensic payload deobfuscation and analysis in the terminal:
 
 import base64
 import hashlib
+import json
 import re
 import urllib.parse
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -84,6 +86,108 @@ def _decode_url(val: str) -> Optional[str]:
         return decoded if decoded != cleaned else None
     except Exception:
         return None
+
+
+def _decode_jwt(val: str) -> Optional[tuple[str, str, str]]:
+    cleaned = val.strip()
+    parts = cleaned.split(".")
+    if len(parts) != 3:
+        return None
+    if not all(re.match(r"^[A-Za-z0-9_-]+$", p) for p in parts if p):
+        return None
+
+    def _b64url_decode(s: str) -> Optional[str]:
+        pad = s + "=" * ((4 - len(s) % 4) % 4)
+        pad = pad.replace("-", "+").replace("_", "/")
+        try:
+            return base64.b64decode(pad).decode("utf-8")
+        except Exception:
+            return None
+
+    try:
+        hdr_raw = _b64url_decode(parts[0])
+        payload_raw = _b64url_decode(parts[1])
+        if not hdr_raw or not payload_raw:
+            return None
+        hdr = json.loads(hdr_raw)
+        payload = json.loads(payload_raw)
+
+        lines = [
+            "[bold white]JWT Header:[/bold white] " + json.dumps(hdr, indent=2),
+            "[bold white]JWT Payload / Claims:[/bold white] " + json.dumps(payload, indent=2),
+        ]
+        if "exp" in payload and isinstance(payload["exp"], (int, float)):
+            exp_dt = datetime.fromtimestamp(payload["exp"], tz=timezone.utc).isoformat()
+            now_ts = datetime.now(timezone.utc).timestamp()
+            status = "EXPIRED" if now_ts > payload["exp"] else "VALID"
+            lines.append(f"[bold cyan]Expiration:[/bold cyan] {exp_dt} ({status})")
+        if "sub" in payload:
+            lines.append(f"[bold cyan]Subject:[/bold cyan] {payload['sub']}")
+
+        return ("JSON Web Token (JWT Claims)", "\n\n".join(lines), "Decoded RFC 7519 JWT header and claims payload")
+    except Exception:
+        return None
+
+
+def _decode_rot13(val: str) -> Optional[tuple[str, str, str]]:
+    cleaned = val.strip()
+    if len(cleaned) < 4 or not re.search(r"[a-zA-Z]", cleaned):
+        return None
+    import codecs
+    decoded = codecs.decode(cleaned, "rot_13")
+    if decoded != cleaned and re.search(r"powershell|cmd|http|/bin/|curl|wget|select|exec", decoded, re.IGNORECASE):
+        return ("ROT13 Deobfuscated", decoded, "Caesar cipher rotation by 13 positions")
+    return None
+
+
+def _scan_single_byte_xor(val: str) -> Optional[tuple[str, str, str]]:
+    cleaned = val.strip()
+    raw_bytes = None
+    if re.match(r"^(\\x[0-9a-fA-F]{2})+$", cleaned, re.IGNORECASE):
+        h = re.sub(r"\\x", "", cleaned, flags=re.IGNORECASE)
+        raw_bytes = bytes.fromhex(h)
+    elif re.match(r"^[0-9a-fA-F]{8,}$", cleaned) and len(cleaned) % 2 == 0:
+        raw_bytes = bytes.fromhex(cleaned)
+    elif 8 <= len(cleaned) <= 512:
+        raw_bytes = cleaned.encode("latin-1", errors="ignore")
+
+    if not raw_bytes or len(raw_bytes) < 4:
+        return None
+
+    sigs = [b"http://", b"https://", b"powershell", b"cmd.exe", b"/bin/sh", b"/bin/bash", b"whoami", b"curl ", b"wget "]
+    for key in range(1, 256):
+        xored = bytes(b ^ key for b in raw_bytes)
+        x_lower = xored.lower()
+        if any(sig in x_lower for sig in sigs):
+            try:
+                text = xored.decode("utf-8", errors="replace")
+                key_hex = f"0x{key:02X}"
+                return (f"XOR Decrypted (Key: {key_hex})", text, f"Payload deobfuscated via single-byte XOR key {key_hex}")
+            except Exception:
+                pass
+    return None
+
+
+def _decode_timestamp(val: str) -> Optional[tuple[str, str, str]]:
+    cleaned = val.strip()
+    ts_sec = None
+    if re.match(r"^\d{10}$", cleaned):
+        num = int(cleaned)
+        if 946684800 <= num <= 2500000000:
+            ts_sec = num
+    elif re.match(r"^\d{13}$", cleaned):
+        num = int(cleaned)
+        if 946684800000 <= num <= 2500000000000:
+            ts_sec = num / 1000.0
+
+    if ts_sec is not None:
+        try:
+            dt = datetime.fromtimestamp(ts_sec, tz=timezone.utc)
+            return ("Unix Epoch Timestamp", f"UTC: {dt.isoformat()}", "Parsed Unix epoch timestamp to ISO-8601 UTC date")
+        except Exception:
+            return None
+    return None
+
 
 
 def _defang(val: str) -> str:
@@ -161,6 +265,22 @@ def decode(
     url_dec = _decode_url(trimmed)
     if url_dec and url_dec != trimmed:
         candidates.append(("URL Percent-Decoded", url_dec, "Decoded web query string"))
+
+    jwt_res = _decode_jwt(trimmed)
+    if jwt_res:
+        candidates.append(jwt_res)
+
+    xor_res = _scan_single_byte_xor(trimmed)
+    if xor_res:
+        candidates.append(xor_res)
+
+    rot_res = _decode_rot13(trimmed)
+    if rot_res:
+        candidates.append(rot_res)
+
+    ts_res = _decode_timestamp(trimmed)
+    if ts_res:
+        candidates.append(ts_res)
 
     # Extract IOCs
     combined = trimmed + "\n" + "\n".join(c[1] for c in candidates)
