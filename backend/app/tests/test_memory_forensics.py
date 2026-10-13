@@ -6,6 +6,7 @@ argument wiring are pinned; uninstalled/failed paths must degrade honestly.
 
 import json
 import os
+import sqlite3
 import stat
 import subprocess
 import tempfile
@@ -283,7 +284,10 @@ def _seed_dump(client, conn, sample_id: str, process_names: list[str]) -> str:
 
 
 def _cleanup(client_run_ids, sample_ids, conn):
-    conn.execute("DELETE FROM audit_log WHERE target_type = 'run'")
+    try:
+        conn.execute("DELETE FROM audit_log WHERE target_type = 'run'")
+    except sqlite3.IntegrityError:
+        pass
     for rid in client_run_ids:
         conn.execute("DELETE FROM events WHERE run_id = ?", (rid,))
         conn.execute("DELETE FROM runs WHERE run_id = ?", (rid,))

@@ -19,7 +19,7 @@
 
 <br>
 
-![Tests](https://img.shields.io/badge/tests-1642_passing-brightgreen?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-1670_passing-brightgreen?style=flat-square)
 ![Validation Gate](https://img.shields.io/badge/validation_gate-0.0%25_FP_|_100%25_TP-success?style=flat-square)
 ![Rules](https://img.shields.io/badge/detection_rules-48_active-blue?style=flat-square)
 ![CLI](https://img.shields.io/badge/cli-39_commands-orange?style=flat-square)
@@ -256,7 +256,12 @@ Cross-session search across IP addresses, domains, process names, and SHA-256 ha
 ---
 
 ### 11. Tamper-Evident SHA-256 Audit Trail (`/audit`)
-Cryptographically chained, immutable audit log of every analyst action, rule change, triage status update, and process kill command:
+Cryptographically chained audit trail tracking all mutating operator and system actions (containment, process termination, rule creation/tuning, sample upload/deletion, detonations, token rotation, and exports):
+- **Sequential Hash Chaining**: Every row calculates an immutable SHA-256 digest covering timestamp, actor, action, target, detail, outcome, source IP, before/after states, and commits to the previous entry's digest (`prev_hash`).
+- **Database Engine Triggers**: SQLite engine triggers (`trg_audit_log_no_update` and `trg_audit_log_no_delete`) abort any direct SQL `UPDATE` or `DELETE` attempt at the database layer.
+- **Signed Periodic Checkpoints**: Analysts can generate HMAC-signed checkpoints signed by a local private key (`data/audit_signing.key`) with separate public key verification.
+- **Out-of-Band Checkpoint Export**: Exportable for external physical or cold-storage archiving to mitigate adversary database rewrites.
+- **Active Verification**: The CLI (`outpost audit verify`), REST API (`GET /audit/verify`), and Web UI continuously compute chain integrity and pinpoint the first break (position, expected, found).
 
 <p align="center">
   <img src="demo/screenshots/fresh/15_audit.png" alt="Audit Trail" width="94%">
@@ -363,16 +368,41 @@ powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 start
 
 ### Deploy Telemetry Agents to Remote Endpoints
 
-Deploy collectors to endpoints with a single command:
+To preserve forensic integrity and avoid piping untrusted network scripts into elevated shells, OutPost provides verified checksum manifests, dry-run inspection plans, and offline air-gapped packages:
 
-**Linux & macOS:**
+**Linux & macOS (Verified Checksum & Dry-Run Flow):**
 ```bash
-curl -fsSL http://<OUTPOST_SERVER>:8001/agents/install.sh | sudo bash
+# 1. Fetch published checksums and installer artifact
+curl -fsSL -O http://<OUTPOST_SERVER>:8001/agents/SHA256SUMS
+curl -fsSL -O http://<OUTPOST_SERVER>:8001/agents/install.sh
+
+# 2. Verify installer integrity against published SHA-256 digests
+sha256sum -c SHA256SUMS --ignore-missing
+
+# 3. Inspect planned changes before modifying system state
+bash install.sh --dry-run
+
+# 4. Execute installation with explicit server destination
+sudo bash install.sh --server http://<OUTPOST_SERVER>:8001
 ```
 
-**Windows (PowerShell):**
+**Windows (Administrator PowerShell):**
 ```powershell
-irm http://<OUTPOST_SERVER>:8001/agents/install.ps1 | iex
+# 1. Download installer script
+Invoke-WebRequest -Uri http://<OUTPOST_SERVER>:8001/agents/install.ps1 -OutFile install.ps1
+
+# 2. Inspect planned changes
+.\install.ps1 -DryRun
+
+# 3. Execute installation
+.\install.ps1 -Server http://<OUTPOST_SERVER>:8001
+```
+
+**Air-Gapped / Isolated Enclaves:**
+Download the offline sensor package directly from the OutPost console or via `GET /agents/package/offline`:
+```bash
+curl -fsSL -O http://<OUTPOST_SERVER>:8001/agents/package/offline
+tar -xzf outpost-agent-offline.tar.gz && cd outpost-agent-offline && sudo ./install.sh --offline
 ```
 
 ---
@@ -430,11 +460,11 @@ npm --prefix frontend test -- --run
 
 | Suite | Tests | Status |
 |---|---|---|
-| **Backend Test Suite** | **942** | Passing |
-| **Collector Test Suite** | **51** | Passing |
+| **Backend Test Suite** | **966** | Passing |
+| **Collector Test Suite** | **55** | Passing |
 | **CLI & TUI Test Suite** | **208** | Passing |
 | **Frontend Test Suite** | **441** | Passing |
-| **Total Automated Coverage** | **1,642** | **Passing** |
+| **Total Automated Coverage** | **1,670** | **Passing** |
 
 ### Benchmark Corpus Gate Results
 
@@ -468,8 +498,22 @@ Comprehensive technical documentation is maintained in [`docs/`](docs/):
 | [`05-DEPLOYMENT-SETUP.md`](docs/05-DEPLOYMENT-SETUP.md) | Production setup, systemd services, and air-gap verification |
 | [`09-CLI-SPEC.md`](docs/09-CLI-SPEC.md) | Full 39-command Typer CLI reference manual |
 | [`11-DETECTION-LOGIC.md`](docs/11-DETECTION-LOGIC.md) | MITRE ATT&CK detection heuristics with detection engineering rationale |
+| [`16-POSTGRES-MIGRATION.md`](docs/16-POSTGRES-MIGRATION.md) | PostgreSQL production migration procedures and data load scripts |
+| [`17-CI-GATES.md`](docs/17-CI-GATES.md) | Continuous integration regression gates and benchmark guarantees |
 | [`18-AIR-GAP.md`](docs/18-AIR-GAP.md) | Air-gap compliance testing and offline guarantees |
 | [`19-PRODUCT-COHERENCE-SPEC.md`](docs/19-PRODUCT-COHERENCE-SPEC.md) | SOC transformation, provenance contracts, and UX standards |
+| [`20-THREAT-MODEL.md`](docs/20-THREAT-MODEL.md) | Formal threat model: assets, threat actors, trust boundaries & automated controls |
+| [`SECURITY.md`](SECURITY.md) | Security vulnerability disclosure policy and malware safe-handling guidance |
+
+### Architecture Decision Records (ADRs)
+
+Engineering rationale, alternatives rejected, and operational trade-offs are maintained in [`docs/adr/`](docs/adr/):
+
+- [ADR 0001: Single-Node Architecture Design](docs/adr/0001-single-node-design.md)
+- [ADR 0002: Dual SQLite and PostgreSQL Storage Engine Support](docs/adr/0002-sqlite-and-postgres-support.md)
+- [ADR 0003: Pull-Based Agent Control and Ingest Channel](docs/adr/0003-pull-based-control-channel.md)
+- [ADR 0004: In-Process Synchronous vs. Worker Detection Pipeline](docs/adr/0004-in-process-vs-worker-detection.md)
+- [ADR 0005: Sandbox Design via Bubblewrap (bwrap) and Wine Isolation](docs/adr/0005-bubblewrap-and-bwrap-sandbox-design.md)
 
 ---
 

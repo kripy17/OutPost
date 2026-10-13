@@ -8,10 +8,12 @@ Delivery happens inside the ingestion path via services/notifications;
 `enabled` is true when at least one channel is configured.
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from ..core.db import db_session
+from ..core.ssrf import validate_outbound_url
+from ..models import audit
 from ..services import notifications as notify
 
 router = APIRouter(tags=["notifications"])
@@ -51,6 +53,17 @@ def get_settings() -> dict:
 
 @router.put("/notifications/settings", response_model=None)
 def set_settings(body: NotifySettingsIn) -> dict:
+    # SSRF guard on outbound webhooks
+    for field_name, url_val in [
+        ("webhook_url", body.webhook_url),
+        ("slack_webhook", body.slack_webhook),
+        ("discord_webhook", body.discord_webhook),
+    ]:
+        if url_val and url_val.strip():
+            is_valid, reason, _ = validate_outbound_url(url_val.strip())
+            if not is_valid:
+                raise HTTPException(status_code=400, detail=f"SSRF violation in {field_name}: {reason}")
+
     with db_session() as conn:
         # Blank SMTP password + a previously stored one → keep the old value
         # (the GET response never returns it, so the UI can't clobber it).
@@ -60,4 +73,14 @@ def set_settings(body: NotifySettingsIn) -> dict:
             payload["smtp_pass"] = existing["smtp_pass"]
         notify.set_settings(conn, payload)
         settings = notify.get_settings(conn)
+        audit.log(
+            conn,
+            actor="analyst",
+            action="settings.webhook_update",
+            target_type="notifications",
+            target_id="settings",
+            detail="updated notification integration channels",
+            before_state=_response(existing),
+            after_state=_response(settings),
+        )
     return _response(settings)

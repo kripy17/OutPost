@@ -15,6 +15,7 @@ semantics, and `db_session()` yields the same commit/rollback lifecycle.
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 from . import config, db_pg
@@ -291,7 +292,21 @@ CREATE TABLE IF NOT EXISTS audit_log (
     detail TEXT,
     outcome TEXT NOT NULL DEFAULT 'success',
     prev_hash TEXT,
-    entry_hash TEXT
+    entry_hash TEXT,
+    source_ip TEXT,
+    before_state TEXT,
+    after_state TEXT,
+    reason TEXT
+);
+
+CREATE TABLE IF NOT EXISTS audit_checkpoints (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    checkpoint_seq INTEGER NOT NULL UNIQUE,
+    created_at TEXT NOT NULL,
+    last_audit_id INTEGER NOT NULL,
+    last_entry_hash TEXT NOT NULL,
+    signature TEXT NOT NULL,
+    public_key TEXT NOT NULL
 );
 
 -- False-positive feedback loop: per-rule FP counters. Every "mark as false
@@ -714,7 +729,7 @@ def _migrate_agent_heartbeats_metrics(conn: sqlite3.Connection) -> None:
 
 
 def _migrate_enrolled_agents(conn: sqlite3.Connection) -> None:
-    """Idempotent: ensure enrolled_agents table exists."""
+    """Idempotent: ensure enrolled_agents and enrollment_tokens tables exist with inventory metadata."""
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS enrolled_agents (
@@ -726,7 +741,32 @@ def _migrate_enrolled_agents(conn: sqlite3.Connection) -> None:
             last_seen_at TEXT NOT NULL,
             agent_secret TEXT NOT NULL,
             hardware_info TEXT,
-            status TEXT NOT NULL DEFAULT 'active'
+            status TEXT NOT NULL DEFAULT 'active',
+            agent_version TEXT DEFAULT '1.0.0',
+            privilege_level TEXT DEFAULT 'least_privilege',
+            enforcement_capabilities TEXT DEFAULT '["telemetry"]'
+        )
+        """
+    )
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(enrolled_agents)").fetchall()}
+    if "agent_version" not in cols:
+        conn.execute("ALTER TABLE enrolled_agents ADD COLUMN agent_version TEXT DEFAULT '1.0.0'")
+    if "privilege_level" not in cols:
+        conn.execute("ALTER TABLE enrolled_agents ADD COLUMN privilege_level TEXT DEFAULT 'least_privilege'")
+    if "enforcement_capabilities" not in cols:
+        conn.execute("ALTER TABLE enrolled_agents ADD COLUMN enforcement_capabilities TEXT DEFAULT '[\"telemetry\"]'")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS enrollment_tokens (
+            token TEXT PRIMARY KEY,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            created_by TEXT NOT NULL,
+            scope TEXT NOT NULL DEFAULT 'fleet',
+            max_uses INTEGER NOT NULL DEFAULT 1,
+            uses_count INTEGER NOT NULL DEFAULT 0,
+            revoked INTEGER NOT NULL DEFAULT 0
         )
         """
     )
@@ -1010,7 +1050,7 @@ def _migrate_events_run_timestamp(conn: sqlite3.Connection) -> None:
 
 
 def _migrate_audit_log_hash_chain(conn: sqlite3.Connection) -> None:
-    """Idempotent: ensure tamper-evident hash chain columns on audit_log."""
+    """Idempotent: ensure tamper-evident hash chain columns, checkpoints, and immutability triggers on audit_log."""
     cols = _column_names(conn, "audit_log")
     if "outcome" not in cols:
         conn.execute("ALTER TABLE audit_log ADD COLUMN outcome TEXT NOT NULL DEFAULT 'success'")
@@ -1018,7 +1058,31 @@ def _migrate_audit_log_hash_chain(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE audit_log ADD COLUMN prev_hash TEXT")
     if "entry_hash" not in cols:
         conn.execute("ALTER TABLE audit_log ADD COLUMN entry_hash TEXT")
+    if "source_ip" not in cols:
+        conn.execute("ALTER TABLE audit_log ADD COLUMN source_ip TEXT")
+    if "before_state" not in cols:
+        conn.execute("ALTER TABLE audit_log ADD COLUMN before_state TEXT")
+    if "after_state" not in cols:
+        conn.execute("ALTER TABLE audit_log ADD COLUMN after_state TEXT")
+    if "reason" not in cols:
+        conn.execute("ALTER TABLE audit_log ADD COLUMN reason TEXT")
     conn.commit()
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS audit_checkpoints (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            checkpoint_seq INTEGER NOT NULL UNIQUE,
+            created_at TEXT NOT NULL,
+            last_audit_id INTEGER NOT NULL,
+            last_entry_hash TEXT NOT NULL,
+            signature TEXT NOT NULL,
+            public_key TEXT NOT NULL
+        )
+        """
+    )
+    conn.commit()
+
     # Backfill hashes for any legacy rows lacking entry_hash
     rows = conn.execute("SELECT id, ts, actor, action, target_type, target_id, detail, outcome, prev_hash, entry_hash FROM audit_log ORDER BY id ASC").fetchall()
     if rows and any(r["entry_hash"] is None for r in rows):
@@ -1034,6 +1098,30 @@ def _migrate_audit_log_hash_chain(conn: sqlite3.Connection) -> None:
             conn.execute("UPDATE audit_log SET prev_hash = ?, entry_hash = ? WHERE id = ?", (prev, h, r["id"]))
             prev = h
         conn.commit()
+
+    # Install database-level immutability triggers (strictly abort UPDATE and DELETE)
+    try:
+        conn.execute(
+            """
+            CREATE TRIGGER IF NOT EXISTS trg_audit_log_no_update
+            BEFORE UPDATE ON audit_log
+            BEGIN
+                SELECT RAISE(ABORT, 'Audit log is immutable: updates prohibited');
+            END;
+            """
+        )
+        conn.execute(
+            """
+            CREATE TRIGGER IF NOT EXISTS trg_audit_log_no_delete
+            BEFORE DELETE ON audit_log
+            BEGIN
+                SELECT RAISE(ABORT, 'Audit log is immutable: deletes prohibited');
+            END;
+            """
+        )
+        conn.commit()
+    except Exception:
+        pass
 
 
 def _migrate_host_containment_lifecycle(conn: sqlite3.Connection) -> None:
@@ -1092,8 +1180,149 @@ def get_connection():
     return conn
 
 
+SCHEMA_MIGRATIONS_TABLE = """
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    version INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    applied_at TEXT NOT NULL,
+    downgrade_note TEXT NOT NULL
+);
+"""
+
+ORDERED_MIGRATIONS = [
+    (1, "alerts_related_pids", _migrate_alerts_related_pids, "Rebuild alerts table to remove related_pids column."),
+    (2, "alerts_triage", _migrate_alerts_triage, "Rebuild alerts table to remove triage columns."),
+    (3, "alerts_assignee", _migrate_alerts_assignee, "Rebuild alerts table to drop assignee column."),
+    (4, "alerts_findings", _migrate_alerts_findings, "Rebuild alerts table to drop finding columns."),
+    (5, "agent_heartbeats_auth", _migrate_agent_heartbeats_auth, "Rebuild agent_heartbeats to drop auth tokens."),
+    (6, "agent_heartbeats_metrics", _migrate_agent_heartbeats_metrics, "Rebuild agent_heartbeats to drop metrics."),
+    (7, "enrolled_agents", _migrate_enrolled_agents, "Drop enrolled_agents table."),
+    (8, "samples_platform_unknown", _migrate_samples_platform_unknown, "Revert samples check constraint via table recreation."),
+    (9, "runs_platform_macos", _migrate_runs_platform_macos, "Revert runs platform check constraint via table recreation."),
+    (10, "runs_kind", _migrate_runs_kind, "Rebuild runs table to drop kind column."),
+    (11, "runs_source", _migrate_runs_source, "Rebuild runs table to drop source column."),
+    (12, "events_host_id", _migrate_events_host_id, "Rebuild events table to drop host_id."),
+    (13, "events_raw_record", _migrate_events_raw_record, "Rebuild events table to drop raw_record."),
+    (14, "events_log_source", _migrate_events_log_source, "Rebuild events table to drop log_source."),
+    (15, "backfill_events_log_source", _backfill_events_log_source, "Idempotent backfill — safe no-op on downgrade."),
+    (16, "events_exe_path", _migrate_events_exe_path, "Rebuild events table to drop exe_path."),
+    (17, "events_query", _migrate_events_query, "Rebuild events table to drop query."),
+    (18, "events_tls_sni", _migrate_events_tls_sni, "Rebuild events table to drop tls_sni."),
+    (19, "events_source_event_id", _migrate_events_source_event_id, "Rebuild events table to drop source_event_id."),
+    (20, "events_boot_id", _migrate_events_boot_id, "Rebuild events table to drop boot_id."),
+    (21, "events_process_start_time", _migrate_events_process_start_time, "Rebuild events table to drop process_start_time."),
+    (22, "events_identity_indexes", _migrate_events_identity_indexes, "Drop composite identity indexes on events."),
+    (23, "events_run_timestamp", _migrate_events_run_timestamp, "Drop idx_events_run_timestamp index."),
+    (24, "runs_suppressed_alerts", _migrate_runs_suppressed_alerts, "Rebuild runs table to drop suppressed_alerts."),
+    (25, "rule_suppressions_value", _migrate_rule_suppressions_value, "Rebuild rule_suppressions table."),
+    (26, "alerts_evidence_and_dedup", _migrate_alerts_evidence_and_dedup, "Drop finding_evidence_events table and alerts deduplication columns."),
+    (27, "idempotency_keys", _migrate_idempotency_keys, "Drop idempotency_keys table."),
+    (28, "events_extended_telemetry", _migrate_events_extended_telemetry, "Rebuild events table to drop extended telemetry fields."),
+    (29, "audit_log_hash_chain", _migrate_audit_log_hash_chain, "Drop audit_log triggers and chain columns."),
+    (30, "host_containment_lifecycle", _migrate_host_containment_lifecycle, "Rebuild host_containment table."),
+    (31, "host_actions", _migrate_host_actions, "Drop host_actions table."),
+]
+
+
+def apply_migrations(conn: sqlite3.Connection, dry_run: bool = False) -> list[dict]:
+    """Execute ordered schema migrations against the database.
+
+    If dry_run is True, returns planned actions without executing them.
+    """
+    conn.executescript(SCHEMA_MIGRATIONS_TABLE)
+    applied_rows = conn.execute("SELECT version, name, applied_at, downgrade_note FROM schema_migrations ORDER BY version ASC").fetchall()
+    applied_versions = {r["version"] for r in applied_rows}
+
+    results = []
+    for ver, name, fn, downgrade_note in ORDERED_MIGRATIONS:
+        if ver in applied_versions:
+            results.append({
+                "version": ver,
+                "name": name,
+                "status": "applied",
+                "downgrade_note": downgrade_note,
+            })
+            continue
+
+        if dry_run:
+            results.append({
+                "version": ver,
+                "name": name,
+                "status": "pending",
+                "downgrade_note": downgrade_note,
+            })
+        else:
+            fn(conn)
+            now_iso = datetime.now(timezone.utc).isoformat()
+            conn.execute(
+                "INSERT OR REPLACE INTO schema_migrations (version, name, applied_at, downgrade_note) VALUES (?, ?, ?, ?)",
+                (ver, name, now_iso, downgrade_note),
+            )
+            conn.commit()
+            results.append({
+                "version": ver,
+                "name": name,
+                "status": "applied",
+                "applied_at": now_iso,
+                "downgrade_note": downgrade_note,
+            })
+    return results
+
+
+def get_schema_version(conn: sqlite3.Connection) -> dict:
+    """Return the current recorded schema version and summary."""
+    try:
+        conn.executescript(SCHEMA_MIGRATIONS_TABLE)
+        row = conn.execute("SELECT MAX(version) AS current_version, COUNT(*) as total_applied FROM schema_migrations").fetchone()
+        current_version = row["current_version"] if row and row["current_version"] is not None else 0
+        total_applied = row["total_applied"] if row else 0
+        latest = conn.execute("SELECT * FROM schema_migrations ORDER BY version DESC LIMIT 1").fetchone()
+        return {
+            "current_version": current_version,
+            "target_version": ORDERED_MIGRATIONS[-1][0],
+            "total_applied": total_applied,
+            "total_available": len(ORDERED_MIGRATIONS),
+            "latest_migration": dict(latest) if latest else None,
+        }
+    except Exception as e:
+        return {
+            "current_version": 0,
+            "target_version": ORDERED_MIGRATIONS[-1][0] if ORDERED_MIGRATIONS else 0,
+            "error": str(e),
+        }
+
+
+def list_migrations(conn: sqlite3.Connection) -> list[dict]:
+    """List all migrations, their status, applied date, and downgrade notes."""
+    conn.executescript(SCHEMA_MIGRATIONS_TABLE)
+    applied = {
+        r["version"]: dict(r)
+        for r in conn.execute("SELECT * FROM schema_migrations").fetchall()
+    }
+    output = []
+    for ver, name, _, downgrade_note in ORDERED_MIGRATIONS:
+        if ver in applied:
+            item = dict(applied[ver])
+            item["status"] = "applied"
+        else:
+            item = {
+                "version": ver,
+                "name": name,
+                "applied_at": None,
+                "downgrade_note": downgrade_note,
+                "status": "pending",
+            }
+        output.append(item)
+    return output
+
+
+def dry_run_migrations(conn: sqlite3.Connection) -> list[dict]:
+    """Return pending migrations in execution order without modifying the database."""
+    return apply_migrations(conn, dry_run=True)
+
+
 def init_db() -> None:
-    """Create tables if they don't exist. Idempotent — safe on every boot.
+    """Create tables if they don't exist and run ordered versioned migrations. Idempotent — safe on every boot.
 
     On the Postgres runtime the translated DDL (the final runtime shape) is
     applied instead — fresh PG installs start correct and skip the SQLite
@@ -1104,37 +1333,7 @@ def init_db() -> None:
         return
     with get_connection() as conn:
         conn.executescript(SCHEMA)
-        _migrate_alerts_related_pids(conn)
-        _migrate_alerts_triage(conn)
-        _migrate_alerts_assignee(conn)
-        _migrate_alerts_findings(conn)
-        _migrate_agent_heartbeats_auth(conn)
-        _migrate_agent_heartbeats_metrics(conn)
-        _migrate_enrolled_agents(conn)
-        _migrate_samples_platform_unknown(conn)
-        _migrate_runs_platform_macos(conn)
-        _migrate_runs_kind(conn)
-        _migrate_runs_source(conn)
-        _migrate_events_host_id(conn)
-        _migrate_events_raw_record(conn)
-        _migrate_events_log_source(conn)
-        _backfill_events_log_source(conn)
-        _migrate_events_exe_path(conn)
-        _migrate_events_query(conn)
-        _migrate_events_tls_sni(conn)
-        _migrate_events_source_event_id(conn)
-        _migrate_events_boot_id(conn)
-        _migrate_events_process_start_time(conn)
-        _migrate_events_identity_indexes(conn)
-        _migrate_events_run_timestamp(conn)
-        _migrate_runs_suppressed_alerts(conn)
-        _migrate_rule_suppressions_value(conn)
-        _migrate_alerts_evidence_and_dedup(conn)
-        _migrate_idempotency_keys(conn)
-        _migrate_events_extended_telemetry(conn)
-        _migrate_audit_log_hash_chain(conn)
-        _migrate_host_containment_lifecycle(conn)
-        _migrate_host_actions(conn)
+        apply_migrations(conn)
 
 
 @contextmanager

@@ -10,6 +10,8 @@ import type {
   AllowlistEntry,
   AllowlistKind,
   AuditResponse,
+  AuditVerificationReport,
+  AuditCheckpoint,
   CompareResponse,
   EnumPatternRow,
   EnumPatternsResponse,
@@ -611,6 +613,18 @@ export async function getAudit(params: { limit?: number; action?: string } = {})
   if (params.action) qs.set("action", params.action);
   const suffix = qs.toString();
   return get<AuditResponse>(`/audit${suffix ? `?${suffix}` : ""}`);
+}
+
+export async function verifyAuditChain(): Promise<AuditVerificationReport> {
+  return get<AuditVerificationReport>("/audit/verify");
+}
+
+export async function createAuditCheckpoint(): Promise<{ status: string; checkpoint: AuditCheckpoint }> {
+  return post<{ status: string; checkpoint: AuditCheckpoint }>("/audit/checkpoint", {});
+}
+
+export async function listAuditCheckpoints(limit = 20): Promise<{ total: number; checkpoints: AuditCheckpoint[] }> {
+  return get<{ total: number; checkpoints: AuditCheckpoint[] }>(`/audit/checkpoints?limit=${limit}`);
 }
 
 // -- False-positive feedback loop ---------------------------------------------

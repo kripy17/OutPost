@@ -215,3 +215,16 @@ def test_run_archive_hides_synthetic_by_default(client):
     shown = {r["sample_name"] for r in client.get("/runs", params={"include_synthetic": "true"}).json()}
     assert "host-real.bin" in shown
     assert set(synth_names).issubset(shown)
+
+
+def test_security_headers_present(client):
+    """Verify that defensive HTTP security headers and strict CSP are returned."""
+    resp = client.get("/meta")
+    assert resp.status_code == 200
+    assert "Content-Security-Policy" in resp.headers
+    assert "default-src 'self'" in resp.headers["Content-Security-Policy"]
+    assert resp.headers["X-Content-Type-Options"] == "nosniff"
+    assert resp.headers["X-Frame-Options"] == "DENY"
+    assert resp.headers["X-XSS-Protection"] == "1; mode=block"
+    assert "Referrer-Policy" in resp.headers
+

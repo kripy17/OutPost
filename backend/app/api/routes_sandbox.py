@@ -21,6 +21,7 @@ from pydantic import BaseModel
 from ..core import config
 from ..core.db import db_session
 from ..core.schema import Platform, SandboxDetonateIn, SandboxTaskOut
+from ..models import audit
 from ..models import run as run_store
 from ..models import samples as samples_store
 from ..services import sandbox as sandbox_service
@@ -113,6 +114,16 @@ async def detonate_sample(body: SandboxDetonateIn) -> SandboxTaskOut:
             session_type="analysis",
             source=f"sandbox:{provider}",
         )
+        audit.log(
+            conn,
+            actor="analyst",
+            action="detonation.start",
+            target_type="sample",
+            target_id=body.sample_id,
+            detail=f"started detonation {run_id} via provider {provider} (platform: {platform})",
+            after_state={"run_id": run_id, "provider": provider, "platform": platform},
+            reason="analyst sandbox detonation",
+        )
 
     task = sandbox_service.create_task(run_id, body.sample_id, sample["original_name"], provider, platform)
 
@@ -154,6 +165,17 @@ async def detonate_dynamic(body: SandboxDetonateIn) -> dict:
             timeout_seconds=10,
             isolation_driver=body.isolation_driver or "auto",
         )
+        with db_session() as conn:
+            audit.log(
+                conn,
+                actor="analyst",
+                action="detonation.start",
+                target_type="sample",
+                target_id=body.sample_id,
+                detail=f"executed dynamic sandbox trace (run_id: {result.get('run_id')}, driver: {body.isolation_driver or 'auto'})",
+                after_state={"run_id": result.get("run_id"), "isolation_driver": body.isolation_driver},
+                reason="analyst dynamic sandbox trace",
+            )
         return result
     except HTTPException:
         raise
@@ -213,6 +235,17 @@ async def detonate_playbook(body: PlaybookDetonateIn) -> dict:
         playbook_key = body.playbook_id
 
     result = await execute_simulation_scenario_live(playbook_key)
+    with db_session() as conn:
+        audit.log(
+            conn,
+            actor="analyst",
+            action="detonation.start",
+            target_type="playbook",
+            target_id=playbook_key,
+            detail=f"executed scenario playbook {playbook_key} (run_id: {result.get('run_id')})",
+            after_state={"run_id": result.get("run_id"), "scenario": playbook_key},
+            reason="adversary simulation lab detonation",
+        )
     return result
 
 

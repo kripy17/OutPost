@@ -1,45 +1,190 @@
-"""Analyst audit trail — who did what, when.
+"""Analyst audit trail — verifiable, tamper-evident record of all operational actions.
 
-Every analyst-relevant mutation (containment isolation/release, process kill,
+Every analyst-relevant mutation (containment isolation/release, process kill/freeze,
 triage transitions, FP marks, logins, rotation, allowlist/suppression edits,
-retention prunes, backups) writes one row via `log()`. `actor` is the role
-when auth is on, 'local' for the zero-config default, or a source label for
-non-web writers ('cli', 'agent', 'system'). Read back with `list_events()` for
-the webapp /audit page.
+rule modifications, detonation start/abort, sample upload/delete, webhook updates,
+retention archives, backups) writes one row via `log()`.
 
-Tamper-evident: each entry cryptographically chains to the preceding entry's
-SHA-256 digest (`entry_hash = SHA256(prev_hash:ts:actor:action:...)`). Any
-out-of-band modification or truncation breaks the cryptographic chain and is
-flagged by `verify_audit_chain()`.
+Tamper-evident guarantees:
+1. Cryptographic hash-chaining: each entry commits to the preceding entry's SHA-256
+   digest (`entry_hash = SHA256(prev_hash:ts:actor:source_ip:action:target_type:target_id:before:after:reason:outcome:detail)`).
+2. Data-layer immutability: database-level triggers strictly prohibit UPDATE and DELETE.
+3. Out-of-band periodic checkpoints: periodic head state is signed with a local key,
+   allowing analysts to export checkpoints for out-of-band validation (print/cold storage)
+   to protect against raw database file rewrites.
+4. Comprehensive verification routine: `verify_audit_chain()` recomputes the entire chain
+   and reports the first break (position, expected, found).
 """
 
+from __future__ import annotations
+
 import hashlib
+import hmac
+import json
+import os
+import secrets
 import sqlite3
 from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
 
+# Path for out-of-band audit checkpoint signing keys
+_DATA_DIR = Path(__file__).resolve().parent.parent.parent.parent / "data"
+_KEY_FILE = _DATA_DIR / "audit_signing.key"
+_PUB_FILE = _DATA_DIR / "audit_signing.pub"
+
+# Comprehensive operational action vocabulary
 ACTIONS = (
+    # Host containment & process execution controls
     "agent.isolate",
     "agent.unisolate",
+    "agent.process.kill",
+    "agent.process.freeze",
+    "agent.process.resume",
     "agent.process.kill_queued",
+    "agent.register",
     "agent.action.ack",
     "agent.action.completed",
-    "agent.register",
-    "alert.status",      # triage transition (open/acknowledged/resolved)
-    "alert.false-positive",
-    "auth.login",        # success
-    "auth.login.failed",
-    "auth.password",     # rotation / bootstrap
-    "auth.agent_token",
+    # Detection rules, tuning & suppressions
+    "rules.create",
+    "rules.modify",
+    "rules.enable",
+    "rules.disable",
+    "rules.delete",
+    "rules.fp-threshold",
     "allowlist.add",
     "allowlist.remove",
     "suppression.add",
     "suppression.remove",
-    "rules.modify",
+    # Samples & dynamic detonations
+    "sample.upload",
+    "sample.delete",
+    "detonation.start",
+    "detonation.abort",
+    # Alerts, triage & investigations
+    "alert.status",
+    "alert.false-positive",
+    "finding.create",
+    "finding.update",
+    "investigation.create",
+    "investigation.update",
+    "investigation.close",
+    "investigation.import",
+    "investigation.export",
+    # Authentication & credential lifecycle
+    "auth.login",
+    "auth.login.failed",
+    "auth.logout",
+    "auth.password",
+    "auth.agent_token",
+    "auth.token_revoke",
+    # Integrations & intelligence configuration
+    "settings.webhook_update",
+    "settings.enrichment_update",
+    "intel.import",
+    "watchlist.add",
+    "watchlist.remove",
+    # Retention, backup & export operations
     "retention.prune",
+    "retention.archive",
     "backup.create",
     "restore.apply",
+    "report.export",
     "snapshot.ingest",
+    "support_bundle.export",
 )
+
+
+class AuditVerificationReport(dict):
+    """Structured report returned by audit chain verification.
+
+    Implements tuple unpacking `(valid, count, error)` for full backward compatibility
+    with existing callers while providing structured dictionary fields.
+    """
+
+    def __iter__(self):
+        return iter((self["valid"], self["entries_verified"], self["error"]))
+
+    @property
+    def valid(self) -> bool:
+        return bool(self.get("valid"))
+
+    @property
+    def intact(self) -> bool:
+        return bool(self.get("intact"))
+
+
+def _serialize_state(val: Any) -> str:
+    if val is None:
+        return ""
+    if isinstance(val, (dict, list)):
+        try:
+            return json.dumps(val, sort_keys=True)
+        except Exception:
+            return str(val)
+    return str(val)
+
+
+def get_or_create_signing_key() -> tuple[bytes, str]:
+    """Retrieve or generate the local 256-bit audit checkpoint signing key and public fingerprint."""
+    _DATA_DIR.mkdir(parents=True, exist_ok=True)
+    if _KEY_FILE.exists():
+        try:
+            key = _KEY_FILE.read_bytes()
+        except OSError:
+            key = secrets.token_bytes(32)
+    else:
+        key = secrets.token_bytes(32)
+        try:
+            _KEY_FILE.write_bytes(key)
+            os.chmod(_KEY_FILE, 0o600)
+        except OSError:
+            pass
+
+    fingerprint = hashlib.sha256(key).hexdigest()
+    try:
+        if not _PUB_FILE.exists() or _PUB_FILE.read_text().strip() != fingerprint:
+            _PUB_FILE.write_text(fingerprint)
+            os.chmod(_PUB_FILE, 0o644)
+    except OSError:
+        pass
+
+    return key, fingerprint
+
+
+def compute_entry_hash(
+    prev_hash: str,
+    ts: str,
+    actor: str,
+    action: str,
+    target_type: str | None = None,
+    target_id: str | None = None,
+    outcome: str = "success",
+    detail: str | None = None,
+    source_ip: str | None = None,
+    before_state: Any = None,
+    after_state: Any = None,
+    reason: str | None = None,
+) -> str:
+    """Compute the authoritative SHA-256 digest committing to every audit field."""
+    before_str = _serialize_state(before_state)
+    after_str = _serialize_state(after_state)
+    target_type_str = target_type or ""
+    target_id_str = target_id or ""
+    detail_str = detail or ""
+    source_ip_str = source_ip or ""
+    reason_str = reason or ""
+
+    if source_ip_str or before_str or after_str or reason_str:
+        canonical = (
+            f"{prev_hash}:{ts}:{actor}:{source_ip_str}:{action}:{target_type_str}:"
+            f"{target_id_str}:{before_str}:{after_str}:{reason_str}:{outcome}:{detail_str}"
+        )
+    else:
+        # Standard canonical format (backward compatible with existing test entries)
+        canonical = f"{prev_hash}:{ts}:{actor}:{action}:{target_type_str}:{target_id_str}:{outcome}:{detail_str}"
+
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def log(
@@ -50,8 +195,12 @@ def log(
     target_id: str | None = None,
     detail: str | None = None,
     outcome: str = "success",
+    source_ip: str | None = None,
+    before_state: Any = None,
+    after_state: Any = None,
+    reason: str | None = None,
 ) -> str:
-    """Append one audit entry chained into the tamper-evident log."""
+    """Append one entry chained into the tamper-evident audit log."""
     ts = datetime.now(timezone.utc).isoformat()
     try:
         cur = conn.execute("SELECT entry_hash FROM audit_log ORDER BY id DESC LIMIT 1").fetchone()
@@ -59,44 +208,263 @@ def log(
     except Exception:
         prev_hash = "0" * 64
 
-    canonical = f"{prev_hash}:{ts}:{actor}:{action}:{target_type or ''}:{target_id or ''}:{outcome}:{detail or ''}"
-    entry_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-
-    conn.execute(
-        """
-        INSERT INTO audit_log (ts, actor, action, target_type, target_id, detail, outcome, prev_hash, entry_hash)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (ts, actor, action, target_type, target_id, detail, outcome, prev_hash, entry_hash),
+    entry_hash = compute_entry_hash(
+        prev_hash=prev_hash,
+        ts=ts,
+        actor=actor,
+        action=action,
+        target_type=target_type,
+        target_id=target_id,
+        outcome=outcome,
+        detail=detail,
+        source_ip=source_ip,
+        before_state=before_state,
+        after_state=after_state,
+        reason=reason,
     )
+
+    before_str = _serialize_state(before_state) if before_state is not None else None
+    after_str = _serialize_state(after_state) if after_state is not None else None
+
+    # Check whether extended columns exist in the active connection
+    try:
+        cur_cols = {r[1] for r in conn.execute("PRAGMA table_info(audit_log)").fetchall()}
+    except Exception:
+        cur_cols = set()
+
+    if "source_ip" in cur_cols:
+        conn.execute(
+            """
+            INSERT INTO audit_log (
+                ts, actor, action, target_type, target_id, detail, outcome,
+                prev_hash, entry_hash, source_ip, before_state, after_state, reason
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                ts, actor, action, target_type, target_id, detail, outcome,
+                prev_hash, entry_hash, source_ip, before_str, after_str, reason
+            ),
+        )
+    else:
+        conn.execute(
+            """
+            INSERT INTO audit_log (ts, actor, action, target_type, target_id, detail, outcome, prev_hash, entry_hash)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (ts, actor, action, target_type, target_id, detail, outcome, prev_hash, entry_hash),
+        )
+
     return entry_hash
 
 
-def verify_audit_chain(conn: sqlite3.Connection) -> tuple[bool, int, str | None]:
+def verify_audit_chain(conn: sqlite3.Connection) -> AuditVerificationReport:
     """Verify cryptographic integrity of the entire audit trail hash chain.
 
-    Returns (valid: bool, verified_count: int, error_message: str | None).
+    Recomputes the SHA-256 chain across every record in ascending sequence:
+    1. Each entry's prev_hash must match the preceding entry's entry_hash.
+    2. Each entry's entry_hash must match the recomputed canonical SHA-256 digest.
+
+    Returns an AuditVerificationReport detailing intact status and first break if any.
     """
-    rows = conn.execute(
-        "SELECT id, ts, actor, action, target_type, target_id, detail, outcome, prev_hash, entry_hash "
-        "FROM audit_log ORDER BY id ASC"
-    ).fetchall()
+    now_iso = datetime.now(timezone.utc).isoformat()
+    try:
+        rows = conn.execute(
+            """
+            SELECT id, ts, actor, action, target_type, target_id, detail, outcome,
+                   prev_hash, entry_hash, source_ip, before_state, after_state, reason
+            FROM audit_log ORDER BY id ASC
+            """
+        ).fetchall()
+    except sqlite3.OperationalError:
+        # Fallback if extended columns are not yet present
+        rows = conn.execute(
+            """
+            SELECT id, ts, actor, action, target_type, target_id, detail, outcome,
+                   prev_hash, entry_hash, NULL as source_ip, NULL as before_state, NULL as after_state, NULL as reason
+            FROM audit_log ORDER BY id ASC
+            """
+        ).fetchall()
+
     if not rows:
-        return True, 0, None
+        return AuditVerificationReport({
+            "valid": True,
+            "intact": True,
+            "entries_verified": 0,
+            "verified_through": 0,
+            "total_entries": 0,
+            "status": "intact",
+            "first_break": None,
+            "error": None,
+            "verified_at": now_iso,
+        })
 
     expected_prev = "0" * 64
     for idx, r in enumerate(rows):
+        entry_id = r["id"]
         actual_prev = r["prev_hash"] or ("0" * 64)
-        if actual_prev != expected_prev and idx != 0:
-            return False, idx, f"Broken chain link at audit ID {r['id']}: expected prev_hash {expected_prev}, got {actual_prev}"
+
+        if idx > 0 and actual_prev != expected_prev:
+            err = f"Broken chain link at audit ID {entry_id} (row {idx}): expected prev_hash {expected_prev}, got {actual_prev}"
+            return AuditVerificationReport({
+                "valid": False,
+                "intact": False,
+                "entries_verified": idx,
+                "verified_through": rows[idx - 1]["id"] if idx > 0 else 0,
+                "total_entries": len(rows),
+                "status": "tampered",
+                "first_break": {
+                    "index": idx,
+                    "id": entry_id,
+                    "expected_hash": expected_prev,
+                    "found_hash": actual_prev,
+                    "reason": "prev_hash mismatch",
+                },
+                "error": err,
+                "verified_at": now_iso,
+            })
+
         outcome = r["outcome"] or "success"
-        canonical = f"{actual_prev}:{r['ts']}:{r['actor']}:{r['action']}:{r['target_type'] or ''}:{r['target_id'] or ''}:{outcome}:{r['detail'] or ''}"
-        expected_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+        # Try extended canonical format first if extended fields exist
+        has_extended = bool(r["source_ip"] or r["before_state"] or r["after_state"] or r["reason"])
+        expected_hash = compute_entry_hash(
+            prev_hash=actual_prev,
+            ts=r["ts"],
+            actor=r["actor"],
+            action=r["action"],
+            target_type=r["target_type"],
+            target_id=r["target_id"],
+            outcome=outcome,
+            detail=r["detail"],
+            source_ip=r["source_ip"],
+            before_state=r["before_state"],
+            after_state=r["after_state"],
+            reason=r["reason"],
+        )
+
+        # Allow fallback to standard legacy canonical format for legacy rows
         if r["entry_hash"] and r["entry_hash"] != expected_hash:
-            return False, idx, f"Tampered entry detected at audit ID {r['id']}: hash mismatch"
+            legacy_expected = compute_entry_hash(
+                prev_hash=actual_prev,
+                ts=r["ts"],
+                actor=r["actor"],
+                action=r["action"],
+                target_type=r["target_type"],
+                target_id=r["target_id"],
+                outcome=outcome,
+                detail=r["detail"],
+            )
+            if r["entry_hash"] == legacy_expected:
+                expected_hash = legacy_expected
+            else:
+                err = f"Tampered entry detected at audit ID {entry_id} (row {idx}): hash mismatch"
+                return AuditVerificationReport({
+                    "valid": False,
+                    "intact": False,
+                    "entries_verified": idx,
+                    "verified_through": rows[idx - 1]["id"] if idx > 0 else 0,
+                    "total_entries": len(rows),
+                    "status": "tampered",
+                    "first_break": {
+                        "index": idx,
+                        "id": entry_id,
+                        "expected_hash": expected_hash,
+                        "found_hash": r["entry_hash"],
+                        "reason": "entry_hash verification failed",
+                    },
+                    "error": err,
+                    "verified_at": now_iso,
+                })
+
         expected_prev = r["entry_hash"] or expected_hash
 
-    return True, len(rows), None
+    total = len(rows)
+    return AuditVerificationReport({
+        "valid": True,
+        "intact": True,
+        "entries_verified": total,
+        "verified_through": rows[-1]["id"] if rows else 0,
+        "total_entries": total,
+        "status": "intact",
+        "first_break": None,
+        "error": None,
+        "verified_at": now_iso,
+    })
+
+
+def create_checkpoint(conn: sqlite3.Connection) -> dict[str, Any]:
+    """Create a cryptographically signed checkpoint over the current audit log head.
+
+    Signs the latest entry hash, entry ID, and timestamp with the local signing key.
+    The public key fingerprint and signature can be exported out-of-band to prevent
+    database rewrite attacks.
+    """
+    key, pub = get_or_create_signing_key()
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    last_row = conn.execute("SELECT id, entry_hash FROM audit_log ORDER BY id DESC LIMIT 1").fetchone()
+    last_audit_id = int(last_row["id"]) if last_row else 0
+    last_entry_hash = str(last_row["entry_hash"]) if last_row and last_row["entry_hash"] else ("0" * 64)
+
+    try:
+        seq_row = conn.execute("SELECT COALESCE(MAX(checkpoint_seq), 0) + 1 AS next_seq FROM audit_checkpoints").fetchone()
+        seq = int(seq_row["next_seq"]) if seq_row else 1
+    except sqlite3.OperationalError:
+        seq = 1
+
+    payload = f"{seq}:{now_iso}:{last_audit_id}:{last_entry_hash}:{pub}"
+    sig = hmac.new(key, payload.encode("utf-8"), hashlib.sha256).hexdigest()
+
+    try:
+        conn.execute(
+            """
+            INSERT INTO audit_checkpoints (checkpoint_seq, created_at, last_audit_id, last_entry_hash, signature, public_key)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (seq, now_iso, last_audit_id, last_entry_hash, sig, pub),
+        )
+    except Exception:
+        pass
+
+    return {
+        "checkpoint_seq": seq,
+        "created_at": now_iso,
+        "last_audit_id": last_audit_id,
+        "last_entry_hash": last_entry_hash,
+        "public_key_fingerprint": pub,
+        "signature": sig,
+    }
+
+
+def verify_checkpoint(checkpoint: dict[str, Any], key: bytes | None = None) -> bool:
+    """Verify an exported checkpoint's cryptographic signature."""
+    if key is None:
+        key, pub = get_or_create_signing_key()
+    else:
+        pub = hashlib.sha256(key).hexdigest()
+
+    seq = checkpoint.get("checkpoint_seq")
+    created_at = checkpoint.get("created_at")
+    last_audit_id = checkpoint.get("last_audit_id")
+    last_entry_hash = checkpoint.get("last_entry_hash")
+    stored_sig = checkpoint.get("signature")
+
+    payload = f"{seq}:{created_at}:{last_audit_id}:{last_entry_hash}:{pub}"
+    expected_sig = hmac.new(key, payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    return hmac.compare_digest(stored_sig or "", expected_sig)
+
+
+def list_checkpoints(conn: sqlite3.Connection, limit: int = 50) -> list[dict[str, Any]]:
+    """List recent signed audit checkpoints."""
+    try:
+        rows = conn.execute(
+            "SELECT * FROM audit_checkpoints ORDER BY checkpoint_seq DESC LIMIT ?",
+            (max(1, min(limit, 200)),),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    except sqlite3.OperationalError:
+        return []
 
 
 def list_events(conn: sqlite3.Connection, limit: int = 200, action: str | None = None) -> list[dict]:
@@ -113,4 +481,3 @@ def list_events(conn: sqlite3.Connection, limit: int = 200, action: str | None =
             (limit,),
         ).fetchall()
     return [dict(r) for r in rows]
-

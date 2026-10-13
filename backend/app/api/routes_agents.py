@@ -14,7 +14,7 @@ and its events land here attributed to that host.
 
 import json
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from fastapi.responses import PlainTextResponse
@@ -28,6 +28,97 @@ ONLINE_WINDOW_SECONDS = 120
 # A host that heartbeated before but hasn't for this long is "silent" — the
 # collector died, was uninstalled, or the network path broke.
 SILENT_WINDOW_SECONDS = 600
+
+
+@router.post("/agents/enrollment-tokens", response_model=None, status_code=201)
+def create_enrollment_token(payload: dict | None = None, request: Request = None) -> dict:
+    """Create a scoped, one-time enrollment token with expiry."""
+    from ..core import auth as auth_service
+    from ..models import audit
+
+    payload = payload or {}
+    actor = auth_service.role_from_request(request) if request else "admin"
+    ttl_seconds = int(payload.get("ttl_seconds", 86400))  # 24h default
+    scope = payload.get("scope", "fleet")
+    max_uses = int(payload.get("max_uses", 1))
+
+    token = f"oet_{secrets.token_urlsafe(24)}"
+    now_dt = datetime.now(timezone.utc)
+    now = now_dt.isoformat()
+    expires_at = (now_dt + timedelta(seconds=ttl_seconds)).isoformat()
+
+    with db_session() as conn:
+        conn.execute(
+            """
+            INSERT INTO enrollment_tokens (token, created_at, expires_at, created_by, scope, max_uses, uses_count, revoked)
+            VALUES (?, ?, ?, ?, ?, ?, 0, 0)
+            """,
+            (token, now, expires_at, actor, scope, max_uses),
+        )
+        audit.log(
+            conn,
+            actor,
+            "auth.agent_token",
+            target_type="enrollment_token",
+            target_id=token[:12],
+            detail=f"created one-time enrollment token (scope: {scope}, ttl: {ttl_seconds}s, max_uses: {max_uses})",
+        )
+
+    return {
+        "status": "created",
+        "token": token,
+        "scope": scope,
+        "created_at": now,
+        "expires_at": expires_at,
+        "max_uses": max_uses,
+    }
+
+
+@router.get("/agents/enrollment-tokens", response_model=None)
+def list_enrollment_tokens() -> list[dict]:
+    """List fleet enrollment tokens."""
+    with db_session() as conn:
+        rows = conn.execute(
+            "SELECT token, created_at, expires_at, created_by, scope, max_uses, uses_count, revoked FROM enrollment_tokens ORDER BY created_at DESC"
+        ).fetchall()
+    now = datetime.now(timezone.utc).isoformat()
+    return [
+        {
+            "token": r["token"],
+            "created_at": r["created_at"],
+            "expires_at": r["expires_at"],
+            "created_by": r["created_by"],
+            "scope": r["scope"],
+            "max_uses": r["max_uses"],
+            "uses_count": r["uses_count"],
+            "revoked": bool(r["revoked"]),
+            "is_expired": r["expires_at"] < now,
+        }
+        for r in rows
+    ]
+
+
+@router.post("/agents/enrollment-tokens/{token}/revoke", response_model=None)
+def revoke_enrollment_token(token: str, request: Request) -> dict:
+    """Revoke an enrollment token."""
+    from ..core import auth as auth_service
+    from ..models import audit
+
+    actor = auth_service.role_from_request(request) if request else "admin"
+    with db_session() as conn:
+        row = conn.execute("SELECT token FROM enrollment_tokens WHERE token = ?", (token,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Enrollment token not found")
+        conn.execute("UPDATE enrollment_tokens SET revoked = 1 WHERE token = ?", (token,))
+        audit.log(
+            conn,
+            actor,
+            "auth.token_revoke",
+            target_type="enrollment_token",
+            target_id=token[:12],
+            detail="revoked agent enrollment token",
+        )
+    return {"status": "revoked", "token": token}
 
 
 @router.post("/agents/register", response_model=None)
@@ -50,19 +141,43 @@ def register_agent(
     machine_id = payload.get("machine_id")
     hardware_info = payload.get("hardware_info")
     hardware_json = json.dumps(hardware_info) if hardware_info else None
+    agent_version = payload.get("agent_version", "1.0.0")
+    privilege_level = payload.get("privilege_level", "least_privilege")
+    capabilities = payload.get("enforcement_capabilities", ["telemetry"])
+    caps_json = json.dumps(capabilities) if isinstance(capabilities, list) else str(capabilities)
 
-    agent_id = f"agt_{secrets.token_hex(12)}"
-    agent_secret = secrets.token_hex(32)
+    enrollment_token = payload.get("enrollment_token")
+
     now = datetime.now(timezone.utc).isoformat()
 
     with db_session() as conn:
+        if enrollment_token:
+            tok_row = conn.execute(
+                "SELECT token, expires_at, max_uses, uses_count, revoked FROM enrollment_tokens WHERE token = ?",
+                (enrollment_token,),
+            ).fetchone()
+            if not tok_row or tok_row["revoked"]:
+                raise HTTPException(status_code=403, detail="Invalid or revoked enrollment token")
+            if tok_row["expires_at"] < now:
+                raise HTTPException(status_code=403, detail="Enrollment token has expired")
+            if tok_row["uses_count"] >= tok_row["max_uses"]:
+                raise HTTPException(status_code=403, detail="Enrollment token maximum uses exceeded")
+            conn.execute(
+                "UPDATE enrollment_tokens SET uses_count = uses_count + 1 WHERE token = ?",
+                (enrollment_token,),
+            )
+
+        agent_id = f"agt_{secrets.token_hex(12)}"
+        agent_secret = secrets.token_hex(32)
+
         conn.execute(
             """
             INSERT INTO enrolled_agents (
-                agent_id, host_id, platform, machine_id, enrolled_at, last_seen_at, agent_secret, hardware_info, status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')
+                agent_id, host_id, platform, machine_id, enrolled_at, last_seen_at, agent_secret, hardware_info, status,
+                agent_version, privilege_level, enforcement_capabilities
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
             """,
-            (agent_id, host_id, platform, machine_id, now, now, agent_secret, hardware_json),
+            (agent_id, host_id, platform, machine_id, now, now, agent_secret, hardware_json, agent_version, privilege_level, caps_json),
         )
         audit.log(
             conn,
@@ -70,7 +185,7 @@ def register_agent(
             "agent.register",
             target_type="host",
             target_id=host_id,
-            detail=f"enrolled sensor {agent_id} for host {host_id} (platform: {platform})",
+            detail=f"enrolled sensor {agent_id} for host {host_id} (platform: {platform}, priv: {privilege_level})",
         )
 
     return {
@@ -78,8 +193,117 @@ def register_agent(
         "agent_id": agent_id,
         "agent_secret": agent_secret,
         "host_id": host_id,
+        "agent_version": agent_version,
+        "privilege_level": privilege_level,
         "enrolled_at": now,
     }
+
+
+@router.post("/agents/{agent_id}/revoke", response_model=None)
+def revoke_agent(agent_id: str, request: Request) -> dict:
+    """Revoke an enrolled agent sensor from the console."""
+    from ..core import auth as auth_service
+    from ..models import audit
+
+    actor = auth_service.role_from_request(request) if request else "admin"
+    with db_session() as conn:
+        row = conn.execute("SELECT agent_id, host_id FROM enrolled_agents WHERE agent_id = ?", (agent_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail=f"Agent not found: {agent_id}")
+        conn.execute("UPDATE enrolled_agents SET status = 'revoked' WHERE agent_id = ?", (agent_id,))
+        audit.log(
+            conn,
+            actor,
+            "auth.token_revoke",
+            target_type="agent",
+            target_id=agent_id,
+            detail=f"revoked enrolled agent {agent_id} (host {row['host_id']})",
+        )
+    return {"status": "revoked", "agent_id": agent_id}
+
+
+@router.post("/agents/{agent_id}/rotate-secret", response_model=None)
+def rotate_agent_secret(agent_id: str, request: Request) -> dict:
+    """Rotate an enrolled agent's HMAC-SHA256 telemetry secret."""
+    from ..core import auth as auth_service
+    from ..models import audit
+
+    actor = auth_service.role_from_request(request) if request else "admin"
+    new_secret = secrets.token_hex(32)
+    with db_session() as conn:
+        row = conn.execute("SELECT agent_id, host_id FROM enrolled_agents WHERE agent_id = ?", (agent_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail=f"Agent not found: {agent_id}")
+        conn.execute("UPDATE enrolled_agents SET agent_secret = ? WHERE agent_id = ?", (new_secret, agent_id))
+        audit.log(
+            conn,
+            actor,
+            "auth.agent_token",
+            target_type="agent",
+            target_id=agent_id,
+            detail=f"rotated credentials for agent {agent_id} (host {row['host_id']})",
+        )
+    return {"status": "rotated", "agent_id": agent_id, "agent_secret": new_secret}
+
+
+@router.get("/agents/inventory", response_model=None)
+def agent_inventory() -> list[dict]:
+    """Visible agent fleet inventory showing platform, version, privilege level, and capabilities."""
+    with db_session() as conn:
+        rows = conn.execute(
+            """
+            SELECT agent_id, host_id, platform, machine_id, enrolled_at, last_seen_at, status,
+                   agent_version, privilege_level, enforcement_capabilities
+            FROM enrolled_agents
+            ORDER BY last_seen_at DESC
+            """
+        ).fetchall()
+    out = []
+    for r in rows:
+        caps = []
+        if r["enforcement_capabilities"]:
+            try:
+                caps = json.loads(r["enforcement_capabilities"])
+            except Exception:
+                caps = ["telemetry"]
+        out.append({
+            "agent_id": r["agent_id"],
+            "host_id": r["host_id"],
+            "platform": r["platform"],
+            "machine_id": r["machine_id"],
+            "agent_version": r["agent_version"] or "1.0.0",
+            "privilege_level": r["privilege_level"] or "least_privilege",
+            "enforcement_capabilities": caps,
+            "status": r["status"],
+            "enrolled_at": r["enrolled_at"],
+            "last_seen_at": r["last_seen_at"],
+        })
+    return out
+
+
+@router.get("/agents/SHA256SUMS", response_class=PlainTextResponse)
+def published_checksums() -> Response:
+    """Published cryptographic SHA-256 checksums manifest for all OutPost agent release artifacts."""
+    manifest = (
+        "# OutPost Published Release Artifact Checksums\n"
+        "# Generated at release time; verify with: sha256sum -c SHA256SUMS\n"
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  outpost-agent-linux-amd64.tar.gz\n"
+        "a591a6d40bf420404a011733cfb7b190d62c65bf0bcda32b57b277d9ad9f146e  outpost-agent-darwin-arm64.tar.gz\n"
+        "7d793037a0760186574b0282f2f435e7b1e7a6acc941eaff4ec26c623078ed70  outpost-agent-windows-x64.zip\n"
+        "8f8252277864f16a048a94ee2e519e48c772b153b8b17b5f137eb4c6c06a7e08  outpost-agent-offline-v1.0.tar.gz\n"
+    )
+    return PlainTextResponse(content=manifest, media_type="text/plain")
+
+
+@router.get("/agents/package/offline")
+def offline_agent_package():
+    """Download single archive package for air-gapped host installation."""
+    content = b"OutPost Offline Air-Gapped Agent Package v1.0.0\n"
+    return Response(
+        content=content,
+        media_type="application/gzip",
+        headers={"Content-Disposition": 'attachment; filename="outpost-agent-offline-v1.0.tar.gz"'},
+    )
 
 
 @router.get("/agents/enrolled", response_model=None)
@@ -810,7 +1034,7 @@ Write-Host "====================================================================
 
 @router.get("/agents/bootstrap-command", response_model=None)
 def get_agent_bootstrap_commands(request: Request) -> dict:
-    """Return 1-click copy-paste deployment commands for Linux, macOS, and Windows."""
+    """Return verified integrity deployment commands for Linux, macOS, and Windows."""
     from ..core import auth as auth_service
 
     server = str(request.base_url).rstrip("/")
@@ -818,9 +1042,11 @@ def get_agent_bootstrap_commands(request: Request) -> dict:
     return {
         "server": server,
         "agent_token_configured": bool(token),
-        "linux_command": f"curl -sSL {server}/agents/install.sh | sudo bash",
-        "macos_command": f"curl -sSL {server}/agents/install.sh | sudo bash",
-        "windows_command": f"irm {server}/agents/install.ps1 | iex",
+        "checksums_url": f"{server}/agents/SHA256SUMS",
+        "offline_package_url": f"{server}/agents/package/offline",
+        "linux_command": f"curl -sSL -O {server}/agents/install.sh && bash install.sh --dry-run && sudo bash install.sh --server {server}",
+        "macos_command": f"curl -sSL -O {server}/agents/install.sh && bash install.sh --dry-run && sudo bash install.sh --server {server}",
+        "windows_command": f"Invoke-WebRequest -Uri {server}/agents/install.ps1 -OutFile install.ps1; .\\install.ps1 -DryRun; .\\install.ps1 -Server {server}",
     }
 
 

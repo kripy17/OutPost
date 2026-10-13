@@ -725,3 +725,106 @@ def test_fleet_per_source_health_reporting(client):
     assert healthy["source_health"]["network"] == "ok"
 
 
+def test_one_time_enrollment_token_lifecycle(client):
+    """Enrollment tokens enforce single-use, scope, and revocation."""
+    # 1. Create one-time token
+    tok_res = client.post(
+        "/agents/enrollment-tokens",
+        json={"ttl_seconds": 3600, "scope": "dmz_hosts", "max_uses": 1},
+    )
+    assert tok_res.status_code == 201
+    token_str = tok_res.json()["token"]
+
+    # 2. First registration succeeds
+    reg1 = client.post(
+        "/agents/register",
+        json={
+            "host_id": "dmz-host-01",
+            "platform": "linux",
+            "enrollment_token": token_str,
+            "privilege_level": "least_privilege",
+            "enforcement_capabilities": ["telemetry", "process_freeze"],
+        },
+    )
+    assert reg1.status_code == 200
+    assert reg1.json()["privilege_level"] == "least_privilege"
+
+    # 3. Re-use of single-use token is rejected
+    reg2 = client.post(
+        "/agents/register",
+        json={"host_id": "dmz-host-02", "platform": "linux", "enrollment_token": token_str},
+    )
+    assert reg2.status_code == 403
+    assert "maximum uses exceeded" in reg2.json()["detail"]
+
+    # 4. Revocation of unused token blocks registration
+    tok_res2 = client.post("/agents/enrollment-tokens", json={"ttl_seconds": 3600})
+    token_str2 = tok_res2.json()["token"]
+    rev_res = client.post(f"/agents/enrollment-tokens/{token_str2}/revoke")
+    assert rev_res.status_code == 200
+
+    reg3 = client.post(
+        "/agents/register",
+        json={"host_id": "dmz-host-03", "platform": "linux", "enrollment_token": token_str2},
+    )
+    assert reg3.status_code == 403
+    assert "revoked" in reg3.json()["detail"]
+
+
+def test_agent_inventory_and_revocation(client):
+    """Visible inventory reports privilege levels and agents can be revoked from console."""
+    # Register agent
+    reg = client.post(
+        "/agents/register",
+        json={
+            "host_id": "inventory-host-01",
+            "platform": "linux",
+            "agent_version": "1.2.0",
+            "privilege_level": "least_privilege",
+            "enforcement_capabilities": ["telemetry", "network_isolate"],
+        },
+    )
+    assert reg.status_code == 200
+    agent_id = reg.json()["agent_id"]
+
+    # Verify inventory listing
+    inv = client.get("/agents/inventory").json()
+    item = next(a for a in inv if a["agent_id"] == agent_id)
+    assert item["agent_version"] == "1.2.0"
+    assert item["privilege_level"] == "least_privilege"
+    assert "network_isolate" in item["enforcement_capabilities"]
+    assert item["status"] == "active"
+
+    # Revoke agent
+    rev_agent = client.post(f"/agents/{agent_id}/revoke")
+    assert rev_agent.status_code == 200
+
+    inv2 = client.get("/agents/inventory").json()
+    item2 = next(a for a in inv2 if a["agent_id"] == agent_id)
+    assert item2["status"] == "revoked"
+
+
+def test_agent_secret_rotation(client):
+    """Enrolled agent secret can be rotated from the API."""
+    reg = client.post("/agents/register", json={"host_id": "rot-host-01", "platform": "linux"})
+    agent_id = reg.json()["agent_id"]
+    old_secret = reg.json()["agent_secret"]
+
+    rot = client.post(f"/agents/{agent_id}/rotate-secret")
+    assert rot.status_code == 200
+    new_secret = rot.json()["agent_secret"]
+    assert new_secret != old_secret
+
+
+def test_published_checksums_and_offline_package(client):
+    """Verify published release checksums and air-gapped package endpoints."""
+    res_chk = client.get("/agents/SHA256SUMS")
+    assert res_chk.status_code == 200
+    assert "sha256sum -c SHA256SUMS" in res_chk.text
+
+    res_pkg = client.get("/agents/package/offline")
+    assert res_pkg.status_code == 200
+    assert "attachment" in res_pkg.headers["content-disposition"]
+
+
+

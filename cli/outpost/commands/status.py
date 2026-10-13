@@ -1,5 +1,6 @@
-"""`outpost status` and `outpost doctor` — system health, connectivity, and diagnostics."""
+"""`outpost status`, `outpost doctor`, and `outpost diagnostics` — system health, connectivity, and diagnostics."""
 
+import json
 import os
 import shutil
 import sqlite3
@@ -55,12 +56,13 @@ def _get_db_stats() -> dict[str, Any]:
 
 
 @app.callback(invoke_without_command=True)
-def status(ctx: typer.Context) -> None:
+def status(
+    ctx: typer.Context,
+    as_json: bool = typer.Option(False, "--json", help="Output machine-readable JSON"),
+) -> None:
     """Display real-time health for Backend API, Web Console, SQLite Database, and Agents."""
     if ctx.invoked_subcommand is not None:
         return
-
-    show_banner(primary=False)
 
     api_url = api_client.get_base_url()
     api_online = False
@@ -78,6 +80,18 @@ def status(ctx: typer.Context) -> None:
 
     # Check Database
     db_stats = _get_db_stats()
+
+    is_json = bool(as_json) and not isinstance(as_json, typer.models.OptionInfo)
+    if is_json:
+        payload = {
+            "backend_api": {"url": api_url, "online": api_online, "meta": api_meta},
+            "web_console": {"url": f"http://localhost:{web_port}", "online": web_online},
+            "database": db_stats,
+        }
+        typer.echo(json.dumps(payload, indent=2))
+        return
+
+    show_banner(primary=False)
 
     # Build Status Table
     table = Table(title="OutPost Platform Status", border_style="dim")
@@ -130,10 +144,10 @@ def status(ctx: typer.Context) -> None:
 
 
 @app.command("doctor")
-def doctor() -> None:
+def doctor(
+    as_json: bool = typer.Option(False, "--json", help="Output machine-readable JSON"),
+) -> None:
     """Run diagnostic checks on python runtime, virtualenv, dependencies, ports, and permissions."""
-    show_banner(primary=False)
-
     checks: list[tuple[str, bool, str]] = []
 
     # 1. Python version
@@ -180,6 +194,16 @@ def doctor() -> None:
     checks.append((":8001 API Port", True, "In use (Service active)" if port_8001_in_use else "Available (Ready)"))
     checks.append((":5174 Web Port", True, "In use (Service active)" if port_5174_in_use else "Available (Ready)"))
 
+    is_json = bool(as_json) and not isinstance(as_json, typer.models.OptionInfo)
+    if is_json:
+        payload = [
+            {"check": name, "passed": ok, "details": det}
+            for name, ok, det in checks
+        ]
+        typer.echo(json.dumps(payload, indent=2))
+        return
+
+    show_banner(primary=False)
     table = Table(title="OutPost Diagnostic Doctor", border_style="dim")
     table.add_column("Diagnostic Check", style="bold cyan")
     table.add_column("Status", justify="center")
@@ -198,3 +222,89 @@ def doctor() -> None:
         console.print("[bold green]✔ All environment diagnostic checks passed. System is fully operational.[/bold green]\n")
     else:
         console.print("[bold red]⚠ Some checks failed. Run `./setup.sh` to resolve missing dependencies.[/bold red]\n")
+
+
+@app.command("diagnostics")
+def diagnostics(
+    as_json: bool = typer.Option(False, "--json", help="Output machine-readable JSON"),
+) -> None:
+    """Report internal platform metrics: ingest rate, queue depth, per-collector health, DB size, and streams."""
+    try:
+        data = api_client.get_diagnostics()
+    except api_client.APIError as exc:
+        console.print(f"[bold red]Diagnostics unavailable: {exc}[/bold red]")
+        raise typer.Exit(1) from exc
+
+    is_json = bool(as_json) and not isinstance(as_json, typer.models.OptionInfo)
+    if is_json:
+        typer.echo(json.dumps(data, indent=2))
+        return
+
+    show_banner(primary=False)
+    console.print("[bold #3FA796]OutPost Platform Internal Observability[/bold #3FA796]\n")
+
+    # Ingest & Pipeline
+    ingest = data.get("ingest", {})
+    ingest_table = Table(title="Telemetry Ingest & Detection Pipeline", border_style="dim")
+    ingest_table.add_column("Metric", style="bold cyan")
+    ingest_table.add_column("Value", style="white")
+    ingest_table.add_row("Events Ingest Rate", f"{ingest.get('events_per_second', 0)} events/sec")
+    ingest_table.add_row("Events (Last 1m / 1h)", f"{ingest.get('events_last_minute', 0)} / {ingest.get('events_last_hour', 0)}")
+    ingest_table.add_row("Total Ingested Events", f"{ingest.get('total_events', 0):,}")
+    ingest_table.add_row("Ingest Pipeline Mode", ingest.get("pipeline_mode", "in-process"))
+    ingest_table.add_row("Queue Depth", str(ingest.get("queue_depth", 0)))
+    ingest_table.add_row("Dropped Events", str(ingest.get("dropped_events_count", 0)))
+    console.print(ingest_table)
+    console.print()
+
+    # Collectors Inventory
+    collectors = data.get("collectors", {}).get("inventory", [])
+    coll_table = Table(title="Endpoint Collectors Health & Specific States", border_style="dim")
+    coll_table.add_column("Host ID / Name", style="bold cyan")
+    coll_table.add_column("Platform / Ver", style="white")
+    coll_table.add_column("Privilege", style="dim")
+    coll_table.add_column("Status", justify="center")
+    coll_table.add_column("Granular Diagnostic State", style="dim")
+
+    for c in collectors:
+        badge = "[bold green]HEALTHY[/bold green]" if c["health_badge"] == "healthy" else (
+            "[bold yellow]DEGRADED[/bold yellow]" if c["health_badge"] == "degraded" else "[bold red]OFFLINE[/bold red]"
+        )
+        coll_table.add_row(
+            f"{c['host_id']} ({c['hostname']})",
+            f"{c['platform']} v{c['agent_version']}",
+            f"{c['privilege_level']} ({c['enforcement_capabilities']})",
+            badge,
+            c["diagnostic_state"],
+        )
+    if not collectors:
+        coll_table.add_row("-", "-", "-", "[dim]NONE[/dim]", "No endpoint collectors currently enrolled")
+    console.print(coll_table)
+    console.print()
+
+    # Database & Integrity
+    db = data.get("database", {})
+    integ = data.get("evidence_integrity", {})
+    db_table = Table(title="Storage Engine & Evidence Hash-Chain", border_style="dim")
+    db_table.add_column("Component", style="bold cyan")
+    db_table.add_column("Details", style="white")
+    db_table.add_row("Database Engine", f"{db.get('engine', 'sqlite').upper()} ({db.get('size_mb', 0)} MB, journal: {db.get('journal_mode', 'wal')})")
+    schema_ver = db.get("schema_version", {})
+    db_table.add_row("Schema Version", f"v{schema_ver.get('current_version', 0)} (applied: {schema_ver.get('total_applied', 0)}/{schema_ver.get('total_available', 0)})")
+    db_table.add_row("Audit Trail Chain", f"{integ.get('audit_chain_length', 0)} entries ({integ.get('status', 'verified')})")
+    db_table.add_row("SSE Stream Subscribers", str(data.get("stream", {}).get("active_subscribers", 0)))
+    console.print(db_table)
+    console.print()
+
+
+@app.command("bundle")
+def bundle(
+    output: Path = typer.Option(None, "--output", "-o", help="Destination path for support bundle zip"),
+) -> None:
+    """Download a sanitized diagnostics support bundle zip archive for offline troubleshooting."""
+    try:
+        saved_path = api_client.download_support_bundle(output)
+        console.print(f"[bold #3FA796]✔ Exported support bundle archive → {saved_path}[/bold #3FA796]")
+    except api_client.APIError as exc:
+        console.print(f"[bold red]Support bundle export failed: {exc}[/bold red]")
+        raise typer.Exit(1) from exc

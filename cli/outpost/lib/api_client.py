@@ -355,6 +355,16 @@ def get_audit(limit: int = 50, action: str = "") -> dict:
     return _get(f"/audit{q}")
 
 
+def verify_audit() -> dict:
+    """Verify cryptographic hash-chain integrity (`GET /audit/verify`)."""
+    return _get("/audit/verify")
+
+
+def create_audit_checkpoint() -> dict:
+    """Create signed cryptographic audit checkpoint (`POST /audit/checkpoint`)."""
+    return _post("/audit/checkpoint", {})
+
+
 def export_stix(run_id: str) -> dict:
     """STIX 2.1 bundle of the run's indicators (roadmap 3.3)."""
     return _get(f"/runs/{run_id}/export?format=stix")
@@ -901,5 +911,24 @@ def execute_investigation_playbook(
             "target_host": target_host,
         },
     )
+
+
+def get_diagnostics() -> dict:
+    """Fetch deep internal platform telemetry and observability metrics."""
+    return _get("/diagnostics")
+
+
+def download_support_bundle(dest_path: Path | None = None) -> Path:
+    """Download encrypted/sanitized support bundle zip archive."""
+    base = get_base_url()
+    try:
+        resp = requests.get(f"{base}/diagnostics/support-bundle", headers=_auth_headers(), timeout=30)
+    except requests.RequestException:
+        raise APIError(f"Backend unreachable at {base} — is OutPost running?") from None
+    if not resp.ok:
+        raise APIError(f"GET /diagnostics/support-bundle → {resp.status_code}: {resp.text[:200]}")
+    target = dest_path or Path("outpost-support-bundle.zip")
+    target.write_bytes(resp.content)
+    return target
 
 
