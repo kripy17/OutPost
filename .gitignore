@@ -6,6 +6,7 @@
 __pycache__/
 node_modules/
 dist/
+*.tsbuildinfo
 *.qcow2
 *.vmdk
 /samples/
