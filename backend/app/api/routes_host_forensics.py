@@ -13,6 +13,8 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 
 from ..core import auth
+from ..core.db import db_session
+from ..models import audit
 from ..services import host_forensics
 
 router = APIRouter(tags=["host-forensics"])
@@ -228,6 +230,16 @@ def export_host_triage_pack(
     """Acquire and download a live endpoint forensic triage pack as a JSON artifact."""
     from ..services.forensic_probes import collect_host_triage_pack
     pack = collect_host_triage_pack(include_yara=include_yara, host_id="local")
+    with db_session() as conn:
+        audit.log(
+            conn,
+            actor="analyst",
+            action="report.export",
+            target_type="forensic_triage",
+            target_id=pack.get("triage_id", "local_triage"),
+            detail=f"exported forensic triage pack (manifest: {str(pack.get('manifest_hash', ''))[:16]}...)",
+            after_state={"manifest_hash": pack.get("manifest_hash"), "triage_id": pack.get("triage_id")},
+        )
     payload = json.dumps(pack, indent=2, default=str)
     filename = f"{pack.get('triage_id', 'outpost_triage')}.json"
     return Response(

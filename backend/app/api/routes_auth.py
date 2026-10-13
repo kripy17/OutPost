@@ -30,7 +30,7 @@ class LoginIn(BaseModel):
 
 
 class PasswordIn(BaseModel):
-    role: str = Field(default="admin", pattern="^(admin|analyst)$")
+    role: str = Field(default="admin", pattern="^(admin|responder|analyst|viewer)$")
     new_password: str = Field(min_length=8, max_length=200)
 
 
@@ -79,8 +79,58 @@ def login(body: LoginIn, request: Request, response: Response) -> dict:
         "token": token,
         "role": role,
         "expires_in": auth.TOKEN_TTL_SECONDS,
-        "read_only": role == "analyst",
+        "read_only": role in ("analyst", "viewer"),
     }
+
+
+@router.post("/auth/logout", response_model=None)
+def logout(request: Request, response: Response) -> dict:
+    """Revoke the current session token and clear the auth cookie."""
+    tok = auth.token_from_request(
+        dict(request.headers),
+        dict(request.query_params),
+        dict(request.cookies),
+        path=request.url.path,
+    )
+    if tok:
+        auth.revoke_token(tok)
+    response.delete_cookie(key="outpost_token", path="/")
+    actor = auth.role_from_request(request)
+    client_ip = request.client.host if request.client else "unknown"
+    with db_session() as conn:
+        audit.log(conn, actor, "auth.logout", target_type="session", target_id=client_ip)
+    return {"status": "ok", "message": "Session revoked"}
+
+
+@router.get("/auth/sessions", response_model=None)
+def list_sessions(request: Request) -> dict:
+    """List active logged-in sessions with revocable session IDs."""
+    if auth.auth_enabled():
+        tok = auth.token_from_request(dict(request.headers), dict(request.query_params), dict(request.cookies), path=request.url.path)
+        role = auth.verify_token(tok) if tok else None
+        if not role:
+            raise HTTPException(status_code=401, detail="Authentication required")
+    sessions = auth.list_active_sessions()
+    return {"total": len(sessions), "sessions": sessions}
+
+
+class RevokeSessionIn(BaseModel):
+    session_id: str
+
+
+@router.post("/auth/sessions/revoke", response_model=None)
+def revoke_session_endpoint(body: RevokeSessionIn, request: Request) -> dict:
+    """Explicitly revoke an active session by session ID (admin only)."""
+    if auth.auth_enabled():
+        tok = auth.token_from_request(dict(request.headers), dict(request.query_params), dict(request.cookies), path=request.url.path)
+        role = auth.verify_token(tok) if tok else None
+        if role != "admin":
+            raise HTTPException(status_code=403, detail="Admin role required to revoke sessions")
+    success = auth.revoke_session_by_id(body.session_id)
+    actor = auth.role_from_request(request)
+    with db_session() as conn:
+        audit.log(conn, actor, "auth.token_revoke", target_type="session", target_id=body.session_id)
+    return {"status": "ok" if success else "not_found", "session_id": body.session_id}
 
 
 @router.get("/auth/ratelimit", response_model=None)
@@ -111,7 +161,7 @@ def me(
         "enabled": auth.auth_enabled(),
         "authenticated": role is not None,
         "role": role,
-        "read_only": role == "analyst",
+        "read_only": role in ("analyst", "viewer"),
         "credential_mode": auth.credential_mode(role) if role else None,
         "expires_at": int(time.time()) + auth.TOKEN_TTL_SECONDS if role else None,
     }

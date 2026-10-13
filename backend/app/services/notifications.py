@@ -28,6 +28,7 @@ from email.message import EmailMessage
 import httpx
 
 from ..core.schema import Alert
+from ..core.ssrf import validate_outbound_url
 
 WEBHOOK_KEY = "NOTIFY_WEBHOOK_URL"
 SLACK_KEY = "NOTIFY_SLACK_WEBHOOK_URL"
@@ -152,14 +153,23 @@ def _human_line(payload: dict) -> str:
 
 
 async def _send_generic_webhook(client: httpx.AsyncClient, url: str, payload: dict) -> None:
+    is_valid, _, _ = validate_outbound_url(url)
+    if not is_valid:
+        return
     await client.post(url, json=payload)
 
 
 async def _send_slack(client: httpx.AsyncClient, url: str, payload: dict) -> None:
+    is_valid, _, _ = validate_outbound_url(url)
+    if not is_valid:
+        return
     await client.post(url, json={"text": _human_line(payload)})
 
 
 async def _send_discord(client: httpx.AsyncClient, url: str, payload: dict) -> None:
+    is_valid, _, _ = validate_outbound_url(url)
+    if not is_valid:
+        return
     severity = payload.get("severity", "suspicious")
     color = 0xEF4444 if severity == "malicious" else 0xF59E0B
     await client.post(

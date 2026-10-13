@@ -312,6 +312,7 @@ def synthesize_case_narrative(investigation_id: str) -> dict:
 @router.get("/investigations/{investigation_id}/export")
 def export_investigation(
     investigation_id: str,
+    request: Request,
     format: str = Query("markdown", description="markdown | json | stix | csv"),
 ):
     """Export an executive Incident Response Case Brief in Markdown, JSON, OASIS STIX 2.1 Bundle, or Timesketch CSV format."""
@@ -327,6 +328,15 @@ def export_investigation(
     with db_session() as conn:
         _require_investigation(conn, investigation_id)
         fmt = format.lower()
+        actor = auth.actor(request)
+        audit.log(
+            conn,
+            actor=actor,
+            action="investigation.export",
+            target_type="investigation",
+            target_id=investigation_id,
+            detail=f"Export format: {fmt}",
+        )
         if fmt == "stix":
             return stix_service.build_investigation_stix_bundle(investigation_id)
         elif fmt == "json":
@@ -349,6 +359,103 @@ def export_investigation(
                     "Content-Disposition": f'attachment; filename="outpost-incident-brief-{investigation_id}.md"'
                 },
             )
+
+
+@router.post("/investigations/import", status_code=201, response_model=None)
+def import_investigation(
+    payload: dict,
+    request: Request,
+) -> dict:
+    """Import an investigation dossier exported from OutPost or compatible incident response tools.
+
+    Restores case title, status, notes, tags, evidence references, and checklist tasks.
+    Audited with a cryptographic chain entry.
+    """
+    from datetime import datetime, timezone
+    actor = auth.actor(request)
+    case_info = payload.get("case", {}) if isinstance(payload.get("case"), dict) else payload
+    title = case_info.get("title") or payload.get("title")
+    if not title or not isinstance(title, str) or not title.strip():
+        raise HTTPException(status_code=422, detail="Dossier must specify a valid case 'title'")
+
+    tags = case_info.get("tags") or payload.get("tags") or []
+    if isinstance(tags, str):
+        tags = [tags]
+    tags = [str(t) for t in tags if t]
+
+    desired_status = case_info.get("status") or payload.get("status") or "created"
+    if desired_status not in inv_store._STATUS_ORDER:
+        desired_status = "created"
+
+    conclusion = case_info.get("conclusion") or payload.get("conclusion")
+    notes = payload.get("notes") or case_info.get("notes") or []
+    refs = payload.get("refs") or case_info.get("refs") or []
+    tasks = payload.get("tasks") or case_info.get("tasks") or []
+
+    with db_session() as conn:
+        inv = inv_store.create(conn, title=title.strip(), created_by=actor, tags=tags)
+        inv_id = inv["id"]
+
+        if desired_status != "created":
+            conn.execute(
+                "UPDATE investigations SET status = ?, conclusion = ?, updated_at = ? WHERE id = ?",
+                (desired_status, conclusion, datetime.now(timezone.utc).isoformat(), inv_id),
+            )
+
+        for note_entry in notes:
+            if isinstance(note_entry, dict) and note_entry.get("note"):
+                inv_store.add_note(
+                    conn,
+                    inv_id,
+                    note=str(note_entry["note"]),
+                    actor=str(note_entry.get("actor") or actor),
+                )
+            elif isinstance(note_entry, str) and note_entry.strip():
+                inv_store.add_note(conn, inv_id, note=note_entry.strip(), actor=actor)
+
+        for ref_entry in refs:
+            if isinstance(ref_entry, dict) and ref_entry.get("ref_type") and ref_entry.get("ref_id"):
+                try:
+                    inv_store.add_ref(
+                        conn,
+                        inv_id,
+                        ref_type=str(ref_entry["ref_type"]),
+                        ref_id=str(ref_entry["ref_id"]),
+                    )
+                except Exception:
+                    pass
+
+        for task_entry in tasks:
+            if isinstance(task_entry, dict) and task_entry.get("title"):
+                try:
+                    inv_store.create_task(
+                        conn,
+                        inv_id,
+                        title=str(task_entry["title"]),
+                        category=str(task_entry.get("category") or "triage"),
+                        actor=str(task_entry.get("actor") or actor),
+                        status=str(task_entry.get("status") or "todo"),
+                    )
+                except Exception:
+                    pass
+
+        audit.log(
+            conn,
+            actor=actor,
+            action="investigation.import",
+            target_type="investigation",
+            target_id=inv_id,
+            detail=f"Imported investigation dossier '{title}' with {len(notes)} notes and {len(refs)} refs",
+        )
+        full_inv = inv_store.get(conn, inv_id)
+
+    return {
+        "status": "imported",
+        "investigation": full_inv,
+        "notes_restored": len(notes),
+        "refs_restored": len(refs),
+        "tasks_restored": len(tasks),
+    }
 
 
 # -- Incident Response Tasks & Checklist -------------------------------------

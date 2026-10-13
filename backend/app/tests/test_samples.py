@@ -557,3 +557,43 @@ def test_sample_dynamic_detonation_endpoint(client):
     assert "events_count" in res
     assert "process_tree" in res
 
+
+def test_sample_restrictive_permissions_and_safe_zip_export(client):
+    import stat
+    import zipfile
+    import io
+    import pytest
+    from ..core import config
+
+    # 1. Upload sample
+    resp = _upload(client, MZ, "safe_export_test.exe")
+    assert resp.status_code == 201
+    sample_id = resp.json()["sample_id"]
+
+    # 2. Verify file permissions are 0600 on disk
+    sample_path = config.SAMPLES_DIR / f"{sample_id}.bin"
+    assert sample_path.exists()
+    mode = stat.S_IMODE(sample_path.stat().st_mode)
+    assert mode == 0o600, f"Expected 0o600, got {oct(mode)}"
+
+    # 3. Export password-protected zip archive
+    export_res = client.get(f"/samples/{sample_id}/export-zip?password=infected")
+    assert export_res.status_code == 200
+    assert "application/zip" in export_res.headers["content-type"]
+    assert "x-outpost-sha256" in export_res.headers
+
+    # 4. Verify password protection and extraction
+    zip_bytes = export_res.content
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+        # Without password, extraction fails
+        with pytest.raises(RuntimeError):
+            zf.read(zf.namelist()[0])
+
+        # With correct password 'infected', extraction succeeds
+        zf.setpassword(b"infected")
+        extracted_names = zf.namelist()
+        assert any("WARNING_MALWARE_NOTICE.txt" in n for n in extracted_names)
+        bin_entry = next(n for n in extracted_names if n.endswith(".bin"))
+        extracted_bytes = zf.read(bin_entry)
+        assert extracted_bytes == MZ
+

@@ -23,8 +23,9 @@ from .api.routes_analysis_jobs import router as analysis_jobs_router
 from .api.routes_audit import router as audit_router
 from .api.routes_auth import router as auth_router
 from .api.routes_campaigns import router as campaigns_router
-from .api.routes_events import router as events_router
 from .api.routes_corpus import router as corpus_router
+from .api.routes_diagnostics import router as diagnostics_router
+from .api.routes_events import router as events_router
 from .api.routes_findings import router as findings_router
 from .api.routes_footprint import router as footprint_router
 from .api.routes_health import router as health_router
@@ -196,6 +197,22 @@ app.add_middleware(DecompressionMiddleware)
 
 
 @app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    """Enforce strict Content-Security-Policy and browser defensive headers."""
+    response = await call_next(request)
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; font-src 'self' data:; connect-src 'self' ws: wss:; "
+        "frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+    )
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
+
+
+@app.middleware("http")
 async def auth_gate(request: Request, call_next):
     """Optional auth: with no role passwords configured this passes everything
     through (the zero-config default). With auth on, every non-public request
@@ -294,4 +311,5 @@ app.include_router(agents_router)
 app.include_router(host_forensics_router)
 app.include_router(audit_router)
 app.include_router(admin_router)
+app.include_router(diagnostics_router)
 app.include_router(corpus_router)

@@ -83,10 +83,54 @@ def _interval_seconds(schedule: str) -> int:
 # -- Retention -----------------------------------------------------------------
 
 
+def _get_data_classes(conn: sqlite3.Connection) -> dict:
+    events_cnt = conn.execute("SELECT COUNT(*) AS c FROM events").fetchone()["c"]
+    alerts_cnt = conn.execute("SELECT COUNT(*) AS c FROM alerts").fetchone()["c"]
+    runs_cnt = conn.execute("SELECT COUNT(*) AS c FROM runs").fetchone()["c"]
+    samples_cnt = conn.execute("SELECT COUNT(*) AS c FROM samples").fetchone()["c"]
+    samples_bytes = 0
+    if config.SAMPLES_DIR.exists():
+        samples_bytes = sum(f.stat().st_size for f in config.SAMPLES_DIR.glob("*") if f.is_file())
+    audit_cnt = conn.execute("SELECT COUNT(*) AS c FROM audit_log").fetchone()["c"]
+    return {
+        "raw_events": {
+            "name": "Raw Telemetry Events",
+            "count": events_cnt,
+            "policy": "Ages out with session run retention cutoff",
+            "prunable": True,
+        },
+        "alerts": {
+            "name": "Alerts & Findings",
+            "count": alerts_cnt,
+            "policy": "Ages out with session run retention cutoff",
+            "prunable": True,
+        },
+        "snapshots": {
+            "name": "Host Telemetry Runs & Forensics",
+            "count": runs_cnt,
+            "policy": "Pruned based on configured retention_days",
+            "prunable": True,
+        },
+        "samples": {
+            "name": "Sample Binary Vault",
+            "count": samples_cnt,
+            "size_bytes": samples_bytes,
+            "policy": "Preserved permanently; requires deliberate manual removal",
+            "prunable": False,
+        },
+        "audit": {
+            "name": "Tamper-Evident Audit Trail",
+            "count": audit_cnt,
+            "policy": "Immutable cryptographic SHA-256 chain; never deleted",
+            "prunable": False,
+        },
+    }
+
+
 @router.get("/admin/retention", response_model=None)
 def get_retention() -> dict:
     """Current retention window, the auto-prune schedule, and — when enabled —
-    an estimate of when the next automatic prune runs."""
+    an estimate of when the next automatic prune runs, with data class breakdown."""
     with db_session() as conn:
         schedule = _auto_prune_schedule(conn)
         last = _setting(conn, AUTO_PRUNE_LAST_RUN_KEY)
@@ -106,6 +150,20 @@ def get_retention() -> dict:
             "auto_prune_enabled": schedule != "off",
             "last_prune_at": last,
             "next_prune_in_seconds": next_in,
+            "data_classes": _get_data_classes(conn),
+        }
+
+
+@router.get("/admin/migrations", response_model=None)
+def get_migrations(dry_run: bool = False) -> dict:
+    """List ordered schema migrations, execution status, and downgrade notes."""
+    with db_session() as conn:
+        from ..core.db import dry_run_migrations, get_schema_version, list_migrations
+
+        return {
+            "schema_version": get_schema_version(conn),
+            "migrations": dry_run_migrations(conn) if dry_run else list_migrations(conn),
+            "dry_run": dry_run,
         }
 
 

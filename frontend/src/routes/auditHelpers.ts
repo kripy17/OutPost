@@ -10,6 +10,13 @@ export interface ActionMeta {
 const ACTION_META: Record<string, ActionMeta> = {
   "alert.status": { label: "triage", cls: "border-accent/50 text-accent bg-accent/10" },
   "alert.false-positive": { label: "false positive", cls: "border-risk-suspicious/50 text-risk-suspicious bg-risk-suspicious/10" },
+  "agent.isolate": { label: "isolate", cls: "border-risk-malicious/50 text-risk-malicious bg-risk-malicious/10" },
+  "agent.unisolate": { label: "release", cls: "border-risk-clean/50 text-risk-clean bg-risk-clean/10" },
+  "agent.process.kill": { label: "kill", cls: "border-risk-malicious/50 text-risk-malicious bg-risk-malicious/10" },
+  "agent.process.freeze": { label: "freeze", cls: "border-risk-suspicious/50 text-risk-suspicious bg-risk-suspicious/10" },
+  "sample.upload": { label: "upload", cls: "border-accent/50 text-accent bg-accent/10" },
+  "sample.delete": { label: "delete", cls: "border-border-subtle text-text-muted bg-bg-elevated/60" },
+  "detonation.start": { label: "detonate", cls: "border-accent/50 text-accent bg-accent/10" },
   "auth.login": { label: "login", cls: "border-risk-clean/50 text-risk-clean bg-risk-clean/10" },
   "auth.login.failed": { label: "login failed", cls: "border-risk-malicious/50 text-risk-malicious bg-risk-malicious/10" },
   "auth.password": { label: "password", cls: "border-risk-suspicious/50 text-risk-suspicious bg-risk-suspicious/10" },
@@ -17,9 +24,11 @@ const ACTION_META: Record<string, ActionMeta> = {
   "allowlist.remove": { label: "allowlist", cls: "border-border-subtle text-text-muted bg-bg-elevated/60" },
   "suppression.add": { label: "suppress", cls: "border-accent/50 text-accent bg-accent/10" },
   "suppression.remove": { label: "suppress", cls: "border-border-subtle text-text-muted bg-bg-elevated/60" },
+  "settings.webhook_update": { label: "webhook", cls: "border-accent/50 text-accent bg-accent/10" },
   "retention.prune": { label: "retention", cls: "border-risk-suspicious/50 text-risk-suspicious bg-risk-suspicious/10" },
   "backup.create": { label: "backup", cls: "border-risk-clean/50 text-risk-clean bg-risk-clean/10" },
   "restore.apply": { label: "restore", cls: "border-risk-malicious/50 text-risk-malicious bg-risk-malicious/10" },
+  "report.export": { label: "export", cls: "border-risk-clean/50 text-risk-clean bg-risk-clean/10" },
 };
 
 const UNKNOWN_META: ActionMeta = { label: "", cls: "border-border-subtle text-text-muted bg-bg-elevated/60" };

@@ -671,6 +671,44 @@ function RetentionPanel() {
           </div>
         </div>
       </div>
+      {data?.data_classes && (
+        <div className="mt-5 border-t border-border-subtle pt-4 space-y-2">
+          <p className="kicker">Data classes &amp; storage retention</p>
+          <div className="overflow-x-auto rounded-lg border border-border-subtle bg-bg-base/40">
+            <table className="w-full text-left font-mono text-xs">
+              <thead className="border-b border-border-subtle bg-bg-elevated/40 text-[10px] uppercase text-text-muted">
+                <tr>
+                  <th className="px-3 py-2">Data Class</th>
+                  <th className="px-3 py-2 text-right">Items</th>
+                  <th className="px-3 py-2">Retention Guarantee</th>
+                  <th className="px-3 py-2 text-right">Prunable</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border-subtle text-text-secondary text-[11px]">
+                {Object.entries(data.data_classes).map(([key, cls]) => (
+                  <tr key={key} className="hover:bg-bg-elevated/20">
+                    <td className="px-3 py-2 font-medium text-text-primary">
+                      {cls.name}
+                      {cls.size_bytes !== undefined && cls.size_bytes > 0 && (
+                        <span className="ml-1.5 text-[10px] text-text-muted">
+                          ({(cls.size_bytes / (1024 * 1024)).toFixed(1)} MB)
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-right text-text-muted">{cls.count.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-text-muted text-[10px]">{cls.policy}</td>
+                    <td className="px-3 py-2 text-right">
+                      <span className={`inline-flex px-1.5 py-0.5 rounded text-[10px] ${cls.prunable ? "bg-amber-500/10 text-amber-400" : "bg-emerald-500/10 text-emerald-400"}`}>
+                        {cls.prunable ? "Auto-Pruned" : "Permanent"}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
       <div className="mt-5 rounded-lg border border-dashed border-risk-malicious/30 bg-risk-malicious/5 px-4 py-3">
         <div className="flex flex-wrap items-center gap-3">
           <div className="min-w-0 flex-1">

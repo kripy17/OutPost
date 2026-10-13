@@ -952,6 +952,40 @@ export interface AuditEntry {
   target_type: string | null;
   target_id: string | null;
   detail: string | null;
+  outcome?: string;
+  prev_hash?: string | null;
+  entry_hash?: string | null;
+  source_ip?: string | null;
+  before_state?: string | null;
+  after_state?: string | null;
+  reason?: string | null;
+}
+
+export interface AuditVerificationReport {
+  valid: boolean;
+  intact: boolean;
+  entries_verified: number;
+  verified_through: number;
+  total_entries: number;
+  status: "intact" | "tampered";
+  first_break: {
+    index: number;
+    id: number;
+    expected_hash: string;
+    found_hash: string;
+    reason: string;
+  } | null;
+  error: string | null;
+  verified_at: string;
+}
+
+export interface AuditCheckpoint {
+  checkpoint_seq: number;
+  created_at: string;
+  last_audit_id: number;
+  last_entry_hash: string;
+  public_key_fingerprint: string;
+  signature: string;
 }
 
 export interface AuditResponse {
@@ -1007,12 +1041,21 @@ export interface HostSnapshot {
 
 // -- Retention & backup --------------------------------------------------------
 
+export interface DataClassRetentionInfo {
+  name: string;
+  count: number;
+  size_bytes?: number;
+  policy: string;
+  prunable: boolean;
+}
+
 export interface RetentionStatus {
   retention_days: number;
   auto_prune: "off" | "hourly" | "daily";
   auto_prune_enabled: boolean;
   last_prune_at: string | null;
   next_prune_in_seconds: number | null;
+  data_classes?: Record<string, DataClassRetentionInfo>;
 }
 
 // -- Rule false-positive surface (Rules page tuning panel) --------------------

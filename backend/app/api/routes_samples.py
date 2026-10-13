@@ -15,6 +15,10 @@ import csv
 import hashlib
 import io
 import json
+import os
+from pathlib import Path
+import subprocess
+import tempfile
 import uuid
 from typing import Any
 
@@ -24,6 +28,7 @@ from fastapi.responses import FileResponse
 
 from ..core import config
 from ..core.db import db_session
+from ..models import audit
 from ..models import samples as samples_store
 from ..models.run import SYNTHETIC_SOURCES
 from ..services import enrichment, network_protocol_analyzer, static_analysis
@@ -132,7 +137,12 @@ def _store_bytes(sample_id: str, body: bytes) -> None:
     """
     try:
         config.SAMPLES_DIR.mkdir(parents=True, exist_ok=True)
-        (config.SAMPLES_DIR / f"{sample_id}.bin").write_bytes(body)
+        file_path = config.SAMPLES_DIR / f"{sample_id}.bin"
+        file_path.write_bytes(body)
+        try:
+            os.chmod(file_path, 0o600)
+        except OSError:
+            pass
     except OSError:
         pass
 
@@ -228,10 +238,11 @@ async def upload_sample(
         # Persist the raw bytes before/independent of the DB row — static
         # analysis (strings/IOCs/PE/ELF) and the download endpoint read them.
         _store_bytes(sample_id, body)
+        sample_name = name.strip() or f"sample-{sha256[:8]}"
         row = samples_store.add_sample(
             conn,
             sample_id,
-            (name.strip() or f"sample-{sha256[:8]}"),
+            sample_name,
             sha256,
             detected_platform,
             len(body),
@@ -243,6 +254,17 @@ async def upload_sample(
             hash_intel["vt_detections"],
             hash_intel["malware_family"],
             json.dumps(yara_names),
+        )
+        client_ip = request.client.host if request.client else "local"
+        audit.log(
+            conn,
+            actor="analyst",
+            action="sample.upload",
+            target_type="sample",
+            target_id=sample_id,
+            detail=f"uploaded sample {sample_name} ({len(body)} bytes)",
+            source_ip=client_ip,
+            after_state={"sample_id": sample_id, "sha256": sha256, "size": len(body), "platform": detected_platform},
         )
         row = samples_store.get_sample(conn, sample_id)
 
@@ -511,13 +533,88 @@ def download_sample(sample_id: str):
     )
 
 
-@router.delete("/samples/{sample_id}", response_model=None)
-def delete_sample_endpoint(sample_id: str) -> dict:
-    """Delete a sample record and its stored binary file."""
+@router.get("/samples/{sample_id}/export-zip")
+def export_sample_archive(
+    sample_id: str,
+    request: Request,
+    password: str = Query("infected", max_length=64, description="Archive decryption password (default: infected)"),
+):
+    """Safely export a malware sample inside a password-protected ZIP container.
+
+    Prevents accidental local double-click execution or endpoint antivirus quarantine during transport.
+    """
     with db_session() as conn:
-        deleted = samples_store.delete_sample(conn, sample_id)
-    if not deleted:
+        row = samples_store.get_sample(conn, sample_id)
+    if not row:
         raise HTTPException(status_code=404, detail=f"Unknown sample_id: {sample_id}")
+    raw = _load_bytes(sample_id)
+    if not raw:
+        raise HTTPException(status_code=404, detail="Sample bytes are not stored on disk")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_dir_path = Path(tmpdir)
+        sample_file = tmp_dir_path / f"{row['sha256']}.bin"
+        sample_file.write_bytes(raw)
+        readme_file = tmp_dir_path / "WARNING_MALWARE_NOTICE.txt"
+        readme_file.write_text(
+            f"OUTPOST MALWARE SAMPLE EXPORT\n"
+            f"Sample ID: {sample_id}\n"
+            f"SHA256: {row['sha256']}\n"
+            f"Original Name: {row.get('original_name', 'sample')}\n"
+            f"Platform: {row.get('detected_platform') or row.get('platform') or 'unknown'}\n"
+            f"Extraction Password: {password}\n\n"
+            f"CAUTION: Live malicious binary. Do not extract or execute on production endpoints.\n"
+        )
+        zip_path = tmp_dir_path / f"outpost_sample_{sample_id}.zip"
+        res = subprocess.run(
+            ["zip", "-j", "-P", password, str(zip_path), str(sample_file), str(readme_file)],
+            capture_output=True,
+        )
+        if res.returncode != 0 or not zip_path.exists():
+            raise HTTPException(status_code=500, detail="Failed to create password-protected archive")
+        zip_bytes = zip_path.read_bytes()
+
+    client_ip = request.client.host if request.client else "local"
+    with db_session() as conn:
+        audit.log(
+            conn,
+            actor="analyst",
+            action="report.export",
+            target_type="sample_archive",
+            target_id=sample_id,
+            source_ip=client_ip,
+            detail=f"exported password-protected sample archive (sha256: {row['sha256']})",
+        )
+
+    return Response(
+        content=zip_bytes,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="sample_{sample_id}_pw_{password}.zip"',
+            "x-outpost-sha256": row["sha256"],
+        },
+    )
+
+
+@router.delete("/samples/{sample_id}", response_model=None)
+def delete_sample_endpoint(sample_id: str, request: Request) -> dict:
+    """Delete a sample record and its stored binary file."""
+    client_ip = request.client.host if request.client else "local"
+    with db_session() as conn:
+        sample = samples_store.get_sample(conn, sample_id)
+        deleted = samples_store.delete_sample(conn, sample_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail=f"Unknown sample_id: {sample_id}")
+        audit.log(
+            conn,
+            actor="analyst",
+            action="sample.delete",
+            target_type="sample",
+            target_id=sample_id,
+            detail=f"deleted sample {sample_id} ({sample.get('original_name') if sample else ''})",
+            source_ip=client_ip,
+            before_state=sample,
+        )
     path = config.SAMPLES_DIR / f"{sample_id}.bin"
     if path.exists():
         try:
@@ -528,10 +625,20 @@ def delete_sample_endpoint(sample_id: str) -> dict:
 
 
 @router.delete("/samples", response_model=None)
-def delete_all_samples_endpoint() -> dict:
+def delete_all_samples_endpoint(request: Request) -> dict:
     """Wipe all sample records and stored binaries."""
+    client_ip = request.client.host if request.client else "local"
     with db_session() as conn:
         count = samples_store.delete_all_samples(conn)
+        audit.log(
+            conn,
+            actor="analyst",
+            action="sample.delete",
+            target_type="sample_vault",
+            target_id="all",
+            detail=f"wiped {count} samples from vault",
+            source_ip=client_ip,
+        )
     if config.SAMPLES_DIR.exists():
         for f in config.SAMPLES_DIR.glob("*.bin"):
             try:

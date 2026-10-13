@@ -457,7 +457,7 @@ function HostInspectorDrawer({
                     Linux Sensor (eBPF / auditd)
                   </span>
                   <button
-                    onClick={() => copyCmd(bootstrapData?.linux_command || "curl -sSL http://localhost:8000/install.sh | sudo bash", "linux")}
+                    onClick={() => copyCmd(bootstrapData?.linux_command || "curl -sSL -O http://localhost:8000/agents/install.sh && bash install.sh --dry-run && sudo bash install.sh --server http://localhost:8000", "linux")}
                     className="press inline-flex items-center gap-1 rounded border border-border-subtle px-2 py-0.5 text-[10px] text-text-muted hover:text-accent"
                   >
                     {copied === "linux" && <Icon name="check" size={10} className="text-signal" />}
@@ -465,7 +465,7 @@ function HostInspectorDrawer({
                   </button>
                 </div>
                 <pre className="rounded-lg bg-bg-base p-2.5 text-[11px] text-accent select-all overflow-x-auto border border-border-subtle">
-                  {bootstrapData?.linux_command || "curl -sSL http://localhost:8000/install.sh | sudo bash"}
+                  {bootstrapData?.linux_command || "curl -sSL -O http://localhost:8000/agents/install.sh && bash install.sh --dry-run && sudo bash install.sh --server http://localhost:8000"}
                 </pre>
               </div>
 
@@ -476,7 +476,7 @@ function HostInspectorDrawer({
                     Windows Sensor (PowerShell + Sysmon)
                   </span>
                   <button
-                    onClick={() => copyCmd(bootstrapData?.windows_command || "irm http://localhost:8000/install.ps1 | iex", "win")}
+                    onClick={() => copyCmd(bootstrapData?.windows_command || "Invoke-WebRequest -Uri http://localhost:8000/agents/install.ps1 -OutFile install.ps1; .\\install.ps1 -DryRun; .\\install.ps1 -Server http://localhost:8000", "win")}
                     className="press inline-flex items-center gap-1 rounded border border-border-subtle px-2 py-0.5 text-[10px] text-text-muted hover:text-accent"
                   >
                     {copied === "win" && <Icon name="check" size={10} className="text-signal" />}
@@ -484,7 +484,7 @@ function HostInspectorDrawer({
                   </button>
                 </div>
                 <pre className="rounded-lg bg-bg-base p-2.5 text-[11px] text-accent select-all overflow-x-auto border border-border-subtle">
-                  {bootstrapData?.windows_command || "irm http://localhost:8000/install.ps1 | iex"}
+                  {bootstrapData?.windows_command || "Invoke-WebRequest -Uri http://localhost:8000/agents/install.ps1 -OutFile install.ps1; .\\install.ps1 -DryRun; .\\install.ps1 -Server http://localhost:8000"}
                 </pre>
               </div>
             </div>
@@ -542,8 +542,8 @@ function EnrollSensorDrawer({ onClose }: { onClose: () => void }) {
     setTimeout(() => setCopied(null), 2000);
   };
 
-  const linuxCmd = bootstrapData?.linux_command || "curl -sSL http://localhost:8000/install.sh | sudo bash";
-  const winCmd = bootstrapData?.windows_command || "irm http://localhost:8000/install.ps1 | iex";
+  const linuxCmd = bootstrapData?.linux_command || "curl -sSL -O http://localhost:8000/agents/install.sh && bash install.sh --dry-run && sudo bash install.sh --server http://localhost:8000";
+  const winCmd = bootstrapData?.windows_command || "Invoke-WebRequest -Uri http://localhost:8000/agents/install.ps1 -OutFile install.ps1; .\\install.ps1 -DryRun; .\\install.ps1 -Server http://localhost:8000";
   const dockerCmd = "docker run -d --name outpost-agent --pid=host --network=host --cap-add=SYS_PTRACE --cap-add=SYS_ADMIN -v /proc:/host/proc:ro -e OUTPOST_SERVER=http://host.docker.internal:8001 outpost/agent:latest";
 
   return (

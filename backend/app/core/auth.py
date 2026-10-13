@@ -31,14 +31,19 @@ import hashlib
 import hmac
 import json
 import os
+import secrets
 import threading
 import time
+
+_REVOKED_TOKENS: set[str] = set()
+_ACTIVE_SESSIONS: dict[str, dict] = {}  # session_id -> metadata
+_SESSION_LOCK = threading.Lock()
 
 TOKEN_TTL_SECONDS = 60 * 60 * 24  # 24h
 PBKDF2_ITERATIONS = 210_000  # OWASP-flavored for PBKDF2-HMAC-SHA256
 _HASH_ALGO = "pbkdf2_sha256"
 
-_ROLES = ("admin", "analyst")
+_ROLES = ("admin", "responder", "analyst", "viewer")
 
 _SEEN_SIGNATURES: dict[str, float] = {}
 _SEEN_NONCES: dict[str, float] = {}
@@ -510,15 +515,66 @@ def issue_token(role: str) -> str | None:
     secret = _secret_for_role(role)
     if not secret:
         return None
-    payload = json.dumps({"role": role, "exp": int(time.time()) + TOKEN_TTL_SECONDS}).encode()
+    jti = secrets.token_hex(16)
+    now = int(time.time())
+    exp = now + TOKEN_TTL_SECONDS
+    payload = json.dumps({"role": role, "jti": jti, "iat": now, "exp": exp}).encode()
     payload_b64 = base64.urlsafe_b64encode(payload).rstrip(b"=").decode()
-    return f"{payload_b64}.{_sign(secret, payload_b64)}"
+    token = f"{payload_b64}.{_sign(secret, payload_b64)}"
+    tok_hash = hashlib.sha256(token.encode()).hexdigest()
+    with _SESSION_LOCK:
+        _ACTIVE_SESSIONS[jti] = {
+            "session_id": jti,
+            "role": role,
+            "token_hash": tok_hash,
+            "issued_at": now,
+            "expires_at": exp,
+        }
+    return token
+
+
+def revoke_token(token: str) -> bool:
+    """Revoke a single token so it can never be used again."""
+    if not token:
+        return False
+    tok_hash = hashlib.sha256(token.encode()).hexdigest()
+    with _SESSION_LOCK:
+        _REVOKED_TOKENS.add(tok_hash)
+        for jti, sess in list(_ACTIVE_SESSIONS.items()):
+            if sess.get("token_hash") == tok_hash:
+                _ACTIVE_SESSIONS.pop(jti, None)
+                break
+    return True
+
+
+def revoke_session_by_id(session_id: str) -> bool:
+    """Revoke an active session by its session ID."""
+    with _SESSION_LOCK:
+        sess = _ACTIVE_SESSIONS.pop(session_id, None)
+        if sess:
+            _REVOKED_TOKENS.add(sess["token_hash"])
+            return True
+    return False
+
+
+def list_active_sessions() -> list[dict]:
+    """List all currently active non-expired sessions."""
+    now = int(time.time())
+    with _SESSION_LOCK:
+        expired = [k for k, v in _ACTIVE_SESSIONS.items() if v.get("expires_at", 0) < now]
+        for k in expired:
+            _ACTIVE_SESSIONS.pop(k, None)
+        return list(_ACTIVE_SESSIONS.values())
 
 
 def verify_token(token: str) -> str | None:
-    """Validate a token; return its role or None (expired / tampered / unknown)."""
+    """Validate a token; return its role or None (expired / tampered / revoked)."""
     if not token:
         return None
+    tok_hash = hashlib.sha256(token.encode()).hexdigest()
+    with _SESSION_LOCK:
+        if tok_hash in _REVOKED_TOKENS:
+            return None
     try:
         payload_b64, sig = token.split(".", 1)
         # Restore padding stripped at issue time.
@@ -564,6 +620,9 @@ def role_from_request(request) -> str:
     if role is None and verify_agent_token(tok):
         return "agent"
     return role or "local"
+
+
+actor = role_from_request
 
 
 def token_from_request(

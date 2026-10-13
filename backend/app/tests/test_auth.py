@@ -636,3 +636,43 @@ def test_password_rotation_invalidates_old_tokens(client, conn):
             assert c.get("/runs", headers={"Authorization": f"Bearer {new_tok}"}).status_code == 200
     finally:
         _clear_db_hashes(conn)
+
+
+def test_logout_revokes_token(auth_env):
+    """Calling /auth/logout explicitly revokes the active token so it cannot be reused."""
+    c = _client()
+    tok = c.post("/auth/login", json={"password": "admin-secret"}).json()["token"]
+    assert c.get("/runs", headers={"Authorization": f"Bearer {tok}"}).status_code == 200
+
+    # Logout
+    logout_res = c.post("/auth/logout", headers={"Authorization": f"Bearer {tok}"})
+    assert logout_res.status_code == 200
+
+    # Subsequent request with revoked token fails
+    assert c.get("/runs", headers={"Authorization": f"Bearer {tok}"}).status_code == 401
+
+
+def test_session_listing_and_revocation(auth_env):
+    """Active sessions can be listed and individually revoked by session ID."""
+    c = _client()
+    tok = c.post("/auth/login", json={"password": "admin-secret"}).json()["token"]
+
+    # List active sessions
+    sess_res = c.get("/auth/sessions", headers={"Authorization": f"Bearer {tok}"})
+    assert sess_res.status_code == 200
+    sessions = sess_res.json()["sessions"]
+    assert len(sessions) >= 1
+    session_id = sessions[0]["session_id"]
+
+    # Revoke session
+    rev_res = c.post(
+        "/auth/sessions/revoke",
+        json={"session_id": session_id},
+        headers={"Authorization": f"Bearer {tok}"},
+    )
+    assert rev_res.status_code == 200
+    assert rev_res.json()["status"] == "ok"
+
+    # Token is now revoked
+    assert c.get("/runs", headers={"Authorization": f"Bearer {tok}"}).status_code == 401
+
