@@ -105,27 +105,27 @@ export const LiveTriageModal: React.FC<LiveTriageModalProps> = ({ onClose, hostI
                 </p>
                 <div className="grid grid-cols-2 gap-3 pt-2">
                   <div className="flex items-center gap-2 text-xs text-text-muted">
-                    <span className="text-accent font-bold">✓</span>
+                    <Icon name="check" size={13} className="text-accent shrink-0" />
                     <span>Crontab & Scheduled Job Persistence</span>
                   </div>
                   <div className="flex items-center gap-2 text-xs text-text-muted">
-                    <span className="text-accent font-bold">✓</span>
+                    <Icon name="check" size={13} className="text-accent shrink-0" />
                     <span>SSH Authorized Keys Backdoor Audit</span>
                   </div>
                   <div className="flex items-center gap-2 text-xs text-text-muted">
-                    <span className="text-accent font-bold">✓</span>
+                    <Icon name="check" size={13} className="text-accent shrink-0" />
                     <span>Memory-Resident Deleted Inodes (Fileless)</span>
                   </div>
                   <div className="flex items-center gap-2 text-xs text-text-muted">
-                    <span className="text-accent font-bold">✓</span>
+                    <Icon name="check" size={13} className="text-accent shrink-0" />
                     <span>Suspicious Listening Sockets & Ports</span>
                   </div>
                   <div className="flex items-center gap-2 text-xs text-text-muted">
-                    <span className="text-accent font-bold">✓</span>
+                    <Icon name="check" size={13} className="text-accent shrink-0" />
                     <span>SUID GTFOBins Escalation Audit</span>
                   </div>
                   <div className="flex items-center gap-2 text-xs text-text-muted">
-                    <span className="text-accent font-bold">✓</span>
+                    <Icon name="check" size={13} className="text-accent shrink-0" />
                     <span>Kernel & Hardware Utilization Metrics</span>
                   </div>
                 </div>
@@ -282,7 +282,7 @@ export const LiveTriageModal: React.FC<LiveTriageModalProps> = ({ onClose, hostI
                 className="press inline-flex items-center gap-2 rounded-xl bg-cyan-500 px-5 py-2 font-mono text-xs font-bold text-black hover:bg-cyan-400 disabled:opacity-50 shadow-md shadow-cyan-500/20"
               >
                 <Icon name={triageMutation.isPending ? "refresh" : "play"} size={14} className={triageMutation.isPending ? "animate-spin" : ""} />
-                <span>{triageMutation.isPending ? "Acquiring Pack..." : "⚡ Acquire Live Triage Pack"}</span>
+                <span>{triageMutation.isPending ? "Acquiring Pack..." : "Acquire Live Triage Pack"}</span>
               </button>
             )}
           </div>

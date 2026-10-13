@@ -199,7 +199,7 @@ def provenance_rows(conn: sqlite3.Connection, ioc_id: str) -> list[dict]:
 
 
 def linked_findings(conn: sqlite3.Connection, ioc_id: str) -> list[dict]:
-    from .event import _parse_related_pids
+    from .event import _parse_evidence_event_ids, _parse_related_pids
 
     rows = conn.execute(
         """
@@ -216,6 +216,7 @@ def linked_findings(conn: sqlite3.Connection, ioc_id: str) -> list[dict]:
     for r in rows:
         d = dict(r)
         _parse_related_pids(d)
+        _parse_evidence_event_ids(d)
         out.append(d)
     return out
 

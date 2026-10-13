@@ -143,12 +143,14 @@ def post_heartbeat(
     metrics = payload.get("metrics")
     metrics_json = json.dumps(metrics) if metrics else None
     agent_id = payload.get("agent_id") or request.headers.get("x-outpost-agent-id")
+    source_health = payload.get("source_health") or payload.get("sources_health")
+    source_health_json = json.dumps(source_health) if source_health else None
 
     with db_session() as conn:
         conn.execute(
             """
-            INSERT INTO agent_heartbeats (host_id, last_heartbeat, platform, version, last_auth_role, last_auth_at, metrics_json, agent_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO agent_heartbeats (host_id, last_heartbeat, platform, version, last_auth_role, last_auth_at, metrics_json, agent_id, source_health_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(host_id) DO UPDATE SET
                 last_heartbeat = excluded.last_heartbeat,
                 platform = COALESCE(excluded.platform, agent_heartbeats.platform),
@@ -156,9 +158,10 @@ def post_heartbeat(
                 last_auth_role = excluded.last_auth_role,
                 last_auth_at = excluded.last_auth_at,
                 metrics_json = COALESCE(excluded.metrics_json, agent_heartbeats.metrics_json),
-                agent_id = COALESCE(excluded.agent_id, agent_heartbeats.agent_id)
+                agent_id = COALESCE(excluded.agent_id, agent_heartbeats.agent_id),
+                source_health_json = COALESCE(excluded.source_health_json, agent_heartbeats.source_health_json)
             """,
-            (host_id, now, payload.get("platform"), payload.get("version"), auth_role, now, metrics_json, agent_id),
+            (host_id, now, payload.get("platform"), payload.get("version"), auth_role, now, metrics_json, agent_id, source_health_json),
         )
         if agent_id:
             conn.execute(
@@ -336,7 +339,7 @@ def list_agents(
         hb_rows = {
             r["host_id"]: r
             for r in conn.execute(
-                "SELECT host_id, last_heartbeat, platform, version, last_auth_role, last_auth_at, metrics_json, agent_id "
+                "SELECT host_id, last_heartbeat, platform, version, last_auth_role, last_auth_at, metrics_json, agent_id, source_health_json "
                 "FROM agent_heartbeats"
             ).fetchall()
         }
@@ -372,12 +375,43 @@ def list_agents(
         silent = hb is not None and (hb_age or 0) > silent_window
         hb_metrics = _parse_metrics(hb["metrics_json"] if hb and "metrics_json" in hb.keys() else None)
         hb_agent_id = hb["agent_id"] if hb and "agent_id" in hb.keys() else None
+        raw_sh = _parse_metrics(hb["source_health_json"] if hb and "source_health_json" in hb.keys() else None)
+        if raw_sh is not None:
+            source_health = {
+                "execution": raw_sh.get("execution", "ok"),
+                "network": raw_sh.get("network", "ok"),
+                "file": raw_sh.get("file", "ok"),
+                "dns": raw_sh.get("dns", "ok"),
+            }
+        else:
+            has_telemetry = r["event_count"] > 0
+            recent_telemetry = (now - last_dt).total_seconds() <= online_window
+            source_health = {
+                "execution": "ok" if recent_telemetry else ("degraded" if has_telemetry else "absent"),
+                "network": "ok" if recent_telemetry else ("degraded" if has_telemetry else "absent"),
+                "file": "ok" if recent_telemetry else ("degraded" if has_telemetry else "absent"),
+                "dns": "ok" if any("dns" in c.lower() for c in (r["channels"] or "").split(",")) else "absent",
+            }
+
+        if silent:
+            health_status = "silent"
+        elif not online:
+            health_status = "offline"
+        elif r["event_count"] == 0:
+            health_status = "degraded"
+        elif any(v in ("degraded", "absent") for v in source_health.values()):
+            health_status = "degraded"
+        else:
+            health_status = "healthy"
+
         agents.append(
             {
                 "host_id": r["host_id"],
                 "last_seen": last_seen,
                 "online": online,
                 "silent": silent,
+                "health_status": health_status,
+                "source_health": source_health,
                 "last_heartbeat": hb["last_heartbeat"] if hb else None,
                 "heartbeat_age_seconds": hb_age,
                 "heartbeat_version": hb["version"] if hb else None,
@@ -415,14 +449,25 @@ def list_agents(
             collected_at is not None
             and (now - datetime.fromisoformat(collected_at)).total_seconds() <= online_window
         )
+        silent = hb is not None and (hb_age or 0) > silent_window
         hb_metrics = _parse_metrics(hb["metrics_json"] if hb and "metrics_json" in hb.keys() else None)
         hb_agent_id = hb["agent_id"] if hb and "agent_id" in hb.keys() else None
+        raw_sh = _parse_metrics(hb["source_health_json"] if hb and "source_health_json" in hb.keys() else None)
+        source_health = {
+            "execution": raw_sh.get("execution", "absent") if raw_sh else "absent",
+            "network": raw_sh.get("network", "absent") if raw_sh else "absent",
+            "file": raw_sh.get("file", "absent") if raw_sh else "absent",
+            "dns": raw_sh.get("dns", "absent") if raw_sh else "absent",
+        }
+        health_status = "silent" if silent else "degraded"
         agents.append(
             {
                 "host_id": host_id,
                 "last_seen": hb["last_heartbeat"] if hb else collected_at,
                 "online": online,
-                "silent": hb is not None and (hb_age or 0) > silent_window,
+                "silent": silent,
+                "health_status": health_status,
+                "source_health": source_health,
                 "last_heartbeat": hb["last_heartbeat"] if hb else None,
                 "heartbeat_age_seconds": hb_age,
                 "heartbeat_version": hb["version"] if hb else None,
@@ -781,17 +826,24 @@ def get_agent_bootstrap_commands(request: Request) -> dict:
 
 @router.get("/agents/{host_id}/containment", response_model=None)
 def get_host_containment(host_id: str) -> dict:
-    """Get isolation status and pending remediation actions for a host."""
+    """Get isolation status, lifecycle state, and pending remediation actions for a host."""
     with db_session() as conn:
         row = conn.execute(
-            "SELECT isolated, isolated_at, isolated_by, reason, pending_actions, updated_at "
-            "FROM host_containment WHERE host_id = ?",
+            """
+            SELECT isolated, isolated_at, isolated_by, reason, pending_actions,
+                   containment_state, enforcement_mode, probe_details, deadman_expires_at, updated_at
+            FROM host_containment WHERE host_id = ?
+            """,
             (host_id,),
         ).fetchone()
     if not row:
         return {
             "host_id": host_id,
             "isolated": False,
+            "containment_state": "released",
+            "enforcement_mode": "none",
+            "probe_details": None,
+            "deadman_expires_at": None,
             "isolated_at": None,
             "isolated_by": None,
             "reason": None,
@@ -804,9 +856,20 @@ def get_host_containment(host_id: str) -> dict:
             pending = json.loads(row["pending_actions"])
         except Exception:
             pending = []
+    probe = None
+    if row["probe_details"]:
+        try:
+            probe = json.loads(row["probe_details"])
+        except Exception:
+            probe = None
+    state = row["containment_state"] or ("enforced" if row["isolated"] else "released")
     return {
         "host_id": host_id,
         "isolated": bool(row["isolated"]),
+        "containment_state": state,
+        "enforcement_mode": row["enforcement_mode"] or "none",
+        "probe_details": probe,
+        "deadman_expires_at": row["deadman_expires_at"],
         "isolated_at": row["isolated_at"],
         "isolated_by": row["isolated_by"],
         "reason": row["reason"],
@@ -817,31 +880,104 @@ def get_host_containment(host_id: str) -> dict:
 
 @router.post("/agents/{host_id}/isolate", response_model=None)
 def set_host_isolation(host_id: str, request: Request, payload: dict | None = None) -> dict:
-    """Toggle host network isolation status (active containment)."""
+    """Request host network isolation or release.
+    
+    Models containment as a lifecycle (requested -> enforced/failed/released).
+    Never reports 'contained' at request time until agent reports verification.
+    """
+    import uuid
+    from datetime import timedelta
+
     from ..core import auth as auth_service
     from ..models import audit
     from ..services import events_stream
 
+    actor = auth_service.role_from_request(request) or "analyst"
+    if actor == "agent":
+        raise HTTPException(
+            status_code=403,
+            detail="Agent credentials are not permitted to isolate or release hosts.",
+        )
+    if actor == "analyst" and auth_service.auth_enabled():
+        raise HTTPException(
+            status_code=403,
+            detail="Read-only analyst role cannot modify containment state.",
+        )
+
     payload = payload or {}
     isolated = bool(payload.get("isolated", True))
     reason = payload.get("reason", "Operator containment request")
-    actor = auth_service.role_from_request(request) or "analyst"
-    now = datetime.now(timezone.utc).isoformat()
+    now_dt = datetime.now(timezone.utc)
+    now = now_dt.isoformat()
+
+    deadman_seconds = int(payload.get("deadman_seconds", 3600))
+    deadman_iso = (now_dt + timedelta(seconds=deadman_seconds)).isoformat() if isolated else None
+
+    action_id = str(uuid.uuid4())
+    action_type = "isolate" if isolated else "unisolate"
+    containment_state = "requested" if isolated else "released"
+    enforcement_mode = "none"
 
     with db_session() as conn:
+        # 1. Enqueue into proper per-action table
         conn.execute(
             """
-            INSERT INTO host_containment (host_id, isolated, isolated_at, isolated_by, reason, pending_actions, updated_at)
-            VALUES (?, ?, ?, ?, ?, '[]', ?)
+            INSERT INTO host_actions (
+                action_id, host_id, action_type, target, payload, status, timeout_seconds, result, created_at, updated_at
+            ) VALUES (?, ?, ?, 'network', ?, 'pending', 120, NULL, ?, ?)
+            """,
+            (action_id, host_id, action_type, json.dumps({"reason": reason, "deadman_seconds": deadman_seconds}), now, now),
+        )
+
+        # 2. Update lifecycle in host_containment table
+        row = conn.execute("SELECT pending_actions FROM host_containment WHERE host_id = ?", (host_id,)).fetchone()
+        actions = []
+        if row and row["pending_actions"]:
+            try:
+                actions = json.loads(row["pending_actions"])
+            except Exception:
+                actions = []
+        actions.append({
+            "action_id": action_id,
+            "action": action_type,
+            "reason": reason,
+            "deadman_expires_at": deadman_iso,
+            "requested_by": actor,
+            "requested_at": now,
+        })
+
+        conn.execute(
+            """
+            INSERT INTO host_containment (
+                host_id, isolated, isolated_at, isolated_by, reason, pending_actions,
+                containment_state, enforcement_mode, deadman_expires_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(host_id) DO UPDATE SET
                 isolated = excluded.isolated,
                 isolated_at = CASE WHEN excluded.isolated = 1 THEN excluded.isolated_at ELSE host_containment.isolated_at END,
                 isolated_by = excluded.isolated_by,
                 reason = excluded.reason,
+                pending_actions = excluded.pending_actions,
+                containment_state = excluded.containment_state,
+                enforcement_mode = excluded.enforcement_mode,
+                deadman_expires_at = excluded.deadman_expires_at,
                 updated_at = excluded.updated_at
             """,
-            (host_id, 1 if isolated else 0, now, actor, reason, now),
+            (
+                host_id,
+                0,  # Never report isolated=1 at request time
+                now if isolated else None,
+                actor,
+                reason,
+                json.dumps(actions),
+                containment_state,
+                enforcement_mode,
+                deadman_iso,
+                now,
+            ),
         )
+
         action_name = "agent.isolate" if isolated else "agent.unisolate"
         audit.log(
             conn,
@@ -849,47 +985,148 @@ def set_host_isolation(host_id: str, request: Request, payload: dict | None = No
             action_name,
             target_type="host",
             target_id=host_id,
-            detail=f"{'isolated' if isolated else 'unisolated'} host {host_id}: {reason}",
+            outcome="requested" if isolated else "released",
+            detail=f"containment {containment_state} for host {host_id}: {reason} (action {action_id})",
         )
 
     events_stream.publish_fleet_update(host_id, online=True, silent=False, last_heartbeat=now)
     return {
         "host_id": host_id,
-        "isolated": isolated,
+        "isolated": False,  # real state: pending agent enforcement
+        "containment_state": containment_state,
+        "enforcement_mode": enforcement_mode,
+        "deadman_expires_at": deadman_iso,
+        "action_id": action_id,
         "isolated_at": now if isolated else None,
         "isolated_by": actor,
         "reason": reason,
-        "status": "contained" if isolated else "uncontained",
+        "status": "requested" if isolated else "uncontained",
+    }
+
+
+@router.post("/agents/{host_id}/containment/report", response_model=None)
+def report_host_containment(host_id: str, request: Request, payload: dict | None = None) -> dict:
+    """Agent reports actual containment verification status and probing outcome."""
+    from ..core import auth as auth_service
+    from ..models import audit
+    from ..services import events_stream
+
+    actor = auth_service.role_from_request(request) or "collector"
+    payload = payload or {}
+    enforcement_mode = payload.get("enforcement_mode", "none")  # full | partial | simulated | none
+    probe_details = payload.get("probe_details")
+    probe_json = json.dumps(probe_details) if probe_details else None
+    success = bool(payload.get("success", False))
+    error_msg = payload.get("error")
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Real state determination: simulated/unprivileged is clearly labelled as uncontained/simulated
+    if success and enforcement_mode in ("full", "partial"):
+        containment_state = "enforced"
+        isolated_int = 1
+    elif enforcement_mode == "simulated":
+        containment_state = "simulated"
+        isolated_int = 0
+    else:
+        containment_state = "failed"
+        isolated_int = 0
+
+    with db_session() as conn:
+        conn.execute(
+            """
+            UPDATE host_containment
+            SET isolated = ?,
+                containment_state = ?,
+                enforcement_mode = ?,
+                probe_details = ?,
+                updated_at = ?
+            WHERE host_id = ?
+            """,
+            (isolated_int, containment_state, enforcement_mode, probe_json, now, host_id),
+        )
+        audit.log(
+            conn,
+            actor,
+            "agent.containment.reported",
+            target_type="host",
+            target_id=host_id,
+            outcome=containment_state,
+            detail=f"mode={enforcement_mode} state={containment_state} err={error_msg or 'none'}",
+        )
+
+    events_stream.publish_fleet_update(host_id, online=True, silent=False, last_heartbeat=now)
+    return {
+        "host_id": host_id,
+        "isolated": bool(isolated_int),
+        "containment_state": containment_state,
+        "enforcement_mode": enforcement_mode,
+        "probe_details": probe_details,
+        "updated_at": now,
+        "status": "contained" if isolated_int else "not_enforced",
     }
 
 
 @router.post("/agents/{host_id}/kill-process", response_model=None)
 def queue_process_kill(host_id: str, request: Request, payload: dict | None = None) -> dict:
-    """Queue a process kill action to be executed by the target host collector."""
+    """Queue a process kill action with mandatory target PID and process start time validation."""
+    import uuid
+
     from ..core import auth as auth_service
     from ..models import audit
+
+    actor = auth_service.role_from_request(request) or "analyst"
+    if actor == "agent":
+        raise HTTPException(
+            status_code=403,
+            detail="Agent credentials are not permitted to queue process kills.",
+        )
+    if actor == "analyst" and auth_service.auth_enabled():
+        raise HTTPException(
+            status_code=403,
+            detail="Read-only analyst role cannot queue process remediation actions.",
+        )
 
     payload = payload or {}
     pid = payload.get("pid")
     process_name = payload.get("process_name", "")
-    expected_create_time = payload.get("expected_create_time")
-    if not pid and not process_name:
-        raise HTTPException(status_code=422, detail="Either 'pid' or 'process_name' is required.")
+    expected_create_time = payload.get("expected_create_time") or payload.get("start_time")
 
-    import uuid
-    actor = auth_service.role_from_request(request) or "analyst"
+    # Name-only kills are rejected to prevent terminating unintended processes
+    if not pid:
+        raise HTTPException(
+            status_code=422,
+            detail="Process kill requires target 'pid'. Name-only kills are rejected to prevent collateral process termination.",
+        )
+    if expected_create_time is None:
+        raise HTTPException(
+            status_code=422,
+            detail="Process kill requires 'expected_create_time' (or 'start_time') to verify target identity against PID reuse.",
+        )
+
     now = datetime.now(timezone.utc).isoformat()
-    action = {
-        "action_id": str(uuid.uuid4()),
+    action_id = str(uuid.uuid4())
+    action_payload = {
+        "action_id": action_id,
         "action": "kill_process",
-        "pid": pid,
+        "pid": int(pid),
         "process_name": process_name,
-        "expected_create_time": expected_create_time,
+        "expected_create_time": float(expected_create_time) if isinstance(expected_create_time, (int, float, str)) and str(expected_create_time).replace(".", "", 1).isdigit() else expected_create_time,
         "requested_by": actor,
         "requested_at": now,
     }
 
     with db_session() as conn:
+        # Enqueue in proper host_actions table
+        conn.execute(
+            """
+            INSERT INTO host_actions (
+                action_id, host_id, action_type, target, payload, status, timeout_seconds, result, created_at, updated_at
+            ) VALUES (?, ?, 'kill_process', ?, ?, 'pending', 60, NULL, ?, ?)
+            """,
+            (action_id, host_id, f"pid:{pid}", json.dumps(action_payload), now, now),
+        )
+
         row = conn.execute(
             "SELECT pending_actions FROM host_containment WHERE host_id = ?",
             (host_id,),
@@ -900,7 +1137,8 @@ def queue_process_kill(host_id: str, request: Request, payload: dict | None = No
                 actions = json.loads(row["pending_actions"])
             except Exception:
                 actions = []
-        actions.append(action)
+        actions.append(action_payload)
+
         conn.execute(
             """
             INSERT INTO host_containment (host_id, isolated, isolated_at, isolated_by, reason, pending_actions, updated_at)
@@ -917,27 +1155,61 @@ def queue_process_kill(host_id: str, request: Request, payload: dict | None = No
             "agent.process.kill_queued",
             target_type="host",
             target_id=host_id,
-            detail=f"queued kill for PID {pid} ({process_name or 'unnamed'}) on host {host_id}",
+            outcome="queued",
+            detail=f"queued kill for PID {pid} ({process_name or 'unnamed'}) start_time={expected_create_time} on host {host_id}",
         )
 
     return {
         "host_id": host_id,
         "status": "queued",
-        "action": action,
+        "action_id": action_id,
+        "action": action_payload,
         "total_pending": len(actions),
     }
 
 
 @router.post("/agents/{host_id}/actions/ack", response_model=None)
 def ack_host_actions(host_id: str, request: Request, payload: dict | None = None) -> dict:
-    """Acknowledge and clear executed containment/remediation actions for a host."""
+    """Acknowledge executed containment/remediation actions and record real execution outcomes."""
     from ..core import auth as auth_service
     from ..models import audit
 
     payload = payload or {}
     action_ids = {str(x) for x in (payload.get("action_ids") or [])}
+    results = payload.get("results") or []  # [{"action_id": ..., "outcome": "killed"|"not_found"|..., "detail": ...}]
+
+    now = datetime.now(timezone.utc).isoformat()
+    actor = auth_service.role_from_request(request) or "collector"
 
     with db_session() as conn:
+        # Record real outcomes in host_actions table and audit trail
+        for res in results:
+            aid = res.get("action_id")
+            if not aid:
+                continue
+            outcome = res.get("outcome", "completed")
+            detail = res.get("detail", "")
+            action_ids.add(str(aid))
+
+            status_val = "completed" if outcome in ("killed", "completed", "enforced", "released") else "failed"
+            conn.execute(
+                """
+                UPDATE host_actions
+                SET status = ?, result = ?, updated_at = ?
+                WHERE action_id = ?
+                """,
+                (status_val, json.dumps({"outcome": outcome, "detail": detail}), now, str(aid)),
+            )
+            audit.log(
+                conn,
+                actor,
+                "agent.action.executed",
+                target_type="host",
+                target_id=host_id,
+                outcome=outcome,
+                detail=f"action {aid} outcome: {outcome} ({detail})",
+            )
+
         row = conn.execute(
             "SELECT pending_actions FROM host_containment WHERE host_id = ?",
             (host_id,),
@@ -960,8 +1232,6 @@ def ack_host_actions(host_id: str, request: Request, payload: dict | None = None
             cleared = len(current_actions)
             remaining = []
 
-
-        now = datetime.now(timezone.utc).isoformat()
         conn.execute(
             """
             UPDATE host_containment
@@ -971,10 +1241,13 @@ def ack_host_actions(host_id: str, request: Request, payload: dict | None = None
             (json.dumps(remaining), now, host_id),
         )
 
-        actor = auth_service.role_from_request(request) or "collector"
         audit.log(
-            conn, actor, "agent.action.ack",
-            target_type="host", target_id=host_id,
+            conn,
+            actor,
+            "agent.action.ack",
+            target_type="host",
+            target_id=host_id,
+            outcome="cleared",
             detail=f"cleared {cleared} action(s) on host {host_id}",
         )
 

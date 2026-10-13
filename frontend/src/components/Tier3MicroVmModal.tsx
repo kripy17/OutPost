@@ -69,7 +69,7 @@ export function Tier3MicroVmModal({ onClose }: { onClose: () => void }) {
                 <span>{copiedCode ? "Copied!" : "Copy command"}</span>
               </button>
             </div>
-            <div className="text-accent select-all bg-[#0a0c10] p-2.5 rounded-lg border border-white/5 overflow-x-auto">
+            <div className="text-accent select-all bg-bg-inset p-2.5 rounded-lg border border-border-subtle overflow-x-auto">
               $ {setupCmd}
             </div>
             <div className="text-[10px] text-text-faint pt-1 leading-normal font-sans">

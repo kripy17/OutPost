@@ -27,7 +27,15 @@ export type EventType =
   | "process_access"
   | "driver_load"
   | "module_load"
-  | "file_delete";
+  | "file_delete"
+  | "pipe_create"
+  | "pipe_connect"
+  | "wmi_filter"
+  | "wmi_consumer"
+  | "wmi_binding"
+  | "dns_query"
+  | "user_logon"
+  | "script_block";
 
 export interface RunSummary {
   run_id: string;
@@ -68,6 +76,8 @@ export interface Alert {
   status: AlertStatus;
   status_comment: string | null;
   status_at: string | null;
+  entity_key?: string | null;
+  pid_fallback?: boolean;
 }
 
 // -- Alert triage (analyst workflow) ------------------------------------------
@@ -102,6 +112,9 @@ export interface ProcessNode {
   ppid: number | null;
   process_name: string;
   command_line: string | null;
+  host_id?: string | null;
+  boot_id?: string | null;
+  process_start_time?: string | null;
   // Network risk annotation (docs/07 signature visual): worst reputation of
   // any destination this pid connected to, plus the distinct IPs behind it.
   flagged_reputation?: Reputation | null;
@@ -139,6 +152,7 @@ export interface EventOut {
   protocol: string | null;
   file_path: string | null;
   registry_key: string | null;
+  host_id?: string | null;
   // DNS query string (Sysmon DNS / DNS-aware collectors) — the DNS-channel
   // rules read this.
   query?: string | null;
@@ -148,6 +162,17 @@ export interface EventOut {
   // The collector's original payload (JSON) — the Event Viewer's raw-record
   // pane. Null for events ingested before the column existed.
   raw_record?: string | null;
+  source_event_id?: string | null;
+  boot_id?: string | null;
+  process_start_time?: string | null;
+  user?: string | null;
+  parent_image?: string | null;
+  parent_command_line?: string | null;
+  hashes?: string | null;
+  integrity_level?: string | null;
+  session_id?: string | null;
+  connection_status?: string | null;
+  process_guid?: string | null;
 }
 
 export interface RunDetail {
@@ -350,6 +375,21 @@ export interface EventIn {
   protocol: string | null;
   file_path: string | null;
   registry_key: string | null;
+  host_id?: string | null;
+  log_source?: string | null;
+  query?: string | null;
+  tls_sni?: string | null;
+  source_event_id?: string | null;
+  boot_id?: string | null;
+  process_start_time?: string | null;
+  user?: string | null;
+  parent_image?: string | null;
+  parent_command_line?: string | null;
+  hashes?: string | null;
+  integrity_level?: string | null;
+  session_id?: string | null;
+  connection_status?: string | null;
+  process_guid?: string | null;
 }
 
 export interface IocMatch {
@@ -883,6 +923,14 @@ export interface AgentInfo {
     queue_backlog?: number;
     uptime_seconds?: number;
   } | null;
+  /** Per-source collector health (ok, degraded, absent) */
+  source_health?: {
+    execution: "ok" | "degraded" | "absent";
+    network: "ok" | "degraded" | "absent";
+    file: "ok" | "degraded" | "absent";
+    dns: "ok" | "degraded" | "absent";
+  };
+  health_status?: "healthy" | "degraded" | "silent" | "unhealthy";
 }
 
 export interface AgentsResponse {
@@ -1011,7 +1059,10 @@ export interface QueueAlert {
   rule_id: string;
   rule_name: string;
   severity: Severity;
+  confidence?: Confidence | null;
+  disposition?: string | null;
   triggered_at: string;
+  last_seen_at?: string | null;
   status: AlertStatus;
   status_comment: string | null;
   status_at: string | null;
@@ -1021,6 +1072,9 @@ export interface QueueAlert {
   related_pids: number[];
   host_ids: string[];
   details: string;
+  rule_condition?: string | null;
+  evidence_event_ids?: number[];
+  occurrence_count?: number;
   // P0.3: nullable link to the optional cross-workflow investigation overlay.
   investigation_id?: string | null;
   source?: string | null;
@@ -1758,12 +1812,22 @@ export interface AnalysisObservation {
   event_type?: EventType;
   timestamp?: string;
   pid?: number | null;
+  ppid?: number | null;
   process_name?: string | null;
   command_line?: string | null;
+  exe_path?: string | null;
   dest_ip?: string | null;
   dest_port?: number | null;
+  protocol?: string | null;
   file_path?: string | null;
   registry_key?: string | null;
+  host_id?: string | null;
+  boot_id?: string | null;
+  process_start_time?: string | null;
+  query?: string | null;
+  tls_sni?: string | null;
+  log_source?: string | null;
+  raw_record?: string | null;
 }
 
 export interface AnalysisObservationsResponse {

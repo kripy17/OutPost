@@ -134,7 +134,7 @@ export function ArtifactHexViewerModal({ artifact, onClose }: ArtifactHexViewerM
               className="rounded-lg p-1.5 text-text-muted hover:bg-bg-elevated hover:text-text-primary"
               aria-label="Close modal"
             >
-              ✕
+              <Icon name="x" size={14} />
             </button>
           </div>
         </div>
@@ -168,7 +168,7 @@ export function ArtifactHexViewerModal({ artifact, onClose }: ArtifactHexViewerM
         {/* Content Body */}
         <div className="flex-1 overflow-y-auto p-6 font-mono text-xs">
           {viewMode === "hex" ? (
-            <div className="rounded-xl border border-border-subtle bg-[#0d1117] p-4 text-[#c9d1d9] shadow-inner">
+            <div className="rounded-xl border border-border-subtle bg-bg-inset p-4 text-text-primary shadow-inner">
               <div className="mb-2 grid grid-cols-12 gap-2 border-b border-white/10 pb-1.5 text-[10px] font-bold uppercase text-text-faint">
                 <span className="col-span-2">Offset</span>
                 <span className="col-span-7">Hexadecimal Bytes</span>
@@ -185,7 +185,7 @@ export function ArtifactHexViewerModal({ artifact, onClose }: ArtifactHexViewerM
               </div>
             </div>
           ) : (
-            <div className="rounded-xl border border-border-subtle bg-[#0d1117] p-4 text-[#c9d1d9] shadow-inner">
+            <div className="rounded-xl border border-border-subtle bg-bg-inset p-4 text-text-primary shadow-inner">
               <pre className="whitespace-pre-wrap font-mono text-[11px] leading-relaxed">
                 {previewLines.join("\n")}
               </pre>

@@ -1,15 +1,23 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { DataProvenanceBadge } from "../components/DataProvenanceBadge";
 import { PageHeader, Panel } from "../components/ui";
 import { copyToClipboard } from "../lib/clipboard";
-import { addInvestigationRef, addSuppression, bulkUpdateAlertStatus, createInvestigation, getAlertQueue, getRuleMeta } from "../lib/api";
+import {
+  addInvestigationRef,
+  addSuppression,
+  bulkUpdateAlertStatus,
+  createInvestigation,
+  getAlertQueue,
+  getRuleMeta,
+  getRunDetail,
+} from "../lib/api";
 import { useEventStream } from "../lib/useEventStream";
 import { SEVERITY_COLORS, SEVERITY_LABEL } from "../lib/constants";
 import { toneFill, toneForSeverity } from "../lib/fillPatterns";
-import type { AlertStatus, QueueAlert, RuleMeta, Severity } from "../types";
+import type { AlertStatus, ProcessNode, QueueAlert, RuleMeta, Severity } from "../types";
 import ProcessContextModal from "../components/ProcessContextModal";
 import NetworkContextModal from "../components/NetworkContextModal";
 import InvestigationsPage from "./investigations";
@@ -23,6 +31,46 @@ import {
   statusTabCount,
   writeSavedProvenance,
 } from "./findingsHelpers";
+
+const RULE_RATIONALE: Record<string, string> = {
+  masquerading: "Process naming itself after a legitimate system executable running from an unexpected directory path.",
+  "suspicious-parent-child": "Office applications, documents, or scripting engines spawning unexpected command shells or interpreters.",
+  "lolbin-abuse": "Living-Off-the-Land Binaries (PowerShell, CertUtil, Mshta, etc.) invoked with evasive command-line flags or remote downloads.",
+  beaconing: "Repetitive outbound network telemetry to a fixed destination with low interval variance characteristic of C2 beaconing.",
+  "registry-persistence": "Modifications to Windows Run, RunOnce, or startup registry keys to establish persistence across reboots.",
+  "autostart-persistence": "Creation or manipulation of startup scripts, systemd services, or autostart entries.",
+  "ssh-authorized-keys": "Modifications to ~/.ssh/authorized_keys indicating unauthorized persistent SSH access configuration.",
+  "scheduled-task": "Creation or modification of scheduled tasks or cron entries to execute payloads at timed intervals.",
+  "suid-set": "Modifications adding SUID or SGID permission bits to Linux binaries to facilitate privilege escalation.",
+  "credential-dump": "Access to or dumping of sensitive authentication stores (LSASS memory, /etc/shadow, SAM).",
+  "enumeration-burst": "Rapid burst of host, domain, or user discovery commands indicative of post-exploitation discovery.",
+  "data-staging": "Rapid archive creation (tar, zip) or staging in temporary directories prior to exfiltration.",
+  "rename-burst": "Rapid batch renaming or file extension modification across user directories indicative of ransomware encryption.",
+  "first-seen-process": "Execution of an unrecognized process or binary hash absent from historical baseline.",
+  "network-scan": "Sequential or rapid port probing across multiple network targets or destination ports.",
+  "lateral-rdp-smb": "Lateral authentication or administrative sessions initiated across internal network hosts.",
+  "log-service-stop": "Termination or suspension of audit and event logging services to conceal attacker actions.",
+  "log-clearing": "Clearing or truncation of security and audit event logs to destroy forensic telemetry.",
+  "dns-tunneling": "High-volume or encoded DNS queries used to establish covert data transfer channels.",
+  "dns-long-label": "Abnormally long subdomain labels in DNS queries characteristic of base32/base64 tunneling.",
+  "shadow-copy-deletion": "Volume Shadow Copy deletion commands executed to prevent system rollback during attacks.",
+  "remote-thread-injection": "Thread injection into external target processes to execute malicious code within trusted address spaces.",
+};
+
+function findProcessLineage(nodes: ProcessNode[] | undefined, targetPid: number, path: ProcessNode[] = []): ProcessNode[] | null {
+  if (!nodes || nodes.length === 0) return null;
+  for (const node of nodes) {
+    const currentPath = [...path, node];
+    if (node.pid === targetPid) {
+      return currentPath;
+    }
+    if (node.children && node.children.length > 0) {
+      const found = findProcessLineage(node.children, targetPid, currentPath);
+      if (found) return found;
+    }
+  }
+  return null;
+}
 
 function AlertDetailDrawer({
   alert,
@@ -42,24 +90,72 @@ function AlertDetailDrawer({
   const [copied, setCopied] = useState(false);
   const sev = alert.severity as Severity;
 
+  const { data: runDetail, isLoading: isLoadingRun } = useQuery({
+    queryKey: ["run", alert.run_id],
+    queryFn: () => getRunDetail(alert.run_id),
+    enabled: Boolean(alert.run_id),
+  });
+
+  const tree = runDetail?.process_tree;
+  const lineagePath = alert.related_pid && tree ? findProcessLineage(tree, alert.related_pid) : null;
+
+  const timeline = runDetail?.timeline;
+  const relatedEvents = timeline
+    ? (alert.evidence_event_ids && alert.evidence_event_ids.length > 0
+        ? timeline.filter((e) => e.id != null && alert.evidence_event_ids!.includes(e.id))
+        : timeline.filter((e) =>
+            (alert.related_pid && e.pid === alert.related_pid) ||
+            (alert.related_ip && e.dest_ip === alert.related_ip)
+          ))
+    : [];
+
+  const rationaleText = RULE_RATIONALE[alert.rule_id] || (
+    ruleMeta?.technique
+      ? `Detection hypothesis aligned with MITRE ATT&CK ${ruleMeta.technique} (${ruleMeta.tactic}) with rule weight ${ruleMeta.weight}/100.`
+      : null
+  );
+
   return (
     <div
       className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-xs transition-opacity"
       onClick={onClose}
     >
       <div
-        className="h-full w-full max-w-lg bg-[#0B0E14] border-l border-border-subtle p-6 overflow-y-auto space-y-5 font-sans text-xs shadow-2xl animate-in slide-in-from-right duration-200"
+        className="h-full w-full max-w-lg bg-bg-surface border-l border-border-subtle p-6 overflow-y-auto space-y-5 font-sans text-xs shadow-2xl animate-in slide-in-from-right duration-200"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div className="flex items-start justify-between border-b border-border-subtle pb-4">
           <div className="space-y-1">
-            <div className="flex items-center gap-2 text-text-faint text-[10px] uppercase">
+            <div className="flex flex-wrap items-center gap-2 text-text-faint text-[10px] uppercase">
               <span>Alert #{alert.id}</span>
               <span>·</span>
               <span>{ageLabel(alert.triggered_at)} ago</span>
               <span>·</span>
               <DataProvenanceBadge source={alert.run_source || alert.source || "live"} />
+              {alert.confidence && (
+                <span
+                  className={`rounded border px-1.5 py-px font-mono text-[9px] font-bold ${
+                    alert.confidence === "high"
+                      ? "border-risk-malicious/50 bg-risk-malicious/15 text-risk-malicious"
+                      : alert.confidence === "medium"
+                      ? "border-accent/50 bg-accent/15 text-accent"
+                      : "border-border-subtle bg-bg-elevated text-text-muted"
+                  }`}
+                >
+                  {alert.confidence} confidence
+                </span>
+              )}
+              {ruleMeta?.weight && (
+                <span className="rounded border border-border-subtle bg-bg-elevated px-1.5 py-px font-mono text-[9px] text-text-muted">
+                  weight {ruleMeta.weight}/100
+                </span>
+              )}
+              {alert.occurrence_count && alert.occurrence_count > 1 && (
+                <span className="rounded border border-accent/40 bg-accent/15 px-1.5 py-px font-mono text-[9px] font-bold text-accent">
+                  deduped ({alert.occurrence_count} occurrences)
+                </span>
+              )}
             </div>
             <h3 className="text-base font-bold text-text-primary flex items-center gap-2">
               <span className={SEVERITY_COLORS[sev]}>{alert.rule_name}</span>
@@ -69,8 +165,9 @@ function AlertDetailDrawer({
           <button
             onClick={onClose}
             className="press rounded-lg p-1.5 text-text-faint hover:text-text-primary hover:bg-bg-elevated"
+            aria-label="Close alert drawer"
           >
-            ✕
+            <Icon name="x" size={14} />
           </button>
         </div>
 
@@ -106,6 +203,118 @@ function AlertDetailDrawer({
             >
               Suppress Scope
             </button>
+          )}
+        </div>
+
+        {/* Rule Rationale & Hypothesis */}
+        <div className="rounded-xl border border-border-subtle bg-bg-surface p-3.5 space-y-2.5">
+          <div className="flex items-center justify-between text-[10px] text-text-faint uppercase font-bold">
+            <span>Rule Rationale &amp; Hypothesis</span>
+            {ruleMeta && <span className="font-mono text-accent">{ruleMeta.tactic}</span>}
+          </div>
+          {alert.rule_condition && (
+            <div className="rounded border border-accent/30 bg-accent/10 p-2 font-mono text-[11px] text-accent space-y-0.5">
+              <span className="text-[9px] uppercase font-bold text-text-faint block tracking-wide">Trigger Condition:</span>
+              <span className="select-all">{alert.rule_condition}</span>
+            </div>
+          )}
+          {rationaleText ? (
+            <p className="text-[11px] text-text-secondary leading-relaxed">
+              {rationaleText}
+            </p>
+          ) : (
+            <div className="rounded border border-dashed border-border-subtle bg-bg-base/40 p-2.5 text-[10px] text-text-faint italic">
+              Missing evidence: No analytical detection rationale documented for rule {alert.rule_id}.
+            </div>
+          )}
+        </div>
+
+        {/* Process Lineage & Ancestry */}
+        <div className="rounded-xl border border-border-subtle bg-bg-surface p-3.5 space-y-2.5">
+          <div className="flex items-center justify-between text-[10px] text-text-faint uppercase font-bold">
+            <span>Process Lineage &amp; Ancestry</span>
+            {alert.related_pid && <span className="font-mono text-accent">PID {alert.related_pid}</span>}
+          </div>
+          {!alert.related_pid ? (
+            <div className="rounded border border-dashed border-border-subtle bg-bg-base/40 p-2.5 text-[11px] text-text-faint">
+              Missing evidence: No associated process PID was captured for this finding.
+            </div>
+          ) : isLoadingRun ? (
+            <div className="skeleton h-10 w-full" />
+          ) : lineagePath && lineagePath.length > 0 ? (
+            <div className="space-y-1.5 font-mono text-[11px]">
+              {lineagePath.map((node, idx) => (
+                <div key={node.pid} className="flex items-start gap-1.5" style={{ paddingLeft: `${idx * 14}px` }}>
+                  <span className="text-text-faint">{idx === 0 ? "●" : "↳"}</span>
+                  <span className={idx === lineagePath.length - 1 ? "font-bold text-accent" : "text-text-muted"}>
+                    {node.process_name}
+                  </span>
+                  <span className="text-text-faint text-[10px]">({node.pid})</span>
+                  {node.command_line && (
+                    <span className="truncate text-text-faint text-[10px] max-w-[200px]" title={node.command_line}>
+                      {node.command_line}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded border border-dashed border-border-subtle bg-bg-base/40 p-2.5 text-[11px] text-text-faint">
+              Process lineage unavailable: PID {alert.related_pid} not found in process tree (process may have terminated before tree snapshot).
+            </div>
+          )}
+        </div>
+
+        {/* Raw Event Evidence */}
+        <div className="rounded-xl border border-border-subtle bg-bg-surface p-3.5 space-y-2.5">
+          <div className="flex items-center justify-between text-[10px] text-text-faint uppercase font-bold">
+            <span>Raw Event Evidence</span>
+            <span className="font-mono text-text-faint">
+              {relatedEvents.length} event(s) {alert.evidence_event_ids?.length ? "directly linked" : "matched"}
+            </span>
+          </div>
+          {isLoadingRun ? (
+            <div className="skeleton h-12 w-full" />
+          ) : relatedEvents.length > 0 ? (
+            <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+              {relatedEvents.map((ev, i) => (
+                <div key={ev.id ?? i} className="rounded-lg border border-border-subtle bg-bg-base p-2.5 font-mono text-[10px] space-y-1">
+                  <div className="flex items-center justify-between text-text-faint">
+                    <span className="text-accent font-semibold">{ev.event_type}</span>
+                    <span>{ev.timestamp}</span>
+                  </div>
+                  {ev.process_name && (
+                    <div className="text-text-secondary truncate">
+                      proc: {ev.process_name} (pid {ev.pid})
+                    </div>
+                  )}
+                  {ev.command_line && (
+                    <div className="text-text-muted truncate select-all" title={ev.command_line}>
+                      cmd: {ev.command_line}
+                    </div>
+                  )}
+                  {ev.dest_ip && (
+                    <div className="text-text-secondary">
+                      dest: {ev.dest_ip}{ev.dest_port ? `:${ev.dest_port}` : ""} ({ev.protocol || "tcp"})
+                    </div>
+                  )}
+                  {ev.file_path && (
+                    <div className="text-text-muted truncate" title={ev.file_path}>
+                      file: {ev.file_path}
+                    </div>
+                  )}
+                  {ev.raw_record && (
+                    <pre className="mt-1 p-1.5 rounded bg-bg-surface text-[9px] text-text-faint overflow-x-auto whitespace-pre-wrap">
+                      {ev.raw_record}
+                    </pre>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded border border-dashed border-border-subtle bg-bg-base/40 p-2.5 text-[11px] text-text-faint">
+              Missing evidence: No matching raw telemetry events captured in this run timeline.
+            </div>
           )}
         </div>
 
@@ -241,6 +450,8 @@ function AlertDetailDrawer({
 function FindingRow({
   a,
   selected,
+  isCursorActive,
+  innerRef,
   onToggle,
   ruleNames,
   ruleMap,
@@ -253,6 +464,8 @@ function FindingRow({
 }: {
   a: QueueAlert;
   selected: boolean;
+  isCursorActive?: boolean;
+  innerRef?: (el: HTMLLIElement | null) => void;
   onToggle: (id: number) => void;
   ruleNames: Map<string, string>;
   ruleMap?: Map<string, { tactic: string; technique: string }>;
@@ -268,8 +481,17 @@ function FindingRow({
 
   return (
     <li
-      className={`group flex items-start gap-3 rounded-xl border bg-bg-surface px-4 py-3 transition-colors duration-150 ${
-        selected ? "border-accent/50 bg-accent/5" : "border-border-subtle hover:border-accent/30"
+      ref={innerRef}
+      tabIndex={0}
+      aria-selected={isCursorActive}
+      data-finding-id={a.id}
+      data-cursor-active={isCursorActive ? "true" : undefined}
+      className={`group flex items-start gap-3 rounded-xl border px-4 py-3 transition-all duration-150 ${
+        isCursorActive
+          ? "border-accent ring-2 ring-accent/60 bg-accent/10 shadow-sm"
+          : selected
+          ? "border-accent/50 bg-accent/5"
+          : "border-border-subtle bg-bg-surface hover:border-accent/30"
       }`}
     >
       <input
@@ -286,6 +508,11 @@ function FindingRow({
           <span className={`text-[13px] font-semibold ${SEVERITY_COLORS[sev]}`}>
             {ruleNames.get(a.rule_id) ?? a.rule_name}
           </span>
+          {isCursorActive && (
+            <span className="rounded bg-accent/20 px-1 py-px font-mono text-[9px] font-bold text-accent uppercase">
+              active
+            </span>
+          )}
           <span className="rounded border border-border-subtle px-1 py-px font-mono text-[9px] uppercase tracking-wide text-text-faint">
             {a.rule_id}
           </span>
@@ -295,6 +522,28 @@ function FindingRow({
               title={`MITRE ATT&CK ${mitre.tactic}`}
             >
               {mitre.technique} · {mitre.tactic}
+            </span>
+          )}
+          {a.confidence && (
+            <span
+              className={`rounded border px-1.5 py-px font-mono text-[9px] font-bold uppercase ${
+                a.confidence === "high"
+                  ? "border-risk-malicious/40 bg-risk-malicious/10 text-risk-malicious"
+                  : a.confidence === "medium"
+                  ? "border-accent/40 bg-accent/10 text-accent"
+                  : "border-border-subtle bg-bg-elevated/40 text-text-muted"
+              }`}
+              title={`Detection confidence: ${a.confidence}`}
+            >
+              {a.confidence}
+            </span>
+          )}
+          {a.occurrence_count && a.occurrence_count > 1 && (
+            <span
+              className="rounded border border-accent/40 bg-accent/15 px-1.5 py-px font-mono text-[9px] font-bold text-accent"
+              title={`Deduplicated ${a.occurrence_count} occurrences into this finding`}
+            >
+              ×{a.occurrence_count}
             </span>
           )}
           <DataProvenanceBadge source={a.run_source || a.source || "live"} />
@@ -453,11 +702,14 @@ export default function FindingsPage() {
   const [submittedQ, setSubmittedQ] = useState(q);
   const [offset, setOffset] = useState(0);
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [cursorIndex, setCursorIndex] = useState(0);
   const [busy, setBusy] = useState(false);
   const [inspectIp, setInspectIp] = useState<string | null>(null);
   const [inspectPid, setInspectPid] = useState<number | null>(null);
   const [inspectFinding, setInspectFinding] = useState<QueueAlert | null>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const rowRefs = useRef<Map<number, HTMLLIElement>>(new Map());
 
   const setParam = (k: string, v: string) => {
     const next = new URLSearchParams(searchParams);
@@ -536,18 +788,193 @@ export default function FindingsPage() {
     return m;
   }, [ruleMeta]);
 
-  const handleSingleStatus = async (id: number, nextStatus: AlertStatus) => {
-    try {
-      await bulkUpdateAlertStatus([id], nextStatus);
-      await queryClient.invalidateQueries({ queryKey: ["alerts", "queue"] });
-      await queryClient.invalidateQueries({ queryKey: ["statusbar"] });
-    } catch (err) {
-      console.error("Failed to update status:", err);
-    }
-  };
+  const handleSingleStatus = useCallback(
+    async (id: number, nextStatus: AlertStatus) => {
+      if (busy) return;
+      setBusy(true);
+      setMsg(null);
+      try {
+        await bulkUpdateAlertStatus([id], nextStatus);
+        setMsg({ ok: true, text: `Finding #${id} marked ${nextStatus}.` });
+        await queryClient.invalidateQueries({ queryKey: ["alerts", "queue"] });
+        await queryClient.invalidateQueries({ queryKey: ["statusbar"] });
+        if (inspectFinding && inspectFinding.id === id) {
+          setInspectFinding({ ...inspectFinding, status: nextStatus });
+        }
+      } catch (err) {
+        console.error("Failed to update status:", err);
+        setMsg({ ok: false, text: `Failed to update status for finding #${id}.` });
+      } finally {
+        setBusy(false);
+      }
+    },
+    [busy, inspectFinding, queryClient]
+  );
 
-  const alerts = data?.alerts ?? [];
+  const handleAcknowledgeAlert = useCallback(
+    async (target: QueueAlert) => {
+      await handleSingleStatus(target.id, "acknowledged");
+    },
+    [handleSingleStatus]
+  );
+
+  const handleEscalateSingle = useCallback(
+    async (target: QueueAlert) => {
+      if (busy) return;
+      setBusy(true);
+      setMsg(null);
+      try {
+        const title = `Incident Case: ${target.rule_name}${target.sample_name ? ` (${target.sample_name})` : ""} [Alert #${target.id}]`;
+        const inv = await createInvestigation({
+          title,
+          tags: ["escalated-finding", target.rule_id],
+        });
+        if (target.run_id) {
+          try {
+            await addInvestigationRef(inv.id, { ref_type: "run", ref_id: target.run_id });
+          } catch {
+            // best-effort
+          }
+        }
+        setMsg({ ok: true, text: `Created investigation case for finding #${target.id}.` });
+        navigate(`/investigations/${inv.id}`);
+      } catch {
+        setMsg({ ok: false, text: `Failed to create investigation case for finding #${target.id}.` });
+      } finally {
+        setBusy(false);
+      }
+    },
+    [busy, navigate]
+  );
+
+  const alerts = useMemo(() => data?.alerts ?? [], [data?.alerts]);
   const onPage = alerts.map((a) => a.id);
+
+  // Preserve cursor within valid range when alerts array updates
+  useEffect(() => {
+    if (alerts.length === 0) {
+      setCursorIndex(0);
+    } else {
+      setCursorIndex((cur) => Math.min(Math.max(0, cur), alerts.length - 1));
+    }
+  }, [alerts]);
+
+  // Scroll active cursor row into view
+  useEffect(() => {
+    if (alerts.length > 0 && alerts[cursorIndex]) {
+      const el = rowRefs.current.get(alerts[cursorIndex].id);
+      if (typeof el?.scrollIntoView === "function") {
+        el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      }
+    }
+  }, [cursorIndex, alerts]);
+
+  // Keyboard navigation & triage shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const isEditing = target && (
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.tagName === "SELECT" ||
+        target.isContentEditable
+      );
+
+      // Esc dismisses transient UI, drawer, or blurs input
+      if (e.key === "Escape") {
+        if (inspectFinding) {
+          e.preventDefault();
+          setInspectFinding(null);
+          return;
+        }
+        if (inspectIp) {
+          e.preventDefault();
+          setInspectIp(null);
+          return;
+        }
+        if (inspectPid) {
+          e.preventDefault();
+          setInspectPid(null);
+          return;
+        }
+        if (isEditing) {
+          e.preventDefault();
+          target?.blur();
+          return;
+        }
+        if (selected.size > 0) {
+          e.preventDefault();
+          setSelected(new Set());
+          return;
+        }
+        return;
+      }
+
+      // Ignore all other shortcuts while editing or inside another modal
+      if (isEditing) return;
+      if (inspectIp !== null || inspectPid !== null) return;
+
+      // Focus search input
+      if (e.key === "/") {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+        return;
+      }
+
+      const currentAlert = inspectFinding || alerts[cursorIndex] || null;
+
+      // Navigate list: j (next), k (prev)
+      if (e.key === "j" || e.key === "J") {
+        if (inspectFinding) return;
+        e.preventDefault();
+        setCursorIndex((prev) => Math.min(prev + 1, Math.max(0, alerts.length - 1)));
+        return;
+      }
+      if (e.key === "k" || e.key === "K") {
+        if (inspectFinding) return;
+        e.preventDefault();
+        setCursorIndex((prev) => Math.max(prev - 1, 0));
+        return;
+      }
+
+      // Acknowledge selected finding: x
+      if (e.key === "x" || e.key === "X") {
+        if (!currentAlert || busy) return;
+        e.preventDefault();
+        void handleAcknowledgeAlert(currentAlert);
+        return;
+      }
+
+      // Escalate selected finding: e
+      if (e.key === "e" || e.key === "E") {
+        if (!currentAlert || busy) return;
+        e.preventDefault();
+        void handleEscalateSingle(currentAlert);
+        return;
+      }
+
+      // Open evidence drawer: Enter or Space
+      if (e.key === "Enter" || e.key === " ") {
+        if (!inspectFinding && currentAlert) {
+          e.preventDefault();
+          setInspectFinding(currentAlert);
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [
+    alerts,
+    cursorIndex,
+    inspectFinding,
+    inspectIp,
+    inspectPid,
+    busy,
+    selected,
+    handleAcknowledgeAlert,
+    handleEscalateSingle,
+  ]);
 
   const toggle = (id: number) =>
     setSelected((cur) => {
@@ -852,9 +1279,10 @@ export default function FindingsPage() {
             }}
           >
             <input
+              ref={searchInputRef}
               value={q}
               onChange={(e) => setParam("q", e.target.value)}
-              placeholder="sample, rule, detail…"
+              placeholder="sample, rule, detail… (/ to search)"
               className="w-44 rounded-lg border border-border-subtle bg-bg-surface px-2.5 py-1.5 font-sans text-xs text-text-primary placeholder:text-text-faint outline-none transition-colors focus:border-accent/60"
               aria-label="Search findings"
             />
@@ -863,6 +1291,44 @@ export default function FindingsPage() {
             </button>
           </form>
         </div>
+      </div>
+
+      {/* Keyboard Shortcut Hints Bar */}
+      <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-border-subtle bg-bg-surface/60 px-3 py-1.5 font-mono text-[11px] text-text-muted">
+        <span className="text-[10px] font-bold uppercase tracking-wider text-text-faint">Shortcuts:</span>
+        <span className="inline-flex items-center gap-1">
+          <kbd className="rounded border border-border-subtle bg-bg-elevated px-1.5 py-0.5 text-[10px] font-bold text-text-primary">j</kbd>
+          <span>/</span>
+          <kbd className="rounded border border-border-subtle bg-bg-elevated px-1.5 py-0.5 text-[10px] font-bold text-text-primary">k</kbd>
+          <span>nav</span>
+        </span>
+        <span className="text-border-subtle">·</span>
+        <span className="inline-flex items-center gap-1">
+          <kbd className="rounded border border-border-subtle bg-bg-elevated px-1.5 py-0.5 text-[10px] font-bold text-text-primary">x</kbd>
+          <span>ack</span>
+        </span>
+        <span className="text-border-subtle">·</span>
+        <span className="inline-flex items-center gap-1">
+          <kbd className="rounded border border-border-subtle bg-bg-elevated px-1.5 py-0.5 text-[10px] font-bold text-text-primary">e</kbd>
+          <span>escalate</span>
+        </span>
+        <span className="text-border-subtle">·</span>
+        <span className="inline-flex items-center gap-1">
+          <kbd className="rounded border border-border-subtle bg-bg-elevated px-1.5 py-0.5 text-[10px] font-bold text-text-primary">↵</kbd>
+          <span>/</span>
+          <kbd className="rounded border border-border-subtle bg-bg-elevated px-1.5 py-0.5 text-[10px] font-bold text-text-primary">space</kbd>
+          <span>inspect</span>
+        </span>
+        <span className="text-border-subtle">·</span>
+        <span className="inline-flex items-center gap-1">
+          <kbd className="rounded border border-border-subtle bg-bg-elevated px-1.5 py-0.5 text-[10px] font-bold text-text-primary">/</kbd>
+          <span>search</span>
+        </span>
+        <span className="text-border-subtle">·</span>
+        <span className="inline-flex items-center gap-1">
+          <kbd className="rounded border border-border-subtle bg-bg-elevated px-1.5 py-0.5 text-[10px] font-bold text-text-primary">esc</kbd>
+          <span>dismiss</span>
+        </span>
       </div>
 
       {/* Saved-split chips — the same per-tab vocabulary as Settings, so an
@@ -998,11 +1464,16 @@ export default function FindingsPage() {
               )}
             </div>
             <ul className="space-y-2">
-              {alerts.map((a) => (
+              {alerts.map((a, index) => (
                 <FindingRow
                   key={a.id}
                   a={a}
                   selected={selected.has(a.id)}
+                  isCursorActive={index === cursorIndex}
+                  innerRef={(el) => {
+                    if (el) rowRefs.current.set(a.id, el);
+                    else rowRefs.current.delete(a.id);
+                  }}
                   onToggle={toggle}
                   ruleNames={ruleNames}
                   ruleMap={ruleMap}
@@ -1056,8 +1527,7 @@ export default function FindingsPage() {
             void suppress([target]);
           }}
           onEscalate={(target) => {
-            setSelected(new Set([target.id]));
-            void handleEscalateToCase();
+            void handleEscalateSingle(target);
           }}
         />
       )}

@@ -17,11 +17,12 @@ malicious at weight 14; suid-set is suspicious at weight 18).
 from typing import TypedDict
 
 
-class RuleMeta(TypedDict):
+class RuleMeta(TypedDict, total=False):
     technique: str
     tactic: str
     weight: int
     severity: str  # the alert severity the rule actually fires with
+    confidence: str  # default analytical confidence: high | medium | low
 
 
 RULE_META: dict[str, RuleMeta] = {
@@ -316,14 +317,249 @@ RULE_META: dict[str, RuleMeta] = {
 }
 
 
-def compute_risk_score(rule_ids: list[str]) -> int:
-    """Sum weights of distinct fired rules, capped at 100 (roadmap 1.3).
+import math
+from datetime import datetime, timezone
+from typing import Any
 
-    Unknown rule_ids (e.g. future/legacy) contribute 0 so the score never
-    crashes on data this build doesn't know about.
+
+def compute_entity_risk_score(
+    alerts: list[dict | Any],
+    reference_time: datetime | None = None,
+) -> dict[str, Any]:
+    """Calculate per-entity threat risk scores accounting for:
+    - Base rule weights & severity (malicious 1.25x multiplier)
+    - Repetition factor (logarithmic boost for repeated detections on same entity)
+    - Kill-chain progression (bonus when an entity touches multiple ATT&CK tactics)
+    - Time decay (exponential decay relative to latest activity)
     """
+    if not alerts:
+        return {"overall_risk": 0, "entities": {}}
+
+    clean_alerts = []
+    latest_ts = reference_time
+    for a in alerts:
+        if hasattr(a, "model_dump"):
+            d = a.model_dump()
+        elif hasattr(a, "__dict__"):
+            d = dict(a.__dict__)
+        elif isinstance(a, dict):
+            d = dict(a)
+        else:
+            continue
+
+        ts = d.get("last_seen_at") or d.get("triggered_at")
+        if isinstance(ts, str):
+            try:
+                if ts.endswith("Z"):
+                    ts = ts[:-1] + "+00:00"
+                dt = datetime.fromisoformat(ts)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                d["_dt"] = dt
+                if latest_ts is None or dt > latest_ts:
+                    latest_ts = dt
+            except Exception:
+                d["_dt"] = datetime.now(timezone.utc)
+        elif isinstance(ts, datetime):
+            dt = ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+            d["_dt"] = dt
+            if latest_ts is None or dt > latest_ts:
+                latest_ts = dt
+        else:
+            d["_dt"] = datetime.now(timezone.utc)
+
+        clean_alerts.append(d)
+
+    if latest_ts is None:
+        latest_ts = datetime.now(timezone.utc)
+
+    # Group alerts by entity key (compound process identity or network destination)
+    entity_groups: dict[str, list[dict]] = {}
+    for a in clean_alerts:
+        ent = a.get("entity_key")
+        if not ent:
+            pid = a.get("related_pid")
+            ip = a.get("related_ip")
+            if pid:
+                ent = f"proc:{pid}"
+            elif ip:
+                ent = f"net:{ip}"
+            else:
+                ent = "host:local"
+        entity_groups.setdefault(ent, []).append(a)
+
+    entity_scores: dict[str, dict[str, Any]] = {}
+    for ent, ent_alerts in entity_groups.items():
+        distinct_rules: dict[str, dict] = {}
+        total_occurrences = 0
+        tactics_seen: set[str] = set()
+        latest_ent_ts = ent_alerts[0]["_dt"]
+
+        for a in ent_alerts:
+            rid = a.get("rule_id", "")
+            occ = int(a.get("occurrence_count") or 1)
+            total_occurrences += occ
+            if a["_dt"] > latest_ent_ts:
+                latest_ent_ts = a["_dt"]
+
+            tac = RULE_META.get(rid, {}).get("tactic")
+            if tac:
+                tactics_seen.add(tac.lower())
+
+            if rid not in distinct_rules:
+                sev = a.get("severity", RULE_META.get(rid, {}).get("severity", "suspicious"))
+                distinct_rules[rid] = {
+                    "weight": RULE_META.get(rid, {}).get("weight", 10),
+                    "severity": sev,
+                }
+
+        base_weight = 0.0
+        for rid, meta in distinct_rules.items():
+            w = meta["weight"]
+            # 1.25x severity multiplier for confirmed malicious findings
+            sev_mult = 1.25 if meta["severity"] == "malicious" else 1.0
+            base_weight += w * sev_mult
+
+        # Repetition boost: repeated actions on same entity escalate threat (log-bounded)
+        excess_repeats = max(0, total_occurrences - len(distinct_rules))
+        repetition_boost = min(15.0, 2.5 * math.log(1.0 + excess_repeats)) if excess_repeats > 0 else 0.0
+
+        # Kill-chain progression bonus: entity touching 2+ tactics indicates multi-stage attack
+        num_tactics = len(tactics_seen)
+        progression_bonus = min(25.0, (num_tactics - 1) * 8.0) if num_tactics > 1 else 0.0
+
+        # Time decay relative to latest activity
+        delta_hours = max(0.0, (latest_ts - latest_ent_ts).total_seconds() / 3600.0)
+        time_decay = max(0.5, math.exp(-0.05 * delta_hours))
+
+        ent_raw = (base_weight + repetition_boost + progression_bonus) * time_decay
+        ent_final = min(100, int(round(ent_raw)))
+
+        entity_scores[ent] = {
+            "entity_key": ent,
+            "risk_score": ent_final,
+            "distinct_rules_count": len(distinct_rules),
+            "total_occurrences": total_occurrences,
+            "tactics": list(tactics_seen),
+            "time_decay_factor": round(time_decay, 2),
+        }
+
+    sorted_scores = sorted([s["risk_score"] for s in entity_scores.values()], reverse=True)
+    if not sorted_scores:
+        overall = 0
+    else:
+        top_score = sorted_scores[0]
+        other_contrib = sum(s * 0.15 for s in sorted_scores[1:])
+        overall = min(100, int(round(top_score + other_contrib)))
+
+    return {
+        "overall_risk": overall,
+        "entities": entity_scores,
+    }
+
+
+def compute_risk_score(
+    rule_ids: list[str],
+    alerts: list[dict | Any] | None = None,
+) -> int:
+    """Compute run threat risk score.
+    
+    If alerts are provided, computes per-entity risk accounting for severity,
+    kill-chain progression, repetition, and time decay.
+    If only rule_ids are provided, sums weights of distinct rules capped at 100.
+    """
+    if alerts:
+        res = compute_entity_risk_score(alerts)
+        return res["overall_risk"]
+
     total = sum(RULE_META.get(rid, {}).get("weight", 0) for rid in set(rule_ids))
     return min(100, total)
+
+
+# Default detection confidence (distinct from severity and risk score):
+# - "high": authoritative kernel/syscall telemetry, verified binary hash, or definite anti-forensics
+# - "medium": signature or behavioral pattern matching on command-line/network heuristics
+# - "low": statistical novelty or baseline anomaly without prior corroborating indicators
+RULE_CONFIDENCE: dict[str, str] = {
+    "masquerading": "high",
+    "suspicious-parent-child": "high",
+    "credential-dump": "high",
+    "suid-set": "high",
+    "gtfobins-suid-execution": "high",
+    "shadow-copy-deletion": "high",
+    "remote-thread-injection": "high",
+    "ifeo-persistence": "high",
+    "macos-tcc-bypass": "high",
+    "macos-launchagent-persistence": "high",
+    "macos-dylib-hijack": "high",
+    "macos-gatekeeper-bypass": "high",
+    "anonymous-rwx-memory": "high",
+    "fileless-unlinked-binary": "high",
+    "log-service-stop": "high",
+    "log-clearing": "high",
+    "ssh-authorized-keys": "high",
+    "scheduled-task": "medium",
+    "registry-persistence": "high",
+    "autostart-persistence": "medium",
+    "lolbin-abuse": "high",
+    "document-dropper": "high",
+    "lateral-psexec-smb": "high",
+    "lateral-winrm-wmi": "high",
+    "lateral-smb-share": "medium",
+    "lateral-rdp-smb": "medium",
+    "rdp-brute-force": "medium",
+    "network-scan": "medium",
+    "toolchain-build": "medium",
+    "screen-capture": "medium",
+    "beaconing": "medium",
+    "rename-burst": "high",
+    "first-seen-process": "low",
+    "unusual-port": "medium",
+    "attack-chain": "high",
+    "baseline-anomaly": "low",
+    "suspicious-extension": "medium",
+    "shell-history-wipe": "medium",
+    "enumeration-burst": "medium",
+    "data-staging": "medium",
+    "dns-tunneling": "medium",
+    "dns-long-label": "medium",
+    "dns-unusual-port": "medium",
+    "tls-sni-suspicious": "medium",
+    "tls-ja3-c2": "high",
+    "doh-resolver-use": "medium",
+    "fanout-contact": "medium",
+    "fanout-recurring": "high",
+}
+
+
+def rule_confidence(rule_id: str) -> str:
+    """Default confidence rating ('high', 'medium', 'low') for a detection rule."""
+    if rule_id in RULE_META and "confidence" in RULE_META[rule_id]:
+        return RULE_META[rule_id]["confidence"]
+    return RULE_CONFIDENCE.get(rule_id, "medium")
+
+
+def recalculate_run_risk(conn, run_id: str) -> int:
+    """Recalculate and return active threat risk score for a run.
+
+    Excludes alerts with disposition 'false-positive' or 'benign' so that
+    analyst triage decisions accurately reflect active threat risk.
+    """
+    rows = conn.execute(
+        """
+        SELECT id, rule_id, severity, occurrence_count, triggered_at, last_seen_at,
+               related_pid, related_ip, entity_key
+        FROM alerts
+        WHERE run_id = ?
+          AND (disposition IS NULL OR disposition NOT IN ('false-positive', 'benign'))
+        """,
+        (run_id,),
+    ).fetchall()
+    if not rows:
+        return 0
+    active_rule_ids = [r["rule_id"] for r in rows]
+    active_alerts = [dict(r) for r in rows]
+    return compute_risk_score(active_rule_ids, alerts=active_alerts)
 
 
 # Human rule names mirror detection.py's alert titles (single source of truth

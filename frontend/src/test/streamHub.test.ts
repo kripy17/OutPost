@@ -12,10 +12,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 class FakeEventSource {
   static instances: FakeEventSource[] = [];
   url: string;
+  options?: EventSourceInit;
   closed = false;
   private listeners = new Map<string, (e: MessageEvent) => void>();
-  constructor(url: string) {
+  constructor(url: string, options?: EventSourceInit) {
     this.url = url;
+    this.options = options;
     FakeEventSource.instances.push(this);
   }
   addEventListener(name: string, fn: (e: MessageEvent) => void) {
@@ -47,20 +49,23 @@ describe("streamHub", () => {
     return await import("../lib/streamHub");
   }
 
-  it("opens a tokenless stream URL when no auth token is set", async () => {
+  it("opens a stream URL with withCredentials and no token in query", async () => {
     const { subscribeStream } = await hub();
     const unsub = subscribeStream({ onAlert: () => {} });
     expect(FakeEventSource.instances.length).toBe(1);
     expect(FakeEventSource.instances[0].url).toMatch(/\/events\/stream$/);
     expect(FakeEventSource.instances[0].url).not.toContain("token=");
+    expect(FakeEventSource.instances[0].options?.withCredentials).toBe(true);
     unsub();
   });
 
-  it("appends ?token= when an auth token exists", async () => {
+  it("never exposes auth token in stream URL even when token is in storage", async () => {
     localStorage.setItem("outpost-token", "sekret");
     const { subscribeStream } = await hub();
     const unsub = subscribeStream({});
-    expect(FakeEventSource.instances[0].url).toMatch(/\/events\/stream\?token=sekret$/);
+    expect(FakeEventSource.instances[0].url).toMatch(/\/events\/stream$/);
+    expect(FakeEventSource.instances[0].url).not.toContain("token=");
+    expect(FakeEventSource.instances[0].options?.withCredentials).toBe(true);
     unsub();
   });
 

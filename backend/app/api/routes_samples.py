@@ -572,7 +572,8 @@ async def detonate_sample_endpoint(
     sample_id: str,
     timeout: int = Query(15, ge=2, le=60),
     isolation_driver: str = Query("auto", max_length=32),
-    network_mode: str = Query("sinkhole", max_length=32),
+    network_mode: str = Query("isolated", max_length=32),
+    allow_unconfined_override: bool = Query(False),
 ):
     """Dynamically execute and detonate an uploaded malware sample in an isolated sandbox.
 
@@ -607,6 +608,7 @@ async def detonate_sample_endpoint(
         timeout_seconds=timeout,
         isolation_driver=isolation_driver,
         network_mode=network_mode,
+        allow_unconfined_override=allow_unconfined_override,
     )
 
     # Reconcile predicted vs observed runtime telemetry
@@ -622,7 +624,8 @@ async def detonate_sample_stream_endpoint(
     sample_id: str,
     timeout: int = Query(15, ge=2, le=60),
     isolation_driver: str = Query("auto", max_length=32),
-    network_mode: str = Query("sinkhole", max_length=32),
+    network_mode: str = Query("isolated", max_length=32),
+    allow_unconfined_override: bool = Query(False),
 ):
     """Real-time SSE stream of dynamic sandbox execution telemetry, logs, and process events."""
     with db_session() as conn:
@@ -661,6 +664,7 @@ async def detonate_sample_stream_endpoint(
                     isolation_driver=isolation_driver,
                     on_telemetry_event=telemetry_callback,
                     network_mode=network_mode,
+                    allow_unconfined_override=allow_unconfined_override,
                 )
 
                 reconciliation = behavioral_forecaster.reconcile_forecast_vs_runtime(forecast, result)

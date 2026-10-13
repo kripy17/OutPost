@@ -41,4 +41,12 @@ export const TYPE_STYLE: Record<EventOut["event_type"], string> = {
   driver_load: "text-[#F87171]",
   module_load: "text-[#60A5FA]",
   file_delete: "text-[#FBBF24]",
+  pipe_create: "text-text-muted",
+  pipe_connect: "text-text-muted",
+  wmi_filter: "text-[#A78BFA]",
+  wmi_consumer: "text-[#A78BFA]",
+  wmi_binding: "text-[#A78BFA]",
+  dns_query: "text-accent",
+  user_logon: "text-text-primary",
+  script_block: "text-[#FBBF24]",
 };

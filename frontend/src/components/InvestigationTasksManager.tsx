@@ -198,23 +198,26 @@ export const InvestigationTasksManager: React.FC<{ investigationId: string }> = 
             <button
               type="button"
               onClick={() => applyPlaybookPreset("ransomware")}
-              className="press rounded-lg border border-rose-500/40 bg-rose-500/10 px-2 py-1 text-[11px] font-bold text-rose-400 hover:bg-rose-500/20"
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-rose-500/40 bg-rose-500/10 px-2 py-1 text-[11px] font-bold text-rose-400 hover:bg-rose-500/20"
             >
-              🛡️ Ransomware Containment
+              <Icon name="shield" size={11} />
+              <span>Ransomware Containment</span>
             </button>
             <button
               type="button"
               onClick={() => applyPlaybookPreset("c2")}
-              className="press rounded-lg border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[11px] font-bold text-amber-400 hover:bg-amber-500/20"
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[11px] font-bold text-amber-400 hover:bg-amber-500/20"
             >
-              🚫 C2 Severance
+              <Icon name="zap" size={11} />
+              <span>C2 Severance</span>
             </button>
             <button
               type="button"
               onClick={() => applyPlaybookPreset("credentials")}
-              className="press rounded-lg border border-sky-500/40 bg-sky-500/10 px-2 py-1 text-[11px] font-bold text-sky-400 hover:bg-sky-500/20"
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-sky-500/40 bg-sky-500/10 px-2 py-1 text-[11px] font-bold text-sky-400 hover:bg-sky-500/20"
             >
-              🔑 Credential Lockout
+              <Icon name="target" size={11} />
+              <span>Credential Lockout</span>
             </button>
           </div>
         </div>
@@ -224,7 +227,7 @@ export const InvestigationTasksManager: React.FC<{ investigationId: string }> = 
           <div className="flex items-start justify-between gap-3 rounded-xl border border-signal/60 bg-signal/15 p-3.5 text-xs font-mono text-signal animate-fade-in shadow-xs">
             <div className="flex items-start gap-2.5">
               <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-signal/20 font-bold">
-                ✓
+                <Icon name="check" size={11} />
               </span>
               <div>
                 <span className="font-bold uppercase tracking-wider block">
@@ -235,9 +238,9 @@ export const InvestigationTasksManager: React.FC<{ investigationId: string }> = 
             </div>
             <button
               onClick={() => setExecutionReceipt(null)}
-              className="text-signal hover:opacity-75 font-bold"
+              className="text-signal hover:opacity-75 font-bold p-1"
             >
-              ✕
+              <Icon name="x" size={13} />
             </button>
           </div>
         )}
@@ -412,8 +415,9 @@ export const InvestigationTasksManager: React.FC<{ investigationId: string }> = 
                           </span>
                         )}
                         {t.completed_at ? (
-                          <span className="text-signal font-semibold">
-                            ✓ Executed &amp; Completed {t.completed_at.slice(0, 19).replace("T", " ")}
+                          <span className="text-signal font-semibold inline-flex items-center gap-1">
+                            <Icon name="check" size={10} />
+                            <span>Executed &amp; Completed {t.completed_at.slice(0, 19).replace("T", " ")}</span>
                           </span>
                         ) : (
                           <span>Created {t.created_at.slice(0, 19).replace("T", " ")}</span>
@@ -432,11 +436,12 @@ export const InvestigationTasksManager: React.FC<{ investigationId: string }> = 
                         title="Execute automated containment action on endpoint / network"
                       >
                         <Icon name="zap" size={11} className={isExecutingThis ? "animate-spin" : ""} />
-                        <span>{isExecutingThis ? "Executing…" : "⚡ Execute Action"}</span>
+                        <span>{isExecutingThis ? "Executing…" : "Execute Action"}</span>
                       </button>
                     ) : (
                       <span className="inline-flex items-center gap-1 rounded border border-signal/40 bg-signal/10 px-2 py-0.5 font-mono text-[10px] text-signal font-bold">
-                        ✓ Enforced
+                        <Icon name="check" size={10} />
+                        <span>Enforced</span>
                       </span>
                     )}
 

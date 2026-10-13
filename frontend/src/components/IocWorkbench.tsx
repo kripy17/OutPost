@@ -413,8 +413,8 @@ export function IocWorkbench() {
             disabled={filteredIndicators.length === 0}
             className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-surface px-3 py-1.5 font-mono text-xs text-text-muted hover:text-text-primary hover:bg-bg-elevated transition disabled:opacity-50"
           >
-            <Icon name="copy" size={12} />
-            <span>{copiedKey === (showDefanged ? "all-defanged" : "all-refanged") ? "✓ Copied!" : "Copy Filtered"}</span>
+            <Icon name={copiedKey === (showDefanged ? "all-defanged" : "all-refanged") ? "check" : "copy"} size={12} />
+            <span>{copiedKey === (showDefanged ? "all-defanged" : "all-refanged") ? "Copied" : "Copy Filtered"}</span>
           </button>
 
           {/* Export JSON */}
@@ -437,7 +437,9 @@ export function IocWorkbench() {
             <Icon name="check" size={14} />
             <span>{importStatus}</span>
           </div>
-          <button onClick={() => setImportStatus(null)} className="text-text-faint hover:text-text-primary">✕</button>
+          <button onClick={() => setImportStatus(null)} className="text-text-faint hover:text-text-primary" aria-label="Dismiss feedback">
+            <Icon name="x" size={14} />
+          </button>
         </div>
       )}
 
@@ -496,7 +498,14 @@ export function IocWorkbench() {
                       className="press rounded border border-border-subtle bg-bg-surface px-2 py-1 text-[11px] text-text-muted hover:text-text-primary hover:bg-bg-elevated transition"
                       title="Copy indicator to clipboard"
                     >
-                      {copiedKey === copyKey ? "✓ Copied" : "Copy"}
+                      {copiedKey === copyKey ? (
+                        <span className="inline-flex items-center gap-1 text-signal">
+                          <Icon name="check" size={11} />
+                          <span>Copied</span>
+                        </span>
+                      ) : (
+                        "Copy"
+                      )}
                     </button>
 
                     <Link

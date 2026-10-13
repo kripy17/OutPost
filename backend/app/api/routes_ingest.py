@@ -84,17 +84,24 @@ async def ingest_batch(events: list[EventIn]) -> dict:
         if batch_min_ts is not None:
             rows = conn.execute(
                 "SELECT event_type, timestamp, pid, process_name, command_line, "
-                "dest_ip, dest_port, file_path, registry_key, host_id FROM events "
+                "dest_ip, dest_port, file_path, registry_key, host_id, source_event_id FROM events "
                 "WHERE run_id = ? AND timestamp >= ?",
                 (run_id, batch_min_ts),
             ).fetchall()
-            seen = {
+            seen_natural = {
                 (r["event_type"], r["timestamp"], r["pid"], r["process_name"], r["command_line"],
                  r["dest_ip"], r["dest_port"], r["file_path"], r["registry_key"], r["host_id"])
                 for r in rows
             }
+            seen_source_ids = {
+                r["source_event_id"]
+                for r in rows
+                if r["source_event_id"]
+            }
         else:
-            seen = set()
+            seen_natural = set()
+            seen_source_ids = set()
+
         stored_events: list[dict] = []
         for event_in in events:
             # mode="json" serializes datetimes to ISO strings — sqlite-safe.
@@ -108,21 +115,29 @@ async def ingest_batch(events: list[EventIn]) -> dict:
             # fall back only when the collector left it empty.
             if not normalized.get("raw_record"):
                 normalized["raw_record"] = json.dumps(raw_payload)
-            key = (
-                normalized.get("event_type"),
-                normalized.get("timestamp"),
-                normalized.get("pid"),
-                normalized.get("process_name"),
-                normalized.get("command_line"),
-                normalized.get("dest_ip"),
-                normalized.get("dest_port"),
-                normalized.get("file_path"),
-                normalized.get("registry_key"),
-                normalized.get("host_id", "local"),
-            )
-            if key in seen:
-                continue
-            seen.add(key)
+
+            src_id = normalized.get("source_event_id")
+            if src_id:
+                if src_id in seen_source_ids:
+                    continue
+                seen_source_ids.add(src_id)
+            else:
+                key = (
+                    normalized.get("event_type"),
+                    normalized.get("timestamp"),
+                    normalized.get("pid"),
+                    normalized.get("process_name"),
+                    normalized.get("command_line"),
+                    normalized.get("dest_ip"),
+                    normalized.get("dest_port"),
+                    normalized.get("file_path"),
+                    normalized.get("registry_key"),
+                    normalized.get("host_id", "local"),
+                )
+                if key in seen_natural:
+                    continue
+                seen_natural.add(key)
+
             # The row id rides on the dict so detection can record event-level
             # IOC provenance (P3.1) — composite rules stay finding-ref only.
             normalized["id"] = event_store.insert_event(conn, normalized)

@@ -244,7 +244,7 @@ def test_agent_token_rotation_via_api(auth_env, monkeypatch):
         from ..core.db import db_session
 
         with db_session() as conn:
-            conn.execute("DELETE FROM settings WHERE key = 'AGENT_TOKEN'")
+            conn.execute("DELETE FROM settings WHERE key IN ('AGENT_TOKEN', 'AGENT_TOKEN_HASH')")
         monkeypatch.delenv("OUTPOST_AGENT_TOKEN", raising=False)
         importlib.reload(auth_mod)
 
@@ -353,13 +353,18 @@ def test_analyst_token_read_ok_write_403(auth_env):
     assert resp.status_code == 403
 
 
-def test_token_query_param_works_for_sse(auth_env):
+def test_token_cookie_works_for_sse(auth_env):
     c = _client()
-    token = c.post("/auth/login", json={"password": "analyst-secret"}).json()["token"]
-    # The ?token= fallback must be accepted on a gated route: simulate by
-    # checking /auth/me via query param.
-    me = c.get(f"/auth/me?token={token}").json()
+    resp = c.post("/auth/login", json={"password": "analyst-secret"})
+    token = resp.json()["token"]
+    assert "outpost_token" in resp.cookies
+    # Cookie-based auth succeeds without Bearer header
+    me = c.get("/auth/me").json()
     assert me["authenticated"] is True
+    # The SSE token must NOT travel in query string — query param token on cookie-less client is refused
+    c_clean = _client()
+    me_query = c_clean.get(f"/auth/me?token={token}").json()
+    assert me_query["authenticated"] is False
 
 
 def test_gated_401_carries_cors_headers(auth_env):
@@ -377,14 +382,12 @@ def test_gated_401_carries_cors_headers(auth_env):
 
 
 def test_sse_stream_requires_token_when_auth_on(auth_env):
-    """The live alert stream is gated too — EventSource can't set headers, so
-    the frontend appends ?token=; both the absent and bad-token cases 401.
-    (The valid-token path is covered by the middleware's shared pass-through;
-    the stream's generator blocks until the first event, so it isn't
-    exercised through the test client.)"""
+    """The live alert stream is gated — EventSource sends the HttpOnly cookie;
+    absent, garbage query, or bad cookie all 401."""
     c = _client()
     assert c.get("/events/stream").status_code == 401
     assert c.get("/events/stream?token=garbage").status_code == 401
+    assert c.get("/events/stream", cookies={"outpost_token": "garbage"}).status_code == 401
 
 
 def test_tampered_token_rejected(auth_env):

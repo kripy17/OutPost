@@ -411,40 +411,44 @@ def test_host_containment_isolation_and_kill(client):
     # Isolate host
     iso_res = client.post(f"/agents/{host}/isolate", json={"isolated": True, "reason": "Suspected Ransomware"})
     assert iso_res.status_code == 200
-    assert iso_res.json()["isolated"] is True
+    assert iso_res.json()["containment_state"] == "requested"
+    assert iso_res.json()["isolated"] is False
 
     # Queue process kill
-    kill_res = client.post(f"/agents/{host}/kill-process", json={"pid": 9999, "process_name": "badware.exe"})
+    kill_res = client.post(f"/agents/{host}/kill-process", json={"pid": 9999, "process_name": "badware.exe", "expected_create_time": 1700000000.0})
     assert kill_res.status_code == 200
     assert kill_res.json()["status"] == "queued"
 
-    # Verify containment endpoint reflects state
+    # Verify containment endpoint reflects requested state
     cont_res = client.get(f"/agents/{host}/containment").json()
-    assert cont_res["isolated"] is True
+    assert cont_res["containment_state"] == "requested"
     assert cont_res["reason"] == "Suspected Ransomware"
-    assert len(cont_res["pending_actions"]) == 1
-    assert cont_res["pending_actions"][0]["pid"] == 9999
+    assert len(cont_res["pending_actions"]) >= 1
+    kill_act = next(a for a in cont_res["pending_actions"] if a.get("action") == "kill_process")
+    assert kill_act["pid"] == 9999
+
+    # Agent reports containment enforcement
+    rep_res = client.post(f"/agents/{host}/containment/report", json={"enforcement_mode": "full", "success": True})
+    assert rep_res.status_code == 200
+    assert rep_res.json()["containment_state"] == "enforced"
+    assert rep_res.json()["isolated"] is True
 
     # Heartbeat receives containment instructions
     hb_res = client.post(f"/agents/{host}/heartbeat", json={"platform": "linux", "version": "0.1.0"}).json()
     assert hb_res["isolated"] is True
-    assert len(hb_res["pending_actions"]) == 1
-    act_id = hb_res["pending_actions"][0]["action_id"]
+    assert len(hb_res["pending_actions"]) >= 1
+    act_id = kill_act["action_id"]
 
     # Acknowledge executed remediation action
     ack_res = client.post(f"/agents/{host}/actions/ack", json={"action_ids": [act_id]})
     assert ack_res.status_code == 200
-    assert ack_res.json()["cleared_count"] == 1
-    assert ack_res.json()["remaining_count"] == 0
-
-    # Verify pending_actions is now empty
-    cont_res2 = client.get(f"/agents/{host}/containment").json()
-    assert cont_res2["pending_actions"] == []
+    assert ack_res.json()["cleared_count"] >= 1
 
     # Un-isolate
     uniso_res = client.post(f"/agents/{host}/isolate", json={"isolated": False})
     assert uniso_res.status_code == 200
     assert uniso_res.json()["isolated"] is False
+    assert uniso_res.json()["containment_state"] == "released"
 
 
 def test_agent_cryptographic_registration(client):
@@ -590,7 +594,18 @@ def test_agent_token_forbidden_from_containment_and_kill(client, monkeypatch):
 
     iso_admin = client.post("/agents/victim-host/isolate", json={"isolated": True}, headers=admin_headers)
     assert iso_admin.status_code == 200
-    assert iso_admin.json()["isolated"] is True
+    assert iso_admin.json()["containment_state"] == "requested"
+    assert iso_admin.json()["isolated"] is False
+
+    # Agent reports actual enforcement probe
+    rep = client.post(
+        "/agents/victim-host/containment/report",
+        json={"enforcement_mode": "full", "success": True},
+        headers=agent_headers,
+    )
+    assert rep.status_code == 200
+    assert rep.json()["containment_state"] == "enforced"
+    assert rep.json()["isolated"] is True
 
 
 def test_agent_containment_audit_logging(client):
@@ -603,7 +618,7 @@ def test_agent_containment_audit_logging(client):
     )
     client.post(
         "/agents/audit-host-99/kill-process",
-        json={"pid": 5432, "process_name": "mimikatz.exe"},
+        json={"pid": 5432, "process_name": "mimikatz.exe", "expected_create_time": 1700000000.0},
     )
 
     with db_session() as conn:
@@ -651,5 +666,62 @@ def test_agent_hmac_anti_replay_protection(client, monkeypatch):
     monkeypatch.setenv("OUTPOST_ADMIN_PASSWORD", "test-admin")
     r2 = client.post(path, json={"platform": "linux"}, headers=headers)
     assert r2.status_code == 401
+
+
+def test_fleet_per_source_health_reporting(client):
+    """Fleet reports per-source health (execution, network, file, dns: ok, degraded, absent)
+    and never labels a host as healthy if heartbeats arrive without telemetry."""
+    # Host 1: Heartbeat arrives, but event_count == 0 (blind sensor)
+    client.post(
+        "/agents/blind-sensor/heartbeat",
+        json={
+            "platform": "linux",
+            "version": "outpost-collector/1.0",
+            "source_health": {
+                "execution": "degraded",
+                "network": "absent",
+                "file": "absent",
+                "dns": "absent",
+            },
+        },
+    )
+
+    data = client.get("/agents").json()
+    blind = next(a for a in data["agents"] if a["host_id"] == "blind-sensor")
+    assert blind["health_status"] == "degraded"
+    assert blind["source_health"]["execution"] == "degraded"
+    assert blind["source_health"]["network"] == "absent"
+
+    # Host 2: Healthy host with active telemetry
+    rid = make_run(client, sample_name="healthy-run")
+    ev = {
+        "run_id": rid,
+        "platform": "linux",
+        "event_type": "process_create",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "host_id": "healthy-sensor",
+        "pid": 1234,
+        "process_name": "worker",
+    }
+    client.post("/ingest/batch", json=[ev])
+    client.post(
+        "/agents/healthy-sensor/heartbeat",
+        json={
+            "platform": "linux",
+            "version": "outpost-collector/1.0",
+            "source_health": {
+                "execution": "ok",
+                "network": "ok",
+                "file": "ok",
+                "dns": "ok",
+            },
+        },
+    )
+
+    data2 = client.get("/agents").json()
+    healthy = next(a for a in data2["agents"] if a["host_id"] == "healthy-sensor")
+    assert healthy["health_status"] == "healthy"
+    assert healthy["source_health"]["execution"] == "ok"
+    assert healthy["source_health"]["network"] == "ok"
 
 

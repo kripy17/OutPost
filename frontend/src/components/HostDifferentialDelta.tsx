@@ -66,7 +66,7 @@ export function HostDifferentialDelta({
               Differential Host Baseline Delta
             </span>
             <span className="rounded bg-bg-elevated px-2 py-0.5 text-[10px] text-text-muted">
-              Velociraptor Artifact Standard
+              Host Artifact Delta
             </span>
           </div>
           <p className="text-[11px] text-text-muted">
@@ -82,7 +82,7 @@ export function HostDifferentialDelta({
             className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-base/80 px-3 py-1.5 text-xs text-text-muted hover:border-accent hover:text-accent disabled:opacity-50"
           >
             <Icon name="refresh" size={12} className={isFetching ? "animate-spin" : ""} />
-            <span>{isFetching ? "Evaluating..." : "↻ Refresh Delta"}</span>
+            <span>{isFetching ? "Evaluating..." : "Refresh Delta"}</span>
           </button>
 
           <button
@@ -92,7 +92,7 @@ export function HostDifferentialDelta({
             className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/40 bg-accent/15 px-3 py-1.5 text-xs font-semibold text-accent hover:bg-accent/25 shadow-xs disabled:opacity-50"
           >
             <Icon name="zap" size={12} className={captureMutation.isPending ? "animate-spin" : ""} />
-            <span>{captureMutation.isPending ? "Capturing..." : "📸 Take New Baseline"}</span>
+            <span>{captureMutation.isPending ? "Capturing..." : "Take New Baseline"}</span>
           </button>
         </div>
       </div>
@@ -302,7 +302,7 @@ export function HostDifferentialDelta({
                           <td className="py-2.5">
                             {isWildcard ? (
                               <span className="rounded bg-rose-500/20 text-rose-300 border border-rose-500/40 px-1.5 py-0.5 text-[9px] uppercase font-bold">
-                                Public 0.0.0.0 Exposure ⚠️
+                                Public 0.0.0.0 Exposure [EXPOSED]
                               </span>
                             ) : (
                               <span className="rounded bg-emerald-500/15 text-emerald-400 px-1.5 py-0.5 text-[9px] uppercase font-bold">

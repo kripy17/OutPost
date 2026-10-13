@@ -235,7 +235,7 @@ ${data.syscalls.length > 0 ? data.syscalls.slice(0, 10).map((s) => `[PID ${s.pid
             </div>
 
             <div className="space-y-2">
-              <div className="bg-[#070a10] p-3 rounded-lg border border-white/10 text-[11px] font-mono">
+              <div className="bg-bg-inset p-3 rounded-lg border border-border-subtle text-[11px] font-mono">
                 <div className="text-text-faint uppercase text-[9px] font-bold mb-1">Host Firewall Rule:</div>
                 <pre className="text-accent whitespace-pre-wrap break-all select-all">
                   {data.actionableIocs.firewall_rules.length > 0
@@ -279,7 +279,10 @@ ${data.syscalls.length > 0 ? data.syscalls.slice(0, 10).map((s) => `[PID ${s.pid
                 >
                   <div className="flex items-center justify-between">
                     <span className="font-bold">{m.id}</span>
-                    <span className="text-[9px] font-bold uppercase">{m.detected ? "✓ DETECTED" : "● OBSERVED"}</span>
+                    <span className="text-[9px] font-bold uppercase inline-flex items-center gap-1">
+                      {m.detected && <Icon name="check" size={10} />}
+                      {m.detected ? "DETECTED" : "OBSERVED"}
+                    </span>
                   </div>
                   <p className="text-[10px] text-text-muted truncate">{m.name || "Technique Vector"}</p>
                 </div>

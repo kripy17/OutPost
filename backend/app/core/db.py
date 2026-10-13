@@ -154,7 +154,13 @@ CREATE TABLE IF NOT EXISTS alerts (
         CHECK(disposition IS NULL OR disposition IN
             ('false-positive', 'confirmed-malicious', 'benign', 'watchlisted', 'escalated')),
     seen_at TEXT,
-    investigation_id TEXT REFERENCES investigations(id)
+    investigation_id TEXT REFERENCES investigations(id),
+    evidence_event_ids TEXT DEFAULT '[]',
+    rule_condition TEXT,
+    occurrence_count INTEGER DEFAULT 1,
+    last_seen_at TEXT,
+    entity_key TEXT,
+    pid_fallback INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS events (
@@ -192,8 +198,36 @@ CREATE TABLE IF NOT EXISTS events (
     query TEXT,
     -- TLS Server Name Indication from the handshake (Sysmon Event ID 3
     -- DestinationHostname) — feeds TLS-SNI and DNS-over-HTTPS detection.
-    tls_sni TEXT
+    tls_sni TEXT,
+    -- Stable source identifier assigned at telemetry origin (auditd seq,
+    -- Sysmon RecordNumber/EventRecordID, UUID). Prevents replay duplicates.
+    source_event_id TEXT,
+    -- Host boot session ID (e.g. /proc/sys/kernel/random/boot_id). Survives
+    -- reboots and disambiguates PID reuse across boot cycles.
+    boot_id TEXT,
+    -- Process start timestamp for compound process identity:
+    -- (host_id + boot_id + pid + process_start_time).
+    process_start_time TEXT,
+    user TEXT,
+    parent_image TEXT,
+    parent_command_line TEXT,
+    hashes TEXT,
+    integrity_level TEXT,
+    session_id TEXT,
+    connection_status TEXT,
+    process_guid TEXT
 );
+
+CREATE TABLE IF NOT EXISTS finding_evidence_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    finding_id INTEGER NOT NULL REFERENCES alerts(id) ON DELETE CASCADE,
+    event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    rule_condition TEXT,
+    matched_at TEXT NOT NULL,
+    UNIQUE (finding_id, event_id)
+);
+CREATE INDEX IF NOT EXISTS idx_finding_evidence_finding ON finding_evidence_events(finding_id);
+CREATE INDEX IF NOT EXISTS idx_finding_evidence_event ON finding_evidence_events(event_id);
 
 CREATE TABLE IF NOT EXISTS enrichment_cache (
     ip TEXT PRIMARY KEY,
@@ -207,6 +241,7 @@ CREATE INDEX IF NOT EXISTS idx_events_run_id ON events(run_id);
 CREATE INDEX IF NOT EXISTS idx_events_dest_ip ON events(dest_ip);
 CREATE INDEX IF NOT EXISTS idx_events_run_type ON events(run_id, event_type);
 CREATE INDEX IF NOT EXISTS idx_events_run_timestamp ON events(run_id, timestamp);
+CREATE INDEX IF NOT EXISTS idx_events_proc_identity ON events(host_id, pid);
 CREATE INDEX IF NOT EXISTS idx_alerts_run_id ON alerts(run_id);
 
 -- Write-through copy of the in-memory process map (persisted at completion)
@@ -218,6 +253,15 @@ CREATE TABLE IF NOT EXISTS run_process_maps (
     pids_json TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS idempotency_keys (
+    key TEXT PRIMARY KEY,
+    endpoint TEXT NOT NULL,
+    response_code INTEGER NOT NULL,
+    response_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_idempotency_keys_created ON idempotency_keys(created_at);
 
 -- Standout features (docs/10-STANDOUT-FEATURES.md)
 CREATE TABLE IF NOT EXISTS run_notes (
@@ -244,7 +288,10 @@ CREATE TABLE IF NOT EXISTS audit_log (
     action TEXT NOT NULL,
     target_type TEXT,
     target_id TEXT,
-    detail TEXT
+    detail TEXT,
+    outcome TEXT NOT NULL DEFAULT 'success',
+    prev_hash TEXT,
+    entry_hash TEXT
 );
 
 -- False-positive feedback loop: per-rule FP counters. Every "mark as false
@@ -279,7 +326,8 @@ CREATE TABLE IF NOT EXISTS agent_heartbeats (
     last_auth_role TEXT,
     last_auth_at TEXT,
     metrics_json TEXT,
-    agent_id TEXT
+    agent_id TEXT,
+    source_health_json TEXT
 );
 
 -- Cryptographic agent fleet enrollment (Phase 4.1): registered sensors with unique
@@ -297,7 +345,7 @@ CREATE TABLE IF NOT EXISTS enrolled_agents (
 );
 CREATE INDEX IF NOT EXISTS idx_enrolled_agents_host_id ON enrolled_agents(host_id);
 
--- Active host containment & remediation: stores isolation status and queued actions.
+-- Active host containment & remediation: stores isolation lifecycle and queued actions.
 CREATE TABLE IF NOT EXISTS host_containment (
     host_id TEXT PRIMARY KEY,
     isolated INTEGER NOT NULL DEFAULT 0,
@@ -305,8 +353,27 @@ CREATE TABLE IF NOT EXISTS host_containment (
     isolated_by TEXT,
     reason TEXT,
     pending_actions TEXT NOT NULL DEFAULT '[]',
+    containment_state TEXT NOT NULL DEFAULT 'released',
+    enforcement_mode TEXT NOT NULL DEFAULT 'none',
+    probe_details TEXT,
+    deadman_expires_at TEXT,
     updated_at TEXT NOT NULL
 );
+
+-- Proper per-action queue for endpoint containment and remediation actions
+CREATE TABLE IF NOT EXISTS host_actions (
+    action_id TEXT PRIMARY KEY,
+    host_id TEXT NOT NULL,
+    action_type TEXT NOT NULL,
+    target TEXT,
+    payload TEXT NOT NULL DEFAULT '{}',
+    status TEXT NOT NULL DEFAULT 'pending',
+    timeout_seconds INTEGER NOT NULL DEFAULT 300,
+    result TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_host_actions_host_status ON host_actions(host_id, status);
 
 -- Per-host behavioral baseline (roadmap 4.x): what binaries execute and which
 -- IPs a host talks to, learned from its own telemetry. The learner upserts
@@ -743,6 +810,37 @@ def _migrate_events_tls_sni(conn: sqlite3.Connection) -> None:
         conn.commit()
 
 
+def _migrate_events_source_event_id(conn: sqlite3.Connection) -> None:
+    """Idempotent: add the `source_event_id` column to pre-existing DBs."""
+    cols = _column_names(conn, "events")
+    if "source_event_id" not in cols:
+        conn.execute("ALTER TABLE events ADD COLUMN source_event_id TEXT")
+        conn.commit()
+
+
+def _migrate_events_boot_id(conn: sqlite3.Connection) -> None:
+    """Idempotent: add the `boot_id` column to pre-existing DBs."""
+    cols = _column_names(conn, "events")
+    if "boot_id" not in cols:
+        conn.execute("ALTER TABLE events ADD COLUMN boot_id TEXT")
+        conn.commit()
+
+
+def _migrate_events_process_start_time(conn: sqlite3.Connection) -> None:
+    """Idempotent: add the `process_start_time` column to pre-existing DBs."""
+    cols = _column_names(conn, "events")
+    if "process_start_time" not in cols:
+        conn.execute("ALTER TABLE events ADD COLUMN process_start_time TEXT")
+        conn.commit()
+
+
+def _migrate_events_identity_indexes(conn: sqlite3.Connection) -> None:
+    """Idempotent: ensure source_event_id and proc_identity indexes exist."""
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_events_source_id ON events(run_id, source_event_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_events_proc_identity ON events(host_id, pid)")
+    conn.commit()
+
+
 def _migrate_runs_suppressed_alerts(conn: sqlite3.Connection) -> None:
     """Idempotent: per-rule alert-cap suppressed counts on the run (storm
     guard — burst-prone rules like first-seen cap per run; the counts are
@@ -781,6 +879,76 @@ def _migrate_alerts_related_pids(conn: sqlite3.Connection) -> None:
     if "related_pids" not in _column_names(conn, "alerts"):
         conn.execute("ALTER TABLE alerts ADD COLUMN related_pids TEXT")
         conn.commit()
+
+
+def _migrate_alerts_evidence_and_dedup(conn: sqlite3.Connection) -> None:
+    """Idempotent: add evidence_event_ids, rule_condition, occurrence_count,
+    and last_seen_at columns to alerts table, and ensure finding_evidence_events
+    table and indexes exist.
+    """
+    cols = _column_names(conn, "alerts")
+    for name, decl in (
+        ("evidence_event_ids", "TEXT DEFAULT '[]'"),
+        ("rule_condition", "TEXT"),
+        ("occurrence_count", "INTEGER DEFAULT 1"),
+        ("last_seen_at", "TEXT"),
+        ("entity_key", "TEXT"),
+        ("pid_fallback", "INTEGER DEFAULT 0"),
+    ):
+        if name not in cols:
+            conn.execute(f"ALTER TABLE alerts ADD COLUMN {name} {decl}")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_alerts_entity_key ON alerts(run_id, rule_id, entity_key)")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS finding_evidence_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            finding_id INTEGER NOT NULL REFERENCES alerts(id) ON DELETE CASCADE,
+            event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+            rule_condition TEXT,
+            matched_at TEXT NOT NULL,
+            UNIQUE (finding_id, event_id)
+        );
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_finding_evidence_finding ON finding_evidence_events(finding_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_finding_evidence_event ON finding_evidence_events(event_id)")
+    conn.commit()
+
+
+def _migrate_idempotency_keys(conn: sqlite3.Connection) -> None:
+    """Idempotent: ensure idempotency_keys table and index exist."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS idempotency_keys (
+            key TEXT PRIMARY KEY,
+            endpoint TEXT NOT NULL,
+            response_code INTEGER NOT NULL,
+            response_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_idempotency_keys_created ON idempotency_keys(created_at)")
+    conn.commit()
+
+
+def _migrate_events_extended_telemetry(conn: sqlite3.Connection) -> None:
+    """Idempotent: add user, parent_image, parent_command_line, hashes,
+    integrity_level, session_id, connection_status, process_guid to events,
+    and source_health_json to agent_heartbeats.
+    """
+    event_cols = _column_names(conn, "events")
+    for col in (
+        "user", "parent_image", "parent_command_line", "hashes",
+        "integrity_level", "session_id", "connection_status", "process_guid"
+    ):
+        if col not in event_cols:
+            conn.execute(f"ALTER TABLE events ADD COLUMN {col} TEXT")
+
+    hb_cols = _column_names(conn, "agent_heartbeats")
+    if "source_health_json" not in hb_cols:
+        conn.execute("ALTER TABLE agent_heartbeats ADD COLUMN source_health_json TEXT")
+    conn.commit()
 
 
 def _migrate_samples_platform_unknown(conn: sqlite3.Connection) -> None:
@@ -841,6 +1009,69 @@ def _migrate_events_run_timestamp(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _migrate_audit_log_hash_chain(conn: sqlite3.Connection) -> None:
+    """Idempotent: ensure tamper-evident hash chain columns on audit_log."""
+    cols = _column_names(conn, "audit_log")
+    if "outcome" not in cols:
+        conn.execute("ALTER TABLE audit_log ADD COLUMN outcome TEXT NOT NULL DEFAULT 'success'")
+    if "prev_hash" not in cols:
+        conn.execute("ALTER TABLE audit_log ADD COLUMN prev_hash TEXT")
+    if "entry_hash" not in cols:
+        conn.execute("ALTER TABLE audit_log ADD COLUMN entry_hash TEXT")
+    conn.commit()
+    # Backfill hashes for any legacy rows lacking entry_hash
+    rows = conn.execute("SELECT id, ts, actor, action, target_type, target_id, detail, outcome, prev_hash, entry_hash FROM audit_log ORDER BY id ASC").fetchall()
+    if rows and any(r["entry_hash"] is None for r in rows):
+        import hashlib
+        prev = "0" * 64
+        for r in rows:
+            if r["entry_hash"]:
+                prev = r["entry_hash"]
+                continue
+            outcome = r["outcome"] or "success"
+            canonical = f"{prev}:{r['ts']}:{r['actor']}:{r['action']}:{r['target_type'] or ''}:{r['target_id'] or ''}:{outcome}:{r['detail'] or ''}"
+            h = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+            conn.execute("UPDATE audit_log SET prev_hash = ?, entry_hash = ? WHERE id = ?", (prev, h, r["id"]))
+            prev = h
+        conn.commit()
+
+
+def _migrate_host_containment_lifecycle(conn: sqlite3.Connection) -> None:
+    """Idempotent: add lifecycle state and verification columns to host_containment."""
+    cols = _column_names(conn, "host_containment")
+    if "containment_state" not in cols:
+        conn.execute("ALTER TABLE host_containment ADD COLUMN containment_state TEXT NOT NULL DEFAULT 'released'")
+    if "enforcement_mode" not in cols:
+        conn.execute("ALTER TABLE host_containment ADD COLUMN enforcement_mode TEXT NOT NULL DEFAULT 'none'")
+    if "probe_details" not in cols:
+        conn.execute("ALTER TABLE host_containment ADD COLUMN probe_details TEXT")
+    if "deadman_expires_at" not in cols:
+        conn.execute("ALTER TABLE host_containment ADD COLUMN deadman_expires_at TEXT")
+    conn.commit()
+
+
+def _migrate_host_actions(conn: sqlite3.Connection) -> None:
+    """Idempotent: ensure host_actions table exists."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS host_actions (
+            action_id TEXT PRIMARY KEY,
+            host_id TEXT NOT NULL,
+            action_type TEXT NOT NULL,
+            target TEXT,
+            payload TEXT NOT NULL DEFAULT '{}',
+            status TEXT NOT NULL DEFAULT 'pending',
+            timeout_seconds INTEGER NOT NULL DEFAULT 300,
+            result TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_host_actions_host_status ON host_actions(host_id, status)")
+    conn.commit()
+
+
 def get_connection():
     """Open a connection with a Row factory and foreign keys on.
 
@@ -891,9 +1122,19 @@ def init_db() -> None:
         _migrate_events_exe_path(conn)
         _migrate_events_query(conn)
         _migrate_events_tls_sni(conn)
+        _migrate_events_source_event_id(conn)
+        _migrate_events_boot_id(conn)
+        _migrate_events_process_start_time(conn)
+        _migrate_events_identity_indexes(conn)
         _migrate_events_run_timestamp(conn)
         _migrate_runs_suppressed_alerts(conn)
         _migrate_rule_suppressions_value(conn)
+        _migrate_alerts_evidence_and_dedup(conn)
+        _migrate_idempotency_keys(conn)
+        _migrate_events_extended_telemetry(conn)
+        _migrate_audit_log_hash_chain(conn)
+        _migrate_host_containment_lifecycle(conn)
+        _migrate_host_actions(conn)
 
 
 @contextmanager

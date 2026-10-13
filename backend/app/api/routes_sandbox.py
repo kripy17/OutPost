@@ -155,6 +155,8 @@ async def detonate_dynamic(body: SandboxDetonateIn) -> dict:
             isolation_driver=body.isolation_driver or "auto",
         )
         return result
+    except HTTPException:
+        raise
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:

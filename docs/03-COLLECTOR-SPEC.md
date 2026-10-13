@@ -109,7 +109,7 @@ def parse_audit_line(line: str) -> dict | None:
 
 def main(run_id: str, backend_url: str):
     shipper = Shipper(backend_url, run_id)
-    # tail audit.log or attach eBPF, parse_audit_line(), shipper.add()
+    # tail audit.log or kernel tracing pipe (tracing_pipe), parse_audit_line(), shipper.add()
     ...
 ```
 

@@ -41,89 +41,80 @@ EVENT_TYPE_MAP = {
     12: "registry_write",
     13: "registry_write",
     14: "registry_write",
+    17: "pipe_create",
+    18: "pipe_connect",
+    19: "wmi_filter",
+    20: "wmi_consumer",
+    21: "wmi_binding",
+    22: "dns_query",
     23: "file_delete",
+    4624: "user_logon",
+    4104: "script_block",
 }
 
 
+def parse_sysmon_xml_data(xml_str: str) -> tuple[int, dict[str, Any], str | None, str | None]:
+    """Parse rendered Windows Event XML into (event_id, data_dict, record_id, timestamp)."""
+    import xml.etree.ElementTree as ET
+
+    root = ET.fromstring(xml_str)
+    # Strip namespaces for robust lookup
+    for elem in root.iter():
+        if "}" in elem.tag:
+            elem.tag = elem.tag.split("}", 1)[1]
+
+    eid_elem = root.find(".//System/EventID")
+    event_id = int(eid_elem.text.strip()) if eid_elem is not None and eid_elem.text else 0
+
+    rid_elem = root.find(".//System/EventRecordID")
+    record_id = rid_elem.text.strip() if rid_elem is not None and rid_elem.text else None
+
+    tc_elem = root.find(".//System/TimeCreated")
+    ts = tc_elem.attrib.get("SystemTime") if tc_elem is not None else None
+
+    data: dict[str, Any] = {}
+    for d in root.findall(".//EventData/Data"):
+        name = d.attrib.get("Name")
+        if name:
+            data[name] = d.text or ""
+
+    return event_id, data, record_id, ts
+
+
 def parse_sysmon_event(record) -> dict | None:
-    """Convert one win32evtlog record into a unified-schema event dict."""
-    try:
-        event_id = record.EventID & 0xFFFF  # Mask qualifier bits
-    except AttributeError:
-        return None
+    """Convert one win32evtlog record into a unified-schema event dict.
+
+    Parses XML / structured event data by exact field names (ProcessGuid, User,
+    IntegrityLevel, Hashes, ParentCommandLine, QueryName, etc.) rather than
+    fragile array indexing, with fallback to legacy Record.Data and StringInserts.
+    """
+    event_id = None
+    data: dict[str, Any] = {}
+    record_number = getattr(record, "RecordNumber", None)
+    xml_ts = None
+
+    # 1. Primary: XML rendering by field name (if XML is available on the record)
+    xml_content = getattr(record, "Xml", None) or getattr(record, "xml", None)
+    if isinstance(record, str) and record.strip().startswith("<Event"):
+        xml_content = record
+    if xml_content:
+        try:
+            event_id, data, xml_rid, xml_ts = parse_sysmon_xml_data(xml_content)
+            if xml_rid and not record_number:
+                record_number = xml_rid
+        except Exception:
+            pass
+
+    if event_id is None:
+        try:
+            event_id = record.EventID & 0xFFFF  # Mask qualifier bits
+        except AttributeError:
+            return None
+
     if event_id not in EVENT_TYPE_MAP:
         return None
 
-    data: dict[str, Any] = {}
-
-    # 1. Try StringInserts (standard for Win32 Event Log provider)
-    inserts = getattr(record, "StringInserts", None)
-    if inserts and isinstance(inserts, (list, tuple)):
-        # For Sysmon Event 1 (Process Create)
-        if event_id == 1 and len(inserts) >= 12:
-            data["UtcTime"] = inserts[1] if len(inserts) > 1 else ""
-            data["ProcessId"] = inserts[3] if len(inserts) > 3 else ""
-            data["Image"] = inserts[4] if len(inserts) > 4 else ""
-            data["CommandLine"] = inserts[10] if len(inserts) > 10 else ""
-            if len(inserts) >= 21:
-                data["ParentProcessId"] = inserts[19]
-                data["ParentImage"] = inserts[20]
-        # For Sysmon Event 3 (Network Connection)
-        elif event_id == 3 and len(inserts) >= 17:
-            data["UtcTime"] = inserts[1]
-            data["ProcessId"] = inserts[3]
-            data["Image"] = inserts[4]
-            data["Protocol"] = inserts[6]
-            data["SourceIp"] = inserts[9]
-            data["DestinationIp"] = inserts[14]
-            data["DestinationHostname"] = inserts[15]
-            data["DestinationPort"] = inserts[16]
-        # For Sysmon Event 6 (Driver Load)
-        elif event_id == 6 and len(inserts) >= 5:
-            data["UtcTime"] = inserts[1]
-            data["Image"] = inserts[3]
-            data["TargetFilename"] = inserts[3]
-        # For Sysmon Event 7 (Module Load)
-        elif event_id == 7 and len(inserts) >= 6:
-            data["UtcTime"] = inserts[1]
-            data["ProcessId"] = inserts[3]
-            data["Image"] = inserts[4]
-            data["TargetFilename"] = inserts[5]
-        # For Sysmon Event 8 (CreateRemoteThread)
-        elif event_id == 8 and len(inserts) >= 8:
-            data["UtcTime"] = inserts[1]
-            data["ProcessId"] = inserts[3]
-            data["Image"] = inserts[4]
-            data["TargetProcessId"] = inserts[6]
-            data["TargetImage"] = inserts[7]
-            data["TargetFilename"] = inserts[7]
-        # For Sysmon Event 10 (ProcessAccess)
-        elif event_id == 10 and len(inserts) >= 9:
-            data["UtcTime"] = inserts[1]
-            data["ProcessId"] = inserts[3]
-            data["Image"] = inserts[5]
-            data["TargetProcessId"] = inserts[7]
-            data["TargetImage"] = inserts[8]
-        # For Sysmon Event 11 (FileCreate / FileWrite)
-        elif event_id == 11 and len(inserts) >= 6:
-            data["UtcTime"] = inserts[1]
-            data["ProcessId"] = inserts[3]
-            data["Image"] = inserts[4]
-            data["TargetFilename"] = inserts[5]
-        # For Sysmon Event 12/13/14 (Registry Write/Delete)
-        elif event_id in (12, 13, 14) and len(inserts) >= 7:
-            data["UtcTime"] = inserts[2]
-            data["ProcessId"] = inserts[4]
-            data["Image"] = inserts[5]
-            data["TargetObject"] = inserts[6]
-        # For Sysmon Event 23 (FileDelete)
-        elif event_id == 23 and len(inserts) >= 6:
-            data["UtcTime"] = inserts[1]
-            data["ProcessId"] = inserts[3]
-            data["Image"] = inserts[4]
-            data["TargetFilename"] = inserts[5]
-
-    # 2. Record.Data fallback for structured event receivers
+    # 2. Structured Data attributes from pywin32 record
     try:
         raw = getattr(record, "Data", None)
         if isinstance(raw, (list, tuple)):
@@ -134,34 +125,103 @@ def parse_sysmon_event(record) -> dict | None:
     except Exception:
         pass
 
-    ts = datetime.datetime.fromtimestamp(record.TimeGenerated.timestamp(), datetime.timezone.utc).isoformat()
+    # 3. Fallback: StringInserts for legacy event log API
+    inserts = getattr(record, "StringInserts", None)
+    if inserts and isinstance(inserts, (list, tuple)) and not data:
+        if event_id == 1 and len(inserts) >= 12:
+            data["UtcTime"] = inserts[1] if len(inserts) > 1 else ""
+            data["ProcessId"] = inserts[3] if len(inserts) > 3 else ""
+            data["Image"] = inserts[4] if len(inserts) > 4 else ""
+            data["CommandLine"] = inserts[10] if len(inserts) > 10 else ""
+            if len(inserts) >= 21:
+                data["ParentProcessId"] = inserts[19]
+                data["ParentImage"] = inserts[20]
+        elif event_id == 3 and len(inserts) >= 17:
+            data["UtcTime"] = inserts[1]
+            data["ProcessId"] = inserts[3]
+            data["Image"] = inserts[4]
+            data["Protocol"] = inserts[6]
+            data["SourceIp"] = inserts[9]
+            data["DestinationIp"] = inserts[14]
+            data["DestinationHostname"] = inserts[15]
+            data["DestinationPort"] = inserts[16]
+        elif event_id == 6 and len(inserts) >= 5:
+            data["UtcTime"] = inserts[1]
+            data["Image"] = inserts[3]
+            data["TargetFilename"] = inserts[3]
+        elif event_id == 7 and len(inserts) >= 6:
+            data["UtcTime"] = inserts[1]
+            data["ProcessId"] = inserts[3]
+            data["Image"] = inserts[4]
+            data["TargetFilename"] = inserts[5]
+        elif event_id == 8 and len(inserts) >= 8:
+            data["UtcTime"] = inserts[1]
+            data["ProcessId"] = inserts[3]
+            data["Image"] = inserts[4]
+            data["TargetProcessId"] = inserts[6]
+            data["TargetImage"] = inserts[7]
+            data["TargetFilename"] = inserts[7]
+        elif event_id == 10 and len(inserts) >= 9:
+            data["UtcTime"] = inserts[1]
+            data["ProcessId"] = inserts[3]
+            data["Image"] = inserts[5]
+            data["TargetProcessId"] = inserts[7]
+            data["TargetImage"] = inserts[8]
+        elif event_id == 11 and len(inserts) >= 6:
+            data["UtcTime"] = inserts[1]
+            data["ProcessId"] = inserts[3]
+            data["Image"] = inserts[4]
+            data["TargetFilename"] = inserts[5]
+        elif event_id in (12, 13, 14) and len(inserts) >= 7:
+            data["UtcTime"] = inserts[2]
+            data["ProcessId"] = inserts[4]
+            data["Image"] = inserts[5]
+            data["TargetObject"] = inserts[6]
+        elif event_id == 23 and len(inserts) >= 6:
+            data["UtcTime"] = inserts[1]
+            data["ProcessId"] = inserts[3]
+            data["Image"] = inserts[4]
+            data["TargetFilename"] = inserts[5]
+
+    time_gen = getattr(record, "TimeGenerated", None)
+    if time_gen and hasattr(time_gen, "timestamp"):
+        ts = datetime.datetime.fromtimestamp(time_gen.timestamp(), datetime.timezone.utc).isoformat()
+    elif xml_ts:
+        ts = xml_ts
+    else:
+        ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+    conn_status = None
+    if event_id == 3:
+        initiated = str(data.get("Initiated", "")).lower()
+        conn_status = "established" if initiated in ("true", "1") else "attempted"
+
     ev = {
         "platform": "windows",
-        "log_source": "sysmon",  # the collector's own channel — explicit
+        "log_source": "sysmon",
         "event_type": EVENT_TYPE_MAP[event_id],
         "timestamp": ts,
         "pid": _int(data.get("ProcessId")),
         "ppid": _int(data.get("ParentProcessId")),
         "process_name": _basename(data.get("Image")),
-        # Sysmon's Image IS the ETW-resolved executable path (the Windows
-        # equivalent of auditd's exe= — symlinks/junction followed, immune to
-        # argv[0] spoofing). The masquerading rule keys on it authoritatively;
-        # Linux parity: the collector ships the resolved path, the backend
-        # decides.
         "exe_path": data.get("Image"),
         "command_line": data.get("CommandLine"),
         "dest_ip": data.get("DestinationIp") or data.get("SourceIp"),
         "dest_port": _int(data.get("DestinationPort")),
         "protocol": data.get("Protocol"),
-        "file_path": data.get("TargetFilename"),
+        "file_path": data.get("TargetFilename") or data.get("PipeName"),
         "registry_key": data.get("TargetObject"),
-        # TLS Server Name Indication — Sysmon Event ID 3's DestinationHostname
-        # (present when the connection carried a TLS handshake). Feeds the
-        # TLS-SNI and DNS-over-HTTPS detection rules.
-        "tls_sni": data.get("DestinationHostname"),
-        # The raw EventData as shipped — the Event Viewer's "raw record" pane
-        # pivots a normalized row back to the exact Sysmon fields (the
-        # backend keeps it when the collector provides it).
+        "query": data.get("QueryName"),
+        "user": data.get("User"),
+        "parent_image": data.get("ParentImage"),
+        "parent_command_line": data.get("ParentCommandLine"),
+        "hashes": data.get("Hashes"),
+        "integrity_level": data.get("IntegrityLevel"),
+        "session_id": str(data.get("LogonId") or data.get("SessionId") or "") or None,
+        "connection_status": conn_status,
+        "process_guid": data.get("ProcessGuid"),
+        "source_event_id": str(record_number or data.get("EventRecordID") or f"sysmon:{event_id}:{ts}"),
+        "process_start_time": data.get("UtcTime") or (ts if event_id == 1 else None),
         "raw_record": json.dumps(data, default=str),
     }
     return ev

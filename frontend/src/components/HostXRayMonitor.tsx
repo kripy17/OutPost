@@ -501,8 +501,9 @@ export default function HostXRayMonitor({ hostId = "local", initialPid = null }:
                 onClick={() => handleSearchChange("")}
                 className="absolute right-2.5 top-1/2 -translate-y-1/2 text-text-faint hover:text-text-primary"
                 title="Clear filter"
+                aria-label="Clear filter"
               >
-                ✕
+                <Icon name="x" size={12} />
               </button>
             )}
           </div>
@@ -667,8 +668,8 @@ export default function HostXRayMonitor({ hostId = "local", initialPid = null }:
 
       {/* ── Deck 2: Process Causality Tree ──────────────────────────── */}
       {activeDeck === "tree" && (
-        <section className="rounded-xl border border-border-subtle bg-[#06080d] p-5 font-mono text-xs shadow-inner">
-          <div className="flex items-center justify-between border-b border-white/10 pb-3 mb-4">
+        <section className="rounded-xl border border-border-subtle bg-bg-inset p-5 font-mono text-xs shadow-inner">
+          <div className="flex items-center justify-between border-b border-border-subtle pb-3 mb-4">
             <div>
               <span className="font-bold text-accent text-sm">Process Causality Tree</span>
               <p className="text-[11px] text-text-muted mt-0.5">
@@ -886,13 +887,13 @@ export default function HostXRayMonitor({ hostId = "local", initialPid = null }:
       {/* ── Slide-Over / Modal: Deep Process Forensic Target Dossier ───── */}
       {inspectPid !== null && (
         <div className="fixed inset-0 z-50 flex items-center justify-end bg-black/60 backdrop-blur-xs">
-          <div className="h-full w-full max-w-2xl bg-[#090d14] border-l border-white/10 p-6 font-mono text-xs overflow-y-auto shadow-2xl flex flex-col justify-between">
+          <div className="h-full w-full max-w-2xl bg-bg-surface border-l border-border-subtle p-6 font-mono text-xs overflow-y-auto shadow-2xl flex flex-col justify-between">
             <div className="space-y-6">
-              <div className="flex items-start justify-between border-b border-white/10 pb-4">
+              <div className="flex items-start justify-between border-b border-border-subtle pb-4">
                 <div>
                   <div className="flex items-center gap-2">
                     <span className="text-accent font-bold text-lg">PID {inspectPid}</span>
-                    <span className="rounded bg-white/10 px-2 py-0.5 text-[10px] font-bold uppercase text-text-primary">
+                    <span className="rounded bg-bg-elevated border border-border-subtle px-2 py-0.5 text-[10px] font-bold uppercase text-text-primary">
                       {dossier?.target?.status || "RUNNING"}
                     </span>
                   </div>
@@ -905,10 +906,11 @@ export default function HostXRayMonitor({ hostId = "local", initialPid = null }:
                 </div>
                 <button
                   onClick={() => setInspectPid(null)}
-                  className="press rounded-lg border border-white/15 bg-white/5 p-1.5 text-text-muted hover:text-white"
+                  className="press rounded-lg border border-border-subtle bg-bg-elevated p-1.5 text-text-muted hover:text-text-primary"
                   title="Close Forensic Drawer"
+                  aria-label="Close Forensic Drawer"
                 >
-                  ✕
+                  <Icon name="x" size={14} />
                 </button>
               </div>
 
@@ -919,7 +921,7 @@ export default function HostXRayMonitor({ hostId = "local", initialPid = null }:
                 </div>
               ) : dossier ? (
                 <>
-                  <div className="flex flex-wrap items-center gap-2 p-3 rounded-xl border border-white/10 bg-white/5">
+                  <div className="flex flex-wrap items-center gap-2 p-3 rounded-xl border border-border-subtle bg-bg-base/60">
                     <span className="text-[11px] text-text-muted font-semibold">Signals:</span>
                     <button
                       onClick={() => void handleProcessAction(inspectPid, "terminate")}
@@ -935,13 +937,13 @@ export default function HostXRayMonitor({ hostId = "local", initialPid = null }:
                     </button>
                     <button
                       onClick={() => void handleProcessAction(inspectPid, "freeze")}
-                      className="press rounded border border-white/15 bg-white/5 px-2.5 py-1 text-[11px] font-bold text-text-muted hover:text-white"
+                      className="press rounded border border-border-subtle bg-bg-surface px-2.5 py-1 text-[11px] font-bold text-text-muted hover:text-text-primary"
                     >
                       SIGSTOP (Freeze)
                     </button>
                     <button
                       onClick={() => void handleProcessAction(inspectPid, "resume")}
-                      className="press rounded border border-white/15 bg-white/5 px-2.5 py-1 text-[11px] font-bold text-text-muted hover:text-white"
+                      className="press rounded border border-border-subtle bg-bg-surface px-2.5 py-1 text-[11px] font-bold text-text-muted hover:text-text-primary"
                     >
                       SIGCONT (Resume)
                     </button>
@@ -955,7 +957,7 @@ export default function HostXRayMonitor({ hostId = "local", initialPid = null }:
 
                   <div className="space-y-2">
                     <span className="text-[11px] text-text-faint uppercase font-bold">Security Capabilities &amp; Context</span>
-                    <div className="rounded-xl border border-white/10 bg-black/40 p-3.5 space-y-2">
+                    <div className="rounded-xl border border-border-subtle bg-bg-base/70 p-3.5 space-y-2">
                       <div className="flex justify-between">
                         <span className="text-text-muted">User / Effective UID:</span>
                         <span className="font-bold text-text-primary">{dossier?.target?.user || "system"}</span>
@@ -976,7 +978,7 @@ export default function HostXRayMonitor({ hostId = "local", initialPid = null }:
                               <span
                                 key={i}
                                 className={`rounded px-1.5 py-0.5 text-[9px] font-bold ${
-                                  c.is_dangerous ? "bg-rose-500/20 text-rose-300 border border-rose-500/40" : "bg-white/10 text-text-muted"
+                                  c.is_dangerous ? "bg-rose-500/20 text-rose-300 border border-rose-500/40" : "bg-bg-elevated border border-border-subtle text-text-muted"
                                 }`}
                               >
                                 {c.name}
@@ -992,12 +994,12 @@ export default function HostXRayMonitor({ hostId = "local", initialPid = null }:
                     <span className="text-[11px] text-text-faint uppercase font-bold">
                       Open Network Sockets ({(dossier?.connections || []).length})
                     </span>
-                    <div className="rounded-xl border border-white/10 bg-black/40 p-3 max-h-36 overflow-y-auto">
+                    <div className="rounded-xl border border-border-subtle bg-bg-base/70 p-3 max-h-36 overflow-y-auto">
                       {(dossier?.connections || []).length === 0 ? (
                         <p className="text-text-faint text-center py-2">No network sockets allocated.</p>
                       ) : (
                         dossier.connections.map((c: any, idx: number) => (
-                          <div key={idx} className="flex items-center justify-between text-[11px] py-1 border-b border-white/5 last:border-0">
+                          <div key={idx} className="flex items-center justify-between text-[11px] py-1 border-b border-border-subtle/40 last:border-0">
                             <span className="text-accent font-bold uppercase">{c.protocol}</span>
                             <span className="text-text-primary font-mono">{c.local_ip}:{c.local_port}</span>
                             <span className="text-text-muted">{c.remote_ip ? `${c.remote_ip}:${c.remote_port}` : "LISTEN"}</span>
@@ -1011,12 +1013,12 @@ export default function HostXRayMonitor({ hostId = "local", initialPid = null }:
                     <span className="text-[11px] text-text-faint uppercase font-bold">
                       Open File Descriptors &amp; Inodes ({(dossier?.files_ipc || []).length})
                     </span>
-                    <div className="rounded-xl border border-white/10 bg-black/40 p-3 max-h-48 overflow-y-auto space-y-1">
+                    <div className="rounded-xl border border-border-subtle bg-bg-base/70 p-3 max-h-48 overflow-y-auto space-y-1">
                       {(dossier?.files_ipc || []).length === 0 ? (
                         <p className="text-text-faint text-center py-2">No file descriptors visible.</p>
                       ) : (
                         dossier.files_ipc.map((f: any, idx: number) => (
-                          <div key={idx} className="flex items-center justify-between text-[10px] py-0.5 border-b border-white/5 last:border-0">
+                          <div key={idx} className="flex items-center justify-between text-[10px] py-0.5 border-b border-border-subtle/40 last:border-0">
                             <span className="text-cyan-400 font-mono">fd {f.fd}</span>
                             <span className="text-text-primary truncate max-w-[320px]" title={f.path}>{f.path}</span>
                             {f.is_deleted && (
@@ -1037,10 +1039,10 @@ export default function HostXRayMonitor({ hostId = "local", initialPid = null }:
               )}
             </div>
 
-            <div className="border-t border-white/10 pt-3 mt-6 flex justify-end">
+            <div className="border-t border-border-subtle pt-3 mt-6 flex justify-end">
               <button
                 onClick={() => setInspectPid(null)}
-                className="press rounded-lg border border-white/15 bg-white/5 px-4 py-2 text-xs font-semibold text-text-primary hover:bg-white/10"
+                className="press rounded-lg border border-border-subtle bg-bg-surface px-4 py-2 text-xs font-semibold text-text-primary hover:bg-bg-elevated"
               >
                 Close Dossier
               </button>

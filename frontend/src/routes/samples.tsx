@@ -377,14 +377,17 @@ export default function SamplesPage() {
               Uploaded files are <span className="text-emerald-400 font-semibold">safely triaged statically</span> (never executed automatically) with Shannon entropy, YARA rules, and VirusTotal pivots, then ready for <span className="text-accent font-semibold">on-demand live dynamic sandbox detonation</span>.
             </p>
             <div className="mt-2 flex flex-wrap items-center justify-center gap-2 text-[10px] font-mono text-text-faint">
-              <span className="rounded bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 text-emerald-400">
-                ✓ Mode 1: Safe Static Triage (No Execution)
+              <span className="inline-flex items-center gap-1 rounded bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 text-emerald-400">
+                <Icon name="check" size={10} />
+                <span>Mode 1: Safe Static Triage (No Execution)</span>
               </span>
-              <span className="rounded bg-accent/10 border border-accent/30 px-2 py-0.5 text-accent">
-                ✓ Mode 2: Live Dynamic Sandbox Cockpit
+              <span className="inline-flex items-center gap-1 rounded bg-accent/10 border border-accent/30 px-2 py-0.5 text-accent">
+                <Icon name="check" size={10} />
+                <span>Mode 2: Live Dynamic Sandbox Cockpit</span>
               </span>
-              <span className="rounded bg-bg-elevated border border-border-subtle px-2 py-0.5 text-text-muted">
-                ✓ 1-Click VirusTotal External Pivots
+              <span className="inline-flex items-center gap-1 rounded bg-bg-elevated border border-border-subtle px-2 py-0.5 text-text-muted">
+                <Icon name="check" size={10} />
+                <span>1-Click VirusTotal External Pivots</span>
               </span>
             </div>
             <label className="press mt-3.5 inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/15 px-4 py-2 font-sans text-xs font-semibold text-accent transition-colors hover:bg-accent/25 focus:ring-1 focus:ring-accent/40">

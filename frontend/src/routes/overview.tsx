@@ -13,6 +13,7 @@ import {
   getAlertQueue,
   getEvents,
   getHealth,
+  getHostContainment,
   getPlatform,
   getProcessSummary,
   getRecentAlerts,
@@ -339,8 +340,42 @@ export default function OverviewPage() {
   const highCount = openAlerts.filter((a) => a.severity === "suspicious").length;
 
   const totalAgents = (fleet?.agents ?? []).length;
-  const onlineAgents = (fleet?.agents ?? []).filter((a) => a.online).length;
-  const totalEventsIngested = (fleet?.agents ?? []).reduce((acc, a) => acc + (a.event_count || 0), 0);
+  const onlineAgents = (fleet?.agents ?? []).filter((a) => a.online && !a.silent).length;
+
+  const degradedAgents = useMemo(
+    () => (fleet?.agents ?? []).filter((a) => !a.online || a.silent),
+    [fleet]
+  );
+
+  const hostIds = useMemo(() => (fleet?.agents ?? []).map((a) => a.host_id), [fleet]);
+
+  const { data: hostContainmentList } = useQuery({
+    queryKey: ["fleet-containment", hostIds],
+    queryFn: async () => {
+      if (!hostIds.length) return [];
+      const results = await Promise.allSettled(
+        hostIds.slice(0, 8).map((id) => getHostContainment(id))
+      );
+      return results
+        .filter((r): r is PromiseFulfilledResult<any> => r.status === "fulfilled" && !!r.value)
+        .map((r) => r.value);
+    },
+    refetchInterval: 15_000,
+  });
+
+  const isolatedHosts = useMemo(
+    () => (hostContainmentList ?? []).filter((c) => Boolean(c.isolated)),
+    [hostContainmentList]
+  );
+
+  const pendingActionsCount = useMemo(
+    () =>
+      (hostContainmentList ?? []).reduce(
+        (acc, c) => acc + (Array.isArray(c.pending_actions) ? c.pending_actions.length : 0),
+        0
+      ),
+    [hostContainmentList]
+  );
 
   const activeCases = (investigations?.investigations ?? []).filter(
     (i) => i.status !== "closed" && i.status !== "resolved"
@@ -418,82 +453,110 @@ export default function OverviewPage() {
       {/* Action Notification Toast */}
       {actionNotice && (
         <div className="flex items-center justify-between rounded-xl border border-signal/50 bg-signal/15 px-4 py-2 text-xs text-signal animate-fade-in shadow-xs">
-          <span className="font-medium">✓ {actionNotice}</span>
-          <button onClick={() => setActionNotice(null)} className="text-text-muted hover:text-text-primary">✕</button>
+          <div className="flex items-center gap-1.5 font-medium">
+            <Icon name="check" size={13} />
+            <span>{actionNotice}</span>
+          </div>
+          <button onClick={() => setActionNotice(null)} className="text-text-muted hover:text-text-primary p-0.5" aria-label="Dismiss notice">
+            <Icon name="x" size={13} />
+          </button>
         </div>
       )}
 
-      {/* Operational Telemetry Summary Ribbon (3 Cards) */}
+      {/* Actionable Operational Summary Ribbon (3 Cards) */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {/* Host Fleet Telemetry */}
-        <div className="flex flex-col justify-between rounded-2xl border border-border-subtle bg-bg-surface p-5 shadow-xs transition hover:border-accent/40">
-          <div className="flex items-center justify-between">
-            <span className="font-mono text-[10px] uppercase font-bold tracking-wider text-text-faint">Host Telemetry</span>
-            <span className="flex items-center gap-1.5 font-mono text-[10px] text-risk-clean">
-              <span className="h-1.5 w-1.5 rounded-full bg-risk-clean animate-pulse" />
-              ingestion active
-            </span>
-          </div>
-          <div className="my-3 flex items-baseline gap-3">
-            <span className="font-mono text-3xl font-bold tracking-tight text-text-primary">{runs.length}</span>
-            <span className="text-xs text-text-muted">monitored sessions</span>
-          </div>
-          <div className="flex flex-wrap items-center justify-between border-t border-border-subtle/60 pt-3 font-mono text-[11px] text-text-muted">
-            <div className="flex items-center gap-2">
-              <Link to="/agents" className="hover:text-accent font-semibold">
-                {totalAgents || 1} host{totalAgents === 1 ? "" : "s"} enrolled
-              </Link>
-              <span className="text-text-faint">·</span>
-              <span className="text-risk-clean">{onlineAgents || (runs.length > 0 ? 1 : 0)} online</span>
-            </div>
-            <Link to="/events" className="text-accent hover:underline text-[10px]">
-              {totalEventsIngested.toLocaleString()} events →
-            </Link>
-          </div>
-        </div>
-
-        {/* Detection Queue */}
+        {/* Card 1: Untriaged Findings Queue */}
         <div className="flex flex-col justify-between rounded-2xl border border-border-subtle bg-bg-surface p-5 shadow-xs transition hover:border-risk-suspicious/40">
           <div className="flex items-center justify-between">
-            <span className="font-mono text-[10px] uppercase font-bold tracking-wider text-text-faint">Detection Queue</span>
-            <Link to="/findings" className="font-mono text-[10px] text-accent hover:underline">
+            <span className="font-mono text-[10px] uppercase font-bold tracking-wider text-text-faint">Untriaged Findings</span>
+            <Link to="/findings?status=open" className="font-mono text-[10px] text-accent hover:underline">
               triage queue →
             </Link>
           </div>
           <div className="my-3 flex items-baseline gap-3">
-            <span className={`font-mono text-3xl font-bold tracking-tight ${criticalCount > 0 ? "text-risk-malicious" : "text-text-primary"}`}>
+            <span className={`font-mono text-3xl font-bold tracking-tight ${criticalCount > 0 ? "text-risk-malicious" : openAlerts.length > 0 ? "text-risk-suspicious" : "text-risk-clean"}`}>
               {openAlerts.length}
             </span>
-            <span className="text-xs text-text-muted">active unacknowledged alerts</span>
+            <span className="text-xs text-text-muted">unhandled active finding{openAlerts.length === 1 ? "" : "s"}</span>
           </div>
           <div className="flex items-center gap-2 border-t border-border-subtle/60 pt-3 font-mono text-[11px]">
-            <span className="inline-flex items-center gap-1 rounded bg-risk-malicious/15 px-2 py-0.5 font-semibold text-risk-malicious border border-risk-malicious/30">
+            <span className={`inline-flex items-center gap-1 rounded px-2 py-0.5 font-semibold ${criticalCount > 0 ? "bg-risk-malicious/15 text-risk-malicious border border-risk-malicious/30" : "bg-bg-elevated/40 text-text-faint border border-border-subtle"}`}>
               {criticalCount} critical
             </span>
-            <span className="inline-flex items-center gap-1 rounded bg-risk-suspicious/15 px-2 py-0.5 font-semibold text-risk-suspicious border border-risk-suspicious/30">
+            <span className={`inline-flex items-center gap-1 rounded px-2 py-0.5 font-semibold ${highCount > 0 ? "bg-risk-suspicious/15 text-risk-suspicious border border-risk-suspicious/30" : "bg-bg-elevated/40 text-text-faint border border-border-subtle"}`}>
               {highCount} suspicious
             </span>
             <span className="ml-auto text-[10px] text-text-faint font-sans">
-              {ruleMetaList.length} heuristics
+              {openAlerts.length > 0 ? `Oldest: ${openSince(openAlerts[openAlerts.length - 1], now)}` : "Queue cleared"}
             </span>
           </div>
         </div>
 
-        {/* Incident Investigations */}
-        <div className="flex flex-col justify-between rounded-2xl border border-border-subtle bg-bg-surface p-5 shadow-xs transition hover:border-accent/40 sm:col-span-2 lg:col-span-1">
+        {/* Card 2: Degraded / Offline Sensors */}
+        <div className="flex flex-col justify-between rounded-2xl border border-border-subtle bg-bg-surface p-5 shadow-xs transition hover:border-accent/40">
           <div className="flex items-center justify-between">
-            <span className="font-mono text-[10px] uppercase font-bold tracking-wider text-text-faint">Investigations</span>
-            <Link to="/investigations" className="font-mono text-[10px] text-accent hover:underline">
-              case files →
+            <span className="font-mono text-[10px] uppercase font-bold tracking-wider text-text-faint">Sensor Fleet Health</span>
+            <Link to="/agents" className="font-mono text-[10px] text-accent hover:underline">
+              fleet status →
             </Link>
           </div>
           <div className="my-3 flex items-baseline gap-3">
-            <span className="font-mono text-3xl font-bold tracking-tight text-text-primary">{activeCases}</span>
-            <span className="text-xs text-text-muted">active case dossiers</span>
+            <span className={`font-mono text-3xl font-bold tracking-tight ${degradedAgents.length > 0 ? "text-risk-malicious" : "text-risk-clean"}`}>
+              {degradedAgents.length}
+            </span>
+            <span className="text-xs text-text-muted">
+              {degradedAgents.length > 0 ? "degraded or offline sensor(s)" : "all sensors reporting nominal"}
+            </span>
+          </div>
+          <div className="flex flex-wrap items-center justify-between border-t border-border-subtle/60 pt-3 font-mono text-[11px] text-text-muted">
+            <div className="flex items-center gap-2">
+              <span className={onlineAgents > 0 ? "text-risk-clean font-semibold" : "text-text-faint"}>
+                {onlineAgents} of {totalAgents || 1} online
+              </span>
+              <span className="text-text-faint">·</span>
+              <span className="text-text-faint">{totalAgents || 1} enrolled</span>
+            </div>
+            {degradedAgents.length > 0 ? (
+              <span className="text-risk-malicious text-[10px] font-semibold">
+                {degradedAgents.map((a) => a.host_id).slice(0, 2).join(", ")} silent
+              </span>
+            ) : (
+              <span className="text-risk-clean text-[10px]">zero heartbeats missed</span>
+            )}
+          </div>
+        </div>
+
+        {/* Card 3: Pending Containment Actions */}
+        <div className="flex flex-col justify-between rounded-2xl border border-border-subtle bg-bg-surface p-5 shadow-xs transition hover:border-accent/40 sm:col-span-2 lg:col-span-1">
+          <div className="flex items-center justify-between">
+            <span className="font-mono text-[10px] uppercase font-bold tracking-wider text-text-faint">Pending Containment</span>
+            <Link to="/agents" className="font-mono text-[10px] text-accent hover:underline">
+              quarantine &amp; actions →
+            </Link>
+          </div>
+          <div className="my-3 flex items-baseline gap-3">
+            <span className={`font-mono text-3xl font-bold tracking-tight ${isolatedHosts.length > 0 || pendingActionsCount > 0 ? "text-risk-malicious" : "text-text-primary"}`}>
+              {isolatedHosts.length + pendingActionsCount}
+            </span>
+            <span className="text-xs text-text-muted">
+              {isolatedHosts.length > 0 || pendingActionsCount > 0
+                ? "active quarantine & queued actions"
+                : "pending containment tasks"}
+            </span>
           </div>
           <div className="flex items-center justify-between border-t border-border-subtle/60 pt-3 font-mono text-[11px] text-text-muted">
-            <span>{cleanRuns} clean baseline sessions</span>
-            <span className="text-text-faint">IR SLA tracked</span>
+            <div className="flex items-center gap-2">
+              <span className={isolatedHosts.length > 0 ? "text-risk-malicious font-semibold" : "text-text-muted"}>
+                {isolatedHosts.length} isolated host{isolatedHosts.length === 1 ? "" : "s"}
+              </span>
+              <span className="text-text-faint">·</span>
+              <span className={pendingActionsCount > 0 ? "text-risk-suspicious font-semibold" : "text-text-muted"}>
+                {pendingActionsCount} kill action{pendingActionsCount === 1 ? "" : "s"}
+              </span>
+            </div>
+            <Link to="/investigations" className="text-accent hover:underline text-[10px]">
+              {activeCases} case{activeCases === 1 ? "" : "s"} →
+            </Link>
           </div>
         </div>
       </div>
@@ -538,7 +601,7 @@ export default function OverviewPage() {
                   {collapsedFindings.length}
                 </span>
                 <span className="inline-flex items-center gap-1.5 font-mono text-[10px] text-signal ml-1">
-                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-signal" />
+                  <span className="h-1.5 w-1.5 rounded-full bg-signal" />
                   live · SSE
                 </span>
               </div>
@@ -1002,7 +1065,7 @@ export default function OverviewPage() {
                 engineHealth ? "text-risk-clean" : "text-risk-malicious"
               }`}
             >
-              <span className={`h-1.5 w-1.5 rounded-full ${engineHealth ? "animate-pulse bg-risk-clean" : "bg-risk-malicious"}`} />
+              <span className={`h-1.5 w-1.5 rounded-full ${engineHealth ? "bg-risk-clean" : "bg-risk-malicious"}`} />
               {engineHealth ? "online" : "offline"}
             </span>
           </div>

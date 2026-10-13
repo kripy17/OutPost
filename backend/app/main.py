@@ -24,6 +24,7 @@ from .api.routes_audit import router as audit_router
 from .api.routes_auth import router as auth_router
 from .api.routes_campaigns import router as campaigns_router
 from .api.routes_events import router as events_router
+from .api.routes_corpus import router as corpus_router
 from .api.routes_findings import router as findings_router
 from .api.routes_footprint import router as footprint_router
 from .api.routes_health import router as health_router
@@ -90,7 +91,7 @@ def _agent_allowed(method: str, path: str) -> bool:
     """Endpoints the agent credential may use: telemetry shipping and heartbeat only.
 
     Writes: event + snapshot ingestion, heartbeats, agent enrollment, session creation/completion,
-    and action acknowledgment. Reads: run data (the agent lists/claims sessions).
+    containment report, and action acknowledgment. Reads: run data (the agent lists/claims sessions).
     Containment actions (host isolation, process termination) and administrative
     endpoints are strictly forbidden for agent credentials.
     """
@@ -100,7 +101,11 @@ def _agent_allowed(method: str, path: str) -> bool:
         return method == "POST"
     if path == "/agents/heartbeat":
         return method == "POST"
-    if path.startswith("/agents/") and (path.endswith("/heartbeat") or path.endswith("/actions/ack")):
+    if path.startswith("/agents/") and (
+        path.endswith("/heartbeat")
+        or path.endswith("/actions/ack")
+        or path.endswith("/containment/report")
+    ):
         return method == "POST"
     if path.startswith("/runs"):
         if method == "GET":
@@ -120,7 +125,7 @@ class DecompressionMiddleware:
 
             headers = dict(scope.get("headers", []))
             encoding = headers.get(b"content-encoding", b"").decode("latin1").lower().strip()
-            if encoding in ("gzip", "deflate", "zlib", "zstd"):
+            if encoding:
                 new_headers = [(k, v) for k, v in scope["headers"] if k.lower() != b"content-encoding"]
                 scope["headers"] = new_headers
 
@@ -136,7 +141,6 @@ class DecompressionMiddleware:
                 if raw_body:
                     try:
                         if encoding == "gzip":
-                            # 16 + MAX_WBITS handles gzip header & streaming CRC validation
                             decompressor = _zlib.decompressobj(16 + _zlib.MAX_WBITS)
                             decompressed = decompressor.decompress(raw_body, _MAX_DECOMPRESS + 1)
                             if len(decompressed) > _MAX_DECOMPRESS or decompressor.unconsumed_tail:
@@ -152,9 +156,9 @@ class DecompressionMiddleware:
                                 dctx = _zstd.ZstdDecompressor()
                                 decompressed = dctx.decompress(raw_body, max_output_size=_MAX_DECOMPRESS)
                             except ImportError:
-                                decompressed = raw_body
+                                raise ValueError("zstd compression unsupported: zstandard package not installed")
                         else:
-                            decompressed = raw_body
+                            raise ValueError(f"Unsupported content-encoding: {encoding}")
                     except Exception as exc:
                         err_bytes = _json.dumps({"detail": f"Payload decompression error: {exc}"}).encode("utf-8")
                         await send({
@@ -196,7 +200,7 @@ async def auth_gate(request: Request, call_next):
     """Optional auth: with no role passwords configured this passes everything
     through (the zero-config default). With auth on, every non-public request
     needs a valid token; the read-only `analyst` role is limited to safe
-    methods. Token arrives via `Authorization: Bearer` or `?token=` (SSE)."""
+    methods. Token arrives via `Authorization: Bearer` or `Cookie: outpost_token`."""
     if not auth_service.auth_enabled():
         return await call_next(request)
 
@@ -213,12 +217,24 @@ async def auth_gate(request: Request, call_next):
     role = None
     if agent_id and ts and sig:
         if auth_service.verify_agent_hmac_headers(
-            agent_id, ts, sig, request.method, path, body_digest=digest, nonce=nonce
+            agent_id,
+            ts,
+            sig,
+            request.method,
+            path,
+            query_string=request.url.query,
+            body_digest=digest,
+            nonce=nonce,
         ):
             role = "agent"
 
     if role is None:
-        token = auth_service.token_from_request(dict(request.headers), dict(request.query_params))
+        token = auth_service.token_from_request(
+            dict(request.headers),
+            dict(request.query_params),
+            dict(request.cookies),
+            path=path,
+        )
         role = auth_service.verify_token(token) if token else None
         # The shared agent credential (OUTPOST_AGENT_TOKEN) is a *host* identity,
         # not a browser role: it may only touch telemetry (ship events, heartbeat,
@@ -278,3 +294,4 @@ app.include_router(agents_router)
 app.include_router(host_forensics_router)
 app.include_router(audit_router)
 app.include_router(admin_router)
+app.include_router(corpus_router)

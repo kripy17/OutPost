@@ -13,7 +13,7 @@
 // listeners once and fans each frame out to every subscriber that has a
 // handler. When the last subscriber disconnects, the stream closes.
 
-import { BASE_URL, getAuthToken } from "./api";
+import { BASE_URL } from "./api";
 
 export interface StreamAlert {
   rule_id: string;
@@ -76,14 +76,10 @@ const subs = new Set<StreamSub>();
 function ensureStream(): EventSource | null {
   if (es) return es;
   try {
-    // EventSource can't set Authorization headers — when a token exists,
-    // pass it as ?token= (the backend's SSE fallback). With no token the
-    // URL is untouched, so the zero-config path stays identical.
-    const token = getAuthToken();
-    const url = token
-      ? `${BASE_URL}/events/stream?token=${encodeURIComponent(token)}`
-      : `${BASE_URL}/events/stream`;
-    es = new EventSource(url);
+    // EventSource can't set Authorization headers. Authenticate via HttpOnly cookie
+    // with credentials: true. Tokens never travel in the URL query string.
+    const url = `${BASE_URL}/events/stream`;
+    es = new EventSource(url, { withCredentials: true });
   } catch {
     return null; // SSE unavailable (e.g. non-browser) — polling covers us
   }

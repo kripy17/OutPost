@@ -8,6 +8,7 @@
 // touches navigator.userAgent and the CSSOM.
 
 import { useState } from "react";
+import { Icon } from "../Icon";
 import { checkBrowserSupport, detectFeatures } from "../../lib/browserSupport";
 
 const DISMISS_KEY = "outpost-browser-check-dismissed";
@@ -24,7 +25,7 @@ export default function BrowserCheck() {
   return (
     <div className="browser-check" role="note">
       <span className="browser-check-icon" aria-hidden="true">
-        ⚠
+        <Icon name="alert" size={14} />
       </span>
       <span className="min-w-0">
         This browser ({verdict.browser.name === "unknown" ? "unrecognized engine" : verdict.browser.name}{" "}

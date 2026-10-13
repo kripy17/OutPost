@@ -31,8 +31,19 @@ def _parse_related_pids(d: dict) -> None:
         d["related_pids"] = []
 
 
+def _parse_evidence_event_ids(d: dict) -> None:
+    raw = d.get("evidence_event_ids")
+    if isinstance(raw, list):
+        return
+    try:
+        d["evidence_event_ids"] = json.loads(raw) if raw else []
+    except (ValueError, TypeError):
+        d["evidence_event_ids"] = []
+
+
 def _row(d: dict) -> dict:
     _parse_related_pids(d)
+    _parse_evidence_event_ids(d)
     return d
 
 
@@ -40,6 +51,41 @@ def get_finding(conn: sqlite3.Connection, alert_id: int) -> dict | None:
     """One finding row (superset of Alert) or None."""
     row = conn.execute("SELECT * FROM alerts WHERE id = ?", (alert_id,)).fetchone()
     return _row(dict(row)) if row else None
+
+
+def get_finding_evidence(conn: sqlite3.Connection, alert_id: int) -> dict | None:
+    """Detailed evidence trace for a finding, resolving all linked raw events."""
+    finding = get_finding(conn, alert_id)
+    if not finding:
+        return None
+    ev_ids = finding.get("evidence_event_ids") or []
+    join_rows = conn.execute(
+        "SELECT event_id FROM finding_evidence_events WHERE finding_id = ? ORDER BY event_id ASC",
+        (alert_id,),
+    ).fetchall()
+    all_ev_ids = sorted(set(ev_ids + [r["event_id"] for r in join_rows]))
+    events = []
+    if all_ev_ids:
+        marks = ",".join("?" * len(all_ev_ids))
+        ev_rows = conn.execute(
+            f"SELECT * FROM events WHERE id IN ({marks}) ORDER BY timestamp ASC, id ASC",
+            all_ev_ids,
+        ).fetchall()
+        events = [dict(r) for r in ev_rows]
+    return {
+        "finding_id": alert_id,
+        "run_id": finding["run_id"],
+        "rule_id": finding["rule_id"],
+        "rule_name": finding["rule_name"],
+        "severity": finding["severity"],
+        "confidence": finding.get("confidence"),
+        "rule_condition": finding.get("rule_condition"),
+        "occurrence_count": finding.get("occurrence_count", 1),
+        "triggered_at": finding["triggered_at"],
+        "last_seen_at": finding.get("last_seen_at"),
+        "evidence_event_ids": all_ev_ids,
+        "events": events,
+    }
 
 
 def create_analyst_finding(conn: sqlite3.Connection, body: FindingIn) -> dict:

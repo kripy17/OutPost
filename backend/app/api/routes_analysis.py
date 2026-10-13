@@ -380,35 +380,54 @@ def event_channel_counts(
 
 
 @router.get("/events/process-summary", response_model=None)
-def process_summary(pid: int) -> dict:
+def process_summary(
+    pid: int,
+    host_id: str | None = None,
+    boot_id: str | None = None,
+    process_start_time: str | None = None,
+) -> dict:
     """One process's identity + impact, for the hover preview on process-jump
     links: name + command line from its process-create record, the run it
     belongs to, its total event count, and how many alerts in those runs name
     this PID (related_pid or in related_pids). 404 when the pid has no events.
+    Supports compound process identity (host_id, boot_id, process_start_time).
     """
     if pid < 1:
         raise HTTPException(status_code=422, detail="pid must be a positive integer")
     with db_session() as conn:
+        where = ["e.pid = ?"]
+        params = [pid]
+        if host_id:
+            where.append("e.host_id = ?")
+            params.append(host_id)
+        if boot_id:
+            where.append("e.boot_id = ?")
+            params.append(boot_id)
+        if process_start_time:
+            where.append("(e.process_start_time = ? OR e.timestamp = ?)")
+            params.extend([process_start_time, process_start_time])
+        where_sql = " AND ".join(where)
+
         row = conn.execute(
-            """
+            f"""
             SELECT e.*, r.sample_name FROM events e
             JOIN runs r ON r.run_id = e.run_id
-            WHERE e.pid = ?
+            WHERE {where_sql}
             -- The identity is the process-CREATE record (name + command line);
             -- fall back to any event for pids with no create observed.
             ORDER BY (e.event_type = 'process_create') DESC, e.timestamp DESC
             LIMIT 1
             """,
-            (pid,),
+            params,
         ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail=f"No events for pid {pid}")
         event_count = conn.execute(
-            "SELECT COUNT(*) AS n FROM events WHERE pid = ?", (pid,)
+            f"SELECT COUNT(*) AS n FROM events e WHERE {where_sql}", params
         ).fetchone()["n"]
         run_ids = [
             r["run_id"]
-            for r in conn.execute("SELECT DISTINCT run_id FROM events WHERE pid = ?", (pid,)).fetchall()
+            for r in conn.execute(f"SELECT DISTINCT e.run_id FROM events e WHERE {where_sql}", params).fetchall()
         ]
         alert_count = 0
         findings = []
@@ -442,6 +461,8 @@ def process_summary(pid: int) -> dict:
         ).fetchall()
         files_written = [f["file_path"] for f in file_rows]
 
+    b_id = row["boot_id"] if "boot_id" in row.keys() else None
+    pst = row["process_start_time"] if "process_start_time" in row.keys() else None
     return {
         "pid": pid,
         "ppid": row["ppid"],
@@ -449,6 +470,9 @@ def process_summary(pid: int) -> dict:
         "command_line": row["command_line"],
         "platform": row["platform"],
         "host_id": row["host_id"],
+        "boot_id": b_id,
+        "process_start_time": pst,
+        "compound_key": f"{row['host_id']}:{b_id or 'default'}:{pid}:{pst or ''}",
         "run_id": row["run_id"],
         "sample_name": row["sample_name"],
         "event_count": event_count,

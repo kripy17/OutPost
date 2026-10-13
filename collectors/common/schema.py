@@ -22,6 +22,23 @@ class Event:
     protocol: str | None = None
     file_path: str | None = None
     registry_key: str | None = None
+    host_id: str | None = None
+    source_event_id: str | None = None
+    boot_id: str | None = None
+    process_start_time: str | None = None
+    raw_record: str | None = None
+    log_source: str | None = None
+    exe_path: str | None = None
+    query: str | None = None
+    tls_sni: str | None = None
+    user: str | None = None
+    parent_image: str | None = None
+    parent_command_line: str | None = None
+    hashes: str | None = None
+    integrity_level: str | None = None
+    session_id: str | None = None
+    connection_status: str | None = None
+    process_guid: str | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)

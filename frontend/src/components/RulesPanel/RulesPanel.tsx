@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Icon } from "../Icon";
 import { Panel } from "../ui";
 import { getRules } from "../../lib/api";
 
@@ -57,9 +58,10 @@ export default function RulesPanel({ runId }: { runId: string }) {
           {text && (
             <button
               onClick={() => void copy()}
-              className="press ml-2 rounded border border-border-subtle px-2 py-1 font-mono text-[10px] text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
+              className="press ml-2 inline-flex items-center gap-1 rounded border border-border-subtle px-2 py-1 font-mono text-[10px] text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
             >
-              {copied ? "Copied ✓" : "Copy"}
+              {copied && <Icon name="check" size={10} className="text-signal" />}
+              <span>{copied ? "Copied" : "Copy"}</span>
             </button>
           )}
         </div>

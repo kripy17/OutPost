@@ -427,7 +427,7 @@ export default function SearchPage() {
           }`}
         >
           <Icon name="zap" size={13} />
-          <span>⚡ IOC Defanger</span>
+          <span>IOC Defanger</span>
         </button>
         <button
           onClick={() => {
@@ -444,7 +444,7 @@ export default function SearchPage() {
           }`}
         >
           <Icon name="terminal" size={13} />
-          <span>⚡ Payload Decoder</span>
+          <span>Payload Decoder</span>
         </button>
       </div>
 

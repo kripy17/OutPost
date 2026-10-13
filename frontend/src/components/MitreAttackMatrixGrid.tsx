@@ -117,24 +117,24 @@ export default function MitreAttackMatrixGrid({
   return (
     <div className={`space-y-4 font-sans ${className}`}>
       {/* Top Filter and KPI Ribbon */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-zinc-800 bg-zinc-950 p-3 shadow-xs">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border-subtle bg-bg-surface p-3 shadow-xs">
         <div className="flex items-center gap-3">
           <div className="relative min-w-56">
-            <Icon name="search" size={12} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
+            <Icon name="search" size={12} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-faint" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search MITRE ID or Technique..."
-              className="w-full rounded-lg border border-zinc-800 bg-zinc-900 py-1.5 pl-8 pr-3 text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-blue-500 outline-none"
+              className="w-full rounded-lg border border-border-subtle bg-bg-base py-1.5 pl-8 pr-3 text-xs text-text-primary placeholder:text-text-faint focus:border-accent outline-none"
             />
           </div>
 
-          <div className="flex items-center rounded-lg border border-zinc-800 bg-zinc-900 p-0.5 text-xs">
+          <div className="flex items-center rounded-lg border border-border-subtle bg-bg-base p-0.5 text-xs">
             <button
               onClick={() => setFilterStatus("all")}
               className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition ${
-                filterStatus === "all" ? "bg-zinc-800 text-white" : "text-zinc-400 hover:text-zinc-200"
+                filterStatus === "all" ? "bg-bg-elevated text-text-primary" : "text-text-muted hover:text-text-primary"
               }`}
             >
               All ({totalTechniques})
@@ -142,7 +142,7 @@ export default function MitreAttackMatrixGrid({
             <button
               onClick={() => setFilterStatus("tested")}
               className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition ${
-                filterStatus === "tested" ? "bg-emerald-600 text-white" : "text-zinc-400 hover:text-zinc-200"
+                filterStatus === "tested" ? "bg-emerald-600 text-white" : "text-text-muted hover:text-text-primary"
               }`}
             >
               Simulated &amp; Verified ({testedCount})
@@ -150,7 +150,7 @@ export default function MitreAttackMatrixGrid({
             <button
               onClick={() => setFilterStatus("gap")}
               className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition ${
-                filterStatus === "gap" ? "bg-rose-600 text-white" : "text-zinc-400 hover:text-zinc-200"
+                filterStatus === "gap" ? "bg-rose-600 text-white" : "text-text-muted hover:text-text-primary"
               }`}
             >
               Coverage Gaps ({gapCount})
@@ -161,14 +161,14 @@ export default function MitreAttackMatrixGrid({
         {/* Coverage Percentage Gauge */}
         <div className="flex items-center gap-3">
           <div className="text-right">
-            <span className="text-[10px] text-zinc-500 uppercase font-bold block">Enterprise ATT&amp;CK Coverage</span>
-            <span className="text-sm font-bold text-zinc-100">
+            <span className="text-[10px] text-text-faint uppercase font-bold block">Enterprise ATT&amp;CK Coverage</span>
+            <span className="text-sm font-bold text-text-primary">
               {Math.round((coveredCount / totalTechniques) * 100)}% Matrix Depth
             </span>
           </div>
-          <div className="h-2 w-28 overflow-hidden rounded-full bg-zinc-800">
+          <div className="h-2 w-28 overflow-hidden rounded-full bg-bg-elevated">
             <div
-              className="h-full rounded-full bg-blue-500 transition-all duration-300"
+              className="h-full rounded-full bg-accent transition-all duration-300"
               style={{ width: `${Math.round((coveredCount / totalTechniques) * 100)}%` }}
             />
           </div>
@@ -176,7 +176,7 @@ export default function MitreAttackMatrixGrid({
       </div>
 
       {/* MITRE Enterprise 12-Column Grid */}
-      <div className="overflow-x-auto rounded-xl border border-zinc-800 bg-zinc-950 p-4 shadow-sm">
+      <div className="overflow-x-auto rounded-xl border border-border-subtle bg-bg-surface p-4 shadow-sm">
         <div className="grid grid-cols-12 gap-2.5 min-w-[1280px]">
           {DEFAULT_TACTICS.map((tactic) => {
             const techs = techniquesByTactic.get(tactic.id) || [];
@@ -184,12 +184,12 @@ export default function MitreAttackMatrixGrid({
             return (
               <div key={tactic.id} className="flex flex-col space-y-2">
                 {/* Tactic Column Header */}
-                <div className="rounded-lg border border-zinc-800/80 bg-zinc-900/60 p-2 text-center shadow-xs">
-                  <span className="text-[9px] font-mono font-bold text-zinc-500 block">{tactic.id}</span>
-                  <span className="text-xs font-bold text-zinc-200 block truncate" title={tactic.name}>
+                <div className="rounded-lg border border-border-subtle bg-bg-surface p-2 text-center shadow-xs">
+                  <span className="text-[9px] font-mono font-bold text-text-faint block">{tactic.id}</span>
+                  <span className="text-xs font-bold text-text-primary block truncate" title={tactic.name}>
                     {tactic.name}
                   </span>
-                  <span className="text-[10px] text-zinc-400 block mt-0.5">
+                  <span className="text-[10px] text-text-muted block mt-0.5">
                     {techs.length} techniques
                   </span>
                 </div>
@@ -197,7 +197,7 @@ export default function MitreAttackMatrixGrid({
                 {/* Technique Tiles in Column */}
                 <div className="space-y-1.5 flex-1">
                   {techs.length === 0 ? (
-                    <div className="rounded border border-dashed border-zinc-800/60 p-3 text-center text-[10px] text-zinc-600">
+                    <div className="rounded border border-dashed border-border-subtle p-3 text-center text-[10px] text-text-faint">
                       No matches
                     </div>
                   ) : (
@@ -217,11 +217,11 @@ export default function MitreAttackMatrixGrid({
                               ? "border-emerald-500/40 bg-emerald-950/20 hover:border-emerald-500/60"
                               : isGap
                               ? "border-rose-500/30 bg-rose-950/20 hover:border-rose-500/50"
-                              : "border-zinc-800 bg-zinc-900/70 hover:border-zinc-700 hover:bg-zinc-900"
+                              : "border-border-subtle bg-bg-surface/80 hover:border-accent/50 hover:bg-bg-elevated"
                           }`}
                         >
                           <div className="flex items-center justify-between gap-1">
-                            <span className="font-mono text-[9px] font-bold text-zinc-400">{tech.id}</span>
+                            <span className="font-mono text-[9px] font-bold text-text-muted">{tech.id}</span>
                             <span
                               className={`h-1.5 w-1.5 rounded-full ${
                                 isTested ? "bg-emerald-400 shadow-xs shadow-emerald-400/50" : isGap ? "bg-rose-400" : "bg-blue-400"
@@ -229,11 +229,11 @@ export default function MitreAttackMatrixGrid({
                             />
                           </div>
 
-                          <p className="mt-1 font-semibold text-[11px] text-zinc-100 leading-tight line-clamp-2" title={tech.name}>
+                          <p className="mt-1 font-semibold text-[11px] text-text-primary leading-tight line-clamp-2" title={tech.name}>
                             {tech.name}
                           </p>
 
-                          <div className="mt-2 flex items-center justify-between text-[9px] text-zinc-400 font-mono">
+                          <div className="mt-2 flex items-center justify-between text-[9px] text-text-muted font-mono">
                             <span>{tech.rulesCount} rules</span>
                             {isTested && <span className="text-emerald-400 font-bold">VERIFIED</span>}
                             {isGap && <span className="text-rose-400 font-bold">GAP</span>}
@@ -258,26 +258,27 @@ export default function MitreAttackMatrixGrid({
           onClick={() => setSelectedTech(null)}
         >
           <div
-            className="w-full max-w-lg rounded-2xl border border-zinc-700 bg-zinc-950 p-6 shadow-2xl space-y-4 animate-scale-in"
+            className="w-full max-w-lg rounded-2xl border border-border-subtle bg-bg-surface p-6 shadow-2xl space-y-4 animate-scale-in"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-start justify-between border-b border-zinc-800 pb-3">
+            <div className="flex items-start justify-between border-b border-border-subtle pb-3">
               <div>
-                <span className="font-mono text-xs font-bold text-blue-400">{selectedTech.id} · {selectedTech.tactic}</span>
-                <h3 className="text-lg font-bold text-white mt-0.5">{selectedTech.name}</h3>
+                <span className="font-mono text-xs font-bold text-accent">{selectedTech.id} · {selectedTech.tactic}</span>
+                <h3 className="text-lg font-bold text-text-primary mt-0.5">{selectedTech.name}</h3>
               </div>
               <button
                 onClick={() => setSelectedTech(null)}
-                className="text-zinc-400 hover:text-white p-1 rounded hover:bg-zinc-800"
+                className="text-text-muted hover:text-text-primary p-1 rounded hover:bg-bg-elevated"
+                aria-label="Close modal"
               >
-                ✕
+                <Icon name="x" size={14} />
               </button>
             </div>
 
-            <div className="space-y-3 text-xs text-zinc-300">
-              <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 space-y-1">
-                <span className="text-[10px] text-zinc-500 uppercase font-bold block">COVERAGE POSTURE</span>
-                <p className="text-zinc-200 leading-relaxed">
+            <div className="space-y-3 text-xs text-text-secondary">
+              <div className="rounded-xl border border-border-subtle bg-bg-elevated/40 p-3 space-y-1">
+                <span className="text-[10px] text-text-faint uppercase font-bold block">COVERAGE POSTURE</span>
+                <p className="text-text-primary leading-relaxed">
                   This technique is mapped to <strong>{selectedTech.rulesCount} active Sigma &amp; heuristic detection rules</strong> in the OutPost engine.
                   {selectedTech.simulated
                     ? " Continuous BAS atomic simulation tests have verified kernel telemetry ingestion and detection firing."
@@ -286,30 +287,30 @@ export default function MitreAttackMatrixGrid({
               </div>
 
               <div className="grid grid-cols-2 gap-2 text-[11px] font-mono">
-                <div className="rounded border border-zinc-800 bg-zinc-900/60 p-2.5">
-                  <span className="text-[9px] text-zinc-500 font-sans block">TACTIC IDENTIFIER</span>
-                  <span className="text-zinc-200 font-bold">{selectedTech.tacticId} ({selectedTech.tactic})</span>
+                <div className="rounded border border-border-subtle bg-bg-elevated/40 p-2.5">
+                  <span className="text-[9px] text-text-faint font-sans block">TACTIC IDENTIFIER</span>
+                  <span className="text-text-primary font-bold">{selectedTech.tacticId} ({selectedTech.tactic})</span>
                 </div>
-                <div className="rounded border border-zinc-800 bg-zinc-900/60 p-2.5">
-                  <span className="text-[9px] text-zinc-500 font-sans block">TEST STATUS</span>
-                  <span className={selectedTech.status === "tested" ? "text-emerald-400 font-bold" : selectedTech.status === "gap" ? "text-rose-400 font-bold" : "text-blue-400 font-bold"}>
+                <div className="rounded border border-border-subtle bg-bg-elevated/40 p-2.5">
+                  <span className="text-[9px] text-text-faint font-sans block">TEST STATUS</span>
+                  <span className={selectedTech.status === "tested" ? "text-emerald-400 font-bold" : selectedTech.status === "gap" ? "text-rose-400 font-bold" : "text-accent font-bold"}>
                     {selectedTech.status.toUpperCase()}
                   </span>
                 </div>
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-2 border-t border-zinc-800 pt-3">
+            <div className="flex items-center justify-end gap-2 border-t border-border-subtle pt-3">
               <Link
                 to={`/monitor?technique=${encodeURIComponent(selectedTech.id)}`}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-xs font-semibold text-zinc-200 hover:bg-zinc-700 transition"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-elevated px-3 py-1.5 text-xs font-semibold text-text-primary hover:bg-bg-surface transition"
               >
                 <Icon name="play" size={11} />
                 <span>Simulate in Lab</span>
               </Link>
               <Link
                 to={`/rules?tab=sigma&mode=builder&technique=${encodeURIComponent(selectedTech.id)}`}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-blue-500/50 bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-500 transition shadow-sm"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-accent/50 bg-accent px-3 py-1.5 text-xs font-semibold text-bg-base hover:bg-accent/90 transition shadow-xs"
               >
                 <Icon name="zap" size={11} />
                 <span>Open in Rule Builder</span>

@@ -202,8 +202,13 @@ export const EndpointTaskManager: React.FC<{ hostId?: string }> = ({ hostId = "l
       {/* Top Action Notice */}
       {actionNotice && (
         <div className="flex items-center justify-between rounded-xl border border-signal/60 bg-signal/15 px-4 py-2.5 text-signal animate-fade-in shadow-xs">
-          <span>✓ {actionNotice}</span>
-          <button onClick={() => setActionNotice(null)} className="font-bold hover:opacity-75">✕</button>
+          <span className="inline-flex items-center gap-1.5">
+            <Icon name="check" size={13} />
+            <span>{actionNotice}</span>
+          </span>
+          <button onClick={() => setActionNotice(null)} className="hover:opacity-75" aria-label="Dismiss notice">
+            <Icon name="x" size={13} />
+          </button>
         </div>
       )}
 
