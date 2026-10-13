@@ -732,7 +732,8 @@ def test_shipper_executes_pending_actions_and_acknowledges(tmp_path, monkeypatch
     assert 98765 in killed_pids
     ack_calls = [c for c in post_calls if "/actions/ack" in c["url"]]
     assert len(ack_calls) == 1
-    assert ack_calls[0]["json"] == {"action_ids": ["act-123"]}
+    assert ack_calls[0]["json"]["action_ids"] == ["act-123"]
+    assert ack_calls[0]["json"]["results"][0]["outcome"] == "killed"
 
 
 def test_sqlite_spool_operations(tmp_path):
@@ -863,5 +864,147 @@ def test_shipper_telemetry_metrics_collection_and_heartbeat(monkeypatch, tmp_pat
     assert "metrics" in hb
     assert "cpu_percent" in hb["metrics"]
     assert "queue_backlog" in hb["metrics"]
+
+
+def test_windows_sysmon_xml_field_parsing_keeps_security_context():
+    from collector_win import parse_sysmon_event
+
+    xml_record = """
+    <Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+      <System>
+        <Provider Name="Microsoft-Windows-Sysmon" />
+        <EventID>1</EventID>
+        <TimeCreated SystemTime="2026-08-30T12:00:00.123456Z" />
+        <EventRecordID>98765</EventRecordID>
+        <Channel>Microsoft-Windows-Sysmon/Operational</Channel>
+      </System>
+      <EventData>
+        <Data Name="UtcTime">2026-08-30 12:00:00.123</Data>
+        <Data Name="ProcessGuid">{A1B2C3D4-E5F6-7890-ABCD-EF0123456789}</Data>
+        <Data Name="ProcessId">6540</Data>
+        <Data Name="Image">C:\\Windows\\System32\\powershell.exe</Data>
+        <Data Name="CommandLine">powershell.exe -NoP -enc AAAA</Data>
+        <Data Name="User">CORP\\secops</Data>
+        <Data Name="ParentProcessGuid">{11223344-5566-7788-99AA-BBCCDDEEFF00}</Data>
+        <Data Name="ParentProcessId">4100</Data>
+        <Data Name="ParentImage">C:\\Windows\\explorer.exe</Data>
+        <Data Name="ParentCommandLine">C:\\Windows\\Explorer.EXE</Data>
+        <Data Name="IntegrityLevel">High</Data>
+        <Data Name="Hashes">SHA256=E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855</Data>
+        <Data Name="LogonId">0x3e7</Data>
+      </EventData>
+    </Event>
+    """
+    ev = parse_sysmon_event(xml_record)
+    assert ev is not None
+    assert ev["event_type"] == "process_create"
+    assert ev["process_name"] == "powershell.exe"
+    assert ev["pid"] == 6540
+    assert ev["ppid"] == 4100
+    assert ev["user"] == "CORP\\secops"
+    assert ev["process_guid"] == "{A1B2C3D4-E5F6-7890-ABCD-EF0123456789}"
+    assert ev["parent_image"] == "C:\\Windows\\explorer.exe"
+    assert ev["parent_command_line"] == "C:\\Windows\\Explorer.EXE"
+    assert ev["integrity_level"] == "High"
+    assert "SHA256=" in ev["hashes"]
+    assert ev["session_id"] == "0x3e7"
+    assert ev["source_event_id"] == "98765"
+
+
+def test_windows_sysmon_extended_event_types():
+    from collector_win import parse_sysmon_event
+
+    # DNS Query Event (Event 22)
+    xml_dns = """
+    <Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+      <System><EventID>22</EventID><EventRecordID>1001</EventRecordID></System>
+      <EventData>
+        <Data Name="ProcessId">1234</Data>
+        <Data Name="Image">C:\\Windows\\System32\\curl.exe</Data>
+        <Data Name="QueryName">c2.attacker-infrastructure.com</Data>
+      </EventData>
+    </Event>
+    """
+    ev_dns = parse_sysmon_event(xml_dns)
+    assert ev_dns is not None
+    assert ev_dns["event_type"] == "dns_query"
+    assert ev_dns["query"] == "c2.attacker-infrastructure.com"
+
+    # Pipe Created Event (Event 17)
+    xml_pipe = """
+    <Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+      <System><EventID>17</EventID><EventRecordID>1002</EventRecordID></System>
+      <EventData>
+        <Data Name="ProcessId">2000</Data>
+        <Data Name="PipeName">\\c2_pipe_beacon</Data>
+      </EventData>
+    </Event>
+    """
+    ev_pipe = parse_sysmon_event(xml_pipe)
+    assert ev_pipe is not None
+    assert ev_pipe["event_type"] == "pipe_create"
+    assert ev_pipe["file_path"] == "\\c2_pipe_beacon"
+
+
+def test_linux_audit_ppid_args_and_connection_status():
+    from collector_linux import parse_audit_line
+
+    # SYSCALL record with ppid, uid, and args
+    line_exec = (
+        'type=SYSCALL msg=audit(1721234569.100:999): arch=c000003e syscall=59 '
+        'success=yes exit=0 ppid=400 pid=800 auid=1001 uid=1001 comm="id" '
+        'exe="/usr/bin/id" args="id,-u,-n"'
+    )
+    ev_exec = parse_audit_line(line_exec, {})
+    assert ev_exec is not None
+    assert ev_exec["pid"] == 800
+    assert ev_exec["ppid"] == 400
+    assert ev_exec["user"] == "1001"
+    assert ev_exec["command_line"] == "id -u -n"
+
+    # Connect with success vs failure
+    line_conn_ok = (
+        'type=SYSCALL msg=audit(1721234569.200:1000): arch=c000003e syscall=42 '
+        'success=yes exit=0 pid=900 comm="curl" saddr=02000050C0A80101'
+    )
+    ev_conn_ok = parse_audit_line(line_conn_ok, {})
+    assert ev_conn_ok is not None
+    assert ev_conn_ok["connection_status"] == "established"
+
+    line_conn_fail = (
+        'type=SYSCALL msg=audit(1721234569.300:1001): arch=c000003e syscall=42 '
+        'success=no exit=-111 pid=901 comm="curl" saddr=02000050C0A80101'
+    )
+    ev_conn_fail = parse_audit_line(line_conn_fail, {})
+    assert ev_conn_fail is not None
+    assert ev_conn_fail["connection_status"] == "attempted"
+
+
+def test_shipper_source_health_in_heartbeat(monkeypatch, tmp_path):
+    from shipper import Shipper
+
+    posted_bodies = []
+
+    class FakeResp:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"status": "ok"}
+
+    def fake_post(url, json=None, timeout=None, headers=None):
+        posted_bodies.append(json or {})
+        return FakeResp()
+
+    monkeypatch.setattr("shipper.requests.post", fake_post)
+
+    sh = Shipper("http://backend:8001", "run-sh", spool_path=str(tmp_path / "s.jsonl"))
+    sh.source_health = {"execution": "ok", "network": "ok", "file": "degraded", "dns": "absent"}
+    sh.maybe_heartbeat(platform="linux", interval=0.0)
+
+    assert len(posted_bodies) == 1
+    assert posted_bodies[0]["source_health"]["execution"] == "ok"
+    assert posted_bodies[0]["source_health"]["file"] == "degraded"
+    assert posted_bodies[0]["source_health"]["dns"] == "absent"
 
 

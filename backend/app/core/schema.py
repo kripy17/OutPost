@@ -7,10 +7,11 @@ CLI's `api_client.py` mirror these same shapes.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 Platform = Literal["windows", "linux", "macos"]
 EventType = Literal[
@@ -23,6 +24,14 @@ EventType = Literal[
     "driver_load",
     "module_load",
     "file_delete",
+    "pipe_create",
+    "pipe_connect",
+    "wmi_filter",
+    "wmi_consumer",
+    "wmi_binding",
+    "dns_query",
+    "user_logon",
+    "script_block",
 ]
 SessionType = Literal["live", "analysis"]
 Severity = Literal["suspicious", "malicious"]
@@ -86,6 +95,24 @@ class EventIn(BaseModel):
     # line / Sysmon event) — the Event Viewer's "raw record" pane pivots a
     # normalized row back to its source. NULL for webapp/sandbox/seed events.
     raw_record: str | None = None
+    # Stable source identifier assigned at telemetry origin (e.g. auditd seq,
+    # Sysmon RecordNumber/EventRecordID, UUID). Prevents replay duplicates.
+    source_event_id: str | None = None
+    # Host boot session ID (e.g. /proc/sys/kernel/random/boot_id). Survives
+    # reboots and disambiguates PID reuse across boot cycles.
+    boot_id: str | None = None
+    # Process start timestamp for compound process identity:
+    # (host_id + boot_id + pid + process_start_time).
+    process_start_time: str | None = None
+    # Extended telemetry fidelity fields (Phase 2.1)
+    user: str | None = None
+    parent_image: str | None = None
+    parent_command_line: str | None = None
+    hashes: str | None = None
+    integrity_level: str | None = None
+    session_id: str | None = None
+    connection_status: str | None = None
+    process_guid: str | None = None
 
 
 class EventOut(EventIn):
@@ -93,6 +120,17 @@ class EventOut(EventIn):
     # The raw record as shipped by the collector (JSON) — the Event Viewer's
     # "raw record" pane. Null for rows ingested before the column existed.
     raw_record: str | None = None
+    source_event_id: str | None = None
+    boot_id: str | None = None
+    process_start_time: str | None = None
+    user: str | None = None
+    parent_image: str | None = None
+    parent_command_line: str | None = None
+    hashes: str | None = None
+    integrity_level: str | None = None
+    session_id: str | None = None
+    connection_status: str | None = None
+    process_guid: str | None = None
 
 
 class RunSummary(BaseModel):
@@ -144,6 +182,40 @@ class Alert(BaseModel):
     seen_at: datetime | None = None
     investigation_id: str | None = None
     intel: list[dict] = []
+    evidence_event_ids: list[int] = []
+    rule_condition: str | None = None
+    occurrence_count: int = 1
+    last_seen_at: datetime | None = None
+    entity_key: str | None = None
+    pid_fallback: bool = False
+
+    @field_validator("related_pids", "evidence_event_ids", mode="before")
+    @classmethod
+    def _parse_int_ids(cls, v: Any) -> list[int]:
+        if isinstance(v, str):
+            try:
+                parsed = json.loads(v)
+                if isinstance(parsed, list):
+                    return [int(x) for x in parsed]
+            except Exception:
+                return []
+        if isinstance(v, (list, tuple, set)):
+            return [int(x) for x in v]
+        return []
+
+    @field_validator("intel", mode="before")
+    @classmethod
+    def _parse_intel(cls, v: Any) -> list[dict]:
+        if isinstance(v, str):
+            try:
+                parsed = json.loads(v)
+                if isinstance(parsed, list):
+                    return parsed
+            except Exception:
+                return []
+        if isinstance(v, list):
+            return v
+        return []
 
 
 class AlertStatusIn(BaseModel):
@@ -307,6 +379,9 @@ class ProcessNode(BaseModel):
     ppid: int | None = None
     process_name: str
     command_line: str | None = None
+    host_id: str | None = None
+    boot_id: str | None = None
+    process_start_time: str | None = None
     # Network risk annotation (docs/07 signature visual): the worst reputation
     # of any destination this pid connected to, and the distinct IPs behind it.
     # Null / empty for processes with no outbound connections.
@@ -374,6 +449,7 @@ class RunCreate(BaseModel):
     # "cli"; the host collector path is forced to "live" server-side when
     # session_type=live.
     source: str = Field(default="webapp-demo", max_length=32)
+    run_id: str | None = None
 
 
 class SandboxDetonateIn(BaseModel):

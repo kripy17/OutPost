@@ -653,14 +653,23 @@ def test_get_sandbox_drivers(client):
 
 def test_dynamic_detonation_isolation_driver(client):
     sample = _upload(client, "isolation_test.py")
-    resp = client.post(
+    # Fail-closed policy blocks unisolated "tempdir" execution with HTTP 422
+    resp_insecure = client.post(
         "/sandbox/detonate/dynamic",
         json={"sample_id": sample["sample_id"], "isolation_driver": "tempdir"},
     )
-    assert resp.status_code == 200
-    res = resp.json()
+    assert resp_insecure.status_code == 422
+    assert "Safe isolation provider unavailable. Execution blocked to prevent host contamination." in resp_insecure.json()["detail"]
+
+    # Verified bubblewrap execution succeeds
+    resp_valid = client.post(
+        "/sandbox/detonate/dynamic",
+        json={"sample_id": sample["sample_id"], "isolation_driver": "auto"},
+    )
+    assert resp_valid.status_code == 200
+    res = resp_valid.json()
     assert "isolation_driver" in res
-    assert res["isolation_driver"] in ("tempdir", "bubblewrap", "wine")
+    assert res["isolation_driver"] in ("bubblewrap", "wine")
 
 
 def test_pcap_capture_generation_and_download(client):

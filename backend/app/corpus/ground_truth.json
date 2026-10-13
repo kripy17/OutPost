@@ -1,0 +1,96 @@
+{
+  "version": "1.0.0",
+  "corpus_name": "OutPost Local Security Validation Corpus",
+  "samples": [
+    {
+      "id": "benign-system-util-exe",
+      "filename": "system_utility.exe",
+      "format": "pe",
+      "is_malicious": false,
+      "expected_verdict": "no_indicators_found_limited",
+      "expected_capabilities": [],
+      "description": "Legitimate PE CLI utility with standard runtime imports and normal section entropy"
+    },
+    {
+      "id": "benign-admin-backup-sh",
+      "filename": "admin_backup.sh",
+      "format": "script",
+      "is_malicious": false,
+      "expected_verdict": "no_indicators_found_limited",
+      "expected_capabilities": [],
+      "description": "Standard system administrator log rotation and backup shell script"
+    },
+    {
+      "id": "benign-audit-ps1",
+      "filename": "host_audit.ps1",
+      "format": "script",
+      "is_malicious": false,
+      "expected_verdict": "no_indicators_found_limited",
+      "expected_capabilities": [],
+      "description": "Legitimate IT administration host inventory script using Get-Process"
+    },
+    {
+      "id": "benign-manual-docx",
+      "filename": "employee_handbook.docx",
+      "format": "office",
+      "is_malicious": false,
+      "expected_verdict": "no_indicators_found_limited",
+      "expected_capabilities": [],
+      "description": "Clean OOXML Word document with plain text and no macro or template relationships"
+    },
+    {
+      "id": "benign-invoice-pdf",
+      "filename": "standard_invoice.pdf",
+      "format": "pdf",
+      "is_malicious": false,
+      "expected_verdict": "no_indicators_found_limited",
+      "expected_capabilities": [],
+      "description": "Standard PDF invoice document with text streams and zero execution triggers"
+    },
+    {
+      "id": "malicious-ransomware-sim",
+      "filename": "handled_ransomware_sim.exe",
+      "format": "pe",
+      "is_malicious": true,
+      "expected_verdict": "malicious",
+      "expected_capabilities": ["Cryptographic & Ransomware", "Process Injection"],
+      "description": "Handled simulated ransomware binary with shadow deletion, crypto APIs, and RWX section"
+    },
+    {
+      "id": "malicious-c2-implant-elf",
+      "filename": "handled_c2_implant.elf",
+      "format": "elf",
+      "is_malicious": true,
+      "expected_verdict": "malicious",
+      "expected_capabilities": ["Network Communications & C2"],
+      "description": "Handled simulated Linux ELF implant initiating reverse socket connection to public C2"
+    },
+    {
+      "id": "malicious-macro-dropper-docm",
+      "filename": "handled_dropper.docm",
+      "format": "office",
+      "is_malicious": true,
+      "expected_verdict": "malicious",
+      "expected_capabilities": ["Execution & Scripting", "Persistence & Autostart"],
+      "description": "Handled Office document with AutoOpen macro calling WScript.Shell and remote download"
+    },
+    {
+      "id": "malicious-stealth-shortcut-lnk",
+      "filename": "handled_stealth.lnk",
+      "format": "lnk",
+      "is_malicious": true,
+      "expected_verdict": "malicious",
+      "expected_capabilities": ["Defense Evasion & Anti-Debug", "Execution & Scripting"],
+      "description": "Handled Windows shortcut file with SW_HIDE stealth flag launching encoded powershell"
+    },
+    {
+      "id": "malicious-phish-smuggle-html",
+      "filename": "handled_smuggle.html",
+      "format": "script",
+      "is_malicious": true,
+      "expected_verdict": "suspicious",
+      "expected_capabilities": ["Execution & Scripting"],
+      "description": "Handled HTML smuggling delivery template with base64 embedded blob and auto-trigger"
+    }
+  ]
+}

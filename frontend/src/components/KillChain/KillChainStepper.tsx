@@ -6,6 +6,7 @@
 // Frame-less: run detail owns the Panel card and its kicker header; this
 // component renders the stepper row itself so the deck can frame it.
 
+import { Icon } from "../Icon";
 import { KILL_CHAIN_ORDER, KILL_CHAIN_STAGE } from "../../lib/constants";
 import { toneFill } from "../../lib/fillPatterns";
 import type { Alert } from "../../types";
@@ -43,7 +44,7 @@ export default function KillChainStepper({ alerts }: { alerts: Alert[] }) {
                   style={hit ? (isFullChain ? toneFill("critical") : toneFill("elevated")) : undefined}
                   title={hit ? `${stage} — observed` : `${stage} — not observed`}
                 >
-                  {hit ? (isFullChain ? "✸" : "✓") : "·"}
+                  {hit ? <Icon name={isFullChain ? "alert" : "check"} size={11} /> : "·"}
                 </span>
                 <span
                   className={`text-center font-mono text-[9px] leading-tight tracking-wide ${

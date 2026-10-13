@@ -299,8 +299,9 @@ function HostInspectorDrawer({
         </div>
 
         {killMsg && (
-          <div className="bg-signal/15 border-b border-signal/40 px-5 py-2 font-mono text-xs text-signal">
-            ✓ {killMsg}
+          <div className="bg-signal/15 border-b border-signal/40 px-5 py-2 font-mono text-xs text-signal flex items-center gap-1.5">
+            <Icon name="check" size={13} />
+            <span>{killMsg}</span>
           </div>
         )}
 
@@ -457,9 +458,10 @@ function HostInspectorDrawer({
                   </span>
                   <button
                     onClick={() => copyCmd(bootstrapData?.linux_command || "curl -sSL http://localhost:8000/install.sh | sudo bash", "linux")}
-                    className="press rounded border border-border-subtle px-2 py-0.5 text-[10px] text-text-muted hover:text-accent"
+                    className="press inline-flex items-center gap-1 rounded border border-border-subtle px-2 py-0.5 text-[10px] text-text-muted hover:text-accent"
                   >
-                    {copied === "linux" ? "Copied ✓" : "Copy"}
+                    {copied === "linux" && <Icon name="check" size={10} className="text-signal" />}
+                    <span>{copied === "linux" ? "Copied" : "Copy"}</span>
                   </button>
                 </div>
                 <pre className="rounded-lg bg-bg-base p-2.5 text-[11px] text-accent select-all overflow-x-auto border border-border-subtle">
@@ -475,9 +477,10 @@ function HostInspectorDrawer({
                   </span>
                   <button
                     onClick={() => copyCmd(bootstrapData?.windows_command || "irm http://localhost:8000/install.ps1 | iex", "win")}
-                    className="press rounded border border-border-subtle px-2 py-0.5 text-[10px] text-text-muted hover:text-accent"
+                    className="press inline-flex items-center gap-1 rounded border border-border-subtle px-2 py-0.5 text-[10px] text-text-muted hover:text-accent"
                   >
-                    {copied === "win" ? "Copied ✓" : "Copy"}
+                    {copied === "win" && <Icon name="check" size={10} className="text-signal" />}
+                    <span>{copied === "win" ? "Copied" : "Copy"}</span>
                   </button>
                 </div>
                 <pre className="rounded-lg bg-bg-base p-2.5 text-[11px] text-accent select-all overflow-x-auto border border-border-subtle">
@@ -591,9 +594,10 @@ function EnrollSensorDrawer({ onClose }: { onClose: () => void }) {
               </span>
               <button
                 onClick={() => copyCmd(linuxCmd, "linux")}
-                className="press rounded-md border border-border-subtle bg-bg-base px-2.5 py-1 text-[11px] text-text-secondary hover:text-accent hover:border-accent"
+                className="press inline-flex items-center gap-1 rounded-md border border-border-subtle bg-bg-base px-2.5 py-1 text-[11px] text-text-secondary hover:text-accent hover:border-accent"
               >
-                {copied === "linux" ? "Copied ✓" : "Copy Command"}
+                {copied === "linux" && <Icon name="check" size={10} className="text-signal" />}
+                <span>{copied === "linux" ? "Copied" : "Copy Command"}</span>
               </button>
             </div>
             <pre className="rounded-lg bg-bg-base p-3 text-[11px] text-accent select-all overflow-x-auto border border-border-subtle leading-relaxed">
@@ -609,9 +613,10 @@ function EnrollSensorDrawer({ onClose }: { onClose: () => void }) {
               </span>
               <button
                 onClick={() => copyCmd(winCmd, "windows")}
-                className="press rounded-md border border-border-subtle bg-bg-base px-2.5 py-1 text-[11px] text-text-secondary hover:text-accent hover:border-accent"
+                className="press inline-flex items-center gap-1 rounded-md border border-border-subtle bg-bg-base px-2.5 py-1 text-[11px] text-text-secondary hover:text-accent hover:border-accent"
               >
-                {copied === "windows" ? "Copied ✓" : "Copy Command"}
+                {copied === "windows" && <Icon name="check" size={10} className="text-signal" />}
+                <span>{copied === "windows" ? "Copied" : "Copy Command"}</span>
               </button>
             </div>
             <pre className="rounded-lg bg-bg-base p-3 text-[11px] text-accent select-all overflow-x-auto border border-border-subtle leading-relaxed">
@@ -627,9 +632,10 @@ function EnrollSensorDrawer({ onClose }: { onClose: () => void }) {
               </span>
               <button
                 onClick={() => copyCmd(dockerCmd, "docker")}
-                className="press rounded-md border border-border-subtle bg-bg-base px-2.5 py-1 text-[11px] text-text-secondary hover:text-accent hover:border-accent"
+                className="press inline-flex items-center gap-1 rounded-md border border-border-subtle bg-bg-base px-2.5 py-1 text-[11px] text-text-secondary hover:text-accent hover:border-accent"
               >
-                {copied === "docker" ? "Copied ✓" : "Copy Command"}
+                {copied === "docker" && <Icon name="check" size={10} className="text-signal" />}
+                <span>{copied === "docker" ? "Copied" : "Copy Command"}</span>
               </button>
             </div>
             <pre className="rounded-lg bg-bg-base p-3 text-[11px] text-accent select-all overflow-x-auto border border-border-subtle leading-relaxed">
@@ -876,7 +882,7 @@ export default function AgentsPage() {
             className="press inline-flex items-center gap-1.5 rounded-lg border border-accent bg-accent px-3 py-1.5 font-semibold text-white shadow-xs hover:brightness-110"
           >
             <Icon name="plus" size={13} />
-            <span>⚡ Enroll New Sensor</span>
+            <span>Enroll New Sensor</span>
           </button>
           <button
             onClick={() => setShowHuntInput(true)}

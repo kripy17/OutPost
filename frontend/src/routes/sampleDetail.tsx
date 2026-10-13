@@ -1,10 +1,9 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
-import { platformIconName } from "../components/iconMeta";
-import { Chip, PageHeader, Panel } from "../components/ui";
-import { deleteSample, detonateDynamic, detonateSample, downloadSample, getDetonateSampleStreamUrl, getRuns, getSample, getSampleForecast, getSampleStatic, getSandboxArtifactUrl, getSandboxProviders, getSandboxTask, getSimilarSamples, sandboxDetonate, watchlistAdd } from "../lib/api";
+import { Chip, Panel } from "../components/ui";
+import { detonateSample, getDetonateSampleStreamUrl, getRuns, getSample, getSampleForecast, getSampleStatic, getSandboxArtifactUrl, getSandboxProviders, getSandboxTask, getSimilarSamples, sandboxDetonate, watchlistAdd } from "../lib/api";
 import { ProcessCausalityTree } from "../components/ProcessCausalityTree";
 import { NetworkProtocolInspector } from "../components/NetworkProtocolInspector";
 import { ArtifactHexViewerModal } from "../components/ArtifactHexViewerModal";
@@ -12,7 +11,15 @@ import { IncidentBriefModal } from "../components/IncidentBriefModal";
 import { Tier3MicroVmModal } from "../components/Tier3MicroVmModal";
 import { SampleMitreMatrix } from "../components/SampleMitreMatrix";
 import type { BehavioralForecast, DroppedArtifactItem, ForecastReconciliation, PeMetadata, Platform, RunSummary, SampleDetonationResult, SampleStatic, SandboxTask } from "../types";
-import { filterStrings, formatBytes, getVirusTotalFileUrl, getVirusTotalIocUrl, iocTotal } from "./samplesHelpers";
+import { getVirusTotalFileUrl } from "./samplesHelpers";
+import { SampleWorkspaceHeader } from "../components/staticAnalysis/SampleWorkspaceHeader";
+import { SampleIdentificationStrip } from "../components/staticAnalysis/SampleIdentificationStrip";
+import { StaticOverviewTab } from "../components/staticAnalysis/StaticOverviewTab";
+import { FileStructureTab } from "../components/staticAnalysis/FileStructureTab";
+import { ImportsCapabilitiesTab } from "../components/staticAnalysis/ImportsCapabilitiesTab";
+import { StringsIndicatorsTab } from "../components/staticAnalysis/StringsIndicatorsTab";
+import { RawBytesTab } from "../components/staticAnalysis/RawBytesTab";
+import { AnalysisHistoryTab } from "../components/staticAnalysis/AnalysisHistoryTab";
 
 /* ── Cryptographic Hashes & Forensic Identity Components ─────────────────── */
 
@@ -49,7 +56,7 @@ function CopyHashRow({ label, value, badge }: { label: string; value?: string | 
   );
 }
 
-function CryptographicHashesCard({ sample, st }: { sample: { sample_id: string; sha256: string }; st?: SampleStatic }) {
+export function CryptographicHashesCard({ sample, st }: { sample: { sample_id: string; sha256: string }; st?: SampleStatic }) {
   const sha256 = st?.sha256 || sample.sha256;
   const sha1 = st?.sha1;
   const md5 = st?.md5;
@@ -69,7 +76,7 @@ function CryptographicHashesCard({ sample, st }: { sample: { sample_id: string; 
   );
 }
 
-function HexPreviewViewer({ preview }: { preview?: Array<{ offset: string; hex: string; ascii: string }> }) {
+export function HexPreviewViewer({ preview }: { preview?: Array<{ offset: string; hex: string; ascii: string }> }) {
   const [filter, setFilter] = useState("");
   const [copied, setCopied] = useState(false);
 
@@ -123,10 +130,10 @@ function HexPreviewViewer({ preview }: { preview?: Array<{ offset: string; hex: 
           </span>
         </div>
 
-        <div className="max-h-72 overflow-x-auto overflow-y-auto rounded-xl border border-white/10 bg-[#04060a] p-3 text-[11px] leading-relaxed shadow-inner">
+        <div className="max-h-72 overflow-x-auto overflow-y-auto rounded-xl border border-border-subtle bg-bg-inset p-3 text-[11px] leading-relaxed shadow-inner">
           <table className="w-full text-left font-mono">
             <thead>
-              <tr className="border-b border-white/10 text-[10px] uppercase text-text-faint">
+              <tr className="border-b border-border-subtle/40 text-[10px] uppercase text-text-faint">
                 <th className="pb-1.5 pr-4 font-normal">Offset</th>
                 <th className="pb-1.5 pr-4 font-normal">00 01 02 03 04 05 06 07  08 09 0A 0B 0C 0D 0E 0F</th>
                 <th className="pb-1.5 font-normal">Decoded Text</th>
@@ -136,7 +143,7 @@ function HexPreviewViewer({ preview }: { preview?: Array<{ offset: string; hex: 
               {filtered.map((row) => (
                 <tr key={row.offset} className="transition-colors hover:bg-white/5">
                   <td className="pr-4 select-all font-bold text-accent/80">{row.offset}</td>
-                  <td className="pr-4 select-all tracking-wider text-[#c9d1d9] whitespace-nowrap">
+                  <td className="pr-4 select-all tracking-wider text-text-primary whitespace-nowrap">
                     {row.hex.slice(0, 23)} <span className="text-white/20">|</span> {row.hex.slice(24)}
                   </td>
                   <td className="select-all font-medium text-emerald-400 whitespace-nowrap">
@@ -154,7 +161,7 @@ function HexPreviewViewer({ preview }: { preview?: Array<{ offset: string; hex: 
 
 /* ── Static Threat Triage & DFIR Posture Card ────────────────────────── */
 
-function StaticThreatTriageCard({
+export function StaticThreatTriageCard({
   sample,
   st,
 }: {
@@ -386,7 +393,7 @@ const SECURITY_API_CATEGORIES = [
   },
 ];
 
-function SecurityApisIntentInspector({ st }: { st?: SampleStatic }) {
+export function SecurityApisIntentInspector({ st }: { st?: SampleStatic }) {
   if (!st || !st.available) return null;
 
   const observedStrings = new Set([
@@ -496,41 +503,36 @@ function SecurityApisIntentInspector({ st }: { st?: SampleStatic }) {
   );
 }
 
-/* ── Static analysis (strings / IOCs / PE / ELF) ─────────────────────────── */
+/* ── Modular Static Analysis Workspace ───────────────────────────────────── */
 
-function StaticAnalysis({ sample }: { sample: { sample_id: string; sha256: string } }) {
-  const queryClient = useQueryClient();
-  const [stringsFilter, setStringsFilter] = useState("");
-  const [showAll, setShowAll] = useState(false);
-  const [watchlisted, setWatchlisted] = useState<Set<string>>(new Set());
-  const [watchlistError, setWatchlistError] = useState<string | null>(null);
+function StaticAnalysis({
+  sample,
+  runs = [],
+  st: initialSt,
+  isLoading: initialLoading,
+  isError: initialError,
+  unavailable: initialUnavailable,
+}: {
+  sample: any;
+  runs?: RunSummary[];
+  st?: SampleStatic;
+  isLoading?: boolean;
+  isError?: boolean;
+  unavailable?: boolean;
+}) {
+  const [staticTab, setStaticTab] = useState<"overview" | "structure" | "imports" | "strings" | "bytes" | "history">("overview");
 
-  const { data: st, isLoading, isError } = useQuery({
+  const { data: fetchedSt, isLoading: isQueryLoading, isError: isQueryError } = useQuery({
     queryKey: ["sample", "static", sample.sample_id],
     queryFn: () => getSampleStatic(sample.sample_id),
-    // Bytes-not-stored is now a 200 with `available: false` (data-driven
-    // state, no console noise); 404 only remains for an unknown sample.
     retry: false,
+    enabled: initialSt === undefined,
   });
-  // A known sample without stored bytes renders its re-upload state from
-  // data — not from a fetch error.
-  const unavailable = st !== undefined && st.available === false;
 
-  const filteredStrings = useMemo(() => (st ? filterStrings(st.strings, stringsFilter) : []), [st, stringsFilter]);
-
-  const addToWatchlist = async (value: string) => {
-    try {
-      await watchlistAdd(value, `from ${sample.sample_id}`);
-      setWatchlisted((prev) => new Set(prev).add(value));
-      setWatchlistError(null);
-      void queryClient.invalidateQueries({ queryKey: ["watchlist"] });
-    } catch {
-      setWatchlistError(`Couldn't watchlist ${value}`);
-    }
-  };
-
-  const visibleStrings = showAll ? filteredStrings : filteredStrings.slice(0, 80);
-  const totalIocs = st ? iocTotal(st.iocs) : 0;
+  const st = initialSt ?? fetchedSt;
+  const isLoading = initialLoading ?? isQueryLoading;
+  const isError = initialError ?? isQueryError;
+  const unavailable = initialUnavailable ?? (st !== undefined && st.available === false);
 
   return (
     <div className="mt-6 space-y-6">
@@ -564,250 +566,72 @@ function StaticAnalysis({ sample }: { sample: { sample_id: string; sha256: strin
         </div>
       </div>
 
-      {st && st.available && <StaticThreatTriageCard sample={sample} st={st} />}
+      {isLoading && <p className="p-4 text-xs text-text-muted font-mono">Analyzing bytes…</p>}
+      {isError && (
+        <p className="p-4 text-xs text-text-muted font-mono">
+          Static analysis unavailable — {sample.sample_id} could not be analyzed.
+        </p>
+      )}
+      {unavailable && (
+        <p className="p-4 text-xs text-text-muted font-mono">
+          Static analysis unavailable — {sample.sample_id} was uploaded before byte persistence. Re-upload the file to enable it.
+        </p>
+      )}
 
-      <CryptographicHashesCard sample={sample} st={st} />
-
-      <Panel
-        kicker="Static · on-demand"
-        title="Strings & candidate IOCs"
-        right={
-          st && st.available ? (
-            <span className="font-mono text-[10px] text-text-faint">
-              {st.strings.length} strings · {totalIocs} IOCs
-            </span>
-          ) : undefined
-        }
-      >
-        {isLoading && <p className="text-sm text-text-muted">Analyzing bytes…</p>}
-        {isError && (
-          <p className="text-sm text-text-muted">
-            Static analysis unavailable — {sample.sample_id} could not be analyzed.
-          </p>
-        )}
-        {unavailable && (
-          <p className="text-sm text-text-muted">
-            Static analysis unavailable — {sample.sample_id} was uploaded before byte persistence. Re-upload the file to enable it.
-          </p>
-        )}
-        {st && st.available && (
-          <>
-            {/* IOC buckets — each chip jumps to internal search, external VirusTotal pivot, or watchlist. */}
-            {totalIocs > 0 ? (
-              <div className="mb-5 space-y-3">
-                {(
-                  [
-                    { key: "urls", label: "URLs", icon: "globe" as const, tone: "accent" as const },
-                    { key: "ips", label: "IPs", icon: "network" as const, tone: "suspicious" as const },
-                    { key: "domains", label: "Domains", icon: "globe" as const, tone: "muted" as const },
-                    { key: "hashes", label: "Hashes", icon: "copy" as const, tone: "muted" as const },
-                    { key: "emails", label: "Emails", icon: "notes" as const, tone: "muted" as const },
-                  ] as const
-                ).map(
-                  (g) =>
-                    st.iocs[g.key].length > 0 && (
-                      <div key={g.key} className="flex flex-wrap items-start gap-1.5">
-                        <span className="mt-1 w-20 shrink-0 font-mono text-[10px] uppercase tracking-wide text-text-faint">
-                          {g.label}
-                        </span>
-                        {st.iocs[g.key].slice(0, 40).map((v) => (
-                          <span key={`${g.key}-${v}`} className="group inline-flex items-center gap-1">
-                            <Link
-                              to={`/search?q=${encodeURIComponent(v)}`}
-                              title={`Search OutPost event history for ${v}`}
-                              className="press inline-flex max-w-[260px] items-center gap-1 truncate rounded border border-border-subtle bg-bg-elevated/40 px-2 py-1 font-mono text-[11px] text-text-primary transition-colors duration-150 hover:border-accent/60 hover:text-accent"
-                            >
-                              <Icon name={g.icon} size={10} className="text-text-faint" />
-                              <span className="truncate">{v}</span>
-                            </Link>
-                            <a
-                              href={getVirusTotalIocUrl(g.key, v)}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              title={`VirusTotal external threat intelligence lookup for ${v}`}
-                              aria-label={`VirusTotal external threat intelligence lookup for ${v}`}
-                              className="press inline-flex h-5 items-center gap-0.5 rounded border border-accent/40 bg-accent/10 px-1.5 font-mono text-[9px] font-semibold text-accent transition-colors duration-150 hover:border-accent hover:bg-accent/20"
-                            >
-                              <span>VT</span>
-                              <Icon name="external" size={9} />
-                            </a>
-                            <button
-                              onClick={() => void addToWatchlist(v)}
-                              disabled={watchlisted.has(v)}
-                              title={watchlisted.has(v) ? "On watchlist" : "Add to watchlist"}
-                              className="press inline-flex h-5 w-5 items-center justify-center rounded border border-border-subtle text-text-faint transition-colors duration-150 hover:border-accent/60 hover:text-accent disabled:cursor-default disabled:text-risk-clean"
-                            >
-                              <Icon name={watchlisted.has(v) ? "check" : "plus"} size={9} />
-                            </button>
-                          </span>
-                        ))}
-                        {st.iocs[g.key].length > 40 && (
-                          <span className="font-mono text-[10px] text-text-faint">+{st.iocs[g.key].length - 40} more</span>
-                        )}
-                      </div>
-                    ),
-                )}
-                {watchlistError && <p className="text-[11px] text-risk-malicious">{watchlistError}</p>}
-              </div>
-            ) : (
-              <p className="mb-4 text-sm text-text-muted">No URLs, IPs, domains, hashes, or emails embedded in the bytes.</p>
-            )}
-
-            {/* Categorized Strings Explorer */}
-            {st.categorized_strings ? (
-              <CategorizedStringsPanel categorized={st.categorized_strings} rawStrings={st.strings} />
-            ) : (
-              /* Strings — filterable, collapsible, mono. */
-              <div className="border-t border-border-subtle pt-4">
-                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                  <span className="font-mono text-[10px] uppercase tracking-wide text-text-faint">
-                    Strings ({st.strings.length})
-                  </span>
-                  <div className="flex items-center gap-2">
-                    <div className="relative">
-                      <Icon name="search" size={11} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-text-faint" />
-                      <input
-                        value={stringsFilter}
-                        onChange={(e) => setStringsFilter(e.target.value)}
-                        placeholder="filter…"
-                        className="w-40 rounded border border-border-subtle bg-bg-base py-1 pl-6 pr-2 font-mono text-[11px] text-text-primary placeholder:text-text-faint focus:border-accent/60 focus:outline-none"
-                        aria-label="Filter strings"
-                      />
-                    </div>
-                    {filteredStrings.length > 80 && (
-                      <button
-                        onClick={() => setShowAll((v) => !v)}
-                        className="press font-mono text-[10px] text-text-muted transition-colors hover:text-accent"
-                      >
-                        {showAll ? "collapse" : `show all ${filteredStrings.length}`}
-                      </button>
-                    )}
-                  </div>
-                </div>
-                <div className="max-h-64 overflow-y-auto rounded-lg border border-border-subtle bg-bg-elevated/30 p-3">
-                  {visibleStrings.length === 0 ? (
-                    <p className="text-[11px] text-text-faint">No strings match the filter.</p>
-                  ) : (
-                    <pre className="font-mono text-[10px] leading-relaxed text-text-muted">
-                      {visibleStrings.map((s) => (
-                        <div key={s}>{s}</div>
-                      ))}
-                    </pre>
-                  )}
-                </div>
-              </div>
-            )}
-          </>
-        )}
-      </Panel>
-
-      {/* Raw Byte & Hex Inspection Viewer */}
-      {st && st.available && <HexPreviewViewer preview={st.hex_preview} />}
-
-      {/* Binary Entropy & Inferred Capabilities */}
-      {st && st.available && (st.entropy !== undefined || (st.capabilities && st.capabilities.length > 0)) && (
-        <Panel kicker="Static · inspection" title="Entropy & Inferred Capabilities">
-          <div className="space-y-4">
-            {st.entropy !== undefined && (
-              <div className="flex flex-wrap items-center justify-between gap-2 rounded border border-border-subtle bg-bg-base p-3">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-xs font-semibold text-text-primary">Shannon Entropy:</span>
-                    <span className="font-mono text-xs text-accent font-bold">{st.entropy} / 8.0</span>
-                    {st.is_packed && (
-                      <span className="rounded bg-risk-malicious/15 px-1.5 py-0.5 font-mono text-[10px] font-medium text-risk-malicious">
-                        High Entropy (Packed / Encrypted)
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-[11px] text-text-muted">
-                    Measures byte randomness. Values above 7.0 indicate compression, packing (e.g. UPX), or encryption.
-                  </p>
-                </div>
-                <div className="h-2 w-36 overflow-hidden rounded-full bg-bg-elevated">
-                  <div
-                    className={`h-full rounded-full ${st.is_packed ? "bg-risk-malicious" : "bg-accent"}`}
-                    style={{ width: `${Math.min(100, (st.entropy / 8.0) * 100)}%` }}
-                  />
-                </div>
-              </div>
-            )}
-
-            {/* Sliding Window Section Entropy Histogram */}
-            <EntropyHistogramChart histogram={st.entropy_histogram} />
-
-            {/* Static Risk Factors & Capabilities */}
-            {st.risk_factors && st.risk_factors.length > 0 && (
-              <div className="rounded-xl border border-risk-malicious/30 bg-risk-malicious/5 p-3 space-y-1.5 font-mono text-xs">
-                <div className="flex items-center justify-between font-bold">
-                  <span className="text-risk-malicious flex items-center gap-1.5">
-                    <Icon name="alert" size={13} />
-                    Static Threat Assessment Factors
-                  </span>
-                  <span className="text-[10px] rounded bg-risk-malicious/20 px-2 py-0.5 text-risk-malicious uppercase">
-                    Risk Score: {st.static_risk_score ?? 0}/100 ({st.static_severity})
-                  </span>
-                </div>
-                <ul className="list-disc list-inside space-y-1 text-[11px] text-text-muted">
-                  {st.risk_factors.map((rf, idx) => (
-                    <li key={idx}>{rf}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {st.capabilities && st.capabilities.length > 0 && (
-              <div className="space-y-2">
-                <span className="font-mono text-[10px] uppercase tracking-wide text-text-faint">
-                  Inferred Capabilities ({st.capabilities.length})
-                </span>
-                <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-                  {st.capabilities.map((cap, i) => (
-                    <div key={i} className="rounded border border-border-subtle bg-bg-base/60 p-2.5">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-mono text-xs font-semibold text-text-primary">{cap.category}</span>
-                        <span className="font-mono text-[10px] text-risk-suspicious uppercase">{cap.confidence}</span>
-                      </div>
-                      <div className="mt-1 flex flex-wrap gap-1">
-                        {cap.matched.map((m) => (
-                          <span key={m} className="rounded bg-bg-elevated px-1.5 py-0.5 font-mono text-[10px] text-text-muted">
-                            {m}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {st.fuzzy_hash && (
-              <div className="flex flex-wrap items-center gap-2 rounded border border-border-subtle bg-bg-base/60 p-2.5 font-mono text-[11px]">
-                <span className="text-text-faint">CTPH / Fuzzy Hash:</span>
-                <span className="text-text-muted select-all truncate max-w-xl">{st.fuzzy_hash}</span>
-              </div>
-            )}
+      {st && st.available && (
+        <div className="space-y-4">
+          {/* Tab Navigation Strip */}
+          <div className="flex flex-wrap items-center gap-1.5 border-b border-border-subtle pb-2.5 font-mono text-xs">
+            {[
+              { id: "overview", label: "Overview", icon: "box" as const },
+              { id: "structure", label: "File Structure", icon: "terminal" as const },
+              { id: "imports", label: "Imports & Capabilities", icon: "shield" as const },
+              { id: "strings", label: "Strings & Indicators", icon: "notes" as const },
+              { id: "bytes", label: "Raw Bytes", icon: "copy" as const },
+              { id: "history", label: "Analysis History", icon: "activity" as const },
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setStaticTab(tab.id as any)}
+                className={`press inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-mono text-xs font-semibold transition ${
+                  staticTab === tab.id
+                    ? "bg-accent text-white shadow-xs"
+                    : "border border-border-subtle/50 bg-bg-surface/70 text-text-muted hover:border-border-subtle hover:text-text-primary"
+                }`}
+              >
+                <Icon name={tab.icon} size={12} />
+                <span>{tab.label}</span>
+              </button>
+            ))}
           </div>
-        </Panel>
+
+          {/* Tab Content */}
+          {staticTab === "overview" && (
+            <StaticOverviewTab sample={sample} st={st} onNavigateTab={setStaticTab} />
+          )}
+          {staticTab === "structure" && (
+            <FileStructureTab st={st} sampleName={sample.original_name} />
+          )}
+          {staticTab === "imports" && (
+            <ImportsCapabilitiesTab st={st} />
+          )}
+          {staticTab === "strings" && (
+            <StringsIndicatorsTab sampleId={sample.sample_id} st={st} />
+          )}
+          {staticTab === "bytes" && (
+            <RawBytesTab st={st} sampleName={sample.original_name} />
+          )}
+          {staticTab === "history" && (
+            <AnalysisHistoryTab sampleId={sample.sample_id} sampleName={sample.original_name} runs={runs} />
+          )}
+        </div>
       )}
-
-      {/* Binary Similarity & Fuzzy Hash Matching */}
-      <SimilarSamplesPanel sampleId={sample.sample_id} />
-
-      {/* Executable metadata — PE or ELF, whichever the bytes actually are. */}
-      {(st?.pe || st?.elf) && (
-        <Panel kicker="Static · format" title={st.pe ? "PE metadata" : "ELF metadata"}>
-          <PeElfTable st={st} />
-        </Panel>
-      )}
-
-      {/* Security API & Threat Intent Matrix */}
-      {st && st.available && <SecurityApisIntentInspector st={st} />}
     </div>
   );
 }
 
-function EntropyHistogramChart({ histogram }: { histogram?: number[] }) {
+
+export function EntropyHistogramChart({ histogram }: { histogram?: number[] }) {
   if (!histogram || histogram.length === 0) return null;
   return (
     <div className="space-y-1.5 border-t border-border-subtle pt-3">
@@ -819,7 +643,7 @@ function EntropyHistogramChart({ histogram }: { histogram?: number[] }) {
           <span className="inline-flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-rose-500" /> &gt;7.0 Packed</span>
         </span>
       </div>
-      <div className="flex h-12 items-end gap-1 rounded-lg border border-border-subtle bg-[#0a0c10] p-1.5">
+      <div className="flex h-12 items-end gap-1 rounded-lg border border-border-subtle bg-bg-inset p-1.5">
         {histogram.map((val, idx) => {
           const pct = Math.min(100, (val / 8.0) * 100);
           const color = val > 7.0 ? "bg-rose-500 ring-1 ring-rose-500/40" : val > 5.5 ? "bg-amber-400" : "bg-emerald-400";
@@ -861,7 +685,7 @@ function tryDecodeString(s: string): { decoded: string; format: "Base64" | "Hex"
   return null;
 }
 
-function CategorizedStringsPanel({ categorized, rawStrings }: { categorized?: SampleStatic["categorized_strings"]; rawStrings: string[] }) {
+export function CategorizedStringsPanel({ categorized, rawStrings }: { categorized?: SampleStatic["categorized_strings"]; rawStrings: string[] }) {
   const [activeTab, setActiveTab] = useState<"all" | "network" | "file_paths" | "commands" | "registry" | "security_apis">("all");
   const [search, setSearch] = useState("");
   const [selectedString, setSelectedString] = useState<{ raw: string; decoded?: string; format?: string } | null>(null);
@@ -921,7 +745,7 @@ function CategorizedStringsPanel({ categorized, rawStrings }: { categorized?: Sa
         />
       </div>
 
-      <div className="max-h-64 overflow-y-auto rounded-xl border border-border-subtle bg-bg-elevated/20 p-2 font-mono text-[11px] leading-relaxed text-[#c9d1d9]">
+      <div className="max-h-64 overflow-y-auto rounded-xl border border-border-subtle bg-bg-elevated/20 p-2 font-mono text-[11px] leading-relaxed text-text-primary">
         {currentList.length === 0 ? (
           <p className="text-text-faint text-center py-4">No strings found in this category.</p>
         ) : (
@@ -973,8 +797,9 @@ function CategorizedStringsPanel({ categorized, rawStrings }: { categorized?: Sa
               <button
                 onClick={() => setSelectedString(null)}
                 className="text-text-muted hover:text-text-primary text-xs"
+                aria-label="Close string inspector"
               >
-                ×
+                <Icon name="x" size={12} />
               </button>
             </div>
           </div>
@@ -986,7 +811,10 @@ function CategorizedStringsPanel({ categorized, rawStrings }: { categorized?: Sa
           {selectedString.decoded && (
             <div className="space-y-1 pt-1 border-t border-accent/20">
               <div className="flex items-center justify-between text-[10px] font-bold text-emerald-400">
-                <span>✓ Decoded Plaintext ({selectedString.format}):</span>
+                <span className="inline-flex items-center gap-1">
+                  <Icon name="check" size={11} />
+                  <span>Decoded Plaintext ({selectedString.format}):</span>
+                </span>
                 <button
                   onClick={() => {
                     void navigator.clipboard.writeText(selectedString.decoded!);
@@ -1823,17 +1651,17 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
         {/* Dual-Deck Grid Layout */}
         <div className="grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-border-subtle">
           {/* ── LEFT DECK: Sandbox Terminal Console (7 Cols) ───── */}
-          <div className="lg:col-span-7 flex flex-col justify-between bg-[#04060a] p-4 text-xs">
+          <div className="lg:col-span-7 flex flex-col justify-between bg-bg-inset p-4 text-xs">
             <div className="space-y-3">
               {/* Terminal Title & Controls Bar */}
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle/50 pb-2.5">
                 <div className="flex items-center gap-2">
                   <div className="flex items-center gap-1.5" aria-hidden>
                     <span className="h-2.5 w-2.5 rounded-full bg-rose-500/80" />
                     <span className="h-2.5 w-2.5 rounded-full bg-amber-500/80" />
                     <span className="h-2.5 w-2.5 rounded-full bg-emerald-500/80" />
                   </div>
-                  <span className="text-[11px] font-bold text-[#c9d1d9] pl-1">
+                  <span className="text-[11px] font-bold text-text-primary pl-1">
                     cage:~/sandbox/{sample.original_name}
                   </span>
                   <span className={`ml-1 inline-flex items-center gap-1 rounded px-2 py-0.5 text-[9px] font-bold uppercase ${
@@ -1923,7 +1751,7 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
               )}
 
               {/* Terminal Screen Console */}
-              <div className="rounded-xl border border-white/10 bg-[#06080d] p-4 font-mono text-[11px] leading-relaxed max-h-[420px] overflow-y-auto shadow-inner selection:bg-accent selection:text-black">
+              <div className="rounded-xl border border-border-subtle bg-bg-inset p-4 font-mono text-[11px] leading-relaxed max-h-[420px] overflow-y-auto shadow-inner selection:bg-accent selection:text-black">
                 {detonating ? (
                   <div className="space-y-1">
                     <div className="text-amber-400 font-bold mb-2 flex items-center justify-between border-b border-amber-500/20 pb-1.5">
@@ -1975,7 +1803,7 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
                                 ? "text-rose-400"
                                 : isInfo
                                   ? "text-emerald-400"
-                                  : "text-[#c9d1d9]"
+                                  : "text-text-primary"
                           }`}
                         >
                           {line}
@@ -2225,7 +2053,7 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
                         </div>
 
                         {art.preview && art.preview.length > 0 && (
-                          <div className="bg-[#0a0c10] p-2 rounded text-[10px] font-mono text-emerald-400 max-h-20 overflow-y-auto space-y-0.5">
+                          <div className="bg-bg-inset border border-border-subtle/50 p-2 rounded text-[10px] font-mono text-emerald-400 max-h-20 overflow-y-auto space-y-0.5">
                             {art.preview.slice(0, 5).map((p, pidx) => (
                               <div key={pidx} className="truncate">{p}</div>
                             ))}
@@ -2306,10 +2134,10 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
                     </div>
                   ) : (
                     <div className="space-y-2">
-                      <div className="overflow-x-auto rounded-lg border border-border-subtle bg-[#0a0c10]">
+                      <div className="overflow-x-auto rounded-lg border border-border-subtle bg-bg-inset">
                         <table className="w-full text-left font-mono text-[10px] border-collapse">
                           <thead>
-                            <tr className="border-b border-white/10 bg-white/5 text-[9px] font-bold uppercase tracking-wider text-text-faint">
+                            <tr className="border-b border-border-subtle bg-bg-elevated/40 text-[9px] font-bold uppercase tracking-wider text-text-faint">
                               <th className="py-1.5 px-2 w-10 text-center">#</th>
                               <th className="py-1.5 px-2 w-16">Offset</th>
                               <th className="py-1.5 px-2 w-16">Proto</th>
@@ -2319,7 +2147,7 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
                               <th className="py-1.5 px-2 text-right">Analyst Action</th>
                             </tr>
                           </thead>
-                          <tbody className="divide-y divide-white/5">
+                          <tbody className="divide-y divide-border-subtle/30">
                             {displayNetwork
                               .filter((net: any) => {
                                 if (!networkSearch.trim()) return true;
@@ -2422,9 +2250,10 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
                               </span>
                               <button
                                 onClick={() => setSelectedFrame(null)}
-                                className="text-text-muted hover:text-text-primary text-[9px]"
+                                className="inline-flex items-center gap-1 text-text-muted hover:text-text-primary text-[9px]"
                               >
-                                ✕ Close
+                                <Icon name="x" size={10} />
+                                <span>Close</span>
                               </button>
                             </div>
                             <div className="grid grid-cols-2 gap-2 text-[10px]">
@@ -2530,7 +2359,7 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
                   {(!result?.syscalls || result.syscalls.length === 0) ? (
                     <p className="text-xs text-text-muted py-6 text-center">No system calls recorded yet.</p>
                   ) : (
-                    <div className="rounded-xl border border-border-subtle bg-[#0a0c10] p-2.5 font-mono text-[10px]">
+                    <div className="rounded-xl border border-border-subtle bg-bg-inset p-2.5 font-mono text-[10px]">
                       <div className="grid grid-cols-12 gap-1 border-b border-border-subtle pb-1 font-bold text-text-faint uppercase text-[9px]">
                         <span className="col-span-1">PID</span>
                         <span className="col-span-2">Call</span>
@@ -2539,7 +2368,7 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
                         <span className="col-span-2">Type</span>
                       </div>
                       {result.syscalls.slice(0, 100).map((sc, scidx) => (
-                        <div key={scidx} className="grid grid-cols-12 gap-1 py-0.5 border-b border-white/5 text-[#c9d1d9]">
+                        <div key={scidx} className="grid grid-cols-12 gap-1 py-0.5 border-b border-border-subtle/30 text-text-primary">
                           <span className="col-span-1 text-text-faint">{sc.pid ?? "-"}</span>
                           <span className="col-span-2 font-bold text-accent">{sc.syscall}</span>
                           <span className="col-span-6 truncate text-text-muted" title={sc.arguments}>{sc.arguments}</span>
@@ -3037,7 +2866,7 @@ function ExploitMitigationsCard({ pe }: { pe?: PeMetadata | null }) {
             }`}
           >
             <span className={`mt-0.5 shrink-0 ${chk.active ? "text-emerald-400 font-bold" : "text-text-faint"}`}>
-              {chk.active ? "✓" : "✗"}
+              <Icon name={chk.active ? "check" : "x"} size={12} />
             </span>
             <div className="space-y-0.5 min-w-0">
               <span className={`block font-bold truncate ${chk.active ? "text-emerald-300" : "text-text-muted"}`}>
@@ -3052,7 +2881,7 @@ function ExploitMitigationsCard({ pe }: { pe?: PeMetadata | null }) {
   );
 }
 
-function PeElfTable({ st }: { st: SampleStatic }) {
+export function PeElfTable({ st }: { st: SampleStatic }) {
   const pe = st.pe;
   const elf = st.elf;
 
@@ -3175,10 +3004,11 @@ function PeElfTable({ st }: { st: SampleStatic }) {
                         <td className="px-3 py-2">
                           {isRwX ? (
                             <span
-                              className="rounded border border-rose-500/50 bg-rose-500/20 px-1.5 py-0.5 text-[9px] font-bold text-rose-400"
+                              className="inline-flex items-center gap-1 rounded border border-rose-500/50 bg-rose-500/20 px-1.5 py-0.5 text-[9px] font-bold text-rose-400"
                               title="Read, Write, and Execute permissions — self-modifying code or shellcode injection danger"
                             >
-                              RWX ⚠️
+                              <span>RWX</span>
+                              <Icon name="alert" size={10} />
                             </span>
                           ) : s.permissions ? (
                             <span className="rounded bg-bg-elevated px-1.5 py-0.2 text-[10px] font-bold text-text-muted">
@@ -3249,17 +3079,19 @@ function PeElfTable({ st }: { st: SampleStatic }) {
 }
 
 export default function SampleDetailPage() {
-  const navigate = useNavigate();
   const { sampleId = "" } = useParams();
-  const [copied, setCopied] = useState(false);
-  const [downloadError, setDownloadError] = useState<string | null>(null);
-  const [detonating, setDetonating] = useState(false);
-  const [detonationError, setDetonationError] = useState<string | null>(null);
   const [dossierTab, setDossierTab] = useState<"static" | "dynamic" | "history" | "similarity">("static");
 
   const { data: sample, isLoading, isError } = useQuery({
     queryKey: ["sample", sampleId],
     queryFn: () => getSample(sampleId),
+  });
+
+  const { data: st, isLoading: isAnalyzing, isError: isStaticError, refetch: refetchStatic } = useQuery({
+    queryKey: ["sample", "static", sampleId],
+    queryFn: () => getSampleStatic(sampleId),
+    retry: false,
+    enabled: Boolean(sampleId),
   });
 
   // Runs that detonated this binary — filtered by its sample name.
@@ -3268,48 +3100,6 @@ export default function SampleDetailPage() {
     queryFn: () => getRuns({ q: sample?.original_name ?? "" }),
     enabled: sample !== undefined,
   });
-
-  const handleExportStix = () => {
-    if (!sample) return;
-    if (runs && runs.length > 0) {
-      window.open(`/api/runs/${runs[0].run_id}/export?format=stix`, "_blank");
-    } else {
-      const bundle = {
-        type: "bundle",
-        id: `bundle--${sample.sample_id}`,
-        objects: [
-          {
-            type: "file",
-            spec_version: "2.1",
-            id: `file--${sample.sample_id}`,
-            hashes: {
-              "SHA-256": sample.sha256,
-            },
-            name: sample.original_name,
-            size: sample.size,
-          },
-        ],
-      };
-      const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `outpost-stix-${sample.original_name || sample.sample_id}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
-    }
-  };
-
-  const copyHash = async () => {
-    if (!sample) return;
-    try {
-      await navigator.clipboard.writeText(sample.sha256);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1800);
-    } catch {
-      /* clipboard unavailable — the title tooltip still carries the hash */
-    }
-  };
 
   if (isLoading) return <p className="p-8 text-sm text-text-muted font-mono">Loading sample…</p>;
   if (isError || !sample) {
@@ -3330,170 +3120,19 @@ export default function SampleDetailPage() {
     );
   }
 
-  const platName = sample.detected_platform === "windows" ? "Windows" : sample.detected_platform === "linux" ? "Linux" : sample.detected_platform === "macos" ? "macOS" : "unknown";
-  const platIcon = sample.detected_platform === "macos" || sample.detected_platform === "windows" || sample.detected_platform === "linux" ? platformIconName(sample.detected_platform) : "terminal";
-
   return (
-    <div className="mx-auto max-w-[1440px] px-6 py-8 lg:px-8 font-sans">
-      <nav className="mb-6 flex items-center gap-2 font-sans text-xs text-text-muted">
-        <Link to="/" className="transition-colors hover:text-accent">
-          Overview
-        </Link>
-        <span aria-hidden>/</span>
-        <Link to="/samples" className="transition-colors hover:text-accent">
-          Malware Vault
-        </Link>
-        <span aria-hidden>/</span>
-        <span className="text-text-primary font-mono">{sample.original_name}</span>
-      </nav>
-
-      <PageHeader
-        kicker="Intelligence · sample"
-        title={
-          <>
-            {sample.original_name}{" "}
-            <span className="font-normal text-text-muted">— {sample.family ?? "untyped"}</span>
-          </>
-        }
-        lede={`Detected ${sample.detected_platform} from magic bytes · ${formatBytes(sample.size)} · uploaded ${sample.created_at.slice(0, 19).replace("T", " ")} UTC`}
-        actions={
-          <div className="flex flex-wrap items-center gap-2 font-sans text-xs">
-            <button
-              onClick={async () => {
-                setDetonationError(null);
-                setDetonating(true);
-                try {
-                  const res = await detonateDynamic({ sample_id: sample.sample_id });
-                  navigate(`/runs/${res.run_id}`);
-                } catch (e: unknown) {
-                  setDetonationError(e instanceof Error ? e.message : "Detonation failed");
-                } finally {
-                  setDetonating(false);
-                }
-              }}
-              disabled={detonating}
-              className="press inline-flex items-center gap-1.5 rounded-lg border border-accent bg-accent px-4 py-2 font-semibold text-white shadow-xs hover:brightness-110 disabled:opacity-50"
-              title="Detonate sample in local isolated dynamic sandbox"
-            >
-              <Icon name="play" size={12} />
-              {detonating ? "Detonating..." : "Detonate in sandbox"}
-            </button>
-            <Link
-              to={`/footprint?sample=${sample.sample_id}`}
-              className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-surface px-4 py-2 font-medium text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
-            >
-              Digital footprint
-              <Icon name="arrowRight" size={12} />
-            </Link>
-            <span className="flex items-center gap-2">
-              {downloadError && <span className="font-mono text-[10px] text-risk-malicious">{downloadError}</span>}
-              {detonationError && <span className="font-mono text-[10px] text-risk-malicious">{detonationError}</span>}
-              <button
-                onClick={() => void downloadSample(sample.sample_id, sample.original_name).catch(() => setDownloadError("Download failed — bytes not stored?"))}
-                className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-surface px-4 py-2 font-medium text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
-                title={`Download ${sample.original_name}`}
-              >
-                <Icon name="download" size={12} />
-                Download
-              </button>
-            </span>
-            <button
-              onClick={handleExportStix}
-              className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-surface px-3.5 py-2 font-medium text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
-              title="Export sample indicators as STIX 2.1 JSON bundle"
-            >
-              <Icon name="shield" size={12} />
-              <span>STIX 2.1</span>
-            </button>
-            <button
-              onClick={() => void copyHash()}
-              className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/60 bg-accent/10 px-4 py-2 font-semibold text-accent transition-colors duration-150 hover:bg-accent/20"
-              title={sample.sha256}
-            >
-              <Icon name={copied ? "check" : "copy"} size={12} />
-              {copied ? "Copied" : "Copy Hash"}
-            </button>
-            <button
-              onClick={async () => {
-                if (!window.confirm(`Delete sample ${sample.original_name} from vault?`)) return;
-                try {
-                  await deleteSample(sample.sample_id);
-                  navigate("/samples");
-                } catch {
-                  setDownloadError("Delete failed");
-                }
-              }}
-              className="press inline-flex items-center gap-1.5 rounded-lg border border-risk-malicious/40 bg-risk-malicious/10 px-4 py-2 font-semibold text-risk-malicious transition-colors duration-150 hover:bg-risk-malicious/20"
-              title={`Delete ${sample.original_name}`}
-            >
-              <Icon name="x" size={12} />
-              Delete
-            </button>
-          </div>
-        }
+    <div className="mx-auto max-w-[1440px] px-6 py-6 lg:px-8 font-sans">
+      {/* Redesigned Compact Technical Header */}
+      <SampleWorkspaceHeader
+        sample={sample}
+        st={st}
+        isAnalyzing={isAnalyzing}
+        onRunStatic={() => void refetchStatic()}
+        onSwitchToDynamic={() => setDossierTab("dynamic")}
       />
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <Panel kicker="Signature" title="Full SHA-256">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-            <code className="min-w-0 flex-1 break-all rounded border border-border-subtle bg-bg-elevated/50 px-3 py-2 font-mono text-xs leading-relaxed text-text-primary">
-              {sample.sha256}
-            </code>
-            <a
-              href={getVirusTotalFileUrl(sample.sha256)}
-              target="_blank"
-              rel="noopener noreferrer"
-              title="Inspect file hash report on VirusTotal"
-              className="press inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-accent/60 bg-accent/15 px-3 py-2 font-sans text-xs font-semibold text-accent transition-all hover:bg-accent/25 focus:ring-1 focus:ring-accent/40"
-            >
-              <span>VirusTotal Intel</span>
-              <Icon name="external" size={12} />
-            </a>
-          </div>
-          <div className="mt-4 flex flex-wrap items-center gap-2">
-            <Chip tone={sample.detected_platform === "macos" ? "suspicious" : sample.detected_platform === "linux" ? "clean" : "accent"} dot title={`Detected ${sample.detected_platform}`}>
-              <Icon name={platIcon} size={11} />
-              {platName}
-            </Chip>
-            {sample.malware_family && (
-              <Chip tone="malicious" dot title="VirusTotal family">
-                {sample.malware_family}
-              </Chip>
-            )}
-            {sample.vt_detections !== null ? (
-              <a
-                href={getVirusTotalFileUrl(sample.sha256)}
-                target="_blank"
-                rel="noopener noreferrer"
-                title="View VirusTotal detection report"
-              >
-                <Chip tone={sample.vt_detections > 0 ? "malicious" : "clean"} dot>
-                  {sample.vt_detections} VT detection{sample.vt_detections === 1 ? "" : "s"} ↗
-                </Chip>
-              </a>
-            ) : (
-              <Chip tone="muted">no VT intel</Chip>
-            )}
-          </div>
-        </Panel>
-
-        <Panel kicker="YARA" title={`Signatures matched (${sample.yara_rules.length})`}>
-          {sample.yara_rules.length > 0 ? (
-            <div className="flex flex-wrap gap-1.5">
-              {sample.yara_rules.map((r) => (
-                <span
-                  key={r}
-                  className="rounded border border-accent/40 bg-accent/5 px-2 py-1 font-mono text-[11px] text-accent"
-                >
-                  {r}
-                </span>
-              ))}
-            </div>
-          ) : (
-            <p className="text-sm text-text-muted">No bundled YARA rules matched this binary.</p>
-          )}
-        </Panel>
-      </div>
+      {/* Persistent Technical Identification Strip */}
+      <SampleIdentificationStrip sample={sample} st={st} />
 
       {/* Analysis Workspace Mode Switcher */}
       <div className="mt-8 rounded-2xl border border-border-subtle bg-bg-surface/80 p-2 shadow-sm font-sans">
@@ -3588,7 +3227,16 @@ export default function SampleDetailPage() {
         </div>
       </div>
 
-      {dossierTab === "static" && <StaticAnalysis sample={sample} />}
+      {dossierTab === "static" && (
+        <StaticAnalysis
+          sample={sample}
+          runs={runs}
+          st={st}
+          isLoading={isAnalyzing}
+          isError={isStaticError}
+          unavailable={st !== undefined && st.available === false}
+        />
+      )}
 
       {dossierTab === "dynamic" && (
         <div className="mt-6 space-y-6">

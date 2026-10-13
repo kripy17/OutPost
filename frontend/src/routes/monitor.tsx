@@ -1061,7 +1061,7 @@ export default function MonitorPage() {
                 <option value="auto" className="bg-bg-surface text-text-primary">Auto (Kernel Namespaces / Micro-Sandbox)</option>
                 {drivers.map((d) => (
                   <option key={d.id} value={d.id} className="bg-bg-surface text-text-primary">
-                    {d.name} {d.available ? "✓" : "(unavailable)"}
+                    {d.name} {d.available ? "(ready)" : "(unavailable)"}
                   </option>
                 ))}
               </select>
@@ -1234,7 +1234,10 @@ export default function MonitorPage() {
                     }`}
                   >
                     <span>{t.id}</span>
-                    <span>{t.detected ? "✓ DETECTED" : "● OBSERVED"}</span>
+                    <span className="inline-flex items-center gap-0.5">
+                      {t.detected && <Icon name="check" size={10} />}
+                      <span>{t.detected ? "DETECTED" : "OBSERVED"}</span>
+                    </span>
                   </span>
                 ))}
               </div>
@@ -1251,8 +1254,8 @@ export default function MonitorPage() {
             <span className="font-bold">Sandbox Execution Error</span>
             <p className="mt-1 text-[11px] text-text-muted">{executionError}</p>
           </div>
-          <button onClick={() => setExecutionError(null)} className="text-text-muted hover:text-text-primary font-bold">
-            ×
+          <button onClick={() => setExecutionError(null)} className="text-text-muted hover:text-text-primary" aria-label="Dismiss error">
+            <Icon name="x" size={14} />
           </button>
         </div>
       )}
@@ -1321,7 +1324,7 @@ export default function MonitorPage() {
         {/* Dual Deck Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-12 min-h-[460px] divide-y lg:divide-y-0 lg:divide-x divide-border-subtle">
           {/* ── LEFT DECK: Interactive Sandbox Terminal Window (7 Columns) ── */}
-          <div className="lg:col-span-7 flex flex-col justify-between bg-[#080b11] p-4 font-mono text-xs">
+          <div className="lg:col-span-7 flex flex-col justify-between bg-bg-base p-4 font-mono text-xs">
             <div className="space-y-3 flex-1 flex flex-col">
               {/* Stepper Controls Strip (If in Step-by-Step Mode) */}
               {isStepModeActive && stepScenario && (
@@ -1379,7 +1382,7 @@ export default function MonitorPage() {
                         >
                           <div className="flex items-center justify-between">
                             <span>Stage {stgNum}</span>
-                            <span>{isCurrent ? "Ready" : hasExecuted ? "✓" : "—"}</span>
+                            <span>{isCurrent ? "Ready" : hasExecuted ? <Icon name="check" size={10} className="inline text-emerald-400" /> : "—"}</span>
                           </div>
                           <div className="truncate opacity-80">{stg.name}</div>
                         </div>
@@ -1506,7 +1509,7 @@ export default function MonitorPage() {
               {/* Main Left Deck Display: Story View vs Terminal View vs Standby */}
               {!hasActiveSession ? (
                 /* Pristine Standby State */
-                <div className="flex-1 rounded-xl border border-border-subtle/60 bg-[#06080d] p-4 overflow-y-auto max-h-[460px] shadow-inner selection:bg-accent selection:text-black">
+                <div className="flex-1 rounded-xl border border-border-subtle bg-bg-inset p-4 overflow-y-auto max-h-[460px] shadow-inner selection:bg-accent selection:text-black">
                   <div className="flex flex-col items-center justify-center h-full min-h-[300px] text-center space-y-3 font-mono py-12">
                     <div className="h-12 w-12 rounded-2xl border border-accent/40 bg-accent/10 flex items-center justify-center text-accent ring-1 ring-accent/30 shadow-xs">
                       <Icon name="terminal" size={24} />
@@ -1524,7 +1527,7 @@ export default function MonitorPage() {
                 </div>
               ) : leftDeckMode === "story" ? (
                 /* Attack Chain & Behavioral Execution Story Mode */
-                <div className="flex-1 rounded-xl border border-border-subtle/60 bg-[#06080d] p-3 overflow-y-auto max-h-[460px] shadow-inner space-y-3">
+                <div className="flex-1 rounded-xl border border-border-subtle bg-bg-inset p-3 overflow-y-auto max-h-[460px] shadow-inner space-y-3">
                   {/* Causality Narrative Card */}
                   <div className="rounded-xl border border-accent/30 bg-accent/5 p-3.5 space-y-2">
                     <div className="flex items-center justify-between text-xs font-bold text-accent">
@@ -1620,7 +1623,7 @@ export default function MonitorPage() {
                           </div>
 
                           {/* Executed Command Box */}
-                          <div className="rounded-lg bg-[#06080d] p-2.5 border border-border-subtle/60 space-y-1">
+                          <div className="rounded-lg bg-bg-inset p-2.5 border border-border-subtle space-y-1">
                             <div className="flex items-center justify-between text-[10px] text-text-faint">
                               <span className="uppercase font-bold tracking-wider">Executed Subprocess Command</span>
                               <button
@@ -1668,7 +1671,7 @@ export default function MonitorPage() {
                                 <span>{isExpanded ? "Hide" : "Show"} Terminal Output ({stdoutLines.length} lines)</span>
                               </button>
                               {isExpanded && (
-                                <div className="mt-2 rounded-lg bg-[#06080d] p-2.5 text-[10px] font-mono border border-border-subtle/60 max-h-40 overflow-y-auto space-y-1">
+                                <div className="mt-2 rounded-lg bg-bg-inset p-2.5 text-[10px] font-mono border border-border-subtle max-h-40 overflow-y-auto space-y-1">
                                   {ph.stdout && <pre className="text-emerald-300 whitespace-pre-wrap">{ph.stdout}</pre>}
                                   {ph.stderr && <pre className="text-rose-400 whitespace-pre-wrap">[STDERR]: {ph.stderr}</pre>}
                                 </div>
@@ -1682,7 +1685,7 @@ export default function MonitorPage() {
                 </div>
               ) : (
                 /* Raw Terminal Console View */
-                <div className="flex-1 rounded-xl border border-border-subtle/60 bg-[#06080d] p-4 overflow-y-auto max-h-[380px] shadow-inner selection:bg-accent selection:text-black">
+                <div className="flex-1 rounded-xl border border-border-subtle bg-bg-inset p-4 overflow-y-auto max-h-[380px] shadow-inner selection:bg-accent selection:text-black">
                   <div className="space-y-1 text-[11px] leading-relaxed font-mono">
                     <div className="text-emerald-400 font-bold mb-2 flex items-center gap-1.5">
                       <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
@@ -1696,7 +1699,7 @@ export default function MonitorPage() {
                         </div>
                       ) : (
                         stageHistory.map((sh, sidx) => (
-                          <div key={sidx} className="space-y-1 pb-3 border-b border-white/5 last:border-b-0">
+                          <div key={sidx} className="space-y-1 pb-3 border-b border-border-subtle/40 last:border-b-0">
                             <div className="text-accent font-bold">
                               &gt;&gt;&gt; [Stage {sh.stage_number}/{sh.total_stages}] {sh.stage_name}
                             </div>
@@ -1733,7 +1736,7 @@ export default function MonitorPage() {
                                     ? "text-rose-400"
                                     : isInfo
                                       ? "text-emerald-400"
-                                      : "text-[#c9d1d9]"
+                                      : "text-text-primary"
                               }`}
                             >
                               {line}
@@ -1924,7 +1927,7 @@ export default function MonitorPage() {
                           </div>
 
                           {art?.preview && art.preview.length > 0 && (
-                            <div className="bg-[#06080d] p-2 rounded text-[10px] font-mono text-emerald-400 max-h-16 overflow-y-auto space-y-0.5">
+                            <div className="bg-bg-inset border border-border-subtle/50 p-2 rounded text-[10px] font-mono text-emerald-400 max-h-16 overflow-y-auto space-y-0.5">
                               {art.preview.map((line, plidx) => (
                                 <div key={plidx} className="truncate">{line}</div>
                               ))}
@@ -2520,7 +2523,7 @@ export default function MonitorPage() {
                     </div>
 
                     {techniqueResult.stdout && (
-                      <div className="mt-2 rounded-lg bg-[#04060a] p-2 text-[10px] text-[#c9d1d9] max-h-20 overflow-y-auto whitespace-pre-wrap break-all">
+                      <div className="mt-2 rounded-lg border border-border-subtle bg-bg-inset p-2 text-[10px] text-text-primary max-h-20 overflow-y-auto whitespace-pre-wrap break-all">
                         {techniqueResult.stdout}
                       </div>
                     )}
@@ -2553,8 +2556,9 @@ export default function MonitorPage() {
                           <span className="text-[9px] uppercase text-text-faint block">Captured Primitives:</span>
                           <div className="flex flex-wrap gap-1 mt-0.5">
                             {techniqueResult.matched_telemetry.map((t) => (
-                              <span key={t} className="rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.2 text-[9px] font-bold">
-                                ✓ {t}
+                              <span key={t} className="inline-flex items-center gap-1 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.2 text-[9px] font-bold">
+                                <Icon name="check" size={9} />
+                                <span>{t}</span>
                               </span>
                             ))}
                           </div>
@@ -2566,8 +2570,9 @@ export default function MonitorPage() {
                           <span className="text-[9px] uppercase text-text-faint block">Missing Telemetry:</span>
                           <div className="flex flex-wrap gap-1 mt-0.5">
                             {techniqueResult.missing_telemetry.map((t) => (
-                              <span key={t} className="rounded bg-rose-500/15 text-rose-400 border border-rose-500/30 px-1.5 py-0.2 text-[9px] font-bold">
-                                ✗ {t}
+                              <span key={t} className="inline-flex items-center gap-1 rounded bg-rose-500/15 text-rose-400 border border-rose-500/30 px-1.5 py-0.2 text-[9px] font-bold">
+                                <Icon name="x" size={9} />
+                                <span>{t}</span>
                               </span>
                             ))}
                           </div>
@@ -2676,18 +2681,19 @@ export default function MonitorPage() {
                         </Link>
                         <button
                           onClick={() => setExpandedTechniqueId(isExpanded ? null : tech.id)}
-                          className="hover:text-accent cursor-pointer"
+                          className="hover:text-accent cursor-pointer inline-flex items-center gap-1"
                         >
-                          {isExpanded ? "Hide Code ▲" : "View Code ▼"}
+                          <Icon name={isExpanded ? "chevronUp" : "chevronDown"} size={10} />
+                          <span>{isExpanded ? "Hide Code" : "View Code"}</span>
                         </button>
                       </div>
                     </div>
 
                     {isExpanded && (
-                      <div className="space-y-2 rounded-lg border border-border-subtle bg-[#06080d] p-3 text-[10px] font-mono">
+                      <div className="space-y-2 rounded-lg border border-border-subtle bg-bg-inset p-3 text-[10px] font-mono">
                         <div>
                           <span className="text-accent uppercase font-bold block mb-0.5">Attack Command:</span>
-                          <pre className="text-[#c9d1d9] whitespace-pre-wrap break-all">{tech.attack_command}</pre>
+                          <pre className="text-text-primary whitespace-pre-wrap break-all">{tech.attack_command}</pre>
                         </div>
                         {tech.cleanup_command && (
                           <div>

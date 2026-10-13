@@ -10,7 +10,7 @@ import datetime
 
 from .conftest import make_run
 
-_TS_BASE = datetime.datetime(2026, 8, 1, 12, 0, 0, tzinfo=datetime.timezone.utc)
+_TS_BASE = datetime.datetime(2026, 10, 1, 12, 0, 0, tzinfo=datetime.timezone.utc)
 
 
 def _ts(offset: int = 0) -> str:

@@ -15,6 +15,7 @@ import { Suspense, lazy, useEffect, useState } from "react";
 import { createBrowserRouter, Navigate, Outlet, useLocation, useNavigate } from "react-router-dom";
 import BrowserCheck from "./components/BrowserCheck/BrowserCheck";
 import BrowserNotifications from "./components/BrowserNotifications/BrowserNotifications";
+import { Icon } from "./components/Icon";
 import Nav from "./components/Nav";
 import TopCommandBar from "./components/TopCommandBar";
 import WatchlistToaster from "./components/WatchlistToaster/WatchlistToaster";
@@ -203,7 +204,7 @@ function Layout() {
                 className="text-text-muted hover:text-text-primary text-sm font-mono p-1 rounded hover:bg-bg-elevated"
                 aria-label="Close shortcuts drawer"
               >
-                ✕
+                <Icon name="x" size={14} />
               </button>
             </div>
             <div className="flex-1 overflow-y-auto p-6 space-y-2.5 font-mono text-xs text-text-muted">

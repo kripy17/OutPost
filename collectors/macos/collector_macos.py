@@ -68,6 +68,8 @@ def parse_bsm_line(line: str, run_id: str) -> dict | None:
             "command_line": cmd,
             "exe_path": exe_path,
             "log_source": "endpoint_security",
+            "source_event_id": f"es:{pid}:{now_iso}",
+            "process_start_time": now_iso,
             "raw_record": line,
         }
 
@@ -95,6 +97,7 @@ def parse_bsm_line(line: str, run_id: str) -> dict | None:
             "dest_port": dest_port,
             "protocol": "tcp",
             "log_source": "endpoint_security",
+            "source_event_id": f"es:{pid}:{dest_ip}:{dest_port}:{now_iso}",
             "raw_record": line,
         }
 
@@ -125,6 +128,7 @@ def parse_eslogger_json(record: dict, run_id: str) -> dict | None:
 
         signing = target.get("signing_info") or {}
         signing_id = signing.get("signing_id") or ""
+        seq = record.get("global_seq_num") or record.get("seq_num")
 
         return {
             "run_id": run_id,
@@ -138,6 +142,8 @@ def parse_eslogger_json(record: dict, run_id: str) -> dict | None:
             "exe_path": exe_path,
             "code_sign_id": signing_id,
             "log_source": "endpoint_security",
+            "source_event_id": str(seq or f"es:{pid}:{now_iso}"),
+            "process_start_time": now_iso,
             "raw_record": str(record)[:1000],
         }
 

@@ -13,13 +13,17 @@ import logging
 import os
 import platform
 import re
+import resource
 import shutil
+import signal
 import sys
 import tempfile
 import time
 import uuid
 from pathlib import Path
 from typing import Any
+
+from fastapi import HTTPException
 
 logger = logging.getLogger(__name__)
 
@@ -84,9 +88,35 @@ def detect_runner(data: bytes, filename: str) -> list[str] | None:
     return []
 
 
+def is_bwrap_usable() -> bool:
+    """Verify that bubblewrap is installed AND functional with required namespace isolation.
+
+    Mere presence of the bwrap binary is insufficient: kernel unprivileged user
+    namespaces may be disabled or restricted. Inspects bwrap execution permissions
+    and Linux kernel user namespace configuration.
+    """
+    bwrap_path = shutil.which("bwrap")
+    if not bwrap_path or not os.access(bwrap_path, os.X_OK):
+        return False
+    # Check if unprivileged user namespaces are disabled in kernel sysctl
+    for proc_path in (
+        "/proc/sys/kernel/unprivileged_userns_clone",
+        "/proc/sys/user/max_user_namespaces",
+    ):
+        try:
+            if os.path.exists(proc_path):
+                with open(proc_path, "r") as f:
+                    val = f.read().strip()
+                    if val == "0":
+                        return False
+        except Exception:
+            pass
+    return True
+
+
 def get_available_isolation_drivers() -> list[dict[str, Any]]:
     """Inspect host system and return supported sandbox isolation drivers and capabilities."""
-    has_bwrap = bool(shutil.which("bwrap"))
+    has_bwrap = is_bwrap_usable()
     has_wine = bool(shutil.which("wine64") or shutil.which("wine"))
     has_podman = bool(shutil.which("podman"))
     has_docker = bool(shutil.which("docker"))
@@ -104,11 +134,11 @@ def get_available_isolation_drivers() -> list[dict[str, Any]]:
         },
         {
             "id": "tempdir",
-            "name": "Standard Ephemeral Isolation",
+            "name": "Standard Ephemeral Isolation (Disabled)",
             "tier": 1,
             "tier_label": "Tier 1: Linux Native",
-            "available": True,
-            "description": "Unprivileged ephemeral directory execution with process timeout monitoring",
+            "available": False,
+            "description": "Host temporary directory execution without kernel namespace isolation (blocked by fail-closed policy)",
             "type": "native",
         },
         {
@@ -116,8 +146,8 @@ def get_available_isolation_drivers() -> list[dict[str, Any]]:
             "name": "Emulated Subsystem (Wine64)",
             "tier": 2,
             "tier_label": "Tier 2: Emulated Windows",
-            "available": has_wine,
-            "description": "Wine64 user-mode translation layer. For non-packed scripts; kernel drivers and anti-sandbox malware require Tier 3.",
+            "available": has_wine and has_bwrap,
+            "description": "Wine64 user-mode translation layer running inside Bubblewrap sandbox namespaces.",
             "type": "emulation",
         },
         {
@@ -152,7 +182,8 @@ async def execute_bytes_sandbox(
     custom_args: list[str] | None = None,
     isolation_driver: str = "auto",
     on_telemetry_event: Any = None,
-    network_mode: str = "sinkhole",
+    network_mode: str = "isolated",
+    allow_unconfined_override: bool = False,
 ) -> tuple[list[dict[str, Any]], str, str, int, str, list[dict[str, Any]], list[dict[str, Any]]]:
     """Execute raw sample bytes in an isolated sandbox workspace and collect genuine execution events."""
     sample_plat = platform_hint or platform.system().lower()
@@ -190,27 +221,52 @@ async def execute_bytes_sandbox(
         if custom_args:
             cmd.extend(custom_args)
 
-        # Determine active isolation driver
-        has_bwrap = bool(shutil.which("bwrap"))
+        # Determine active isolation driver under strict fail-closed policy
+        has_bwrap = is_bwrap_usable()
         has_wine = bool(shutil.which("wine64") or shutil.which("wine"))
+        is_wine_target = any("wine" in str(c) for c in cmd)
 
-        if isolation_driver == "auto":
-            if any("wine" in str(c) for c in cmd):
-                active_driver = "wine" if has_wine else "tempdir"
-            elif has_bwrap and platform.system().lower() == "linux":
+        requested = (isolation_driver or "auto").lower()
+        active_driver: str | None = None
+
+        if requested == "auto":
+            if is_wine_target:
+                if has_wine and has_bwrap:
+                    active_driver = "wine"
+                elif has_wine and allow_unconfined_override:
+                    active_driver = "wine_unconfined_override"
+            elif platform.system().lower() == "linux" and has_bwrap:
                 active_driver = "bubblewrap"
-            else:
-                active_driver = "tempdir"
-        elif isolation_driver == "bubblewrap" and has_bwrap:
-            active_driver = "bubblewrap"
-        elif isolation_driver == "wine" and has_wine:
-            active_driver = "wine"
-        else:
-            active_driver = "tempdir"
+        elif requested == "bubblewrap":
+            if platform.system().lower() == "linux" and has_bwrap:
+                active_driver = "bubblewrap"
+        elif requested == "wine":
+            if has_wine and has_bwrap:
+                active_driver = "wine"
+            elif has_wine and allow_unconfined_override:
+                active_driver = "wine_unconfined_override"
 
-        # Apply bubblewrap wrapping if active
-        exec_cmd = list(cmd)
-        if active_driver == "bubblewrap" and has_bwrap:
+        if not active_driver:
+            raise HTTPException(
+                status_code=422,
+                detail="Safe isolation provider unavailable. Execution blocked to prevent host contamination.",
+            )
+
+        if active_driver == "wine_unconfined_override":
+            from ..models import audit
+            with db_session() as conn:
+                audit.log(
+                    conn,
+                    actor="operator",
+                    action="sandbox.wine.unconfined_override",
+                    target_type="run",
+                    target_id=run_id,
+                    outcome="allowed_override",
+                    detail="Explicit audited operator override for unconfined Wine execution",
+                )
+            exec_cmd = list(cmd)
+        else:
+            # Apply bubblewrap wrapping (strictly enforced for all dynamic sandbox execution)
             bwrap_prefix = [
                 "bwrap",
                 "--ro-bind", "/usr", "/usr",
@@ -240,7 +296,7 @@ async def execute_bytes_sandbox(
             if network_mode not in ("bridge", "host", "allow_net"):
                 bwrap_prefix.append("--unshare-net")
             bwrap_prefix.append("--die-with-parent")
-            exec_cmd = bwrap_prefix + exec_cmd
+            exec_cmd = bwrap_prefix + list(cmd)
 
         ALLOWED_ENV_VARS = {
             "PATH", "TERM", "LANG", "LC_ALL", "USER", "LOGNAME", "HOME", "TMPDIR", "TZ", "SHELL",
@@ -297,6 +353,27 @@ async def execute_bytes_sandbox(
 
         main_pid = os.getpid()
         poller_task = None
+        if not exec_cmd or (exec_cmd[0] != "bwrap" and active_driver != "wine_unconfined_override"):
+            raise HTTPException(
+                status_code=422,
+                detail="Safe isolation provider unavailable. Execution blocked to prevent host contamination.",
+            )
+
+        def _apply_rlimits():
+            if os.name == "posix":
+                try:
+                    resource.setrlimit(resource.RLIMIT_CPU, (timeout_seconds + 5, timeout_seconds + 10))
+                except Exception:
+                    pass
+                try:
+                    resource.setrlimit(resource.RLIMIT_FSIZE, (50 * 1024 * 1024, 50 * 1024 * 1024))
+                except Exception:
+                    pass
+                try:
+                    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+                except Exception:
+                    pass
+
         stop_poller = asyncio.Event()
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -306,6 +383,7 @@ async def execute_bytes_sandbox(
                 stderr=asyncio.subprocess.PIPE,
                 env=child_env,
                 close_fds=True,
+                preexec_fn=_apply_rlimits if os.name == "posix" else None,
             )
             main_pid = getattr(proc, "pid", os.getpid())
 
@@ -363,7 +441,12 @@ async def execute_bytes_sandbox(
                     proc.kill()
                 except Exception:
                     pass
-                stderr_data += "\n[OutPost Sandbox] Execution timed out after limit."
+                try:
+                    if hasattr(proc, "pid") and proc.pid:
+                        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                except Exception:
+                    pass
+                stderr_data += f"\n[OutPost Sandbox] Execution timed out after {timeout_seconds}s limit."
                 exit_code = -1
             finally:
                 stop_poller.set()
@@ -465,6 +548,7 @@ async def execute_and_trace(
     timeout_seconds: int = 10,
     custom_args: list[str] | None = None,
     isolation_driver: str = "auto",
+    allow_unconfined_override: bool = False,
 ) -> dict[str, Any]:
     """Execute sample in an isolated sandbox workspace and collect real execution telemetry."""
     with db_session() as conn:
@@ -508,6 +592,7 @@ async def execute_and_trace(
         timeout_seconds=timeout_seconds,
         custom_args=custom_args,
         isolation_driver=isolation_driver,
+        allow_unconfined_override=allow_unconfined_override,
     )
 
     with db_session() as conn:
@@ -868,6 +953,10 @@ async def execute_simulation_scenario_live(scenario_id: str) -> dict[str, Any]:
                 "command_line": stage_cmd,
                 "exe_path": "/bin/sh",
                 "host_id": "local",
+                "provenance": "scripted_simulation",
+                "is_simulated": True,
+                "log_source": "scripted_simulation",
+                "raw_record": json.dumps({"provenance": "scripted_simulation", "is_simulated": True, "stage": stage_name, "cmd": stage_cmd}),
             }
             events.append(proc_ev)
             with db_session() as conn:
@@ -895,6 +984,7 @@ async def execute_simulation_scenario_live(scenario_id: str) -> dict[str, Any]:
                     "stderr": err_s,
                     "exit_code": proc.returncode,
                     "status": "success" if proc.returncode == 0 else "failed",
+                    "provenance": "scripted_stage",
                 })
             except asyncio.TimeoutError:
                 try:
@@ -910,6 +1000,7 @@ async def execute_simulation_scenario_live(scenario_id: str) -> dict[str, Any]:
                     "stderr": "[!] Stage execution timed out",
                     "exit_code": -1,
                     "status": "timeout",
+                    "provenance": "scripted_stage",
                 })
 
         # Scan for created files
@@ -924,6 +1015,10 @@ async def execute_simulation_scenario_live(scenario_id: str) -> dict[str, Any]:
                     "pid": os.getpid(),
                     "file_path": str(p),
                     "host_id": "local",
+                    "provenance": "observed_artifact",
+                    "is_simulated": False,
+                    "log_source": "observed_artifact",
+                    "raw_record": json.dumps({"provenance": "observed_artifact", "is_simulated": False, "file_path": str(p)}),
                 }
                 events.append(fe)
                 with db_session() as conn:
@@ -951,6 +1046,10 @@ async def execute_simulation_scenario_live(scenario_id: str) -> dict[str, Any]:
                 "dest_port": 443,
                 "protocol": "tcp",
                 "host_id": "local",
+                "provenance": "scripted_simulation",
+                "is_simulated": True,
+                "log_source": "scripted_simulation",
+                "raw_record": json.dumps({"provenance": "scripted_simulation", "is_simulated": True, "target": "185.220.101.34:443"}),
             }
             events.append(ne)
             with db_session() as conn:
@@ -1234,6 +1333,8 @@ async def execute_simulation_scenario_stage(
         "command_line": stage_cmd,
         "exe_path": "/bin/sh",
         "host_id": "local",
+        "provenance": "scripted_simulation",
+        "is_simulated": True,
     }
     events.append(proc_ev)
     with db_session() as conn:
@@ -1280,6 +1381,8 @@ async def execute_simulation_scenario_stage(
                 "pid": proc.pid,
                 "file_path": str(p),
                 "host_id": "local",
+                "provenance": "observed_artifact",
+                "is_simulated": False,
             }
             events.append(fe)
             with db_session() as conn:
@@ -1364,7 +1467,7 @@ def extract_syscalls_from_trace(trace_text: str) -> list[dict[str, Any]]:
 
 
 def extract_c2_sinkhole_events(stdout_s: str, stderr_s: str) -> list[dict[str, Any]]:
-    """Simulated C2 / FakeDNS interceptor capturing outbound requests."""
+    """Simulated C2 / FakeDNS indicator extractor parsing outbound requests."""
     combined = stdout_s + "\n" + stderr_s
     requests: list[dict[str, Any]] = []
 
@@ -1375,8 +1478,9 @@ def extract_c2_sinkhole_events(stdout_s: str, stderr_s: str) -> list[dict[str, A
                 "type": "dns_query",
                 "target": d,
                 "record_type": "A",
-                "intercepted_response": "127.0.0.1 (SINKHOLED)",
-                "action": "sinkholed",
+                "intercepted_response": "127.0.0.1 (static regex extraction)",
+                "action": "extracted_indicator",
+                "is_reconstructed": True,
             })
 
     http_methods = re.findall(r"(GET|POST|PUT|DELETE)\s+([/\w\-._~:?#[\]@!$&'()*+,;=]+)\s+HTTP/[0-9.]+", combined)
@@ -1386,8 +1490,9 @@ def extract_c2_sinkhole_events(stdout_s: str, stderr_s: str) -> list[dict[str, A
             "method": method,
             "path": path,
             "target": "simulated_c2",
-            "intercepted_response": "HTTP/1.1 200 OK (SINKHOLE_BEACON_ACK)",
-            "action": "intercepted",
+            "intercepted_response": "HTTP/1.1 200 OK (static regex extraction)",
+            "action": "extracted_indicator",
+            "is_reconstructed": True,
         })
 
     urls = set(re.findall(r"https?://[^\s\"'<>]+", combined))
@@ -1395,8 +1500,9 @@ def extract_c2_sinkhole_events(stdout_s: str, stderr_s: str) -> list[dict[str, A
         requests.append({
             "type": "outbound_url",
             "target": u,
-            "intercepted_response": "Intercepted by OutPost Sandbox Sinkhole",
-            "action": "sinkholed",
+            "intercepted_response": "Extracted from process stdout/stderr",
+            "action": "extracted_indicator",
+            "is_reconstructed": True,
         })
 
     return requests[:50]
@@ -1410,7 +1516,8 @@ async def execute_sample_detonation(
     timeout_seconds: int = 15,
     isolation_driver: str = "auto",
     on_telemetry_event: Any = None,
-    network_mode: str = "sinkhole",
+    network_mode: str = "isolated",
+    allow_unconfined_override: bool = False,
 ) -> dict[str, Any]:
     """Execute uploaded malware sample bytes in an isolated dynamic sandbox, collect telemetry, and evaluate alerts."""
     run_id = f"dyn_{uuid.uuid4().hex[:12]}"
@@ -1442,6 +1549,7 @@ async def execute_sample_detonation(
         isolation_driver=isolation_driver,
         on_telemetry_event=on_telemetry_event,
         network_mode=network_mode,
+        allow_unconfined_override=allow_unconfined_override,
     )
 
     # Compute post-detonation differential delta

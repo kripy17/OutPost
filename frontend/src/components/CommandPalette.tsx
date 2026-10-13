@@ -95,7 +95,7 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
       ...syntaxItems,
       {
         kind: "action",
-        label: "🌓 Toggle Theme (Dark / Light)",
+        label: "Toggle Theme (Dark / Light)",
         hint: "Switch between Dark tactical mode and Clean Light mode",
         icon: "sun" as IconName,
         onRun: () => {
@@ -112,7 +112,7 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
       },
       {
         kind: "action",
-        label: "⚡ Theme: Phosphor Matrix (Hacker)",
+        label: "Theme: Phosphor Matrix (Hacker)",
         hint: "CRT terminal obsidian & phosphor emerald glow",
         icon: "sliders" as IconName,
         onRun: () => {
@@ -123,7 +123,7 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
       },
       {
         kind: "action",
-        label: "🌆 Theme: Cyberpunk Neon (Synthwave)",
+        label: "Theme: Cyberpunk Neon (Synthwave)",
         hint: "Night City abyss, neon rose & laser cyan",
         icon: "sliders" as IconName,
         onRun: () => {
@@ -134,7 +134,7 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
       },
       {
         kind: "action",
-        label: "🛰️ Theme: Mission Control (Aerospace)",
+        label: "Theme: Mission Control (Aerospace)",
         hint: "Deep space navy & telemetry gold",
         icon: "sliders" as IconName,
         onRun: () => {
@@ -145,7 +145,7 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
       },
       {
         kind: "action",
-        label: "🟣 Theme: Amethyst Void (Cyber)",
+        label: "Theme: Amethyst Void (Cyber)",
         hint: "Royal violet obsidian & radiant magenta",
         icon: "sliders" as IconName,
         onRun: () => {
@@ -156,7 +156,7 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
       },
       {
         kind: "action",
-        label: "❄️ Theme: Nordic Glacier (Nord Frost)",
+        label: "Theme: Nordic Glacier (Nord Frost)",
         hint: "Polar night & aurora cyan atmosphere",
         icon: "sliders" as IconName,
         onRun: () => {
@@ -167,7 +167,7 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
       },
       {
         kind: "action",
-        label: "🪵 Theme: Monokai Carbon (Pro Dark)",
+        label: "Theme: Monokai Carbon (Pro Dark)",
         hint: "Warm charcoal & studio amber gold",
         icon: "sliders" as IconName,
         onRun: () => {
@@ -178,7 +178,7 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
       },
       {
         kind: "action",
-        label: "🎨 Palette: Emerald (Cyber Green)",
+        label: "Palette: Emerald (Cyber Green)",
         hint: "High-contrast phosphor green tactical palette",
         icon: "sliders" as IconName,
         onRun: () => {
@@ -191,7 +191,7 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
       },
       {
         kind: "action",
-        label: "🎨 Palette: Amber (Tactical Gold)",
+        label: "Palette: Amber (Tactical Gold)",
         hint: "Industrial gold & tactical telemetry palette",
         icon: "sliders" as IconName,
         onRun: () => {
@@ -204,7 +204,7 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
       },
       {
         kind: "action",
-        label: "🎨 Palette: Amethyst (Cyber Violet)",
+        label: "Palette: Amethyst (Cyber Violet)",
         hint: "Deep purple & neon violet palette",
         icon: "sliders" as IconName,
         onRun: () => {
@@ -217,70 +217,70 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
       },
       {
         kind: "action",
-        label: "⚡ Run Live Adversary Emulation",
+        label: "Run Live Adversary Emulation",
         hint: "Trigger real-time attack simulation in the sandbox",
         icon: "activity" as IconName,
         to: "/monitor",
       },
       {
         kind: "action",
-        label: "📦 Upload & Detonate Binary Sample",
+        label: "Upload & Detonate Binary Sample",
         hint: "Execute suspicious file in isolated dynamic environment",
         icon: "box" as IconName,
         to: "/samples",
       },
       {
         kind: "action",
-        label: "🛡️ Author New Sigma Detection Rule",
+        label: "Author New Sigma Detection Rule",
         hint: "Open SigmaHQ detection workbench editor",
         icon: "shield" as IconName,
         to: "/rules?create=1",
       },
       {
         kind: "action",
-        label: "📝 Open Incident Investigation Case",
+        label: "Open Incident Investigation Case",
         hint: "Spin up a new forensic case dossier",
         icon: "notes" as IconName,
         to: "/investigations?create=1",
       },
       {
         kind: "action",
-        label: "🌐 Digital Footprint & Topology",
+        label: "Digital Footprint & Topology",
         hint: "View network topology graph & cluster connections",
         icon: "network" as IconName,
         to: "/footprint",
       },
       {
         kind: "action",
-        label: "🎯 MITRE ATT&CK Matrix Heatmap",
+        label: "MITRE ATT&CK Matrix Heatmap",
         hint: "Analyze enterprise detection coverage and gap metrics",
         icon: "target" as IconName,
         to: "/coverage",
       },
       {
         kind: "action",
-        label: "📡 Sensor Fleet Agent Setup",
+        label: "Sensor Fleet Agent Setup",
         hint: "Deploy eBPF, Sysmon & EndpointSecurity collectors",
         icon: "terminal" as IconName,
         to: "/agents",
       },
       {
         kind: "action",
-        label: "⭐ Threat Infrastructure Watchlist",
+        label: "Threat Infrastructure Watchlist",
         hint: "Inspect monitored adversary IPs, domains, and hashes",
         icon: "star" as IconName,
         to: "/watchlist",
       },
       {
         kind: "action",
-        label: "📜 Audit Trail & Write Provenance",
+        label: "Audit Trail & Write Provenance",
         hint: "View tamper-evident action logs and export CSV",
         icon: "notes" as IconName,
         to: "/audit",
       },
       {
         kind: "action",
-        label: "🔤 Font: JetBrains Mono",
+        label: "Font: JetBrains Mono",
         hint: "Apply developer monospace ligatures",
         icon: "terminal" as IconName,
         onRun: () => {
@@ -291,7 +291,7 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
       },
       {
         kind: "action",
-        label: "🔤 Font: Fira Code",
+        label: "Font: Fira Code",
         hint: "Apply clean geometric monospace",
         icon: "terminal" as IconName,
         onRun: () => {
@@ -302,7 +302,7 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
       },
       {
         kind: "action",
-        label: "🔤 Font: IBM Plex Mono (Default)",
+        label: "Font: IBM Plex Mono (Default)",
         hint: "Restore default high-contrast SOC typography",
         icon: "terminal" as IconName,
         onRun: () => {
@@ -313,7 +313,7 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
       },
       {
         kind: "action",
-        label: "📐 UI Density: Compact (90%)",
+        label: "UI Density: Compact (90%)",
         hint: "High information density for SOC multi-monitors",
         icon: "sliders" as IconName,
         onRun: () => {
@@ -324,7 +324,7 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
       },
       {
         kind: "action",
-        label: "📐 UI Density: Standard (100%)",
+        label: "UI Density: Standard (100%)",
         hint: "Optimal balance for desktop workstations",
         icon: "sliders" as IconName,
         onRun: () => {
@@ -335,7 +335,7 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
       },
       {
         kind: "action",
-        label: "📐 UI Density: Comfortable (110%)",
+        label: "UI Density: Comfortable (110%)",
         hint: "Enlarged interface for wallboards and high-DPI",
         icon: "sliders" as IconName,
         onRun: () => {

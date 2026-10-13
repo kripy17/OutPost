@@ -32,7 +32,7 @@ AUDIT_LOG = "/var/log/audit/audit.log"
 # (syscall + pid), type=EXECVE (program args), type=SOCKADDR (connect dest).
 # Match all three so execve and connect are actually parsed; the body decides
 # which handler applies.
-_AUDIT_RE = re.compile(r"type=([A-Z]+) msg=audit\(([\d.]+):\d+\):\s*(.+)")
+_AUDIT_RE = re.compile(r"type=([A-Z]+) msg=audit\(([\d.]+):(\d+)\):\s*(.+)")
 
 
 def _pid_from_syscall(body: str) -> int | None:
@@ -83,17 +83,38 @@ def _body_comm_exe(body: str) -> tuple[str | None, str | None]:
     return (comm.group(1) if comm else None, exe.group(1) if exe else None)
 
 
+
+def _ppid_from_syscall(body: str) -> int | None:
+    m = re.search(r"\bppid=(\d+)", body)
+    return int(m.group(1)) if m else None
+
+
+def _decode_audit_arg(val: str) -> str:
+    if val.startswith('"') and val.endswith('"'):
+        return val[1:-1]
+    try:
+        return bytes.fromhex(val).decode("utf-8", errors="replace")
+    except Exception:
+        return val
+
+
+def _parse_execve_args(body: str) -> str | None:
+    # Match args="a,b,c" or a0="val" a1="val"
+    m_args = re.search(r'args="([^"]*)"', body)
+    if m_args:
+        return " ".join(m_args.group(1).split(","))
+    matches = re.findall(r'\ba\d+=("[^"]*"|\S+)', body)
+    if matches:
+        return " ".join(_decode_audit_arg(m) for m in matches)
+    return None
+
+
 def parse_audit_line(line: str, pid_cache: dict, conn_state: dict | None = None) -> dict | None:
     """Parse one audit.log line into a unified-schema event dict.
 
-    `conn_state` (per-run dict, lives across lines) correlates the two records
-    auditd emits for one connect: the SYSCALL record carries identity (pid /
-    comm / exe) but NO saddr, the SOCKADDR record carries saddr but NO
-    identity. Without the merge, each connect became two events — an
-    identity-only row (process_name present, no dest) and a dest-only row
-    (dest present, process_name None) — the real-feed fidelity gap that left
-    ~half the network events unnamed. Soak/gate feeds that put saddr inline
-    on the SYSCALL record are untouched (complete event, stash never used).
+    Extracts parent PID, process arguments, exit status, and user directly from
+    kernel audit records, surviving short-lived processes without racy /proc reads.
+    `conn_state` correlates multi-record syscalls (SYSCALL + SOCKADDR, SYSCALL + EXECVE).
     """
     if "audit(" not in line:
         return None
@@ -101,41 +122,66 @@ def parse_audit_line(line: str, pid_cache: dict, conn_state: dict | None = None)
     m = _AUDIT_RE.match(line)
     if not m:
         return None
-    record_type, ts, body = m.groups()
+    record_type, ts, seq, body = m.groups()
+    source_event_id = f"auditd:{ts}:{seq}"
 
     if record_type == "EXECVE" or "execve" in body or "syscall=59" in body:
-        # Process-create: pid lives on the SYSCALL record (EXECVE records
-        # carry a0= program args instead). Name fallback chain: /proc comm
-        # (live process) → SYSCALL body comm= (kernel-stamped, survives
-        # short-lived procs) → a0="name" (EXECVE args).
         pid = _pid_from_syscall(body)
-        if pid in pid_cache:
-            return None  # execve may repeat; dedup per pid
-        pid_cache[pid] = True
-        ppid, proc_comm = _ppid_and_comm(pid) if pid else (None, None)
+        if pid is not None:
+            if pid in pid_cache:
+                return None  # execve may repeat; dedup per pid
+            pid_cache[pid] = True
+
+        # Kernel-stamped fields directly from the audit record
+        ppid = _ppid_from_syscall(body)
+        proc_comm = None
+        if ppid is None and pid:
+            ppid, proc_comm = _ppid_and_comm(pid)
+
         body_comm, exe_path = _body_comm_exe(body)
-        # Body comm= is kernel-stamped for THIS syscall — ground truth that
-        # survives short-lived procs and pid reuse. /proc is only a fallback
-        # (racy: the process may be gone or the pid reused by the time the
-        # collector reads it — CI caught pid 2022 resolving to an unrelated
-        # live process).
         comm = body_comm or proc_comm
         if not comm:
             a0 = re.search(r'a0="([^"]*)"', body)
             comm = a0.group(1) if a0 else None
+
+        # Command line: prefer kernel-stamped EXECVE/args over racy /proc
+        cmdline = _parse_execve_args(body)
+        if not cmdline and pid:
+            cmdline = _cmdline(pid)
+
+        # Correlate EXECVE argument records with previous SYSCALL record if needed
+        ts_float = float(ts)
+        if conn_state is not None:
+            if record_type == "SYSCALL" and not cmdline:
+                # Hold pending EXECVE record
+                conn_state["execve"] = (ts_float, seq, pid, ppid, comm, exe_path, source_event_id)
+            elif record_type == "EXECVE":
+                stashed = conn_state.get("execve")
+                if stashed and abs(stashed[0] - ts_float) < 1.0:
+                    _ts_f, _seq, s_pid, s_ppid, s_comm, s_exe, s_sid = stashed
+                    pid = s_pid or pid
+                    ppid = s_ppid or ppid
+                    comm = s_comm or comm
+                    exe_path = s_exe or exe_path
+                    source_event_id = s_sid or source_event_id
+                    conn_state["execve"] = None
+
+        m_uid = re.search(r"\b(?:uid|euid|auid)=(\d+)", body)
+        user = m_uid.group(1) if m_uid else None
+
         return {
             "platform": "linux",
-            "log_source": "auditd",  # the collector's own channel — explicit
+            "log_source": "auditd",
             "event_type": "process_create",
             "timestamp": _ts(ts),
             "pid": pid,
             "ppid": ppid,
             "process_name": comm,
-            "command_line": _cmdline(pid) if pid else None,
+            "command_line": cmdline,
             "exe_path": exe_path,
-            # The raw auditd record — the Event Viewer's "raw record" pane
-            # pivots a normalized row back to the exact source line (the
-            # backend keeps it when the collector provides it).
+            "user": user,
+            "source_event_id": source_event_id,
+            "process_start_time": _ts(ts),
             "raw_record": line.strip(),
         }
 
@@ -152,12 +198,14 @@ def parse_audit_line(line: str, pid_cache: dict, conn_state: dict | None = None)
             if pid is not None and ip is None:
                 # The SYSCALL half: identity without a destination. Hold it
                 # for the SOCKADDR record that follows at the same timestamp.
-                conn_state["identity"] = (ts_float, pid, comm, exe_path)
+                conn_state["identity"] = (ts_float, pid, comm, exe_path, source_event_id)
                 return None
             if pid is None:
                 stashed = conn_state.get("identity")
                 if stashed and abs(stashed[0] - ts_float) < 1.0:
-                    _ts_s, _pid, _comm, _exe = stashed
+                    _ts_s, _pid, _comm, _exe = stashed[:4]
+                    if len(stashed) > 4:
+                        source_event_id = stashed[4]
                     pid, comm, exe_path = _pid, _comm or comm, _exe or exe_path
                     conn_state["identity"] = None  # consumed
         if ip is None:
@@ -166,6 +214,10 @@ def parse_audit_line(line: str, pid_cache: dict, conn_state: dict | None = None)
             # network rules and only bloats the Event Log. The real-feed
             # re-measurement showed ~44% of events were these.
             return None
+        succ_m = re.search(r"\bsuccess=(yes|no)", body)
+        exit_m = re.search(r"\bexit=(-?\d+)", body)
+        conn_status = "established" if (succ_m and succ_m.group(1) == "yes") or (exit_m and exit_m.group(1) == "0") else "attempted"
+
         return {
             "platform": "linux",
             "log_source": "auditd",  # the collector's own channel — explicit
@@ -178,9 +230,33 @@ def parse_audit_line(line: str, pid_cache: dict, conn_state: dict | None = None)
             "dest_ip": ip,
             "dest_port": port,
             "protocol": "TCP",
+            "connection_status": conn_status,
+            "source_event_id": source_event_id,
             # See the process_create branch — same raw-record pivot.
             "raw_record": line.strip(),
         }
+
+    # File creation, deletion, rename, and permission modifications
+    if any(k in body for k in ("vantage_file", "syscall=82", "syscall=257", "syscall=87", "syscall=263", "syscall=90", "syscall=268")) or record_type == "PATH":
+        name_m = re.search(r'name="([^"]*)"', body)
+        if name_m:
+            path = name_m.group(1)
+            is_del = "unlink" in body or "syscall=87" in body or "syscall=263" in body
+            pid = _pid_from_syscall(body)
+            body_comm, exe_path = _body_comm_exe(body)
+            return {
+                "platform": "linux",
+                "log_source": "auditd",
+                "event_type": "file_delete" if is_del else "file_write",
+                "timestamp": _ts(ts),
+                "pid": pid,
+                "ppid": _ppid_from_syscall(body),
+                "process_name": body_comm,
+                "exe_path": exe_path,
+                "file_path": path,
+                "source_event_id": source_event_id,
+                "raw_record": line.strip(),
+            }
 
     return None
 

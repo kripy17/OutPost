@@ -90,7 +90,7 @@
   --glow-clean: 0 0 0 1px rgba(15, 118, 110, 0.4), 0 1px 2px rgba(23, 25, 31, 0.08);
 }
 
-/* ⚡ Phosphor Matrix — CRT terminal green & deep obsidian */
+/* Phosphor Matrix — CRT terminal green & deep obsidian */
 [data-theme="matrix"] {
   --bg-base: #050805;
   --bg-surface: #0a120b;
@@ -126,7 +126,7 @@
   --glow-clean: 0 0 0 1px rgba(16, 185, 129, 0.45), 0 1px 2px rgba(0, 0, 0, 0.5);
 }
 
-/* 🌆 Cyberpunk Neon — Synthwave purple abyss & electric rose */
+/* Cyberpunk Neon — Synthwave purple abyss & electric rose */
 [data-theme="cyberpunk"] {
   --bg-base: #0b0817;
   --bg-surface: #140e28;
@@ -162,7 +162,7 @@
   --glow-clean: 0 0 0 1px rgba(6, 182, 212, 0.45), 0 1px 2px rgba(0, 0, 0, 0.5);
 }
 
-/* 🛰️ Mission Control — Aerospace telemetry & command gold */
+/* Mission Control — Aerospace telemetry & command gold */
 [data-theme="mission"] {
   --bg-base: #080e1a;
   --bg-surface: #0f1a2e;
@@ -198,7 +198,7 @@
   --glow-clean: 0 0 0 1px rgba(56, 189, 248, 0.45), 0 1px 2px rgba(0, 0, 0, 0.5);
 }
 
-/* ❄️ Nordic Polar — Nord frost snow & aurora cyan */
+/* Nordic Polar — Nord frost snow & aurora cyan */
 [data-theme="nordic"] {
   --bg-base: #242933;
   --bg-surface: #2e3440;
@@ -234,7 +234,7 @@
   --glow-clean: 0 0 0 1px rgba(163, 190, 140, 0.45), 0 1px 2px rgba(0, 0, 0, 0.5);
 }
 
-/* 🪵 Monokai Pro — Dark carbon & warm studio yellow */
+/* Monokai Pro — Dark carbon & warm studio yellow */
 [data-theme="monokai"] {
   --bg-base: #18181b;
   --bg-surface: #27272a;
@@ -270,7 +270,7 @@
   --glow-clean: 0 0 0 1px rgba(34, 197, 94, 0.45), 0 1px 2px rgba(0, 0, 0, 0.5);
 }
 
-/* 🟣 Amethyst Void — Deep cyber violet & radiant magenta */
+/* Amethyst Void — Deep cyber violet & radiant magenta */
 [data-theme="amethyst"] {
   --bg-base: #0a0714;
   --bg-surface: #130e24;

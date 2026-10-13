@@ -238,8 +238,13 @@ export default function EventsPage() {
       {/* Action Notice if any */}
       {actionMessage && (
         <div className="rounded-xl border border-signal/50 bg-signal/15 px-4 py-2 text-xs text-signal font-mono flex items-center justify-between">
-          <span>✓ {actionMessage}</span>
-          <button onClick={() => setActionMessage(null)} className="text-text-muted hover:text-text-primary">✕</button>
+          <div className="flex items-center gap-1.5">
+            <Icon name="check" size={13} />
+            <span>{actionMessage}</span>
+          </div>
+          <button onClick={() => setActionMessage(null)} className="text-text-muted hover:text-text-primary p-0.5" aria-label="Dismiss notice">
+            <Icon name="x" size={13} />
+          </button>
         </div>
       )}
 
@@ -261,8 +266,9 @@ export default function EventsPage() {
                 onClick={() => handleSearchChange("")}
                 className="absolute right-2.5 top-1/2 -translate-y-1/2 text-text-faint hover:text-text-primary"
                 title="Clear filter"
+                aria-label="Clear filter"
               >
-                ✕
+                <Icon name="x" size={12} />
               </button>
             )}
           </div>
@@ -457,7 +463,7 @@ export default function EventsPage() {
           onClick={() => setInspectEvent(null)}
         >
           <div
-            className="h-full w-full max-w-lg bg-[#0B0E14] border-l border-border-subtle p-6 overflow-y-auto space-y-5 font-mono text-xs shadow-2xl animate-in slide-in-from-right duration-200"
+            className="h-full w-full max-w-lg bg-bg-surface border-l border-border-subtle p-6 overflow-y-auto space-y-5 font-mono text-xs shadow-2xl animate-in slide-in-from-right duration-200"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header */}
@@ -488,8 +494,9 @@ export default function EventsPage() {
               <button
                 onClick={() => setInspectEvent(null)}
                 className="press rounded-lg p-1.5 text-text-faint hover:text-text-primary hover:bg-bg-elevated"
+                aria-label="Close event drawer"
               >
-                ✕
+                <Icon name="x" size={14} />
               </button>
             </div>
 

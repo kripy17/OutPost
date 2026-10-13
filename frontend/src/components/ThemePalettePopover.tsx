@@ -1,25 +1,24 @@
 import { useEffect, useRef, useState } from "react";
-import { IconMoon, IconSun } from "./Icon";
+import { Icon, IconMoon, IconSun } from "./Icon";
 
 export interface ThemePreset {
   id: string;
   name: string;
   badge: string;
-  icon: string;
   desc: string;
   bgDot: string;
   accentDot: string;
 }
 
 export const THEME_PRESETS: ThemePreset[] = [
-  { id: "dark", name: "Midnight Obsidian", badge: "Default", icon: "🌌", desc: "Cyber obsidian base & electric indigo accent", bgDot: "bg-[#090a0f]", accentDot: "bg-[#6366f1]" },
-  { id: "matrix", name: "Phosphor Matrix", badge: "Hacker", icon: "⚡", desc: "CRT terminal obsidian & phosphor emerald", bgDot: "bg-[#050805]", accentDot: "bg-[#10b981]" },
-  { id: "cyberpunk", name: "Cyberpunk Neon", badge: "Synthwave", icon: "🌆", desc: "Night City abyss & neon rose lasers", bgDot: "bg-[#0b0817]", accentDot: "bg-[#f43f5e]" },
-  { id: "mission", name: "Mission Control", badge: "Aerospace", icon: "🛰️", desc: "Deep space navy & telemetry gold", bgDot: "bg-[#080e1a]", accentDot: "bg-[#f59e0b]" },
-  { id: "amethyst", name: "Amethyst Void", badge: "Cyber", icon: "🟣", desc: "Royal violet obsidian & radiant magenta", bgDot: "bg-[#0a0714]", accentDot: "bg-[#a855f7]" },
-  { id: "nordic", name: "Nordic Glacier", badge: "Nord", icon: "❄️", desc: "Polar night & aurora cyan frost", bgDot: "bg-[#242933]", accentDot: "bg-[#88c0d0]" },
-  { id: "monokai", name: "Monokai Carbon", badge: "Pro", icon: "🪵", desc: "Warm carbon & studio amber gold", bgDot: "bg-[#18181b]", accentDot: "bg-[#eab308]" },
-  { id: "light", name: "Arctic Frost", badge: "Light", icon: "🧊", desc: "Clean modern high-contrast daylight", bgDot: "bg-[#f8fafc]", accentDot: "bg-[#2563eb]" },
+  { id: "dark", name: "Midnight Obsidian", badge: "Default", desc: "Cyber obsidian base & electric indigo accent", bgDot: "bg-[#090a0f]", accentDot: "bg-[#6366f1]" },
+  { id: "matrix", name: "Phosphor Matrix", badge: "Hacker", desc: "CRT terminal obsidian & phosphor emerald", bgDot: "bg-[#050805]", accentDot: "bg-[#10b981]" },
+  { id: "cyberpunk", name: "Cyberpunk Neon", badge: "Synthwave", desc: "Night City abyss & neon rose lasers", bgDot: "bg-[#0b0817]", accentDot: "bg-[#f43f5e]" },
+  { id: "mission", name: "Mission Control", badge: "Aerospace", desc: "Deep space navy & telemetry gold", bgDot: "bg-[#080e1a]", accentDot: "bg-[#f59e0b]" },
+  { id: "amethyst", name: "Amethyst Void", badge: "Cyber", desc: "Royal violet obsidian & radiant magenta", bgDot: "bg-[#0a0714]", accentDot: "bg-[#a855f7]" },
+  { id: "nordic", name: "Nordic Glacier", badge: "Nord", desc: "Polar night & aurora cyan frost", bgDot: "bg-[#242933]", accentDot: "bg-[#88c0d0]" },
+  { id: "monokai", name: "Monokai Carbon", badge: "Pro", desc: "Warm carbon & studio amber gold", bgDot: "bg-[#18181b]", accentDot: "bg-[#eab308]" },
+  { id: "light", name: "Arctic Frost", badge: "Light", desc: "Clean modern high-contrast daylight", bgDot: "bg-[#f8fafc]", accentDot: "bg-[#2563eb]" },
 ];
 
 export interface PaletteOption {
@@ -119,7 +118,7 @@ export function ThemePalettePopover({
           {/* Header */}
           <div className="flex items-center justify-between border-b border-border-subtle pb-2.5">
             <div className="flex items-center gap-1.5">
-              <span className="text-sm">🎨</span>
+              <Icon name="sliders" size={14} className="text-accent" />
               <span className="font-sans text-xs font-bold uppercase tracking-wider text-text-primary">
                 Theme Studio
               </span>
@@ -165,7 +164,9 @@ export function ThemePalettePopover({
                     }`}
                   >
                     <div className="flex items-center gap-2.5">
-                      <span className="text-base">{t.icon}</span>
+                      <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded border border-border-strong bg-bg-surface overflow-hidden">
+                        <span className={`h-2.5 w-2.5 rounded-full ${t.accentDot}`} />
+                      </div>
                       <div>
                         <div className="flex items-center gap-1.5">
                           <span className={`text-xs font-semibold ${isCurrent ? "text-accent font-bold" : "text-text-primary"}`}>
@@ -219,7 +220,7 @@ export function ThemePalettePopover({
 
           {/* Footer Live Status */}
           <div className="mt-3 flex items-center justify-between border-t border-border-subtle pt-2 text-[10px] text-text-faint">
-            <span>✨ Saved in local browser session</span>
+            <span>Saved in local browser session</span>
             <button
               onClick={() => {
                 applyThemePreset("dark");

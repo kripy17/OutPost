@@ -24,7 +24,7 @@ from ..models import audit
 from ..models import event as event_store
 from ..models import findings as findings_store
 from ..models import run as run_store
-from ..models.event import _parse_related_pids
+from ..models.event import _parse_evidence_event_ids, _parse_related_pids
 from ..models.run import SYNTHETIC_SOURCES
 from ..services.alert_context import attach_intel
 
@@ -144,6 +144,7 @@ def update_alert_status(alert_id: int, body: AlertPatchIn, request: Request) -> 
         row = conn.execute("SELECT * FROM alerts WHERE id = ?", (alert_id,)).fetchone()
     d = dict(row)
     _parse_related_pids(d)
+    _parse_evidence_event_ids(d)
     return Alert(**d)
 
 
@@ -328,6 +329,7 @@ def list_recent_alerts(limit: int = 20, provenance: str = "") -> list[dict]:
         attach_intel(out, conn)
     for d in out:
         _parse_related_pids(d)
+        _parse_evidence_event_ids(d)
     return out
 
 

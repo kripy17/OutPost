@@ -231,7 +231,10 @@ function SimulationTacticColumn({
                 <p className="mt-1.5 text-[11px] text-text-muted line-clamp-2 leading-relaxed">{t.description}</p>
 
                 <div className="mt-2 flex items-center justify-between border-t border-border-subtle/50 pt-2">
-                  <span className="font-mono text-[9px] text-emerald-400">✓ Cleanup contract</span>
+                  <span className="inline-flex items-center gap-1 font-mono text-[9px] text-emerald-400">
+                    <Icon name="check" size={10} />
+                    <span>Cleanup contract</span>
+                  </span>
                   <button
                     type="button"
                     disabled={runningTestId === t.id}
@@ -481,7 +484,7 @@ export default function CoveragePage() {
           </div>
 
           {activeTestResult.stdout && (
-            <div className="rounded bg-[#0a0c10] p-2 text-[10px] text-emerald-400 max-h-24 overflow-y-auto">
+            <div className="rounded border border-border-subtle bg-bg-inset p-2 text-[10px] text-emerald-400 max-h-24 overflow-y-auto">
               <pre className="whitespace-pre-wrap">{activeTestResult.stdout}</pre>
             </div>
           )}

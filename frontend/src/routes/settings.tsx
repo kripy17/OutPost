@@ -219,7 +219,12 @@ function ThemePalettePanel() {
               Reset to Default
             </button>
           )}
-          {titleSaved && <span className="font-mono text-xs text-risk-clean">✓ Title updated across console</span>}
+          {titleSaved && (
+            <span className="inline-flex items-center gap-1 font-mono text-xs text-risk-clean">
+              <Icon name="check" size={11} />
+              <span>Title updated across console</span>
+            </span>
+          )}
         </div>
         <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
           <span className="font-mono text-[10px] text-text-faint">Presets:</span>
@@ -256,7 +261,10 @@ function ThemePalettePanel() {
               >
                 <div>
                   <div className="flex items-center justify-between">
-                    <span className="text-base">{t.icon}</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className={`h-3 w-3 rounded-full border border-border-strong ${t.bgDot}`} />
+                      <span className={`h-3 w-3 rounded-full ${t.accentDot}`} />
+                    </div>
                     <span className="rounded bg-bg-elevated px-1.5 py-0.5 font-mono text-[9px] font-semibold text-text-muted uppercase">
                       {t.badge}
                     </span>
@@ -265,14 +273,11 @@ function ThemePalettePanel() {
                   <p className="mt-0.5 text-[10px] text-text-muted">{t.desc}</p>
                 </div>
 
-                <div className="mt-3 flex items-center justify-between border-t border-border-subtle/60 pt-2">
-                  <div className="flex items-center gap-1.5">
-                    <span className={`h-3 w-3 rounded-full border border-border-strong ${t.bgDot}`} />
-                    <span className={`h-3 w-3 rounded-full ${t.accentDot}`} />
-                  </div>
+                <div className="mt-3 flex items-center justify-end border-t border-border-subtle/60 pt-2 min-h-[22px]">
                   {isCurrent && (
-                    <span className="font-mono text-[9px] font-bold text-accent uppercase">
-                      ✓ Active
+                    <span className="inline-flex items-center gap-1 font-mono text-[9px] font-bold text-accent uppercase">
+                      <Icon name="check" size={10} />
+                      <span>Active</span>
                     </span>
                   )}
                 </div>
@@ -335,7 +340,7 @@ function ThemePalettePanel() {
                   <div className="font-mono text-xs text-text-primary">{f.name}</div>
                   <div className="text-[10px] text-text-faint">{f.desc}</div>
                 </div>
-                {isCurrent && <span className="font-mono text-xs text-accent">✓</span>}
+                {isCurrent && <Icon name="check" size={12} className="text-accent" />}
               </button>
             );
           })}
@@ -365,7 +370,7 @@ function ThemePalettePanel() {
                   <div className="text-xs font-semibold text-text-primary">{d.name}</div>
                   <div className="text-[10px] text-text-faint">{d.desc}</div>
                 </div>
-                {isCurrent && <span className="font-mono text-xs text-accent">✓</span>}
+                {isCurrent && <Icon name="check" size={12} className="text-accent" />}
               </button>
             );
           })}
@@ -824,9 +829,9 @@ function IntelKeysPanel() {
                 )}
               </div>
               {results[k.name]?.detail && (
-                <p className={`mt-2 font-mono text-[10px] ${results[k.name]?.ok ? "text-risk-clean" : "text-risk-malicious"}`}>
-                  {results[k.name]?.ok ? "✓ " : "✗ "}
-                  {results[k.name]?.detail}
+                <p className={`mt-2 font-mono text-[10px] inline-flex items-center gap-1.5 ${results[k.name]?.ok ? "text-risk-clean" : "text-risk-malicious"}`}>
+                  <Icon name={results[k.name]?.ok ? "check" : "x"} size={10} />
+                  <span>{results[k.name]?.detail}</span>
                 </p>
               )}
               {/* Rotation hint — a stored key past 90 days is flagged so
@@ -863,8 +868,9 @@ function IntelKeysPanel() {
             )}
           </div>
           {sweep.data && (
-            <p className="mt-2 font-mono text-[10px] text-risk-clean">
-              ✓ refreshed {sweep.data.refreshed} stale verdict{sweep.data.refreshed === 1 ? "" : "s"}
+            <p className="mt-2 font-mono text-[10px] text-risk-clean inline-flex items-center gap-1.5">
+              <Icon name="check" size={10} />
+              <span>refreshed {sweep.data.refreshed} stale verdict{sweep.data.refreshed === 1 ? "" : "s"}</span>
             </p>
           )}
         </div>
@@ -1074,11 +1080,11 @@ export default function SettingsPage() {
       let body: any;
       if (channel === "slack") {
         body = JSON.stringify({
-          text: `🚨 *[OutPost Connectivity Test]* - Verification payload sent from SOC console at ${new Date().toLocaleTimeString()}`,
+          text: `*[OutPost Connectivity Test]* - Verification payload sent from SOC console at ${new Date().toLocaleTimeString()}`,
         });
       } else if (channel === "discord") {
         body = JSON.stringify({
-          content: `🚨 **[OutPost Connectivity Test]** - Verification payload sent at ${new Date().toLocaleTimeString()}`,
+          content: `**[OutPost Connectivity Test]** - Verification payload sent at ${new Date().toLocaleTimeString()}`,
           embeds: [
             {
               title: "OutPost Channel Test",

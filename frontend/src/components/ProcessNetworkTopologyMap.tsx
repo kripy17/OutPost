@@ -189,7 +189,7 @@ export default function ProcessNetworkTopologyMap({
   return (
     <div
       ref={containerRef}
-      className="relative w-full rounded-2xl border border-zinc-800 bg-[#090d16] overflow-hidden select-none font-sans"
+      className="relative w-full rounded-2xl border border-border-subtle bg-bg-base overflow-hidden select-none font-sans"
       style={{ height }}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
@@ -209,10 +209,10 @@ export default function ProcessNetworkTopologyMap({
       {/* Top Controls Bar */}
       <div className="absolute top-3 left-4 right-4 z-20 flex flex-wrap items-center justify-between gap-2 pointer-events-none">
         <div className="flex items-center gap-2 pointer-events-auto">
-          <div className="flex items-center gap-1.5 rounded-lg border border-zinc-800 bg-zinc-950/85 backdrop-blur-md px-3 py-1.5 shadow-sm text-xs">
+          <div className="flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-surface/90 backdrop-blur-md px-3 py-1.5 shadow-sm text-xs">
             <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="font-semibold text-zinc-100">Live Process &amp; Socket Topology</span>
-            <span className="text-zinc-500 text-[11px]">({procNodes.length} Processes · {socketNodes.length} Sockets)</span>
+            <span className="font-semibold text-text-primary">Live Process &amp; Socket Topology</span>
+            <span className="text-text-faint text-[11px]">({procNodes.length} Processes · {socketNodes.length} Sockets)</span>
           </div>
 
           <div className="relative">
@@ -221,9 +221,9 @@ export default function ProcessNetworkTopologyMap({
               value={filterQuery}
               onChange={(e) => setFilterQuery(e.target.value)}
               placeholder="Search PID / Name in Topology..."
-              className="w-48 rounded-lg border border-zinc-800 bg-zinc-950/90 py-1 pl-7 pr-2.5 text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-blue-500 outline-none"
+              className="w-48 rounded-lg border border-border-subtle bg-bg-base/90 py-1 pl-7 pr-2.5 text-xs text-text-primary placeholder:text-text-faint focus:border-accent outline-none"
             />
-            <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-zinc-500">
+            <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-text-faint">
               <Icon name="search" size={11} />
             </span>
           </div>
@@ -236,26 +236,26 @@ export default function ProcessNetworkTopologyMap({
             className={`rounded-lg border px-2.5 py-1 text-xs font-medium transition ${
               anomaliesOnly
                 ? "border-rose-500/60 bg-rose-500/20 text-rose-300"
-                : "border-zinc-800 bg-zinc-950/85 text-zinc-400 hover:text-zinc-200"
+                : "border-border-subtle bg-bg-surface/90 text-text-muted hover:text-text-primary"
             }`}
           >
             {anomaliesOnly ? "Anomalies Only (Active)" : "All Processes"}
           </button>
 
-          <div className="flex items-center rounded-lg border border-zinc-800 bg-zinc-950/85 p-0.5 text-xs text-zinc-400">
+          <div className="flex items-center rounded-lg border border-border-subtle bg-bg-surface/90 p-0.5 text-xs text-text-muted">
             <button
               onClick={() => setZoom((z) => Math.min(2.2, z * 1.15))}
-              className="p-1 hover:text-zinc-200 hover:bg-zinc-800 rounded"
+              className="p-1 hover:text-text-primary hover:bg-bg-elevated rounded"
               title="Zoom In"
             >
               <Icon name="plus" size={12} />
             </button>
-            <span className="px-1.5 font-mono text-[10px] text-zinc-400">
+            <span className="px-1.5 font-mono text-[10px] text-text-muted">
               {Math.round(zoom * 100)}%
             </span>
             <button
               onClick={() => setZoom((z) => Math.max(0.4, z * 0.85))}
-              className="p-1 hover:text-zinc-200 hover:bg-zinc-800 rounded font-bold text-xs leading-none"
+              className="p-1 hover:text-text-primary hover:bg-bg-elevated rounded font-bold text-xs leading-none"
               title="Zoom Out"
             >
               −
@@ -266,7 +266,7 @@ export default function ProcessNetworkTopologyMap({
                 setPan({ x: 0, y: 0 });
                 setSelectedPid(null);
               }}
-              className="p-1 hover:text-zinc-200 hover:bg-zinc-800 rounded ml-0.5"
+              className="p-1 hover:text-text-primary hover:bg-bg-elevated rounded ml-0.5"
               title="Reset View"
             >
               <Icon name="refresh" size={12} />
@@ -423,13 +423,13 @@ export default function ProcessNetworkTopologyMap({
 
       {/* Selected Process Inspector Slide-over */}
       {selectedProc && (
-        <div className="absolute right-4 bottom-4 top-16 z-30 w-84 rounded-xl border border-zinc-700 bg-zinc-950/95 backdrop-blur-xl p-4 shadow-2xl flex flex-col text-xs text-zinc-200 animate-slide-left font-sans">
-          <div className="flex items-start justify-between border-b border-zinc-800 pb-3">
+        <div className="absolute right-4 bottom-4 top-16 z-30 w-84 rounded-xl border border-border-subtle bg-bg-surface/95 backdrop-blur-xl p-4 shadow-2xl flex flex-col text-xs text-text-primary animate-slide-left font-sans">
+          <div className="flex items-start justify-between border-b border-border-subtle pb-3">
             <div className="space-y-0.5">
-              <span className="text-[10px] uppercase font-bold tracking-wider text-zinc-500 block">
+              <span className="text-[10px] uppercase font-bold tracking-wider text-text-faint block">
                 PROCESS INSPECTOR · PID {selectedProc.pid}
               </span>
-              <h4 className="font-bold text-sm text-white">{selectedProc.name}</h4>
+              <h4 className="font-bold text-sm text-text-primary">{selectedProc.name}</h4>
               <span className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-bold uppercase ${
                 flaggedPids.has(selectedProc.pid)
                   ? "bg-rose-500/20 text-rose-400 border border-rose-500/40"
@@ -440,38 +440,39 @@ export default function ProcessNetworkTopologyMap({
             </div>
             <button
               onClick={() => setSelectedPid(null)}
-              className="text-zinc-500 hover:text-white p-1 rounded hover:bg-zinc-800"
+              className="text-text-muted hover:text-text-primary p-1 rounded hover:bg-bg-elevated"
+              aria-label="Close inspector"
             >
-              ✕
+              <Icon name="x" size={14} />
             </button>
           </div>
 
           <div className="flex-1 overflow-y-auto py-3 space-y-3 font-mono text-[11px]">
             <div>
-              <span className="text-[10px] text-zinc-500 block font-sans">COMMAND LINE</span>
-              <pre className="mt-1 rounded bg-zinc-900 p-2 text-[10px] text-zinc-300 whitespace-pre-wrap break-all border border-zinc-800">
+              <span className="text-[10px] text-text-faint block font-sans">COMMAND LINE</span>
+              <pre className="mt-1 rounded bg-bg-elevated/70 p-2 text-[10px] text-text-primary whitespace-pre-wrap break-all border border-border-subtle">
                 {Array.isArray(selectedProc.cmdline) ? selectedProc.cmdline.join(" ") : String(selectedProc.cmdline || selectedProc.name)}
               </pre>
             </div>
 
             <div className="grid grid-cols-2 gap-2">
-              <div className="rounded border border-zinc-800 bg-zinc-900/60 p-2">
-                <span className="text-[9px] text-zinc-500 block font-sans">USER CONTEXT</span>
-                <span className="text-zinc-200 font-bold">{selectedProc.user || selectedProc.username || "system"}</span>
+              <div className="rounded border border-border-subtle bg-bg-elevated/40 p-2">
+                <span className="text-[9px] text-text-faint block font-sans">USER CONTEXT</span>
+                <span className="text-text-primary font-bold">{selectedProc.user || selectedProc.username || "system"}</span>
               </div>
-              <div className="rounded border border-zinc-800 bg-zinc-900/60 p-2">
-                <span className="text-[9px] text-zinc-500 block font-sans">PARENT PID</span>
-                <span className="text-zinc-200 font-bold">{selectedProc.ppid || 1}</span>
+              <div className="rounded border border-border-subtle bg-bg-elevated/40 p-2">
+                <span className="text-[9px] text-text-faint block font-sans">PARENT PID</span>
+                <span className="text-text-primary font-bold">{selectedProc.ppid || 1}</span>
               </div>
             </div>
 
             <div className="grid grid-cols-2 gap-2">
-              <div className="rounded border border-zinc-800 bg-zinc-900/60 p-2">
-                <span className="text-[9px] text-zinc-500 block font-sans">CPU LOAD</span>
-                <span className="text-blue-400 font-bold">{Number(selectedProc.cpu_percent || 0).toFixed(1)}%</span>
+              <div className="rounded border border-border-subtle bg-bg-elevated/40 p-2">
+                <span className="text-[9px] text-text-faint block font-sans">CPU LOAD</span>
+                <span className="text-accent font-bold">{Number(selectedProc.cpu_percent || 0).toFixed(1)}%</span>
               </div>
-              <div className="rounded border border-zinc-800 bg-zinc-900/60 p-2">
-                <span className="text-[9px] text-zinc-500 block font-sans">RAM RSS</span>
+              <div className="rounded border border-border-subtle bg-bg-elevated/40 p-2">
+                <span className="text-[9px] text-text-faint block font-sans">RAM RSS</span>
                 <span className="text-emerald-400 font-bold">
                   {typeof selectedProc.memory_mb === "number" ? selectedProc.memory_mb : typeof selectedProc.memory_rss_bytes === "number" ? Math.round(selectedProc.memory_rss_bytes / (1024 * 1024)) : (selectedProc.memory_rss_mb || 0)} MB
                 </span>
@@ -480,8 +481,8 @@ export default function ProcessNetworkTopologyMap({
           </div>
 
           {/* Quick Signal Actions */}
-          <div className="border-t border-zinc-800 pt-3 space-y-1.5 font-sans">
-            <span className="text-[10px] uppercase font-bold text-zinc-500 block">CONTAINMENT DISPATCH</span>
+          <div className="border-t border-border-subtle pt-3 space-y-1.5 font-sans">
+            <span className="text-[10px] uppercase font-bold text-text-faint block">CONTAINMENT DISPATCH</span>
             <div className="grid grid-cols-2 gap-2">
               <button
                 onClick={() => onKillPid?.(selectedProc.pid)}

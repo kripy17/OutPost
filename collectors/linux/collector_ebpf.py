@@ -78,6 +78,8 @@ def parse_trace_line(line: str, run_id: str) -> dict | None:
             "command_line": cmd,
             "exe_path": exe_path,
             "log_source": "ebpf",
+            "source_event_id": f"ebpf:{pid}:{now_ts}",
+            "process_start_time": now_ts,
             "raw_record": line.strip(),
         }
 
@@ -106,6 +108,7 @@ def parse_trace_line(line: str, run_id: str) -> dict | None:
                 "dest_port": dest_port,
                 "protocol": "tcp",
                 "log_source": "ebpf",
+                "source_event_id": f"ebpf:{pid}:{dest_ip}:{dest_port}:{now_ts}",
                 "raw_record": line.strip(),
             }
 
@@ -121,6 +124,7 @@ def parse_trace_line(line: str, run_id: str) -> dict | None:
             "process_name": comm,
             "file_path": f"memfd:{mem_name}",
             "log_source": "ebpf",
+            "source_event_id": f"ebpf:{pid}:memfd:{now_ts}",
             "raw_record": line.strip(),
         }
 
@@ -136,6 +140,8 @@ def parse_trace_line(line: str, run_id: str) -> dict | None:
             "process_name": comm,
             "command_line": f"ptrace(request={req})",
             "log_source": "ebpf",
+            "source_event_id": f"ebpf:{pid}:ptrace:{now_ts}",
+            "process_start_time": now_ts,
             "raw_record": line.strip(),
         }
 

@@ -185,7 +185,7 @@ export function CyberDecoder({ initialValue = "" }: { initialValue?: string }) {
                   title="Copy indicator"
                 >
                   {copiedId === `ioc-${ioc.value}` ? (
-                    <span className="text-signal text-[10px]">✓</span>
+                    <Icon name="check" size={11} className="text-signal" />
                   ) : (
                     <Icon name="copy" size={11} />
                   )}
@@ -233,7 +233,7 @@ export function CyberDecoder({ initialValue = "" }: { initialValue?: string }) {
                     >
                       {copiedId === c.id ? (
                         <>
-                          <span className="text-signal">✓</span> Copied
+                          <Icon name="check" size={11} className="text-signal" /> Copied
                         </>
                       ) : (
                         <>

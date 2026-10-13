@@ -14,13 +14,14 @@ def test_live_views_strictly_exclude_synthetic_and_simulation(client):
     seed, webapp-demo, monitor, and sandbox:demo records by default.
     """
     run_live = make_run(client, sample_name="host-agent.bin", platform="linux", session_type="live", source="live")
+    now_iso = datetime.now(timezone.utc).isoformat()
     client.post(
         "/ingest/batch",
         json=[{
             "run_id": run_live,
             "platform": "linux",
             "event_type": "process_create",
-            "timestamp": "2026-08-23T10:00:00Z",
+            "timestamp": now_iso,
             "pid": 1001,
             "ppid": 1,
             "process_name": "bash-prov",
@@ -36,7 +37,7 @@ def test_live_views_strictly_exclude_synthetic_and_simulation(client):
             "run_id": run_sim,
             "platform": "linux",
             "event_type": "network_connection",
-            "timestamp": "2026-08-23T10:05:00Z",
+            "timestamp": now_iso,
             "pid": 2002,
             "dest_ip": "203.0.113.88",
             "dest_port": 443,

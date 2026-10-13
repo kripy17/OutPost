@@ -15,7 +15,7 @@ zero-config local runs frictionless.
 
 import time
 
-from fastapi import APIRouter, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from ..core import auth
@@ -35,7 +35,7 @@ class PasswordIn(BaseModel):
 
 
 @router.post("/auth/login", response_model=None)
-def login(body: LoginIn, request: Request) -> dict:
+def login(body: LoginIn, request: Request, response: Response) -> dict:
     if not auth.auth_enabled():
         raise HTTPException(status_code=404, detail="Authentication is not configured on this server")
     ip = request.client.host if request.client else "unknown"
@@ -65,6 +65,16 @@ def login(body: LoginIn, request: Request) -> dict:
     with db_session() as conn:
         audit.log(conn, role, "auth.login", target_type="auth", target_id=ip)
     token = auth.issue_token(role)
+    if token:
+        response.set_cookie(
+            key="outpost_token",
+            value=token,
+            httponly=True,
+            samesite="lax",
+            secure=bool(request.url.scheme == "https"),
+            max_age=auth.TOKEN_TTL_SECONDS,
+            path="/",
+        )
     return {
         "token": token,
         "role": role,
@@ -84,12 +94,18 @@ def rate_limit_status() -> dict:
 
 @router.get("/auth/me", response_model=None)
 def me(
+    request: Request,
     authorization: str = Header("", alias="Authorization"),
     token: str = Query(""),
 ) -> dict:
     """Report the current session. Always 200 — the webapp boot gate reads
     `enabled` to decide whether to show a login screen at all."""
-    tok = auth.token_from_request({"authorization": authorization}, {"token": token})
+    tok = auth.token_from_request(
+        dict(request.headers),
+        dict(request.query_params),
+        dict(request.cookies),
+        path=request.url.path,
+    )
     role = auth.verify_token(tok) if tok else None
     return {
         "enabled": auth.auth_enabled(),

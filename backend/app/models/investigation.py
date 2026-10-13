@@ -322,7 +322,7 @@ def finding_investigation(conn: sqlite3.Connection, alert_id: int) -> str | None
 
 def findings_for_investigation(conn: sqlite3.Connection, investigation_id: str) -> list[dict]:
     """The attached findings — the canonical alerts rows, never duplicated."""
-    from .event import _parse_related_pids
+    from .event import _parse_evidence_event_ids, _parse_related_pids
 
     rows = conn.execute(
         "SELECT a.*, r.sample_name FROM alerts a "
@@ -334,6 +334,7 @@ def findings_for_investigation(conn: sqlite3.Connection, investigation_id: str) 
     for r in rows:
         d = dict(r)
         _parse_related_pids(d)
+        _parse_evidence_event_ids(d)
         out.append(d)
     return out
 

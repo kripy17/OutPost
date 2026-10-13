@@ -118,10 +118,12 @@ def build_alert(run_id: str, host: str, kind: str, value: str, event: dict) -> A
         details = f"First-time network destination on host {host}: {value}"
         related_ip = value
         related_pid = event.get("pid")
+        entity_key = f"net:{host}:{value}"
     else:
         details = f"First-time process on host {host}: {value}"
         related_ip = None
         related_pid = event.get("pid")
+        entity_key = f"proc:{host}:{value}"
     return Alert(
         run_id=run_id,
         rule_id=RULE_ID,
@@ -131,4 +133,5 @@ def build_alert(run_id: str, host: str, kind: str, value: str, event: dict) -> A
         related_pid=related_pid,
         related_ip=related_ip,
         details=details,
+        entity_key=entity_key,
     )

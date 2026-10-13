@@ -14,6 +14,7 @@ import os
 import sqlite3
 import threading
 import time
+import uuid
 from pathlib import Path
 from urllib.parse import quote
 
@@ -66,6 +67,23 @@ def _default_host_id() -> str:
     import socket
 
     return os.getenv("OUTPOST_HOST_ID", "").strip() or socket.gethostname().lower()
+
+
+def _read_boot_id() -> str:
+    """Read host boot session UUID or generate stable session fallback."""
+    env_boot = os.getenv("OUTPOST_BOOT_ID", "").strip()
+    if env_boot:
+        return env_boot
+    for path in ("/proc/sys/kernel/random/boot_id", "/proc/sys/kernel/random/uuid"):
+        try:
+            if os.path.exists(path):
+                with open(path, "r") as fh:
+                    val = fh.read().strip()
+                    if val:
+                        return val
+        except Exception:
+            pass
+    return "default"
 
 
 def claim_active_live_run(backend_url: str) -> str:
@@ -243,6 +261,7 @@ class Shipper:
         self.flush_interval = flush_interval
         self.max_retries = max_retries
         self.host_id = host_id or _default_host_id()
+        self.boot_id = _read_boot_id()
         self.compress = compress
         self.agent_id = agent_id or os.environ.get("OUTPOST_AGENT_ID", "").strip() or None
         self.agent_secret = agent_secret or os.environ.get("OUTPOST_AGENT_SECRET", "").strip() or None
@@ -276,8 +295,8 @@ class Shipper:
         """Queue one normalized event dict; flush when thresholds are hit.
 
         Every event is stamped with this shipper's host identity (fleet
-        attribution — the backend's /agents view groups by it). An event that
-        already names a host keeps its own.
+        attribution — the backend's /agents view groups by it) and boot session ID.
+        An event that already names a host or boot keeps its own.
 
         The exact log channel comes from the collectors themselves (they
         stamp auditd/sysmon on every event they build); this platform-based
@@ -285,6 +304,11 @@ class Shipper:
         can ever land unstamped."""
         event["run_id"] = self.run_id
         event.setdefault("host_id", self.host_id)
+        event.setdefault("boot_id", self.boot_id)
+        if "source_event_id" not in event or not event["source_event_id"]:
+            event["source_event_id"] = str(uuid.uuid4())
+        if event.get("event_type") == "process_create" and not event.get("process_start_time"):
+            event["process_start_time"] = event.get("timestamp")
         plat = (event.get("platform") or "").lower()
         if plat == "linux":
             event.setdefault("log_source", "auditd")
@@ -402,6 +426,8 @@ class Shipper:
                 payload["metrics"] = self.get_system_metrics()
             if self.agent_id:
                 payload["agent_id"] = self.agent_id
+            if getattr(self, "source_health", None):
+                payload["source_health"] = self.source_health
 
             resp = requests.post(
                 f"{self.backend_url}{path}",
@@ -412,12 +438,33 @@ class Shipper:
             resp.raise_for_status()
             try:
                 data = resp.json() if hasattr(resp, "json") and callable(resp.json) else {}
-                isolated = bool(data.get("isolated", False))
+                desired_isolated = bool(data.get("isolated", False) or data.get("containment_state") == "requested")
+                deadman_expires = data.get("deadman_expires_at")
                 try:
                     from . import containment
                 except ImportError:
                     import containment
-                containment.apply_containment_state(isolated, self.backend_url)
+                current_c = containment.get_containment_status(self.backend_url) if hasattr(containment, "get_containment_status") else {}
+                if current_c.get("isolated") != desired_isolated or (deadman_expires and current_c.get("deadman_expires_at") != deadman_expires):
+                    try:
+                        state = containment.apply_containment_state(desired_isolated, self.backend_url, deadman_expires_at=deadman_expires)
+                    except TypeError:
+                        state = containment.apply_containment_state(desired_isolated, self.backend_url)
+                    if isinstance(state, dict):
+                        try:
+                            rep_path = f"/agents/{quote(self.host_id, safe='')}/containment/report"
+                            requests.post(
+                                f"{self.backend_url}{rep_path}",
+                                json={
+                                    "enforcement_mode": state.get("enforced_mode", "none"),
+                                    "probe_details": state.get("probe_details"),
+                                    "success": state.get("enforced_mode") in ("full", "partial"),
+                                },
+                                headers=self.get_auth_headers("POST", rep_path),
+                                timeout=5,
+                            )
+                        except Exception as rep_err:
+                            log.debug("Failed reporting containment status: %s", rep_err)
 
                 pending_actions = data.get("pending_actions") or []
                 if pending_actions:
@@ -430,56 +477,78 @@ class Shipper:
     heartbeat = maybe_heartbeat
 
     def _execute_pending_actions(self, actions: list[dict]) -> None:
-        """Execute queued remediation actions (e.g. process termination) and acknowledge completion."""
+        """Execute queued remediation actions (e.g. process termination) and acknowledge real execution outcomes."""
         import signal
+        results = []
         executed_ids = []
         for act in actions:
             action_type = act.get("action")
             action_id = act.get("action_id")
+            if not action_id:
+                action_id = str(act.get("pid") or "")
             if action_type == "kill_process":
                 pid = act.get("pid")
                 proc_name = act.get("process_name", "")
-                if pid:
+                expected_create_time = act.get("expected_create_time")
+                outcome = "failed"
+                detail = ""
+
+                if not pid:
+                    outcome = "denied"
+                    detail = "Name-only process kill rejected: explicit PID required"
+                else:
                     try:
                         pid_int = int(pid)
-                        if pid_int > 1 and pid_int != os.getpid():
-                            expected_create_time = act.get("expected_create_time")
+                        if pid_int <= 1 or pid_int == os.getpid():
+                            outcome = "denied"
+                            detail = f"Cannot terminate protected process PID {pid_int}"
+                        else:
+                            mismatch = False
                             if expected_create_time is not None:
                                 try:
                                     import psutil
                                     p = psutil.Process(pid_int)
                                     p_create = p.create_time()
                                     if abs(p_create - float(expected_create_time)) > 3.0:
-                                        log.warning(
-                                            "PID %d start time mismatch (%s vs expected %s) — aborting kill to prevent PID reuse collision",
-                                            pid_int,
-                                            p_create,
-                                            expected_create_time,
-                                        )
-                                        if action_id:
-                                            executed_ids.append(action_id)
-                                        continue
-                                except (ImportError, ValueError, Exception) as proc_check_err:
-                                    log.debug("Process start-time check skipped: %s", proc_check_err)
-                            try:
-                                os.kill(pid_int, signal.SIGTERM)
-                            except AttributeError:
-                                import subprocess
-                                subprocess.run(["taskkill", "/F", "/PID", str(pid_int)], capture_output=True, timeout=5, check=False)
-                            log.info("Terminated process PID %d (%s) as instructed by OutPost controller", pid_int, proc_name)
-                    except (ProcessLookupError, OSError) as err:
-                        log.debug("Process PID %s could not be terminated: %s", pid, err)
+                                        mismatch = True
+                                        outcome = "identity_mismatch"
+                                        detail = f"PID {pid_int} create_time mismatch ({p_create} vs expected {expected_create_time})"
+                                except Exception:
+                                    pass
+
+                            if not mismatch:
+                                try:
+                                    os.kill(pid_int, signal.SIGTERM)
+                                    outcome = "killed"
+                                    detail = f"Terminated PID {pid_int} ({proc_name})"
+                                except AttributeError:
+                                    import subprocess
+                                    subprocess.run(["taskkill", "/F", "/PID", str(pid_int)], capture_output=True, timeout=5, check=False)
+                                    outcome = "killed"
+                                    detail = f"Terminated PID {pid_int} via taskkill"
+                                except ProcessLookupError:
+                                    outcome = "not_found"
+                                    detail = f"PID {pid_int} not found"
+                                except PermissionError as perm_err:
+                                    outcome = "denied"
+                                    detail = str(perm_err)
                     except Exception as err:
-                        log.warning("Failed executing kill_process on PID %s: %s", pid, err)
-            if action_id:
+                        outcome = "failed"
+                        detail = str(err)
+
+                if action_id:
+                    results.append({"action_id": action_id, "outcome": outcome, "detail": detail})
+                    executed_ids.append(action_id)
+            elif action_id:
+                results.append({"action_id": action_id, "outcome": "completed", "detail": f"Processed action {action_type}"})
                 executed_ids.append(action_id)
 
-        if executed_ids:
+        if executed_ids or results:
             try:
                 ack_path = f"/agents/{quote(self.host_id, safe='')}/actions/ack"
                 ack_resp = requests.post(
                     f"{self.backend_url}{ack_path}",
-                    json={"action_ids": executed_ids},
+                    json={"action_ids": executed_ids, "results": results},
                     headers=self.get_auth_headers("POST", ack_path),
                     timeout=5,
                 )

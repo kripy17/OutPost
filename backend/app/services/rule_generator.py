@@ -637,6 +637,105 @@ def get_community_sigma_rules() -> list[dict[str, Any]]:
     return list(COMMUNITY_SIGMA_RULES)
 
 
+SUPPORTED_SIGMA_FIELDS: dict[str, str] = {
+    # Process Creation & Execution
+    "image": "process_name",
+    "process": "process_name",
+    "process_name": "process_name",
+    "processname": "process_name",
+    "executable": "process_name",
+    "binary": "process_name",
+    "exe_path": "process_name",
+    "exepath": "process_name",
+    "targetimage": "process_name",
+    "target_image": "process_name",
+    "parentimage": "parent_name",
+    "parent_image": "parent_name",
+    "parentprocess": "parent_name",
+    "parent_process": "parent_name",
+    "parent_name": "parent_name",
+    "parent_process_name": "parent_name",
+    "ppid": "parent_name",
+    "parentcommandline": "parent_command_line",
+    "parent_command_line": "parent_command_line",
+    "parentcmdline": "parent_command_line",
+    "parent_cmd": "parent_command_line",
+    "commandline": "command_line",
+    "command_line": "command_line",
+    "cmdline": "command_line",
+    "cmd": "command_line",
+    "arguments": "command_line",
+    "args": "command_line",
+    "user": "user",
+    "username": "user",
+    "user_name": "user",
+    "account": "user",
+    "targetusername": "user",
+    "targetuser": "user",
+    "subjectusername": "user",
+    "integritylevel": "integrity_level",
+    "integrity_level": "integrity_level",
+    "sessionid": "session_id",
+    "session_id": "session_id",
+    "logonid": "session_id",
+    "logon_id": "session_id",
+    "processguid": "process_guid",
+    "process_guid": "process_guid",
+    # Network
+    "destinationip": "dest_ip",
+    "destination_ip": "dest_ip",
+    "dest_ip": "dest_ip",
+    "dst_ip": "dest_ip",
+    "remote_ip": "dest_ip",
+    "ip": "dest_ip",
+    "destinationport": "dest_port",
+    "destination_port": "dest_port",
+    "dest_port": "dest_port",
+    "dst_port": "dest_port",
+    "remote_port": "dest_port",
+    "port": "dest_port",
+    "protocol": "protocol",
+    "proto": "protocol",
+    "connection_status": "connection_status",
+    "connectionstatus": "connection_status",
+    "status": "connection_status",
+    "query": "query",
+    "queryname": "query",
+    "query_name": "query",
+    "dns_query": "query",
+    # File & Registry & Pipe
+    "targetfilename": "file_path",
+    "target_filename": "file_path",
+    "filename": "file_path",
+    "file_path": "file_path",
+    "filepath": "file_path",
+    "path": "file_path",
+    "file": "file_path",
+    "pipename": "file_path",
+    "pipe_name": "file_path",
+    "targetobject": "registry_key",
+    "target_object": "registry_key",
+    "registry_key": "registry_key",
+    "reg_key": "registry_key",
+    "registry": "registry_key",
+    # System / Host / Event
+    "host_id": "host_id",
+    "hostname": "host_id",
+    "computername": "host_id",
+    "host": "host_id",
+    "event_type": "event_type",
+    "category": "event_type",
+    "event": "event_type",
+    "eventid": "event_type",
+    "channel": "event_type",
+    "sha256": "sha256",
+    "hash": "sha256",
+    "hashes": "sha256",
+    "md5": "sha256",
+    "sha1": "sha256",
+}
+
+
 def transpile_sigma_yaml(yaml_str: str) -> dict[str, Any]:
     """Transpile a Sigma YAML detection rule into OutPost detection filter/logic."""
     if not yaml_str or not yaml_str.strip():
@@ -680,65 +779,108 @@ def transpile_sigma_yaml(yaml_str: str) -> dict[str, Any]:
 
     # Parse detection definitions
     detection_def = data.get("detection") or {}
-    criteria: list[dict[str, Any]] = []
+    if not isinstance(detection_def, dict):
+        raise ValueError("Detection section must be a mapping")
 
-    def _normalize_field(raw_k: str) -> tuple[str, str]:
-        target = "command_line"
-        modifier = "contains"
+    def _normalize_field(raw_k: str) -> tuple[str, list[str]]:
+        modifiers: list[str] = []
         if "|" in raw_k:
-            rf, mod = raw_k.split("|", 1)
-            raw_field = rf.strip()
-            modifier = mod.strip().lower()
+            parts = raw_k.split("|")
+            raw_field = parts[0].strip()
+            modifiers = [p.strip().lower() for p in parts[1:] if p.strip()]
         else:
             raw_field = raw_k.strip()
 
-        fl = raw_field.lower()
-        if any(k in fl for k in ("parentimage", "parent_image", "parent_process", "parent_name", "ppid")):
-            target = "parent_name"
-        elif any(k in fl for k in ("image", "process_name", "process", "executable", "binary", "exe_path")):
-            target = "process_name"
-        elif any(k in fl for k in ("commandline", "command_line", "cmdline", "cmd", "arguments", "args")):
-            target = "command_line"
-        elif any(k in fl for k in ("targetobject", "registry_key", "reg_key", "registry")):
-            target = "registry_key"
-        elif any(k in fl for k in ("targetfilename", "file_path", "filename", "filepath", "path", "file")):
-            target = "file_path"
-        elif any(k in fl for k in ("destinationip", "dest_ip", "dst_ip", "remote_ip", "destination_ip", "ip")):
-            target = "dest_ip"
-        elif any(k in fl for k in ("destinationport", "dest_port", "dst_port", "remote_port", "destination_port", "port")):
-            target = "dest_port"
-        elif any(k in fl for k in ("username", "user_name", "user", "account")):
-            target = "user"
-        elif any(k in fl for k in ("host_id", "hostname", "computername", "host")):
-            target = "host_id"
-        elif any(k in fl for k in ("event_type", "category", "event")):
-            target = "event_type"
-        elif any(k in fl for k in ("protocol", "proto")):
-            target = "protocol"
-        elif any(k in fl for k in ("sha256", "hash", "md5", "hashes")):
-            target = "sha256"
+        clean_key = re.sub(r"[^a-z0-9_]", "", raw_field.lower())
+        target = SUPPORTED_SIGMA_FIELDS.get(clean_key)
+        if not target:
+            # Check partial/fuzzy mapping
+            if any(k in clean_key for k in ("parentimage", "parentprocess", "parentname", "ppid")):
+                target = "parent_name"
+            elif any(k in clean_key for k in ("parentcommandline", "parentcmd")):
+                target = "parent_command_line"
+            elif any(k in clean_key for k in ("image", "process", "executable", "binary", "exepath", "targetimage")):
+                target = "process_name"
+            elif any(k in clean_key for k in ("commandline", "cmdline", "cmd", "arguments", "args")):
+                target = "command_line"
+            elif any(k in clean_key for k in ("targetobject", "registry")):
+                target = "registry_key"
+            elif any(k in clean_key for k in ("targetfilename", "filepath", "filename", "path", "file", "pipe")):
+                target = "file_path"
+            elif any(k in clean_key for k in ("destinationip", "destip", "dstip", "remoteip", "ip")):
+                target = "dest_ip"
+            elif any(k in clean_key for k in ("destinationport", "destport", "dstport", "remoteport", "port")):
+                target = "dest_port"
+            elif any(k in clean_key for k in ("user", "username", "account")):
+                target = "user"
+            elif any(k in clean_key for k in ("hostname", "computername", "host")):
+                target = "host_id"
+            elif any(k in clean_key for k in ("eventtype", "category", "event", "eventid", "channel")):
+                target = "event_type"
+            elif any(k in clean_key for k in ("protocol", "proto")):
+                target = "protocol"
+            elif any(k in clean_key for k in ("sha256", "hash", "md5", "sha1")):
+                target = "sha256"
+            elif any(k in clean_key for k in ("query", "dns")):
+                target = "query"
+            else:
+                raise ValueError(
+                    f"Unsupported telemetry field: '{raw_field}'. OutPost telemetry does not collect this field."
+                )
 
-        return target, modifier
+        if not modifiers:
+            modifiers = ["contains"]
+        return target, modifiers
+
+    criteria: list[dict[str, Any]] = []
+    selections: dict[str, list[list[dict[str, Any]]]] = {}
 
     for sel_name, sel_content in detection_def.items():
-        if sel_name == "condition" or not isinstance(sel_content, dict):
+        if sel_name == "condition":
             continue
         is_excl = sel_name.lower().startswith(("filter", "exclusion", "exclude", "drop"))
-        for field_key, field_val in sel_content.items():
-            target_f, mod = _normalize_field(str(field_key))
-            values = field_val if isinstance(field_val, list) else [field_val]
-            str_vals = [str(v).strip() for v in values if v is not None]
-            if not str_vals:
+        branches = sel_content if isinstance(sel_content, list) else [sel_content]
+        parsed_branches: list[list[dict[str, Any]]] = []
+
+        for branch in branches:
+            if not isinstance(branch, dict):
                 continue
-            criteria.append({
-                "section": sel_name,
-                "is_exclusion": is_excl,
-                "original_field": str(field_key),
-                "target_field": target_f,
-                "modifier": mod,
-                "values": str_vals,
-                "value": str_vals[0] if len(str_vals) == 1 else str_vals,
-            })
+            branch_criteria: list[dict[str, Any]] = []
+            for field_key, field_val in branch.items():
+                target_f, mods = _normalize_field(str(field_key))
+                values = field_val if isinstance(field_val, list) else [field_val]
+                str_vals = [str(v).strip() for v in values if v is not None]
+                if not str_vals:
+                    continue
+
+                is_re = any(m in ("re", "regex") for m in mods)
+                if is_re:
+                    for pat in str_vals:
+                        try:
+                            re.compile(pat)
+                        except re.error as re_err:
+                            raise ValueError(f"Invalid regular expression '{pat}' in field '{field_key}': {re_err}")
+
+                crit_dict = {
+                    "section": sel_name,
+                    "is_exclusion": is_excl,
+                    "original_field": str(field_key),
+                    "target_field": target_f,
+                    "modifier": "|".join(mods),
+                    "modifiers": mods,
+                    "is_all": "all" in mods,
+                    "is_regex": is_re,
+                    "values": str_vals,
+                    "value": str_vals[0] if len(str_vals) == 1 else str_vals,
+                }
+                branch_criteria.append(crit_dict)
+                criteria.append(crit_dict)
+
+            if branch_criteria:
+                parsed_branches.append(branch_criteria)
+
+        if parsed_branches:
+            selections[sel_name] = parsed_branches
 
     rule_id = f"sigma-{re.sub(r'[^a-zA-Z0-9]', '-', title.lower())[:32].strip('-')}"
 
@@ -754,8 +896,9 @@ def transpile_sigma_yaml(yaml_str: str) -> dict[str, Any]:
         "mitre_tactics": mitre_tactics or ["execution"],
         "mitre_techniques": mitre_techniques or ["T1059"],
         "criteria": criteria,
+        "selections": selections,
         "transpiled_filter_count": len(criteria),
-        "condition": str(detection_def.get("condition") or "selection"),
+        "condition": str(detection_def.get("condition") or "selection").strip(),
         "source": "sigma_import",
     }
 

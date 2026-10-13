@@ -530,7 +530,7 @@ export function ProcessContextModal({
                             }`}
                           >
                             {c.name}
-                            {c.is_dangerous && " ⚠️"}
+                            {c.is_dangerous && " [ELEVATED]"}
                           </span>
                         ))}
                       </div>

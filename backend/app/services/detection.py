@@ -10,12 +10,16 @@ never a generic "suspicious activity detected". Runs on every ingested batch
 so live monitoring is actually live.
 """
 
+import concurrent.futures
+import fnmatch
+import functools
 import ipaddress
 import json
 import os
 import re
 import sqlite3
 import statistics
+import threading
 
 # ---------------------------------------------------------------------------
 # Process-map cache (bounded per-batch reads on long sessions)
@@ -473,6 +477,28 @@ def _proc_name(event: dict) -> str:
 # ---------------------------------------------------------------------------
 # Alert factory + dedup
 # ---------------------------------------------------------------------------
+def make_entity_key(
+    event: dict,
+    related_pid: int | None = None,
+    related_ip: str | None = None,
+) -> str:
+    """Compound process entity: (host_id, boot_id, pid, process_start_time).
+
+    Disambiguates PID reuse and multiple hosts/boots, and ensures that
+    a second process contacting the same destination is never deduped away.
+    """
+    host_id = event.get("host_id") or "local"
+    boot_id = event.get("boot_id") or ""
+    start_time = event.get("process_start_time") or ""
+    pid = related_pid if related_pid is not None else event.get("pid")
+    if pid is not None and pid != 0:
+        return f"proc:{host_id}:{boot_id}:{pid}:{start_time}"
+    ip = related_ip if related_ip is not None else event.get("dest_ip")
+    if ip:
+        return f"net:{host_id}:{ip}"
+    return f"host:{host_id}"
+
+
 def _make_alert(
     run_id: str,
     rule_id: str,
@@ -480,36 +506,117 @@ def _make_alert(
     severity: str,
     event: dict,
     details: str,
+    *,
+    rule_condition: str | None = None,
+    confidence: str | None = None,
+    evidence_event_ids: list[int] | None = None,
 ) -> Alert:
+    rid = run_id or event.get("run_id") or "unknown"
+    conf = confidence
+    ev_ids = evidence_event_ids
+    if ev_ids is None:
+        ev_id = event.get("id")
+        ev_ids = [ev_id] if ev_id is not None else []
+
+    # Use event time (ev["timestamp"]), not server ingest time
+    ev_ts = _parse_ts(event.get("timestamp")) or datetime.now(timezone.utc)
+
+    # Process attribution: Never fall back from process PID to parent PID
+    # without setting pid_fallback: True in alert metadata.
+    pid = event.get("pid")
+    pid_fallback = False
+    if pid is None or pid == 0:
+        ppid = event.get("ppid")
+        if ppid is not None and ppid != 0:
+            pid = ppid
+            pid_fallback = True
+
+    final_details = details
+    if pid_fallback and "[PID fallback" not in final_details:
+        final_details = f"{details} [PID fallback to parent PPID {pid}]"
+
+    entity_key = make_entity_key(event, pid, event.get("dest_ip"))
+
     return Alert(
-        run_id=run_id,
+        run_id=rid,
         rule_id=rule_id,
         rule_name=rule_name,
         severity=severity,
-        triggered_at=datetime.now(timezone.utc),
-        related_pid=event.get("pid") or event.get("ppid"),
+        confidence=conf,
+        triggered_at=ev_ts,
+        related_pid=pid,
         related_ip=event.get("dest_ip"),
-        details=details,
+        details=final_details,
+        rule_condition=rule_condition or details,
+        evidence_event_ids=ev_ids,
+        occurrence_count=1,
+        last_seen_at=ev_ts,
+        entity_key=entity_key,
+        pid_fallback=pid_fallback,
     )
 
 
-def _alert_exists(conn: sqlite3.Connection, run_id: str, rule_id: str, related: str | None) -> bool:
-    """Dedupe: same rule + same related entity should only alert once per run.
+def _get_existing_alert(
+    conn: sqlite3.Connection,
+    run_id: str,
+    rule_id: str,
+    entity_key: str | None,
+    related_fallback: str | None = None,
+) -> dict | None:
+    """Find an existing alert matching (run_id, rule_id, entity_key).
 
-    Prevents beaconing / rename-burst / event rules from spamming identical
-    alerts on every polling batch.
+    Attributes alerts by compound process entity (host_id, boot_id, pid, process_start_time).
+    Prevents deduping away a second process contacting the same bad destination.
     """
-    if related is not None:
+    if entity_key is not None:
         row = conn.execute(
-            "SELECT 1 FROM alerts WHERE run_id = ? AND rule_id = ? AND (related_ip = ? OR related_pid = ?) LIMIT 1",
-            (run_id, rule_id, related, related),
+            "SELECT id, evidence_event_ids, occurrence_count, details, last_seen_at, entity_key FROM alerts "
+            "WHERE run_id = ? AND rule_id = ? AND entity_key = ? LIMIT 1",
+            (run_id, rule_id, entity_key),
         ).fetchone()
-    else:
+        if row:
+            d = dict(row)
+            try:
+                d["evidence_event_ids"] = json.loads(d.get("evidence_event_ids") or "[]")
+            except (ValueError, TypeError):
+                d["evidence_event_ids"] = []
+            return d
+
+        if related_fallback is not None:
+            row = conn.execute(
+                "SELECT id, evidence_event_ids, occurrence_count, details, last_seen_at, entity_key FROM alerts "
+                "WHERE run_id = ? AND rule_id = ? AND entity_key IS NULL AND (related_ip = ? OR related_pid = ?) LIMIT 1",
+                (run_id, rule_id, related_fallback, related_fallback),
+            ).fetchone()
+            if row:
+                d = dict(row)
+                try:
+                    d["evidence_event_ids"] = json.loads(d.get("evidence_event_ids") or "[]")
+                except (ValueError, TypeError):
+                    d["evidence_event_ids"] = []
+                return d
+        return None
+
+    if related_fallback is not None:
         row = conn.execute(
-            "SELECT 1 FROM alerts WHERE run_id = ? AND rule_id = ? AND related_ip IS NULL AND related_pid IS NULL LIMIT 1",
-            (run_id, rule_id),
+            "SELECT id, evidence_event_ids, occurrence_count, details, last_seen_at, entity_key FROM alerts "
+            "WHERE run_id = ? AND rule_id = ? AND (related_ip = ? OR related_pid = ?) LIMIT 1",
+            (run_id, rule_id, related_fallback, related_fallback),
         ).fetchone()
-    return row is not None
+        if row:
+            d = dict(row)
+            try:
+                d["evidence_event_ids"] = json.loads(d.get("evidence_event_ids") or "[]")
+            except (ValueError, TypeError):
+                d["evidence_event_ids"] = []
+            return d
+
+    return None
+
+
+def _alert_exists(conn: sqlite3.Connection, run_id: str, rule_id: str, entity_or_related: str | None) -> bool:
+    """Dedupe: same rule + same related entity should only alert once per run."""
+    return _get_existing_alert(conn, run_id, rule_id, entity_or_related, related_fallback=entity_or_related) is not None
 
 
 # ---------------------------------------------------------------------------
@@ -671,29 +778,54 @@ def check_unusual_port(event: dict) -> Alert | None:
 # Rule 4 — C2-Style Beaconing
 # ---------------------------------------------------------------------------
 def _parse_ts(value) -> datetime | None:
-    """Accept ISO strings (with or without Z) or already-parsed datetimes."""
+    """Accept ISO strings (with or without Z), numeric epochs, or datetimes, returning timezone-aware UTC datetime."""
     if isinstance(value, datetime):
-        return value
+        return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, (int, float)):
+        try:
+            return datetime.fromtimestamp(value, tz=timezone.utc)
+        except (ValueError, OSError, OverflowError):
+            return None
     if not isinstance(value, str):
         return None
+    cleaned = value.strip().replace("Z", "+00:00")
+    if not cleaned:
+        return None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
+        dt = datetime.fromisoformat(cleaned)
+        return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+    except (ValueError, TypeError):
         return None
 
 
-def _window_cutoff(events: list[dict], window_seconds: int) -> datetime:
-    """Anchor the detection window to the newest event in the batch.
+def _window_cutoff(
+    events: list[dict],
+    window_seconds: int,
+    conn: sqlite3.Connection | None = None,
+    run_id: str | None = None,
+) -> datetime:
+    """Anchor the detection window to the newest event in the batch or stored run history.
 
-    Using `now` would break replay/import scenarios where ingested timestamps
-    are in the past; anchoring to the data itself keeps the rules correct for
-    both live streaming and batched synthetic events.
+    Using the newest known event timestamp keeps the rules correct for both live
+    streaming and batched synthetic/historical events, and survives out-of-order batches.
     """
     ref = None
     for ev in events:
         ts = _parse_ts(ev.get("timestamp", ""))
         if ts and (ref is None or ts > ref):
             ref = ts
+    if conn is not None and run_id is not None:
+        try:
+            row = conn.execute(
+                "SELECT timestamp FROM events WHERE run_id = ? ORDER BY timestamp DESC LIMIT 1",
+                (run_id,),
+            ).fetchone()
+            if row:
+                db_ts = _parse_ts(row["timestamp"])
+                if db_ts and (ref is None or db_ts > ref):
+                    ref = db_ts
+        except Exception:
+            pass
     if ref is None:
         ref = datetime.now(timezone.utc)
     return ref - timedelta(seconds=window_seconds)
@@ -705,30 +837,30 @@ def _recent_connection_times(
     dest_ip: str,
     cutoff: datetime,
     dest_port: int | None = None,
-) -> list[datetime]:
-    """Connection timestamps to one destination CHANNEL (ip + port).
-
-    Grouping by ip alone was a real-feed FP: a host's DNS-on-53 + DoH-on-443
-    + one-off ports to the same resolver IP all aggregated into one "beacon".
-    A C2 channel is one ip:port tuple — the port must participate.
+    pid: int | None = None,
+) -> tuple[list[datetime], list[int]]:
+    """Connection timestamps and event IDs to one destination CHANNEL (ip + port),
+    optionally isolated by originating process PID.
     """
-    if dest_port is None:
-        rows = conn.execute(
-            "SELECT timestamp FROM events WHERE run_id = ? AND dest_ip = ? AND timestamp >= ? ORDER BY timestamp ASC",
-            (run_id, dest_ip, cutoff.isoformat()),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT timestamp FROM events WHERE run_id = ? AND dest_ip = ? AND dest_port = ? AND timestamp >= ? "
-            "ORDER BY timestamp ASC",
-            (run_id, dest_ip, dest_port, cutoff.isoformat()),
-        ).fetchall()
+    clauses = ["run_id = ?", "dest_ip = ?", "timestamp >= ?"]
+    params: list[Any] = [run_id, dest_ip, cutoff.isoformat()]
+    if dest_port is not None:
+        clauses.append("dest_port = ?")
+        params.append(dest_port)
+    if pid is not None:
+        clauses.append("pid = ?")
+        params.append(pid)
+
+    query = f"SELECT id, timestamp FROM events WHERE {' AND '.join(clauses)} ORDER BY timestamp ASC"
+    rows = conn.execute(query, tuple(params)).fetchall()
     times = []
+    ids = []
     for r in rows:
         ts = _parse_ts(r["timestamp"])
         if ts:
             times.append(ts)
-    return times
+            ids.append(r["id"])
+    return times, ids
 
 
 def check_beaconing(
@@ -740,16 +872,13 @@ def check_beaconing(
     variance: float = BEACON_VARIANCE_THRESHOLD,
     min_interval: float = BEACON_MIN_INTERVAL_SECONDS,
     dest_port: int | None = None,
+    pid: int | None = None,
+    event: dict | None = None,
 ) -> Alert | None:
-    """Regular low-variance connections to one destination CHANNEL.
+    """Regular low-variance connections to one destination CHANNEL, attributed to originating PID.
 
-    Two protocol-level exclusions keep real hosts quiet (both soak-discovered
-    on the live auditd feed):
-      * port 53 — DNS. Every machine queries its resolver at regular intervals;
-        covert DNS channels are the DNS-tunnel rules' job, not beaconing's.
-      * public DoH resolvers on 443 — dns.google / cloudflare-dns.com are
-        background browser noise with exactly beacon-like cadence. A beacon to
-        a resolver on a NON-DNS port (e.g. 1.1.1.1:4444) still fires.
+    Uses interval regularity (coefficient of variation, CV = stdev / mean < 0.25)
+    relative to the mean with jitter tolerance.
     """
     if not _is_routable_dest(dest_ip):
         return None
@@ -757,31 +886,59 @@ def check_beaconing(
         return None  # DNS protocol — routine resolver cadence, covered by DNS-tunnel rules
     if dest_ip in DOH_RESOLVERS and dest_port == 443:
         return None  # public DoH resolver — legitimate background cadence (soak FP)
-    timestamps = _recent_connection_times(conn, run_id, dest_ip, cutoff, dest_port)
+
+    # First attempt: connection times attributed to the originating process PID
+    timestamps, event_ids = _recent_connection_times(conn, run_id, dest_ip, cutoff, dest_port, pid=pid)
+    alert_pid = pid
+    if len(timestamps) < min_conn and pid is not None:
+        timestamps, event_ids = _recent_connection_times(conn, run_id, dest_ip, cutoff, dest_port, pid=None)
+        alert_pid = None
+
     if len(timestamps) < min_conn:
         return None
+
     intervals = [(t2 - t1).total_seconds() for t1, t2 in zip(timestamps, timestamps[1:])]
-    if len(intervals) < 2:
+    # Filter out immediate socket connection bursts (<0.2s)
+    filtered = [x for x in intervals if x >= 0.2]
+    if len(filtered) < 2:
         return None
-    if statistics.pstdev(intervals) >= variance:
+
+    mean_interval = statistics.mean(filtered)
+    if mean_interval <= min_interval:
+        # High-frequency burst traffic is not periodic beaconing
         return None
-    if statistics.mean(intervals) < min_interval:
-        # A burst (all connections within a fraction of a second) reads as
-        # perfectly regular to the variance gate — but it isn't a beacon.
+
+    stdev_interval = statistics.pstdev(filtered)
+    # Coefficient of variation CV = sigma / mu < 0.25 (or legacy variance threshold for tight intervals)
+    cv = (stdev_interval / mean_interval) if mean_interval > 0 else 1.0
+    if cv >= 0.25 and stdev_interval >= variance:
         return None
+
     port_suffix = f":{dest_port}" if dest_port is not None else ""
+    pid_str = f" from PID {alert_pid}" if alert_pid else ""
+    last_ts = timestamps[-1]
+
+    dummy_ev = event or {"host_id": "local", "pid": alert_pid, "dest_ip": dest_ip, "timestamp": last_ts.isoformat()}
+    entity_key = make_entity_key(dummy_ev, alert_pid, dest_ip)
+
     return Alert(
         run_id=run_id,
         rule_id="beaconing",
         rule_name="C2-style beaconing",
         severity="suspicious",
-        triggered_at=datetime.now(timezone.utc),
+        confidence="medium",
+        triggered_at=last_ts,
+        related_pid=alert_pid,
         related_ip=dest_ip,
         details=(
-            f"{len(timestamps)} connections to {dest_ip}{port_suffix} at regular "
-            f"~{int(statistics.mean(intervals))}s intervals (std-dev "
-            f"{statistics.pstdev(intervals):.1f}s)"
+            f"{len(timestamps)} connections{pid_str} to {dest_ip}{port_suffix} at regular "
+            f"~{int(mean_interval)}s intervals (CV: {cv:.2f}, jitter: {stdev_interval:.1f}s)"
         ),
+        rule_condition=f"connections >= {min_conn} and CV < 0.25 (cv={cv:.2f}) at ~{int(mean_interval)}s interval",
+        evidence_event_ids=event_ids,
+        occurrence_count=1,
+        last_seen_at=last_ts,
+        entity_key=entity_key,
     )
 
 
@@ -1443,12 +1600,13 @@ def check_enumeration_burst(
     if patterns is None:
         patterns = ENUM_PATTERNS
     rows = conn.execute(
-        "SELECT platform, pid, command_line FROM events "
+        "SELECT id, platform, pid, command_line FROM events "
         "WHERE run_id = ? AND event_type = 'process_create' AND timestamp >= ?",
         (run_id, cutoff.isoformat()),
     ).fetchall()
     seen: set[str] = set()
     actor_pids: set[int] = set()  # every process that performed an enum command
+    actor_event_ids: list[int] = []
     for r in rows:
         platform = (r["platform"] or "windows").lower()
         table = patterns.get(platform, patterns["windows"])
@@ -1456,17 +1614,20 @@ def check_enumeration_burst(
         for pattern, label in table:
             if re.search(pattern, cmdline, re.IGNORECASE):
                 seen.add(label)
+                actor_event_ids.append(r["id"])
                 if r["pid"] is not None:
                     actor_pids.add(r["pid"])
                 break  # one label per command — repeats don't stack
     if len(seen) < min_distinct:
         return None
+    now_utc = datetime.now(timezone.utc)
     return Alert(
         run_id=run_id,
         rule_id="enumeration-burst",
         rule_name="Discovery enumeration burst",
         severity="suspicious",
-        triggered_at=datetime.now(timezone.utc),
+        confidence="medium",
+        triggered_at=now_utc,
         related_ip=None,
         related_pid=None,
         # The processes behind the sweep — the Monitor highlights exactly these
@@ -1476,6 +1637,10 @@ def check_enumeration_burst(
             f"{len(seen)} distinct enumeration commands within "
             f"{ENUM_WINDOW_SECONDS}s: {', '.join(sorted(seen))}"
         ),
+        rule_condition=f"distinct enumeration commands count >= {min_distinct} in {ENUM_WINDOW_SECONDS}s",
+        evidence_event_ids=sorted(actor_event_ids),
+        occurrence_count=1,
+        last_seen_at=now_utc,
     )
 
 
@@ -1530,24 +1695,24 @@ def _is_private(ip: str) -> bool:
     return False
 
 
-def _archive_created_in_window(conn: sqlite3.Connection, run_id: str, cutoff: datetime) -> bool:
-    """Any archive file written or archive-creating command run in the window."""
+def _archive_created_in_window(conn: sqlite3.Connection, run_id: str, cutoff: datetime) -> int | None:
+    """Any archive file written or archive-creating command run in the window. Returns event id or None."""
     writes = conn.execute(
-        "SELECT file_path FROM events WHERE run_id = ? AND event_type = 'file_write' AND timestamp >= ?",
+        "SELECT id, file_path FROM events WHERE run_id = ? AND event_type = 'file_write' AND timestamp >= ?",
         (run_id, cutoff.isoformat()),
     ).fetchall()
     for r in writes:
         p = (r["file_path"] or "").lower()
         if p.endswith(ARCHIVE_EXTENSIONS):
-            return True
+            return r["id"]
     procs = conn.execute(
-        "SELECT command_line FROM events WHERE run_id = ? AND event_type = 'process_create' AND timestamp >= ?",
+        "SELECT id, command_line FROM events WHERE run_id = ? AND event_type = 'process_create' AND timestamp >= ?",
         (run_id, cutoff.isoformat()),
     ).fetchall()
     for r in procs:
         if _ARCHIVER_RE.search(r["command_line"] or ""):
-            return True
-    return False
+            return r["id"]
+    return None
 
 
 def _cmdline_has_private_ip(cmdline: str) -> bool:
@@ -1580,34 +1745,39 @@ def check_data_staging(conn: sqlite3.Connection, run_id: str, event: dict, cutof
         signal = f"connection to {event.get('dest_ip')}:{event.get('dest_port') or '?'}"
     else:
         return None
-    if not _archive_created_in_window(conn, run_id, cutoff):
+    arch_ev_id = _archive_created_in_window(conn, run_id, cutoff)
+    if arch_ev_id is None:
         return None
-    # related_ip is intentionally NOT set here: the same arc can surface as a
-    # process_create (upload command) and a network_connection (the actual
-    # push) — both share the pid, and the dedup key is (rule_id, pid, ip).
-    # Dropping the ip makes both halves of one staging arc dedupe to a single
-    # alert instead of double-firing.
+    ev_ids = [arch_ev_id]
+    if event.get("id"):
+        ev_ids.append(event["id"])
+    now_utc = datetime.now(timezone.utc)
     return Alert(
         run_id=run_id,
         rule_id="data-staging",
         rule_name="Data staging: archive then exfil",
         severity="malicious",
-        triggered_at=datetime.now(timezone.utc),
+        confidence="medium",
+        triggered_at=now_utc,
         related_pid=event.get("pid"),
         related_ip=None,
         details=f"Archive created within {STAGING_WINDOW_SECONDS}s, then upload signal: {signal}",
+        rule_condition="archive created in window followed by upload/exfil signal",
+        evidence_event_ids=ev_ids,
+        occurrence_count=1,
+        last_seen_at=now_utc,
     )
 
 
 # ---------------------------------------------------------------------------
 # Rule 6 — Rapid File Write Burst (ransomware indicator)
 # ---------------------------------------------------------------------------
-def _recent_file_writes(conn: sqlite3.Connection, run_id: str, pid: int, cutoff: datetime) -> list[str]:
+def _recent_file_writes(conn: sqlite3.Connection, run_id: str, pid: int, cutoff: datetime) -> tuple[list[str], list[int]]:
     rows = conn.execute(
-        "SELECT file_path FROM events WHERE run_id = ? AND pid = ? AND event_type = 'file_write' AND timestamp >= ?",
+        "SELECT id, file_path FROM events WHERE run_id = ? AND pid = ? AND event_type = 'file_write' AND timestamp >= ?",
         (run_id, pid, cutoff.isoformat()),
     ).fetchall()
-    return [r["file_path"] for r in rows]
+    return [r["file_path"] for r in rows], [r["id"] for r in rows]
 
 
 def check_rename_burst(
@@ -1620,12 +1790,15 @@ def check_rename_burst(
     pid = event.get("pid")
     if event.get("event_type") != "file_write" or pid is None:
         return None
-    recent = _recent_file_writes(conn, run_id, pid, cutoff)
+    recent, event_ids = _recent_file_writes(conn, run_id, pid, cutoff)
     if len(recent) > threshold:
         return _make_alert(
             run_id, "rename-burst", "Rapid file write burst (possible ransomware)",
             "malicious", event,
             f"{len(recent)} file writes from pid {pid} within {RENAME_BURST_WINDOW_SECONDS} seconds",
+            rule_condition=f"file_write_burst > {threshold} in {RENAME_BURST_WINDOW_SECONDS}s",
+            confidence="high",
+            evidence_event_ids=event_ids,
         )
     return None
 
@@ -2268,9 +2441,10 @@ _IP_LITERAL_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
 def check_tls_sni_suspicious(event: dict) -> Alert | None:
     """C2 (T1071.001) — TLS SNI that no legitimate client sends.
 
-    RFC 6066 forbids IP-literal SNIs, so an SNI that IS an IP is a covert
-    channel / raw-tunnel tell; a long or high-entropy SNI label is the TLS
-    cousin of the DNS DGA smell. Reads Sysmon's DestinationHostname.
+    Evaluated when packet-level TLS inspection (e.g. Zeek, Suricata, or
+    sandbox PCAP analyzer) extracts tls_sni from ClientHello. RFC 6066 forbids
+    IP-literal SNIs, so an SNI that IS an IP is a covert channel / raw-tunnel tell;
+    a long or high-entropy SNI label is the TLS cousin of the DNS DGA smell.
     """
     if event.get("event_type") != "network_connection":
         return None
@@ -2657,18 +2831,24 @@ def _extract_event_field_value(event: dict, field: str) -> str:
         return str(raw).strip()
 
     aliases = {
-        "process_name": ("image", "Image", "exe_path", "process", "binary"),
-        "parent_name": ("parent_process_name", "parentimage", "ParentImage", "parent"),
+        "process_name": ("image", "Image", "exe_path", "process", "binary", "targetimage", "TargetImage"),
+        "parent_name": ("parent_process_name", "parentimage", "ParentImage", "parent", "parentprocess"),
+        "parent_command_line": ("parent_command_line", "parentcommandline", "ParentCommandLine", "parent_cmd"),
         "command_line": ("commandline", "CommandLine", "cmd", "cmdline"),
         "dest_ip": ("destinationip", "DestinationIp", "dst_ip", "remote_ip", "ip"),
         "dest_port": ("destinationport", "DestinationPort", "dst_port", "remote_port", "port"),
-        "file_path": ("targetfilename", "TargetFilename", "filename", "path"),
-        "registry_key": ("targetobject", "TargetObject", "reg_key"),
-        "user": ("username", "User", "UserName", "account"),
-        "host_id": ("hostname", "ComputerName", "host"),
-        "event_type": ("category", "event", "EventID"),
+        "file_path": ("targetfilename", "TargetFilename", "filename", "path", "file_path", "pipe_name", "pipename", "PipeName"),
+        "registry_key": ("targetobject", "TargetObject", "reg_key", "registry_key"),
+        "user": ("username", "User", "UserName", "account", "targetusername"),
+        "host_id": ("hostname", "ComputerName", "host", "host_id"),
+        "event_type": ("category", "event", "EventID", "channel"),
         "protocol": ("proto", "Protocol"),
-        "sha256": ("hash", "hashes", "sha1", "md5"),
+        "sha256": ("hash", "hashes", "sha1", "md5", "sha256"),
+        "query": ("query", "QueryName", "queryname", "dns_query"),
+        "integrity_level": ("integrity_level", "IntegrityLevel", "integritylevel"),
+        "session_id": ("session_id", "SessionId", "sessionid", "logonid", "LogonId"),
+        "process_guid": ("process_guid", "ProcessGuid", "processguid"),
+        "connection_status": ("connection_status", "status"),
     }
     for alt in aliases.get(field, ()):
         val = event.get(alt)
@@ -2677,40 +2857,223 @@ def _extract_event_field_value(event: dict, field: str) -> str:
     return ""
 
 
+@functools.lru_cache(maxsize=1024)
+def _compile_regex(pattern: str) -> re.Pattern | None:
+    try:
+        return re.compile(pattern, re.IGNORECASE)
+    except re.error:
+        return None
+
+
+_PATHOLOGICAL_NESTED_QUANTIFIER_RE = re.compile(r"\([^)]*[\+\*][^)]*\)\s*[\+\*\{]")
+
+
+def safe_regex_search(pattern: str, text: str, timeout_seconds: float = 0.05) -> bool:
+    """Execute regex search bounded by timeout to protect against ReDoS."""
+    if _PATHOLOGICAL_NESTED_QUANTIFIER_RE.search(pattern):
+        return False
+    compiled = _compile_regex(pattern)
+    if compiled is None:
+        return False
+    result = [False]
+
+    def _run() -> None:
+        try:
+            m = compiled.search(text)
+            result[0] = m is not None
+        except Exception:
+            result[0] = False
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    t.join(timeout=timeout_seconds)
+    if t.is_alive():
+        return False
+    return result[0]
+
+
 def _evaluate_single_criterion(crit: dict, event: dict) -> tuple[bool, str, str]:
     field = crit.get("target_field", "command_line")
-    mod = (crit.get("modifier") or "contains").lower()
+    mods = crit.get("modifiers") or ([crit["modifier"]] if crit.get("modifier") else ["contains"])
+    mods_lower = [str(m).strip().lower() for m in mods]
+    is_all = crit.get("is_all", False) or "all" in mods_lower
+    is_regex = crit.get("is_regex", False) or any(m in ("re", "regex") for m in mods_lower)
+
     vals = crit.get("values") or ([crit["value"]] if isinstance(crit.get("value"), str) else crit.get("value") or [])
     event_val = _extract_event_field_value(event, field)
     if not event_val:
         return False, field, ""
 
     event_val_lower = event_val.lower()
-    for v_raw in vals:
-        val = str(v_raw).lower()
-        if mod in ("contains", "all"):
-            if val in event_val_lower:
-                return True, field, event_val
-        elif mod == "startswith":
-            if event_val_lower.startswith(val):
-                return True, field, event_val
-        elif mod == "endswith":
-            if event_val_lower.endswith(val):
-                return True, field, event_val
-        elif mod in ("equals", "exact"):
-            if event_val_lower == val:
-                return True, field, event_val
-        elif mod in ("re", "regex"):
-            try:
-                if re.search(val, event_val_lower, re.IGNORECASE):
-                    return True, field, event_val
-            except re.error:
-                pass
-        else:
-            if val in event_val_lower:
-                return True, field, event_val
 
-    return False, field, event_val
+    def _match_val(v_raw: Any) -> bool:
+        if is_regex:
+            return safe_regex_search(str(v_raw), event_val)
+        val_lower = str(v_raw).lower()
+        if any(m in ("startswith",) for m in mods_lower):
+            return event_val_lower.startswith(val_lower)
+        elif any(m in ("endswith",) for m in mods_lower):
+            return event_val_lower.endswith(val_lower)
+        elif any(m in ("equals", "exact") for m in mods_lower):
+            return event_val_lower == val_lower
+        else:  # default contains
+            return val_lower in event_val_lower
+
+    if is_all:
+        passed = bool(vals) and all(_match_val(v) for v in vals)
+    else:
+        passed = any(_match_val(v) for v in vals)
+
+    return passed, field, event_val
+
+
+def evaluate_sigma_selection(
+    branches: list[list[dict]] | list[dict] | dict,
+    event: dict,
+) -> tuple[bool, list[str]]:
+    """Evaluate a named search identifier (e.g. selection, filter) against an event.
+
+    In Sigma:
+    - If multiple branches (list of dicts): OR logic across branches.
+    - Within a branch (dict): AND logic across field criteria.
+    """
+    if isinstance(branches, dict):
+        branches = [[branches]]
+    elif isinstance(branches, list) and branches and isinstance(branches[0], dict):
+        branches = [branches]
+
+    matched_details: list[str] = []
+    for branch in branches:
+        branch_passed = True
+        branch_details: list[str] = []
+        for crit in branch:
+            passed, f_name, ev_val = _evaluate_single_criterion(crit, event)
+            if not passed:
+                branch_passed = False
+                break
+            orig_f = crit.get("original_field", f_name)
+            branch_details.append(f"{orig_f} matched")
+        if branch_passed and branch:
+            matched_details.extend(branch_details)
+            return True, matched_details
+
+    return False, []
+
+
+_SIGMA_TOKEN_RE = re.compile(
+    r"\s*(?:"
+    r"(\()|"
+    r"(\))|"
+    r"\b(and|or|not)\b|"
+    r"\b(1|all|any)\s+of\s+([a-zA-Z0-9_\*]+)(?=\s+|$|\))|"
+    r"([a-zA-Z0-9_\*]+)"
+    r")\s*",
+    re.IGNORECASE,
+)
+
+
+def evaluate_sigma_condition(
+    condition_expr: str,
+    eval_results: dict[str, bool],
+    all_identifier_names: list[str],
+) -> bool:
+    """Parse and evaluate Sigma condition expressions across selections.
+
+    Supports:
+    - Boolean operators: and, or, not
+    - Parentheses: ( ... )
+    - Quantifiers: 1 of pattern, all of pattern, any of pattern
+      (pattern: them, selection*, filter*, etc.)
+    - Identifier lookups: selection, filter, etc.
+    """
+    if not condition_expr or not condition_expr.strip():
+        return eval_results.get("selection", False)
+
+    tokens: list[tuple[str, str]] = []
+    pos = 0
+    expr = condition_expr.strip()
+    while pos < len(expr):
+        m = _SIGMA_TOKEN_RE.match(expr, pos)
+        if not m:
+            break
+        pos = m.end()
+        lparen, rparen, op, quant, quant_pat, ident = m.groups()
+        if lparen:
+            tokens.append(("LPAREN", "("))
+        elif rparen:
+            tokens.append(("RPAREN", ")"))
+        elif op:
+            tokens.append(("OP", op.lower()))
+        elif quant:
+            tokens.append(("QUANT", f"{quant.lower()}:{quant_pat}"))
+        elif ident:
+            tokens.append(("IDENT", ident))
+
+    if not tokens:
+        return eval_results.get(expr, False)
+
+    idx = 0
+
+    def parse_expr() -> bool:
+        return parse_or()
+
+    def parse_or() -> bool:
+        nonlocal idx
+        val = parse_and()
+        while idx < len(tokens) and tokens[idx][0] == "OP" and tokens[idx][1] == "or":
+            idx += 1
+            right = parse_and()
+            val = val or right
+        return val
+
+    def parse_and() -> bool:
+        nonlocal idx
+        val = parse_not()
+        while idx < len(tokens) and tokens[idx][0] == "OP" and tokens[idx][1] == "and":
+            idx += 1
+            right = parse_not()
+            val = val and right
+        return val
+
+    def parse_not() -> bool:
+        nonlocal idx
+        if idx < len(tokens) and tokens[idx][0] == "OP" and tokens[idx][1] == "not":
+            idx += 1
+            return not parse_not()
+        return parse_primary()
+
+    def parse_primary() -> bool:
+        nonlocal idx
+        if idx >= len(tokens):
+            return False
+        t_type, t_val = tokens[idx]
+        idx += 1
+        if t_type == "LPAREN":
+            res = parse_expr()
+            if idx < len(tokens) and tokens[idx][0] == "RPAREN":
+                idx += 1
+            return res
+        elif t_type == "QUANT":
+            quant_type, pat = t_val.split(":", 1)
+            if pat.lower() == "them":
+                matching = [k for k in all_identifier_names if k != "condition"]
+            else:
+                matching = [k for k in all_identifier_names if fnmatch.fnmatch(k.lower(), pat.lower())]
+            if not matching:
+                return False
+            if quant_type in ("1", "any"):
+                return any(eval_results.get(k, False) for k in matching)
+            elif quant_type == "all":
+                return all(eval_results.get(k, False) for k in matching)
+            return False
+        elif t_type == "IDENT":
+            return eval_results.get(t_val, False)
+        return False
+
+    try:
+        return parse_expr()
+    except Exception:
+        return eval_results.get(expr, False)
 
 
 def check_custom_sigma_rules(custom_rules: dict, event: dict) -> list[Alert]:
@@ -2729,42 +3092,71 @@ def check_custom_sigma_rules(custom_rules: dict, event: dict) -> list[Alert]:
         if rule_plat not in ("all", "", "unknown") and plat and rule_plat != plat:
             continue
 
-        criteria = rule_def.get("criteria", [])
-        if not criteria:
-            continue
+        selections = rule_def.get("selections")
+        condition_str = rule_def.get("condition") or "selection"
+        all_details: list[str] = []
 
-        matched_selection = True
-        matched_exclusion = False
-        matched_details = []
-
-        for crit in criteria:
-            is_excl = crit.get("is_exclusion", False)
-            passed, f_name, ev_val = _evaluate_single_criterion(crit, event)
-            if is_excl:
+        if selections and isinstance(selections, dict):
+            eval_results: dict[str, bool] = {}
+            for sel_name, branches in selections.items():
+                passed, details = evaluate_sigma_selection(branches, event)
+                eval_results[sel_name] = passed
                 if passed:
-                    matched_exclusion = True
-                    break
-            else:
-                if not passed:
-                    matched_selection = False
-                    break
-                matched_details.append(f"{crit.get('original_field', f_name)} matched")
+                    all_details.extend(details)
+            is_match = evaluate_sigma_condition(condition_str, eval_results, list(selections.keys()))
+        else:
+            criteria = rule_def.get("criteria", [])
+            if not criteria:
+                continue
+            matched_selection = True
+            matched_exclusion = False
+            for crit in criteria:
+                is_excl = crit.get("is_exclusion", False)
+                passed, f_name, ev_val = _evaluate_single_criterion(crit, event)
+                if is_excl:
+                    if passed:
+                        matched_exclusion = True
+                        break
+                else:
+                    if not passed:
+                        matched_selection = False
+                        break
+                    all_details.append(f"{crit.get('original_field', f_name)} matched")
+            is_match = bool(matched_selection and not matched_exclusion and all_details)
 
-        if matched_selection and not matched_exclusion and matched_details:
-            alerts.append(
-                Alert(
-                    run_id=event.get("run_id") or "",
-                    rule_id=rule_def.get("rule_id", rule_id),
-                    rule_name=rule_def.get("title", rule_id),
-                    severity=rule_def.get("severity", "suspicious"),
-                    mitre_tactic=rule_def.get("mitre_tactics", ["execution"])[0] if rule_def.get("mitre_tactics") else "execution",
-                    mitre_technique=rule_def.get("mitre_techniques", ["T1059"])[0] if rule_def.get("mitre_techniques") else "T1059",
-                    details=f"SigmaHQ rule '{rule_def.get('title')}': {', '.join(matched_details[:3])}",
-                    related_pid=event.get("pid"),
-                    related_ip=event.get("dest_ip"),
-                    triggered_at=event.get("timestamp") or datetime.now(timezone.utc).isoformat(),
-                )
+        if is_match:
+            ev_ts = _parse_ts(event.get("timestamp")) or datetime.now(timezone.utc)
+            pid = event.get("pid")
+            pid_fallback = False
+            if pid is None or pid == 0:
+                ppid = event.get("ppid")
+                if ppid is not None and ppid != 0:
+                    pid = ppid
+                    pid_fallback = True
+
+            entity_key = make_entity_key(event, pid, event.get("dest_ip"))
+            detail_msg = f"SigmaHQ rule '{rule_def.get('title')}': {', '.join(all_details[:3]) if all_details else condition_str}"
+            if pid_fallback:
+                detail_msg += f" [PID fallback to parent PPID {pid}]"
+
+            alert = Alert(
+                run_id=event.get("run_id") or "",
+                rule_id=rule_def.get("rule_id", rule_id),
+                rule_name=rule_def.get("title", rule_id),
+                severity=rule_def.get("severity", "suspicious"),
+                mitre_tactic=rule_def.get("mitre_tactics", ["execution"])[0] if rule_def.get("mitre_tactics") else "execution",
+                mitre_technique=rule_def.get("mitre_techniques", ["T1059"])[0] if rule_def.get("mitre_techniques") else "T1059",
+                details=detail_msg,
+                related_pid=pid,
+                related_ip=event.get("dest_ip"),
+                triggered_at=ev_ts,
+                last_seen_at=ev_ts,
+                entity_key=entity_key,
+                pid_fallback=pid_fallback,
+                evidence_event_ids=[event["id"]] if event.get("id") is not None else [],
+                rule_condition=condition_str,
             )
+            alerts.append(alert)
 
     return alerts
 
@@ -2782,35 +3174,57 @@ def simulate_rule_evaluation(rule_def_or_yaml: dict | str, event: dict) -> dict:
     severity = rule_def.get("severity", "malicious" if level in ("critical", "high") else "suspicious")
     mitre_tactics = rule_def.get("mitre_tactics", ["execution"])
     mitre_techniques = rule_def.get("mitre_techniques", ["T1059"])
+    selections = rule_def.get("selections")
+    condition_str = rule_def.get("condition") or "selection"
     criteria = rule_def.get("criteria", [])
 
     diagnostics = []
-    matched_selection = True
-    matched_exclusion = False
+    eval_results: dict[str, bool] = {}
 
-    for crit in criteria:
-        is_excl = crit.get("is_exclusion", False)
-        passed, f_name, ev_val = _evaluate_single_criterion(crit, event)
-        status = "PASS" if passed else "FAIL"
-        if is_excl:
-            if passed:
-                matched_exclusion = True
-        else:
-            if not passed:
-                matched_selection = False
+    if selections and isinstance(selections, dict):
+        for sel_name, branches in selections.items():
+            sel_passed, sel_details = evaluate_sigma_selection(branches, event)
+            eval_results[sel_name] = sel_passed
+            for branch in branches:
+                for crit in branch:
+                    passed, f_name, ev_val = _evaluate_single_criterion(crit, event)
+                    diagnostics.append({
+                        "section": sel_name,
+                        "original_field": crit.get("original_field", f_name),
+                        "target_field": f_name,
+                        "modifier": crit.get("modifier", "contains"),
+                        "expected_values": crit.get("values", [crit.get("value")]),
+                        "event_value": ev_val,
+                        "passed": passed,
+                        "is_exclusion": crit.get("is_exclusion", False),
+                        "status": "PASS" if passed else "FAIL",
+                    })
+        is_match = evaluate_sigma_condition(condition_str, eval_results, list(selections.keys()))
+    else:
+        matched_selection = True
+        matched_exclusion = False
+        for crit in criteria:
+            is_excl = crit.get("is_exclusion", False)
+            passed, f_name, ev_val = _evaluate_single_criterion(crit, event)
+            status = "PASS" if passed else "FAIL"
+            if is_excl:
+                if passed:
+                    matched_exclusion = True
+            else:
+                if not passed:
+                    matched_selection = False
+            diagnostics.append({
+                "original_field": crit.get("original_field", f_name),
+                "target_field": f_name,
+                "modifier": crit.get("modifier", "contains"),
+                "expected_values": crit.get("values", [crit.get("value")]),
+                "event_value": ev_val,
+                "passed": passed,
+                "is_exclusion": is_excl,
+                "status": status,
+            })
+        is_match = bool(matched_selection and not matched_exclusion and criteria)
 
-        diagnostics.append({
-            "original_field": crit.get("original_field", f_name),
-            "target_field": f_name,
-            "modifier": crit.get("modifier", "contains"),
-            "expected_values": crit.get("values", [crit.get("value")]),
-            "event_value": ev_val,
-            "passed": passed,
-            "is_exclusion": is_excl,
-            "status": status,
-        })
-
-    is_match = bool(matched_selection and not matched_exclusion and criteria)
     simulated_alert = None
     if is_match:
         simulated_alert = {
@@ -2819,7 +3233,7 @@ def simulate_rule_evaluation(rule_def_or_yaml: dict | str, event: dict) -> dict:
             "severity": severity,
             "mitre_tactic": mitre_tactics[0] if mitre_tactics else "execution",
             "mitre_technique": mitre_techniques[0] if mitre_techniques else "T1059",
-            "details": f"Sigma detection matched: {', '.join([d['original_field'] for d in diagnostics if d['passed'] and not d['is_exclusion']])}",
+            "details": f"Sigma detection matched ({condition_str})",
             "related_pid": event.get("pid"),
             "related_ip": event.get("dest_ip"),
         }
@@ -2831,12 +3245,13 @@ def simulate_rule_evaluation(rule_def_or_yaml: dict | str, event: dict) -> dict:
         "severity": severity,
         "mitre_tactics": mitre_tactics,
         "mitre_techniques": mitre_techniques,
+        "condition": condition_str,
         "diagnostics": diagnostics,
         "simulated_alert": simulated_alert,
         "recommendation": (
             f"Rule would trigger an immediate {severity.upper()} finding in the SOC triage queue mapped to {mitre_techniques[0]}."
             if is_match else
-            "Event does not satisfy all selection conditions or triggered an exclusion filter."
+            f"Event does not satisfy Sigma condition '{condition_str}'."
         ),
     }
 
@@ -2897,25 +3312,63 @@ def evaluate_batch(conn: sqlite3.Connection, run_id: str, events: list[dict]) ->
             return False
         if _allowlist_blocks(allowlist, alert, sample_sha256):
             return False
-        key = (alert.rule_id, alert.related_pid, alert.related_ip)
-        related = alert.related_ip or (str(alert.related_pid) if alert.related_pid else None)
-        if key in seen_related or _alert_exists(conn, run_id, alert.rule_id, related):
+
+        ev_id = event.get("id") if event else None
+        if ev_id and ev_id not in alert.evidence_event_ids:
+            alert.evidence_event_ids.append(ev_id)
+
+        # Entity attribution key
+        entity_key = alert.entity_key or make_entity_key(event or {}, alert.related_pid, alert.related_ip)
+        alert.entity_key = entity_key
+
+        existing = _get_existing_alert(
+            conn,
+            run_id,
+            alert.rule_id,
+            entity_key,
+            related_fallback=(str(alert.related_pid) if alert.related_pid else alert.related_ip),
+        )
+
+        dedup_key = (alert.rule_id, entity_key)
+        if dedup_key in seen_related or existing is not None:
+            # Deduplicate repeated alerts for the same entity without losing supporting evidence!
+            if existing is not None and ev_id is not None:
+                existing_id = existing["id"]
+                existing_ev_ids = existing.get("evidence_event_ids") or []
+                if ev_id not in existing_ev_ids:
+                    existing_ev_ids.append(ev_id)
+                    ev_ts_iso = (
+                        alert.last_seen_at.isoformat()
+                        if alert.last_seen_at
+                        else datetime.now(timezone.utc).isoformat()
+                    )
+                    conn.execute(
+                        "UPDATE alerts SET evidence_event_ids = ?, occurrence_count = occurrence_count + 1, last_seen_at = ? WHERE id = ?",
+                        (json.dumps(existing_ev_ids), ev_ts_iso, existing_id),
+                    )
+                    conn.execute(
+                        """
+                        INSERT OR IGNORE INTO finding_evidence_events (
+                            finding_id, event_id, rule_condition, matched_at
+                        ) VALUES (?, ?, ?, ?)
+                        """,
+                        (existing_id, ev_id, alert.rule_condition, ev_ts_iso),
+                    )
             return False
+
         cap = alert_caps.get(alert.rule_id)
         if cap is None and default_cap > 0:
             cap = default_cap
         if cap is not None:
             fired = fired_counts.get(alert.rule_id, 0)
             if fired >= cap:
-                # Count the *distinct* alert once — remember it in the dedup
-                # set so the next observation of the same (rule, pid, ip)
-                # from this batch is a silent repeat, not another suppress.
-                if key not in seen_related:
+                if dedup_key not in seen_related:
                     suppressed_counts[alert.rule_id] = suppressed_counts.get(alert.rule_id, 0) + 1
-                    seen_related.add(key)
+                    seen_related.add(dedup_key)
                 return False
             fired_counts[alert.rule_id] = fired + 1
-        seen_related.add(key)
+
+        seen_related.add(dedup_key)
         finding_id = insert_alert(conn, alert)
         new_alerts.append(alert)
         record_for_alert(conn, alert, finding_id, event.get("id") if event else None)
@@ -3031,6 +3484,8 @@ def evaluate_batch(conn: sqlite3.Connection, run_id: str, events: list[dict]) ->
                 variance=int(t["BEACON_VARIANCE_THRESHOLD"] * 100) / 100.0,
                 min_interval=float(t["BEACON_MIN_INTERVAL_SECONDS"]),
                 dest_port=event.get("dest_port"),
+                pid=event.get("pid"),
+                event=event,
             )
             if alert:
                 fire(alert, event)
@@ -3135,18 +3590,36 @@ def evaluate_batch(conn: sqlite3.Connection, run_id: str, events: list[dict]) ->
 
     stages = {_KILL_CHAIN_STAGE[r["rule_id"]] for r in fired if r["rule_id"] in _KILL_CHAIN_STAGE}
     if len(stages) >= 3 and not _alert_exists(conn, run_id, "attack-chain", None):
+        chain_evidence_ids: list[int] = []
+        for r in fired:
+            if r["rule_id"] in _KILL_CHAIN_STAGE:
+                al_row = conn.execute(
+                    "SELECT evidence_event_ids FROM alerts WHERE run_id = ? AND rule_id = ?",
+                    (run_id, r["rule_id"]),
+                ).fetchone()
+                if al_row and al_row["evidence_event_ids"]:
+                    try:
+                        chain_evidence_ids.extend(json.loads(al_row["evidence_event_ids"]))
+                    except Exception:
+                        pass
+        now_utc = datetime.now(timezone.utc)
         chain_alert = Alert(
             run_id=run_id,
             rule_id="attack-chain",
             rule_name="Coordinated attack chain",
             severity="malicious",
-            triggered_at=datetime.now(timezone.utc),
+            confidence="high",
+            triggered_at=now_utc,
             related_ip=None,
             related_pid=None,
             details=(
                 f"{len(stages)} distinct kill-chain stages observed — "
                 f"{', '.join(sorted(stages))}"
             ),
+            rule_condition=f"multi-stage kill chain correlation: {len(stages)} distinct ATT&CK tactics observed",
+            evidence_event_ids=sorted(set(chain_evidence_ids)),
+            occurrence_count=1,
+            last_seen_at=now_utc,
         )
         fire(chain_alert)
 
@@ -3166,6 +3639,96 @@ def evaluate_batch(conn: sqlite3.Connection, run_id: str, events: list[dict]) ->
     baseline_svc.learn(conn, events)
 
     return new_alerts
+
+
+def reproduce_run_detections(
+    conn: sqlite3.Connection,
+    run_id: str,
+    *,
+    sync_database: bool = False,
+) -> dict[str, Any]:
+    """Reproduce detections deterministically from stored event data for a run.
+
+    Loads all stored events for run_id in chronological sequence and evaluates
+    detection heuristics. If sync_database is True, synchronizes findings with the
+    database and recalculates the run's risk score.
+    """
+    from ..models.event import list_events_for_run
+    from .risk import compute_risk_score, recalculate_run_risk
+
+    events = list_events_for_run(conn, run_id)
+    existing_alerts = conn.execute(
+        "SELECT id, rule_id, rule_name, severity, confidence, details, rule_condition, "
+        "evidence_event_ids, occurrence_count FROM alerts WHERE run_id = ? ORDER BY id ASC",
+        (run_id,),
+    ).fetchall()
+    existing = [dict(r) for r in existing_alerts]
+
+    if not events:
+        return {
+            "run_id": run_id,
+            "events_scanned": 0,
+            "existing_findings_count": len(existing),
+            "reproduced_findings_count": 0,
+            "reproduced_findings": [],
+            "synced": False,
+            "risk_score": 0,
+        }
+
+    if sync_database:
+        # Clear existing auto-detected alerts (preserving analyst-created findings)
+        conn.execute(
+            "DELETE FROM finding_evidence_events WHERE finding_id IN (SELECT id FROM alerts WHERE run_id = ? AND source = 'detection')",
+            (run_id,),
+        )
+        conn.execute(
+            "DELETE FROM ioc_findings WHERE finding_id IN (SELECT id FROM alerts WHERE run_id = ? AND source = 'detection')",
+            (run_id,),
+        )
+        conn.execute(
+            "DELETE FROM alerts WHERE run_id = ? AND source = 'detection'",
+            (run_id,),
+        )
+        evict_run_process_map(run_id)
+        reproduced_alerts = evaluate_batch(conn, run_id, events)
+        risk_score = recalculate_run_risk(conn, run_id)
+        return {
+            "run_id": run_id,
+            "events_scanned": len(events),
+            "existing_findings_count": len(existing),
+            "reproduced_findings_count": len(reproduced_alerts),
+            "reproduced_findings": [a.model_dump() for a in reproduced_alerts],
+            "synced": True,
+            "risk_score": risk_score,
+        }
+    else:
+        conn.execute("SAVEPOINT dry_run_reproduce")
+        try:
+            conn.execute(
+                "DELETE FROM finding_evidence_events WHERE finding_id IN (SELECT id FROM alerts WHERE run_id = ? AND source = 'detection')",
+                (run_id,),
+            )
+            conn.execute(
+                "DELETE FROM ioc_findings WHERE finding_id IN (SELECT id FROM alerts WHERE run_id = ? AND source = 'detection')",
+                (run_id,),
+            )
+            conn.execute("DELETE FROM alerts WHERE run_id = ? AND source = 'detection'", (run_id,))
+            evict_run_process_map(run_id)
+            reproduced_alerts = evaluate_batch(conn, run_id, events)
+            out = [a.model_dump() for a in reproduced_alerts]
+            risk_score = compute_risk_score([a.rule_id for a in reproduced_alerts])
+            return {
+                "run_id": run_id,
+                "events_scanned": len(events),
+                "existing_findings_count": len(existing),
+                "reproduced_findings_count": len(reproduced_alerts),
+                "reproduced_findings": out,
+                "synced": False,
+                "risk_score": risk_score,
+            }
+        finally:
+            conn.execute("ROLLBACK TO SAVEPOINT dry_run_reproduce")
+            conn.execute("RELEASE SAVEPOINT dry_run_reproduce")
 
 
 def backtest_rule(conn: sqlite3.Connection, rule_id: str, max_events: int = 2000) -> dict[str, Any]:

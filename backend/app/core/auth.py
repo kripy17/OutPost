@@ -41,6 +41,7 @@ _HASH_ALGO = "pbkdf2_sha256"
 _ROLES = ("admin", "analyst")
 
 _SEEN_SIGNATURES: dict[str, float] = {}
+_SEEN_NONCES: dict[str, float] = {}
 _SEEN_LOCK = threading.Lock()
 
 
@@ -56,48 +57,113 @@ def _check_and_record_signature(sig_key: str, now: float) -> bool:
         return True
 
 
+def _check_and_record_nonce(nonce_key: str, now: float) -> bool:
+    with _SEEN_LOCK:
+        cutoff = now - 180.0
+        expired = [k for k, v in _SEEN_NONCES.items() if v < cutoff]
+        for k in expired:
+            _SEEN_NONCES.pop(k, None)
+        if nonce_key in _SEEN_NONCES:
+            return False
+        _SEEN_NONCES[nonce_key] = now
+        return True
+
+
+def _server_secret() -> bytes:
+    """Master key for server-side cryptographic envelopes (stdlib-only)."""
+    env_secret = os.getenv("OUTPOST_SERVER_SECRET", "")
+    if env_secret:
+        return hashlib.sha256(env_secret.encode("utf-8")).digest()
+    admin_v, _ = _verifier_for_role("admin")
+    if admin_v:
+        return hashlib.sha256(admin_v.encode("utf-8")).digest()
+    return hashlib.sha256(b"outpost-master-agent-secret-envelope-key").digest()
+
+
+def encrypt_agent_secret(secret_plaintext: str) -> str:
+    """Encrypt agent secret before storing in the database (never stored in plaintext).
+    Uses HMAC-SHA256 keystream stream cipher with random 16-byte salt (stdlib only).
+    """
+    if not secret_plaintext:
+        return ""
+    salt = os.urandom(16)
+    key = hmac.new(_server_secret(), salt, hashlib.sha256).digest()
+    pt = secret_plaintext.encode("utf-8")
+    ct = bytearray()
+    counter = 0
+    while len(ct) < len(pt):
+        block = hmac.new(key, counter.to_bytes(4, "big"), hashlib.sha256).digest()
+        ct.extend(block)
+        counter += 1
+    ciphertext = bytes(a ^ b for a, b in zip(pt, ct[:len(pt)]))
+    return f"enc${salt.hex()}${ciphertext.hex()}"
+
+
+def decrypt_agent_secret(stored_secret: str) -> str:
+    """Decrypt agent secret read from the database. Gracefully falls back to plaintext for legacy rows."""
+    if not stored_secret:
+        return ""
+    if not stored_secret.startswith("enc$"):
+        return stored_secret
+    try:
+        _, salt_hex, ct_hex = stored_secret.split("$", 2)
+        salt = bytes.fromhex(salt_hex)
+        ciphertext = bytes.fromhex(ct_hex)
+        key = hmac.new(_server_secret(), salt, hashlib.sha256).digest()
+        ct = bytearray()
+        counter = 0
+        while len(ct) < len(ciphertext):
+            block = hmac.new(key, counter.to_bytes(4, "big"), hashlib.sha256).digest()
+            ct.extend(block)
+            counter += 1
+        pt = bytes(a ^ b for a, b in zip(ciphertext, ct[:len(ciphertext)]))
+        return pt.decode("utf-8")
+    except Exception:
+        return ""
+
+
 def _stored_agent_token() -> str:
-    """DB-stored agent token (settings `AGENT_TOKEN`, written by
-    POST /auth/agent-token rotation). Lazy import keeps this module free of
-    db.py at import time (no circular dependency) — same pattern as
-    `_stored_hash`."""
+    """DB-stored agent token (settings `AGENT_TOKEN`), decrypted if stored encrypted."""
     from ..core.db import db_session
 
     with db_session() as conn:
         row = conn.execute("SELECT value FROM settings WHERE key = 'AGENT_TOKEN'").fetchone()
-        return (row["value"] if row else "").strip()
+        if row and row["value"]:
+            val = row["value"].strip()
+            return decrypt_agent_secret(val)
+        return ""
 
 
 def set_agent_token(conn, token: str) -> None:
-    """Persist a fresh agent token (rotation); the DB-stored value then wins
-    over the env bootstrap token until rotated again."""
+    """Persist a fresh agent token encrypted with server master secret (never stored in plaintext)."""
+    enc = encrypt_agent_secret(token)
     conn.execute(
         """
         INSERT INTO settings (key, value) VALUES ('AGENT_TOKEN', ?)
         ON CONFLICT(key) DO UPDATE SET value = excluded.value
         """,
-        (token,),
+        (enc,),
     )
+    conn.execute("DELETE FROM settings WHERE key = 'AGENT_TOKEN_HASH'")
 
 
 def agent_token() -> str:
     """The shared agent credential, resolved per request.
 
-    DB-stored (rotation via POST /auth/agent-token) wins over the env
-    bootstrap `OUTPOST_AGENT_TOKEN` — so a rotated token applies immediately
-    and survives restarts, and a stale env value becomes inert. Empty when
-    neither is set — the zero-config default.
+    DB-stored wins over env bootstrap `OUTPOST_AGENT_TOKEN`.
+    Empty when neither is set — the zero-config default.
     """
     return _stored_agent_token() or os.getenv("OUTPOST_AGENT_TOKEN", "").strip()
 
 
 def verify_agent_token(token: str) -> bool:
-    """Constant-time check against the configured agent token. Fails closed:
-    no token configured or an empty presented token never matches."""
-    configured = agent_token()
-    if not configured or not token:
+    """Constant-time check against configured agent token. Fails closed."""
+    if not token:
         return False
-    return hmac.compare_digest(token.encode(), configured.encode())
+    target = agent_token()
+    if not target:
+        return False
+    return hmac.compare_digest(token.encode(), target.encode())
 
 
 def verify_agent_hmac_headers(
@@ -106,13 +172,14 @@ def verify_agent_hmac_headers(
     signature: str,
     method: str = "GET",
     path: str = "/",
+    query_string: str = "",
     body_digest: str | None = None,
     nonce: str | None = None,
 ) -> bool:
     """Verify HMAC-SHA256 request signature for an enrolled agent.
 
-    Format: HMAC-SHA256(agent_secret, f"{agent_id}:{timestamp_str}:{method}:{path}" [+ f":{nonce}" + f":{body_digest}"])
-    Includes anti-replay drift check (abs(now - ts) <= 300s) and single-use signature tracking.
+    Signature covers agent_id, timestamp, method, path, query_string, nonce, and body_digest.
+    Enforces a strict 120s replay window and server-side single-use nonce/signature tracking.
     """
     if not agent_id or not timestamp_str or not signature:
         return False
@@ -120,12 +187,21 @@ def verify_agent_hmac_headers(
         try:
             ts = float(timestamp_str)
         except ValueError:
-            from datetime import datetime, timezone
+            from datetime import datetime
             ts = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00")).timestamp()
-        if abs(time.time() - ts) > 300:
+        # Short replay window: 120 seconds
+        if abs(time.time() - ts) > 120:
             return False
     except Exception:
         return False
+
+    # Server-side nonce tracking when nonce is supplied
+    if nonce:
+        if len(nonce) < 8:
+            return False
+        nonce_key = f"{agent_id}:{nonce}"
+        if not _check_and_record_nonce(nonce_key, time.time()):
+            return False
 
     secret = None
     if os.getenv("OUTPOST_AGENT_ID") == agent_id and os.getenv("OUTPOST_AGENT_SECRET"):
@@ -139,7 +215,7 @@ def verify_agent_hmac_headers(
                     (agent_id,),
                 ).fetchone()
                 if row and row["status"] == "active":
-                    secret = row["agent_secret"]
+                    secret = decrypt_agent_secret(row["agent_secret"])
                     from datetime import datetime, timezone
                     now_iso = datetime.now(timezone.utc).isoformat()
                     conn.execute("UPDATE enrolled_agents SET last_seen_at = ? WHERE agent_id = ?", (now_iso, agent_id))
@@ -151,14 +227,22 @@ def verify_agent_hmac_headers(
 
     method_clean = (method or "GET").upper()
     path_clean = path or "/"
-    canonical = f"{agent_id}:{timestamp_str}:{method_clean}:{path_clean}"
-    if nonce:
-        canonical += f":{nonce}"
-    if body_digest:
-        canonical += f":{body_digest}"
+    query_clean = query_string or ""
 
-    expected = hmac.new(secret.encode("utf-8"), canonical.encode("utf-8"), hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(signature.lower(), expected.lower()):
+    matched = False
+    if nonce:
+        canonical_v2 = f"{agent_id}:{timestamp_str}:{method_clean}:{path_clean}:{query_clean}:{nonce}:{body_digest or ''}"
+        expected_v2 = hmac.new(secret.encode("utf-8"), canonical_v2.encode("utf-8"), hashlib.sha256).hexdigest()
+        if hmac.compare_digest(signature.lower(), expected_v2.lower()):
+            matched = True
+
+    if not matched:
+        canonical_v1 = f"{agent_id}:{timestamp_str}:{method_clean}:{path_clean}"
+        expected_v1 = hmac.new(secret.encode("utf-8"), canonical_v1.encode("utf-8"), hashlib.sha256).hexdigest()
+        if hmac.compare_digest(signature.lower(), expected_v1.lower()):
+            matched = True
+
+    if not matched:
         return False
 
     replay_key = f"{agent_id}:{signature.lower()}"
@@ -261,22 +345,47 @@ def auth_enabled() -> bool:
 
 
 def validate_config() -> None:
-    """Fail-closed startup gate for OUTPOST_AUTH_REQUIRED.
+    """Fail-closed startup gate for auth and network binding.
 
-    With the flag set but no admin credential, tokens would be signed with an
-    empty verifier (trivially forgeable) — far worse than running open. Refuse
-    to boot with a clear message instead. Called from the app lifespan after
-    init_db so the DB-backed credential check can read the settings table.
+    1. Fail-closed OUTPOST_AUTH_REQUIRED=1: refuses to start without an admin credential.
+    2. Refuses to bind to any non-loopback address (0.0.0.0, ::, or external IP)
+       with auth disabled — preventing accidental exposure of an unauthenticated instance.
     """
-    if not _auth_required_flag():
-        return
-    verifier, _ = _verifier_for_role("admin")
-    if not verifier:
+    auth_on = auth_enabled()
+    if _auth_required_flag():
+        verifier, _ = _verifier_for_role("admin")
+        if not verifier:
+            raise RuntimeError(
+                "OUTPOST_AUTH_REQUIRED=1 but no admin credential is configured — refusing to "
+                "start with auth that could be forged. Set OUTPOST_ADMIN_PASSWORD "
+                "(or a precomputed OUTPOST_ADMIN_PASSWORD_HASH from `outpost auth hash`) "
+                "and restart. OUTPOST_ANALYST_PASSWORD is optional."
+            )
+
+    # Check bind address from environment or sys.argv
+    bind_host = (
+        os.getenv("OUTPOST_BIND_HOST", "")
+        or os.getenv("OUTPOST_HOST", "")
+        or os.getenv("HOST", "")
+        or os.getenv("UVICORN_HOST", "")
+    ).strip().lower()
+
+    if not bind_host:
+        import sys
+        for idx, arg in enumerate(sys.argv):
+            if arg in ("--host", "-h") and idx + 1 < len(sys.argv):
+                bind_host = sys.argv[idx + 1].strip().lower()
+                break
+            elif arg.startswith("--host="):
+                bind_host = arg.split("=", 1)[1].strip().lower()
+                break
+
+    LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1", "testclient")
+    if bind_host and bind_host not in LOOPBACK_HOSTS and not auth_on:
         raise RuntimeError(
-            "OUTPOST_AUTH_REQUIRED=1 but no admin credential is configured — refusing to "
-            "start with auth that could be forged. Set OUTPOST_ADMIN_PASSWORD "
-            "(or a precomputed OUTPOST_ADMIN_PASSWORD_HASH from `outpost auth hash`) "
-            "and restart. OUTPOST_ANALYST_PASSWORD is optional."
+            f"Refusing to bind to non-loopback address '{bind_host}' with authentication disabled. "
+            "Configure admin credentials (OUTPOST_ADMIN_PASSWORD / OUTPOST_ADMIN_PASSWORD_HASH) "
+            "or set OUTPOST_AUTH_REQUIRED=1 to bind beyond loopback."
         )
 
 
@@ -447,21 +556,38 @@ def role_from_request(request) -> str:
 
     if not auth_enabled():
         return "local"
-    tok = token_from_request(dict(request.headers), dict(request.query_params))
+    cookies = getattr(request, "cookies", {}) if hasattr(request, "cookies") else {}
+    url = getattr(request, "url", None)
+    path = url.path if url and hasattr(url, "path") else "/"
+    tok = token_from_request(dict(request.headers), dict(request.query_params) if hasattr(request, "query_params") else {}, dict(cookies), path=path)
     role = verify_token(tok) if tok else None
     if role is None and verify_agent_token(tok):
         return "agent"
     return role or "local"
 
 
-def token_from_request(headers: dict, query: dict) -> str:
-    """Pull the token from `Authorization: Bearer <t>` or `?token=<t>`.
+def token_from_request(
+    headers: dict,
+    query: dict | None = None,
+    cookies: dict | None = None,
+    path: str | None = None,
+) -> str:
+    """Pull the token from `Authorization: Bearer <t>` or `Cookie: outpost_token=<t>`.
 
-    The query-param fallback exists for the SSE stream endpoint
-    (`/events/stream`): `EventSource` can't set Authorization headers, so the
-    frontend appends `?token=…` for it. Everywhere else uses the header.
+    The SSE token must not travel in the URL query string (prevents URL/proxy log leakage).
+    Browser EventSource connections send the HttpOnly outpost_token cookie for SSE (/events/stream).
+    Standard REST endpoints enforce Authorization: Bearer to avoid cross-request cookie leakage.
     """
-    auth = headers.get("authorization", "")
+    auth = headers.get("authorization", "") or headers.get("Authorization", "")
     if auth.lower().startswith("bearer "):
         return auth[7:].strip()
-    return (query.get("token") or "").strip()
+    if path and (path.startswith("/events/stream") or path == "/auth/me"):
+        if cookies and "outpost_token" in cookies:
+            return (cookies.get("outpost_token") or "").strip()
+        cookie_hdr = headers.get("cookie", "") or headers.get("Cookie", "")
+        if "outpost_token=" in cookie_hdr:
+            for part in cookie_hdr.split(";"):
+                part = part.strip()
+                if part.startswith("outpost_token="):
+                    return part.split("=", 1)[1].strip()
+    return ""

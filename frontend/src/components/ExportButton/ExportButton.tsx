@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Icon } from "../Icon";
 import { getRunExport } from "../../lib/api";
 
 type Status = "idle" | "working" | "done" | "error";
@@ -38,16 +39,14 @@ export default function ExportButton({
     }
   };
 
-  const text =
-    status === "working" ? "Fetching…" : status === "done" ? "Exported ✓" : status === "error" ? "Failed" : label;
-
   return (
     <button
       onClick={onExport}
       disabled={status === "working"}
-      className="press rounded border border-accent/60 px-3 py-1.5 font-mono text-xs text-accent transition-colors duration-150 hover:bg-accent/10 disabled:opacity-50"
+      className="press inline-flex items-center gap-1.5 rounded border border-accent/60 px-3 py-1.5 font-mono text-xs text-accent transition-colors duration-150 hover:bg-accent/10 disabled:opacity-50"
     >
-      {text}
+      {status === "done" && <Icon name="check" size={12} className="text-signal" />}
+      <span>{status === "working" ? "Fetching…" : status === "done" ? "Exported" : status === "error" ? "Failed" : label}</span>
     </button>
   );
 }

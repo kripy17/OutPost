@@ -122,3 +122,35 @@ def create_finding(body: FindingIn, request: Request) -> FindingDTO:
             detail=f"{body.severity} · {body.rule_id} on run {body.run_id}",
         )
     return FindingDTO(**row)
+
+
+@router.get("/findings/{finding_id}/evidence", response_model=None)
+def get_finding_evidence_endpoint(finding_id: int) -> dict:
+    """Fetch complete raw evidence trace and condition details for a finding."""
+    with db_session() as conn:
+        trace = findings_store.get_finding_evidence(conn, finding_id)
+    if not trace:
+        raise HTTPException(status_code=404, detail=f"Unknown finding id: {finding_id}")
+    return trace
+
+
+@router.post("/runs/{run_id}/recalculate-detections", response_model=None)
+def recalculate_detections_endpoint(
+    run_id: str,
+    request: Request,
+    sync: bool = Query(False, description="Commit changes to database and recalculate run risk score"),
+) -> dict:
+    """Reproduce detections deterministically from stored event data for a run."""
+    with db_session() as conn:
+        if not run_store.get_run(conn, run_id):
+            raise HTTPException(status_code=404, detail=f"Unknown run_id: {run_id}")
+        from ..services.detection import reproduce_run_detections
+
+        res = reproduce_run_detections(conn, run_id, sync_database=sync)
+        if sync:
+            audit.log(
+                conn, auth.role_from_request(request), "detection.recalculate",
+                target_type="run", target_id=run_id,
+                detail=f"Recalculated detections for {run_id}: {res['reproduced_findings_count']} findings, risk {res['risk_score']}",
+            )
+    return res

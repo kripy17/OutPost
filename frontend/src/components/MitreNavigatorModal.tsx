@@ -153,7 +153,10 @@ export function MitreNavigatorModal({
                         >
                           <div className="flex items-center justify-between font-bold">
                             <span>{tech.id}</span>
-                            <span className="text-[8px] uppercase">{tech.detected ? "✓ DETECT" : "● OBS"}</span>
+                            <span className="text-[8px] uppercase inline-flex items-center gap-0.5">
+                              {tech.detected && <Icon name="check" size={9} />}
+                              {tech.detected ? "DETECT" : "OBS"}
+                            </span>
                           </div>
                           <div className="truncate text-text-muted text-[9px]">{tech.name || tech.id}</div>
                         </button>
@@ -200,7 +203,7 @@ export function MitreNavigatorModal({
               {selectedTech.command && (
                 <div className="space-y-1">
                   <span className="text-text-faint text-[10px] uppercase font-bold block">Attack Emulation Command:</span>
-                  <pre className="rounded-lg border border-white/10 bg-[#06080d] p-3 text-[11px] text-[#c9d1d9] whitespace-pre-wrap break-all">
+                  <pre className="rounded-lg border border-border-subtle bg-bg-inset p-3 text-[11px] text-text-primary whitespace-pre-wrap break-all">
                     {selectedTech.command}
                   </pre>
                 </div>

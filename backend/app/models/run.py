@@ -128,6 +128,7 @@ def _alert_stats(conn: sqlite3.Connection, run_id: str) -> tuple[int, str | None
         SELECT COUNT(*) AS n,
                MAX(CASE severity WHEN 'malicious' THEN 2 WHEN 'suspicious' THEN 1 ELSE 0 END) AS sev
         FROM alerts WHERE run_id = ?
+          AND (disposition IS NULL OR disposition NOT IN ('false-positive', 'benign'))
         """,
         (run_id,),
     ).fetchone()
@@ -139,7 +140,10 @@ def _alert_stats(conn: sqlite3.Connection, run_id: str) -> tuple[int, str | None
 
 def _fired_rule_ids(conn: sqlite3.Connection, run_id: str) -> list[str]:
     rows = conn.execute(
-        "SELECT DISTINCT rule_id FROM alerts WHERE run_id = ?",
+        """
+        SELECT DISTINCT rule_id FROM alerts WHERE run_id = ?
+          AND (disposition IS NULL OR disposition NOT IN ('false-positive', 'benign'))
+        """,
         (run_id,),
     ).fetchall()
     return [r["rule_id"] for r in rows]

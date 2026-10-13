@@ -12,8 +12,11 @@ def insert_event(conn: sqlite3.Connection, event: dict) -> int:
         INSERT INTO events (
             run_id, platform, event_type, timestamp, pid, ppid, process_name,
             command_line, exe_path, dest_ip, dest_port, protocol, file_path, registry_key,
-            host_id, raw_record, log_source, query, tls_sni
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            host_id, raw_record, log_source, query, tls_sni,
+            source_event_id, boot_id, process_start_time,
+            user, parent_image, parent_command_line, hashes,
+            integrity_level, session_id, connection_status, process_guid
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             event["run_id"],
@@ -35,6 +38,17 @@ def insert_event(conn: sqlite3.Connection, event: dict) -> int:
             event.get("log_source"),
             event.get("query"),
             event.get("tls_sni"),
+            event.get("source_event_id"),
+            event.get("boot_id"),
+            event.get("process_start_time"),
+            event.get("user"),
+            event.get("parent_image"),
+            event.get("parent_command_line"),
+            event.get("hashes"),
+            event.get("integrity_level"),
+            event.get("session_id"),
+            event.get("connection_status"),
+            event.get("process_guid"),
         ),
     )
     return cur.lastrowid or 0
@@ -49,10 +63,15 @@ def list_events_for_run(conn: sqlite3.Connection, run_id: str) -> list[dict]:
 
 
 def insert_alert(conn: sqlite3.Connection, alert: Alert) -> int:
+    last_seen = alert.last_seen_at.isoformat() if alert.last_seen_at else alert.triggered_at.isoformat()
     cur = conn.execute(
         """
-        INSERT INTO alerts (run_id, rule_id, rule_name, severity, triggered_at, related_pid, related_ip, related_pids, details)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO alerts (
+            run_id, rule_id, rule_name, severity, triggered_at, related_pid,
+            related_ip, related_pids, details, confidence, evidence_event_ids,
+            rule_condition, occurrence_count, last_seen_at, entity_key, pid_fallback
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             alert.run_id,
@@ -64,9 +83,28 @@ def insert_alert(conn: sqlite3.Connection, alert: Alert) -> int:
             alert.related_ip,
             json.dumps(alert.related_pids),
             alert.details,
+            alert.confidence,
+            json.dumps(alert.evidence_event_ids or []),
+            alert.rule_condition,
+            alert.occurrence_count or 1,
+            last_seen,
+            alert.entity_key,
+            1 if alert.pid_fallback else 0,
         ),
     )
-    return cur.lastrowid or 0
+    alert_id = cur.lastrowid or 0
+    if alert_id and alert.evidence_event_ids:
+        now_iso = alert.triggered_at.isoformat()
+        for ev_id in alert.evidence_event_ids:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO finding_evidence_events (
+                    finding_id, event_id, rule_condition, matched_at
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (alert_id, ev_id, alert.rule_condition, now_iso),
+            )
+    return alert_id
 
 
 def list_alerts_for_run(conn: sqlite3.Connection, run_id: str) -> list[dict]:
@@ -78,6 +116,7 @@ def list_alerts_for_run(conn: sqlite3.Connection, run_id: str) -> list[dict]:
     for r in rows:
         d = dict(r)
         _parse_related_pids(d)
+        _parse_evidence_event_ids(d)
         out.append(d)
     return out
 
@@ -92,6 +131,16 @@ def _parse_related_pids(d: dict) -> None:
         d["related_pids"] = json.loads(raw) if raw else []
     except (ValueError, TypeError):
         d["related_pids"] = []
+
+
+def _parse_evidence_event_ids(d: dict) -> None:
+    raw = d.get("evidence_event_ids")
+    if isinstance(raw, list):
+        return
+    try:
+        d["evidence_event_ids"] = json.loads(raw) if raw else []
+    except (ValueError, TypeError):
+        d["evidence_event_ids"] = []
 
 
 def get_cache(conn: sqlite3.Connection, ip: str) -> dict | None:

@@ -7,8 +7,17 @@
 -a always,exit -F arch=b64 -S connect -k vantage_net
 -a always,exit -F arch=b32 -S connect -k vantage_net
 
+## Monitor file creation, rename, and permission modifications
+-a always,exit -F arch=b64 -S creat,open,openat,unlink,unlinkat -F exit=-EACCES -k vantage_file_denied
+-a always,exit -F arch=b32 -S creat,open,openat,unlink,unlinkat -F exit=-EACCES -k vantage_file_denied
+-a always,exit -F arch=b64 -S rename,renameat,renameat2 -k vantage_file_rename
+-a always,exit -F arch=b32 -S rename,renameat,renameat2 -k vantage_file_rename
+-a always,exit -F arch=b64 -S chmod,fchmod,fchmodat,chown,fchown,fchownat -k vantage_file_perm
+-a always,exit -F arch=b32 -S chmod,fchmod,fchmodat,chown,fchown,fchownat -k vantage_file_perm
+
 ## Monitor critical identity & privilege escalation file modifications
 -w /etc/passwd -p wa -k vantage_auth
 -w /etc/shadow -p wa -k vantage_auth
 -w /etc/sudoers -p wa -k vantage_auth
 -w /etc/sudoers.d/ -p wa -k vantage_auth
+

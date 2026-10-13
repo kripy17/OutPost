@@ -1089,8 +1089,13 @@ export default function FootprintPage() {
       {/* Action Notification Toast */}
       {actionNotice && (
         <div className="flex items-center justify-between rounded-xl border border-signal/50 bg-signal/15 px-4 py-2 font-mono text-xs text-signal animate-fade-in">
-          <span>✓ {actionNotice}</span>
-          <button onClick={() => setActionNotice(null)} className="text-text-muted hover:text-text-primary">✕</button>
+          <div className="flex items-center gap-1.5 font-medium">
+            <Icon name="check" size={13} />
+            <span>{actionNotice}</span>
+          </div>
+          <button onClick={() => setActionNotice(null)} className="text-text-muted hover:text-text-primary p-0.5" aria-label="Dismiss notice">
+            <Icon name="x" size={13} />
+          </button>
         </div>
       )}
 

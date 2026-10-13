@@ -243,7 +243,7 @@ export default function TopCommandBar() {
                   }`}
                 >
                   <span>{p.label}</span>
-                  {range === p.id && <span className="text-accent">✓</span>}
+                  {range === p.id && <Icon name="check" size={12} className="text-accent" />}
                 </button>
               ))}
             </div>

@@ -198,6 +198,14 @@ export function IconChevronDown() {
   );
 }
 
+export function IconChevronUp() {
+  return (
+    <S>
+      <path d="m18.5 15-6.5-6.5L5.5 15" />
+    </S>
+  );
+}
+
 export function IconChevronLeft() {
   return (
     <S>
@@ -440,6 +448,7 @@ const ICONS = {
   x: IconX,
   chevronRight: IconChevronRight,
   chevronDown: IconChevronDown,
+  chevronUp: IconChevronUp,
   chevronLeft: IconChevronLeft,
   arrowRight: IconArrowRight,
   download: IconDownload,

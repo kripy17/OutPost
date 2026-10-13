@@ -6,6 +6,7 @@ Covers the audit findings:
 - a nonzero exit code alone no longer flips the verdict to suspicious.
 """
 
+import json
 import os
 
 import pytest
@@ -137,3 +138,191 @@ async def test_nonzero_exit_alone_is_clean(client, monkeypatch, dynamic_sandbox)
     assert result["alerts_count"] == 0
     assert result["verdict"] == "clean"
     _cleanup(result["run_id"], sample_id)
+
+
+@pytest.mark.asyncio
+async def test_missing_isolation_returns_422_and_blocks_host_execution(client, monkeypatch, dynamic_sandbox):
+    """Missing isolation provider must raise 422 and never execute on host."""
+    resp = client.post("/samples?name=untrusted_payload.sh", content=b"#!/bin/sh\necho malicious\n")
+    assert resp.status_code == 201
+    sample_id = resp.json()["sample_id"]
+
+    spawn_called = False
+
+    async def spy_exec(*cmd, **kwargs):
+        nonlocal spawn_called
+        spawn_called = True
+        return _FakeProc(0)
+
+    monkeypatch.setattr(dynamic_sandbox.asyncio, "create_subprocess_exec", spy_exec)
+    monkeypatch.setattr(dynamic_sandbox, "is_bwrap_usable", lambda: False)
+
+    # Calling execute_and_trace must raise HTTPException with 422
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException) as exc_info:
+        await dynamic_sandbox.execute_and_trace(sample_id)
+
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail == "Safe isolation provider unavailable. Execution blocked to prevent host contamination."
+    assert not spawn_called, "Host execution occurred despite missing isolation provider!"
+
+    # Calling via HTTP endpoint must return 422 with exact detail
+    api_resp = client.post("/sandbox/detonate/dynamic", json={"sample_id": sample_id})
+    assert api_resp.status_code == 422
+    assert api_resp.json()["detail"] == "Safe isolation provider unavailable. Execution blocked to prevent host contamination."
+    assert not spawn_called
+
+    _cleanup(None, sample_id)
+
+
+@pytest.mark.asyncio
+async def test_unusable_bwrap_returns_422_and_blocks_host_execution(client, monkeypatch, dynamic_sandbox):
+    """Present but unusable bwrap (e.g. user namespaces blocked) must return 422 and prevent host execution."""
+    resp = client.post("/samples?name=untrusted_elf.bin", content=b"\x7fELFfakebinary")
+    assert resp.status_code == 201
+    sample_id = resp.json()["sample_id"]
+
+    spawn_called = False
+
+    async def spy_exec(*cmd, **kwargs):
+        nonlocal spawn_called
+        spawn_called = True
+        return _FakeProc(0)
+
+    monkeypatch.setattr(dynamic_sandbox.asyncio, "create_subprocess_exec", spy_exec)
+    # bwrap exists on disk...
+    monkeypatch.setattr(dynamic_sandbox.shutil, "which", lambda cmd: "/usr/bin/bwrap" if cmd == "bwrap" else None)
+    # ...but kernel probe fails (unusable)
+    monkeypatch.setattr(dynamic_sandbox, "is_bwrap_usable", lambda: False)
+
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException) as exc_info:
+        await dynamic_sandbox.execute_and_trace(sample_id)
+
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail == "Safe isolation provider unavailable. Execution blocked to prevent host contamination."
+    assert not spawn_called, "Subprocess executed on host when isolation provider was unusable!"
+
+    _cleanup(None, sample_id)
+
+
+@pytest.mark.asyncio
+async def test_tempdir_driver_rejected_with_422(client, monkeypatch, dynamic_sandbox):
+    """Explicit request for tempdir must be rejected with 422 and blocked from host execution."""
+    resp = client.post("/samples?name=test_tempdir.py", content=b"#!/usr/bin/env python3\nprint('hello')\n")
+    assert resp.status_code == 201
+    sample_id = resp.json()["sample_id"]
+
+    spawn_called = False
+
+    async def spy_exec(*cmd, **kwargs):
+        nonlocal spawn_called
+        spawn_called = True
+        return _FakeProc(0)
+
+    monkeypatch.setattr(dynamic_sandbox.asyncio, "create_subprocess_exec", spy_exec)
+
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException) as exc_info:
+        await dynamic_sandbox.execute_and_trace(sample_id, isolation_driver="tempdir")
+
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail == "Safe isolation provider unavailable. Execution blocked to prevent host contamination."
+    assert not spawn_called
+
+    _cleanup(None, sample_id)
+
+
+@pytest.mark.asyncio
+async def test_samples_detonate_endpoint_returns_422_when_unisolated(client, monkeypatch, dynamic_sandbox):
+    """POST /samples/{sample_id}/detonate must return 422 if isolation provider is unavailable."""
+    resp = client.post("/samples?name=sample_detonate.sh", content=b"#!/bin/sh\necho test\n")
+    assert resp.status_code == 201
+    sample_id = resp.json()["sample_id"]
+
+    monkeypatch.setattr(dynamic_sandbox, "is_bwrap_usable", lambda: False)
+
+    detonate_resp = client.post(f"/samples/{sample_id}/detonate")
+    assert detonate_resp.status_code == 422
+    assert detonate_resp.json()["detail"] == "Safe isolation provider unavailable. Execution blocked to prevent host contamination."
+
+    _cleanup(None, sample_id)
+
+
+@pytest.mark.asyncio
+async def test_wine_unconfined_override_required_and_audited(client, monkeypatch, dynamic_sandbox):
+    """Windows binaries under Wine must refuse unconfined execution without explicit operator override, and override must write to audit trail."""
+    resp = client.post("/samples?name=test_wine.exe", content=b"MZ\x90\x00\x03\x00\x00\x00")
+    assert resp.status_code == 201
+    sample_id = resp.json()["sample_id"]
+
+    # Emulate Wine present but bwrap unavailable
+    monkeypatch.setattr(dynamic_sandbox.shutil, "which", lambda cmd: "/usr/bin/wine" if "wine" in cmd else None)
+    monkeypatch.setattr(dynamic_sandbox, "is_bwrap_usable", lambda: False)
+
+    from fastapi import HTTPException
+    # Without override -> 422
+    with pytest.raises(HTTPException) as exc_info:
+        await dynamic_sandbox.execute_and_trace(sample_id, allow_unconfined_override=False)
+    assert exc_info.value.status_code == 422
+
+    # With override -> proceeds, driver is wine_unconfined_override, audit entry recorded
+    spawn_called = False
+    async def fake_exec(*cmd, **kwargs):
+        nonlocal spawn_called
+        spawn_called = True
+        return _FakeProc(0)
+
+    monkeypatch.setattr(dynamic_sandbox.asyncio, "create_subprocess_exec", fake_exec)
+
+    res = await dynamic_sandbox.execute_and_trace(sample_id, allow_unconfined_override=True)
+    assert spawn_called
+    assert res["isolation_driver"] == "wine_unconfined_override"
+
+    from app.core.db import db_session
+    with db_session() as conn:
+        audit_rows = conn.execute("SELECT * FROM audit_log WHERE action = 'sandbox.wine.unconfined_override'").fetchall()
+        assert len(audit_rows) > 0
+        assert audit_rows[-1]["outcome"] == "allowed_override"
+
+    _cleanup(res["run_id"], sample_id)
+
+
+@pytest.mark.asyncio
+async def test_resource_limits_applied(client, monkeypatch, dynamic_sandbox):
+    """Execution must enforce rlimits on POSIX hosts and pass preexec_fn."""
+    resp = client.post("/samples?name=limited.sh", content=b"#!/bin/sh\necho hi\n")
+    assert resp.status_code == 201
+    sample_id = resp.json()["sample_id"]
+
+    captured_preexec = None
+    async def fake_exec(*cmd, **kwargs):
+        nonlocal captured_preexec
+        captured_preexec = kwargs.get("preexec_fn")
+        return _FakeProc(0)
+
+    monkeypatch.setattr(dynamic_sandbox.asyncio, "create_subprocess_exec", fake_exec)
+    res = await dynamic_sandbox.execute_and_trace(sample_id)
+    assert captured_preexec is not None
+    _cleanup(res["run_id"], sample_id)
+
+
+@pytest.mark.asyncio
+async def test_simulation_scenario_provenance_labels(client, dynamic_sandbox):
+    """Simulation scenario events must carry provenance='scripted_simulation' and is_simulated=True."""
+    res = await dynamic_sandbox.execute_simulation_scenario_live("recon_sweep")
+    assert res["events_count"] > 0
+    from app.core.db import db_session
+    with db_session() as conn:
+        events = conn.execute("SELECT * FROM events WHERE run_id = ?", (res["run_id"],)).fetchall()
+        assert len(events) > 0
+        proc_evs = [dict(e) for e in events if e["event_type"] == "process_create"]
+        assert len(proc_evs) > 0
+        for pe in proc_evs:
+            assert pe.get("log_source") == "scripted_simulation"
+            raw = json.loads(pe.get("raw_record") or "{}")
+            assert raw.get("is_simulated") is True
+            assert raw.get("provenance") == "scripted_simulation"
+    _cleanup(res["run_id"], None)
+
+

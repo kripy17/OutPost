@@ -28,3 +28,17 @@ def list_audit(
         "action": action.strip() or None,
         "events": events,
     }
+
+
+@router.get("/audit/verify", response_model=None)
+def verify_audit() -> dict:
+    """Verify the cryptographic hash-chain integrity of the tamper-evident audit log."""
+    with db_session() as conn:
+        valid, count, err = audit.verify_audit_chain(conn)
+    return {
+        "valid": valid,
+        "entries_verified": count,
+        "status": "intact" if valid else "tampered",
+        "error": err,
+    }
+

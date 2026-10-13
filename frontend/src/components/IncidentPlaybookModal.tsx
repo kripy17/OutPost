@@ -369,7 +369,7 @@ export const IncidentPlaybookModal: React.FC<IncidentPlaybookModalProps> = ({
                     size={14}
                     className={executeMutation.isPending ? "animate-spin" : ""}
                   />
-                  <span>{executeMutation.isPending ? "Executing SOAR..." : "⚡ Execute SOAR Playbook"}</span>
+                  <span>{executeMutation.isPending ? "Executing SOAR..." : "Execute SOAR Playbook"}</span>
                 </button>
               ) : (
                 <button
