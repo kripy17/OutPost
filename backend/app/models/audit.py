@@ -327,7 +327,6 @@ def verify_audit_chain(conn: sqlite3.Connection) -> AuditVerificationReport:
         outcome = r["outcome"] or "success"
 
         # Try extended canonical format first if extended fields exist
-        has_extended = bool(r["source_ip"] or r["before_state"] or r["after_state"] or r["reason"])
         expected_hash = compute_entry_hash(
             prev_hash=actual_prev,
             ts=r["ts"],

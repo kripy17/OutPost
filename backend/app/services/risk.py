@@ -399,8 +399,7 @@ def compute_entity_risk_score(
             rid = a.get("rule_id", "")
             occ = int(a.get("occurrence_count") or 1)
             total_occurrences += occ
-            if a["_dt"] > latest_ent_ts:
-                latest_ent_ts = a["_dt"]
+            latest_ent_ts = max(latest_ent_ts, a["_dt"])
 
             tac = RULE_META.get(rid, {}).get("tactic")
             if tac:

@@ -14,7 +14,6 @@ Analyzes Windows binaries with bounds-checked defensive parsing:
 import datetime
 import hashlib
 import math
-import struct
 from typing import Any
 
 from ..provenance import create_finding, create_provenance
@@ -153,8 +152,7 @@ def parse_deep_pe(data: bytes) -> dict[str, Any]:
         raw_data = data[raw_ptr : raw_ptr + raw_size] if (raw_ptr > 0 and raw_ptr + raw_size <= len(data)) else b""
         sec_entropy = _calc_entropy(raw_data) if raw_data else 0.0
 
-        if raw_ptr + raw_size > max_section_end:
-            max_section_end = raw_ptr + raw_size
+        max_section_end = max(max_section_end, raw_ptr + raw_size)
 
         is_exec = bool(chars & 0x20000000)
         is_write = bool(chars & 0x80000000)
@@ -234,7 +232,6 @@ def parse_deep_pe(data: bytes) -> dict[str, Any]:
     # 3. TLS Callbacks (Data Directory 9)
     tls_rva, tls_sz = _get_dd(9)
     has_tls_callbacks = False
-    tls_callback_addresses: list[str] = []
 
     if tls_rva > 0:
         tls_off = _rva_to_offset(sections, tls_rva)

@@ -77,7 +77,7 @@ def execute_in_isolated_worker(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            preexec_fn=_set_worker_rlimits if os.name != "nt" else None,
+            preexec_fn=_set_worker_rlimits if os.name != "nt" else None,  # noqa: PLW1509
         )
 
         try:

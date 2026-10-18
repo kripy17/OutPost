@@ -5,6 +5,7 @@ so a new backend endpoint is wired into both clients without redesign.
 """
 
 import os
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 

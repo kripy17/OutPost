@@ -22,6 +22,7 @@ router = APIRouter(tags=["host-forensics"])
 
 class ProcessKillIn(BaseModel):
     signal: str = "SIGTERM"
+    expected_create_time: float | None = None
 
 
 class ProcessActionIn(BaseModel):
@@ -103,11 +104,16 @@ def perform_xray_process_action(pid: int, body: ProcessActionIn, request: Reques
 @router.post("/system/forensics/process/{pid}/kill", response_model=None)
 @router.post("/system/xray/process/{pid}/kill", response_model=None)
 def kill_xray_process(pid: int, body: ProcessKillIn, request: Request) -> dict:
-    """Terminate or kill a process PID with audit log."""
+    """Terminate or kill a process PID with audit log and start-time identity validation."""
     user = auth.role_from_request(request) or "analyst"
     sig = body.signal.upper()
     action = "terminate" if sig == "SIGTERM" else "kill"
-    return host_forensics.control_process(pid, action=action, request_user=user)
+    return host_forensics.control_process(
+        pid,
+        action=action,
+        expected_create_time=body.expected_create_time,
+        request_user=user,
+    )
 
 
 @router.get("/system/forensics/search", response_model=None)

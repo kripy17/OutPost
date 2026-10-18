@@ -10,7 +10,6 @@ never a generic "suspicious activity detected". Runs on every ingested batch
 so live monitoring is actually live.
 """
 
-import concurrent.futures
 import fnmatch
 import functools
 import ipaddress

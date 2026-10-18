@@ -10,7 +10,6 @@ Provides real-time internal metrics for the OutPost platform itself:
 
 import io
 import json
-import os
 import platform
 import sqlite3
 import sys
@@ -19,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request
 from fastapi.responses import Response
 
 from ..core import auth, config

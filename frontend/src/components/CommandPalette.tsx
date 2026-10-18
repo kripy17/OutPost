@@ -29,7 +29,7 @@ const NAV_ITEMS: Item[] = [
   { kind: "nav", label: "Malware Analysis Vault", hint: "Binary static/dynamic detonation analyzer", icon: "box", to: "/samples" },
   { kind: "nav", label: "ATT&CK Matrix", hint: "Enterprise tactic coverage & gap heatmap", icon: "target", to: "/coverage" },
   { kind: "nav", label: "Detection Rules", hint: "Sigma / YAML rules engine & test runner", icon: "shield", to: "/rules" },
-  { kind: "nav", label: "Sensor Fleet", hint: "eBPF, Auditd & Sysmon host endpoints", icon: "terminal", to: "/agents" },
+  { kind: "nav", label: "Sensor Fleet", hint: "Auditd, Sysmon & Process collectors", icon: "terminal", to: "/agents" },
   { kind: "nav", label: "Threat Watchlist", hint: "Real-time IOC surveillance", icon: "star", to: "/watchlist" },
   { kind: "nav", label: "Forensic Search", hint: "Deep query syntax hunting", icon: "search", to: "/search" },
   { kind: "nav", label: "Audit Log", hint: "Immutable write provenance trail", icon: "notes", to: "/audit" },
@@ -260,7 +260,7 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
       {
         kind: "action",
         label: "Sensor Fleet Agent Setup",
-        hint: "Deploy eBPF, Sysmon & EndpointSecurity collectors",
+        hint: "Deploy Auditd, Sysmon & Process collectors",
         icon: "terminal" as IconName,
         to: "/agents",
       },

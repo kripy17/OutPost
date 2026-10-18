@@ -16,10 +16,10 @@ import hashlib
 import io
 import json
 import os
-from pathlib import Path
 import subprocess
 import tempfile
 import uuid
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -569,6 +569,7 @@ def export_sample_archive(
         res = subprocess.run(
             ["zip", "-j", "-P", password, str(zip_path), str(sample_file), str(readme_file)],
             capture_output=True,
+            check=False,
         )
         if res.returncode != 0 or not zip_path.exists():
             raise HTTPException(status_code=500, detail="Failed to create password-protected archive")

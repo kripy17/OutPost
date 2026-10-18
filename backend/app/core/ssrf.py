@@ -16,8 +16,8 @@ Enforces:
 
 import ipaddress
 import socket
+from typing import List, Tuple
 from urllib.parse import urlparse
-from typing import Tuple, List
 
 # Cloud metadata addresses and hostnames
 _METADATA_HOSTS = {

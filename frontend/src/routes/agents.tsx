@@ -454,7 +454,7 @@ function HostInspectorDrawer({
                 <div className="flex items-center justify-between">
                   <span className="font-semibold text-text-primary flex items-center gap-1.5">
                     <Icon name="linux" size={13} className="text-accent" />
-                    Linux Sensor (eBPF / auditd)
+                    Linux Sensor (Auditd / Procfs)
                   </span>
                   <button
                     onClick={() => copyCmd(bootstrapData?.linux_command || "curl -sSL -O http://localhost:8000/agents/install.sh && bash install.sh --dry-run && sudo bash install.sh --server http://localhost:8000", "linux")}
@@ -581,7 +581,7 @@ function EnrollSensorDrawer({ onClose }: { onClose: () => void }) {
             <ol className="list-decimal list-inside space-y-1 text-text-muted text-[11px]">
               <li>Open an elevated terminal (root on Linux, Administrator PowerShell on Windows).</li>
               <li>Paste and execute the bootstrap command below for your operating system.</li>
-              <li>The sensor provisions local eBPF / Sysmon hooks and connects back to OutPost automatically.</li>
+              <li>The sensor provisions local Auditd / Sysmon hooks and connects back to OutPost automatically.</li>
               <li>Live process trees, network sockets, and security audit events appear in your console within 5 seconds.</li>
             </ol>
           </div>
@@ -590,7 +590,7 @@ function EnrollSensorDrawer({ onClose }: { onClose: () => void }) {
             <div className="flex items-center justify-between">
               <span className="font-bold text-text-primary flex items-center gap-1.5">
                 <Icon name="linux" size={14} className="text-emerald-400" />
-                <span>Linux Sensor (eBPF Kernel Probes &amp; auditd)</span>
+                <span>Linux Sensor (Auditd &amp; Procfs)</span>
               </span>
               <button
                 onClick={() => copyCmd(linuxCmd, "linux")}

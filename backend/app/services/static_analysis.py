@@ -14,33 +14,20 @@ Elevated with:
 import hashlib
 import json
 import logging
-import math
 import os
-import re
 import shutil
 import subprocess
 import tempfile
 from typing import Any
 
-from .static.decoders.manager import run_family_decoders
 from .static.fidelity import create_static_fidelity_block
-from .static.formats.archive import analyze_archive, is_archive_or_container
 from .static.formats.elf import is_elf, parse_deep_elf
-from .static.formats.lnk import analyze_lnk, is_lnk_file
-from .static.formats.office import analyze_office, is_office_document
-from .static.formats.pdf import analyze_pdf, is_pdf_document
 from .static.formats.pe import is_pe, parse_deep_pe
-from .static.formats.script import analyze_script, is_script
-from .static.indicators import extract_embedded_indicators, is_valid_domain, is_valid_public_ipv4
+from .static.indicators import extract_embedded_indicators, is_valid_domain
 from .static.pipeline import (
-    calculate_entropy,
-    calculate_entropy_histogram,
-    categorize_strings,
-    extract_strings,
-    generate_hex_preview,
     run_complete_static_pipeline,
 )
-from .static.provenance import create_finding, create_provenance
+from .static.provenance import create_provenance
 from .static.verdict import assess_static_evidence
 from .static.worker import execute_in_isolated_worker
 

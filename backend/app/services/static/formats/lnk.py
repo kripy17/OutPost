@@ -45,9 +45,6 @@ def analyze_lnk(data: bytes) -> dict[str, Any]:
 
     has_target_id_list = bool(link_flags & 0x01)
     has_link_info = bool(link_flags & 0x02)
-    has_name = bool(link_flags & 0x04)
-    has_rel_path = bool(link_flags & 0x08)
-    has_work_dir = bool(link_flags & 0x10)
     has_args = bool(link_flags & 0x20)
     has_icon = bool(link_flags & 0x40)
 

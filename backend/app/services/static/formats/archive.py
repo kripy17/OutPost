@@ -10,7 +10,6 @@ Provides safe container inspection with strict resource constraints:
 
 import io
 import os
-import tarfile
 import zipfile
 from typing import Any
 
