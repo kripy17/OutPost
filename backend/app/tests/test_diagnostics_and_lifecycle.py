@@ -5,13 +5,12 @@ and investigation dossier import/export roundtrip.
 import io
 import json
 import zipfile
+
 import pytest
 from fastapi.testclient import TestClient
 
-from ..core import config
 from ..core.db import (
     ORDERED_MIGRATIONS,
-    apply_migrations,
     db_session,
     dry_run_migrations,
     get_schema_version,

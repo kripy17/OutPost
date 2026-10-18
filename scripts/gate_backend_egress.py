@@ -61,6 +61,8 @@ BACKEND_SHELL_SANCTIONED = {
     "services/screenshots.py",
     "services/host_forensics.py",
     "services/static_analysis.py",
+    "services/static/worker.py",
+    "api/routes_samples.py",
 }
 #
 # Collector sanctioned subprocess modules:

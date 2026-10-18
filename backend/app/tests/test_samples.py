@@ -559,10 +559,12 @@ def test_sample_dynamic_detonation_endpoint(client):
 
 
 def test_sample_restrictive_permissions_and_safe_zip_export(client):
+    import io
     import stat
     import zipfile
-    import io
+
     import pytest
+
     from ..core import config
 
     # 1. Upload sample

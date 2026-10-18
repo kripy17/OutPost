@@ -15,12 +15,13 @@ Guarantees:
 """
 
 import sqlite3
+
 import pytest
 from fastapi.testclient import TestClient
 
 from ..core.db import db_session
-from ..models import audit
 from ..main import app
+from ..models import audit
 
 
 def test_sequential_hash_chain_verification():
@@ -152,9 +153,9 @@ def test_tamper_detection_pinpoints_first_break():
     )
 
     # Insert 3 chained entries
-    h1 = audit.log(raw_conn, actor="user1", action="auth.login", detail="login 1")
-    h2 = audit.log(raw_conn, actor="user2", action="agent.isolate", detail="isolate host")
-    h3 = audit.log(raw_conn, actor="user3", action="rules.modify", detail="modify rule")
+    audit.log(raw_conn, actor="user1", action="auth.login", detail="login 1")
+    audit.log(raw_conn, actor="user2", action="agent.isolate", detail="isolate host")
+    audit.log(raw_conn, actor="user3", action="rules.modify", detail="modify rule")
 
     initial_report = audit.verify_audit_chain(raw_conn)
     assert initial_report["valid"] is True

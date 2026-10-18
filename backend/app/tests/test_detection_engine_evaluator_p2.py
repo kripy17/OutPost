@@ -19,26 +19,21 @@ Verifies:
    - Per-entity threat score accounting for severity, kill-chain progression, repetition, and time decay
 """
 
+from datetime import datetime, timezone
+
 import pytest
-from datetime import datetime, timezone, timedelta
-from ..services.rule_generator import transpile_sigma_yaml
+
 from ..services.detection import (
-    evaluate_sigma_condition,
-    evaluate_sigma_selection,
-    safe_regex_search,
-    check_custom_sigma_rules,
     _make_alert,
-    make_entity_key,
-    check_beaconing,
+    check_custom_sigma_rules,
+    evaluate_sigma_condition,
+    safe_regex_search,
 )
 from ..services.risk import (
-    compute_risk_score,
     compute_entity_risk_score,
-    recalculate_run_risk,
 )
-from ..core.db import db_session
+from ..services.rule_generator import transpile_sigma_yaml
 from .conftest import make_run
-
 
 # ===========================================================================
 # 1. Sigma Real Evaluator Tests

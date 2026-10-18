@@ -44,7 +44,7 @@ def is_script(data: bytes) -> bool:
         return True
     # Check text patterns (stripping backticks to defeat PowerShell quote obfuscation)
     sample_chunk = data[:4096].lower().replace(b"`", b"")
-    for script_type, pattern in _SCRIPT_PATTERNS.items():
+    for pattern in _SCRIPT_PATTERNS.values():
         if re.search(pattern, sample_chunk, re.IGNORECASE):
             return True
     return False

@@ -9,7 +9,6 @@ corpus of known-benign system binaries, admin scripts, and handled threat sample
 
 import io
 import json
-import os
 import zipfile
 from pathlib import Path
 from typing import Any
