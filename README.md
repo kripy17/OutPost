@@ -474,7 +474,7 @@ cd frontend && npx tsc --noEmit
 ### Continuous Integration Configuration
 OutPost CI runs via GitHub Actions in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) on push to `main` and pull requests. The pipeline executes:
 1. **Fast-Fail Gates**: Frontend TypeScript compiler (`tsc --noEmit`), badge freshness check (`refresh-badges.sh --check`), Docker image budget checks (`gate_image_budget_docs.py`), and repair hint regression tests (`gate_hint_coverage.py`).
-2. **Full Sweep (`scripts/verify.sh`)**: Runs backend pytest, 14/14 ATT&CK coverage gate, collector pytest, CLI pytest, curated ruff lint, frontend test and build, air-gap bundle scan (`gate_airgap_artifacts.py`), collector soak baselines (`soak_linux_collector.py`, `soak_windows_collector.py`), CLI network loopback gate (`gate_cli_network.py`), and post-deploy walk.
+2. **Full Sweep ([`verify.sh`](verify.sh))**: Runs backend pytest, 14/14 ATT&CK coverage gate, collector pytest, CLI pytest, curated ruff lint, frontend test and build, air-gap bundle scan (`scripts/gate_airgap_artifacts.py`), collector soak baselines (`scripts/soak_linux_collector.py`, `scripts/soak_windows_collector.py`), CLI network loopback gate (`scripts/gate_cli_network.py`), and post-deploy walk.
 
 ### Contributing
 Contributions must adhere to the offline, evidence-integrity, and testing standards detailed in [`CONTRIBUTING.md`](CONTRIBUTING.md).
