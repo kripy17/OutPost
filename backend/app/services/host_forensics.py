@@ -1282,7 +1282,7 @@ def control_process(
     with db_session() as conn:
         audit.log(
             conn,
-            role=request_user,
+            actor=request_user,
             action=f"process.{action}",
             target_type="process",
             target_id=str(pid),
