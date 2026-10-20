@@ -5,7 +5,7 @@
 
 OutPost is an offline, local-first security analysis workbench for ingesting, detecting, and investigating Linux and Windows host telemetry without external cloud dependencies.
 
-Status: Active development. Single-author project. Last verified: October 2026. 1,670 automated tests passing.
+Status: Experimental. Single-author project. Last verified: October 2026. 1,670 automated tests passing.
 
 ![OutPost SOC Workbench Overview](demo/screenshots/fresh/01_overview.png)
 *Figure 1: OutPost investigation console populated with multi-host seeded demo telemetry (October 2026).*
@@ -81,14 +81,15 @@ OutPost was built to provide an immediate, self-contained forensic workbench tha
 - **Node.js**: Version 18.0 or newer (tested on Node 22).
 - **SQLite**: Version 3.35 or newer (bundled with modern Python distributions).
 
-### Optional Dependencies
+### Optional Dependencies & Degradation
 - `bubblewrap` (`bwrap`): For local sandbox execution. If absent, dynamic analysis is disabled.
-- `wine64`: For Windows PE execution inside Linux sandboxes.
-- `yara-python`: For compiling and scanning custom YARA rules.
-- `postgresql`: Optional database backend; SQLite is used by default.
+- `wine64`: For Windows PE execution inside Linux sandboxes. If absent, dynamic Windows detonation fails closed.
+- `yara-python`: For compiling and scanning custom YARA rules. If absent, engine falls back to ASCII/Unicode string matching and entropy extraction.
+- `flare-capa` (`capa`): For automated capability identification in PE files. If absent, capability mapping falls back to built-in string and API import pattern matching.
+- `postgresql` (`psycopg` via `backend[pg]`): Optional database backend. If absent, SQLite is used automatically.
 
 ### Installation and Launch
-Clone the repository and run the setup script:
+Clone the repository and run the setup script (takes approximately 1 to 2 minutes on a clean environment):
 
 ```bash
 git clone https://github.com/kripy17/OutPost.git
@@ -220,6 +221,12 @@ Requires Windows 10/11 or Server 2016+, PowerShell 5.1+, and Microsoft Sysmon. N
                       |  Linux (auditd) · Windows (Sysmon)    |
                       +---------------------------------------+
                                           |
+                                          v
+                      +---------------------------------------+
+                      |         Shipper & Local Spool         |
+                      |     (In-Memory Buffer & Re-queue)     |
+                      +---------------------------------------+
+                                          |
                                           | Telemetry (HTTP POST /ingest/batch)
                                           v
 +-----------------------------------------------------------------------------------+
@@ -275,6 +282,9 @@ Requires Windows 10/11 or Server 2016+, PowerShell 5.1+, and Microsoft Sysmon. N
 
 OutPost evaluates behavioral detection rules synchronously during event ingestion.
 
+![Process Causality Lineage Tree](demo/screenshots/fresh/24_process_causality_tree.png)
+*Figure 2: Correlated parent-child process causality tree populated from multi-host attack simulation (October 2026).*
+
 ### Rule Organization
 Rules are maintained across two subsystems:
 1. **Behavioral Code Rules**: 48 active rule definitions defined in [`backend/app/services/risk.py`](backend/app/services/risk.py#L28) and evaluated in [`backend/app/services/detection.py`](backend/app/services/detection.py). Rules cover LOLBIN execution, process masquerading, credential dumping patterns, registry persistence, SUID execution, and lateral movement.
@@ -288,6 +298,9 @@ Rules are maintained across two subsystems:
 
 ### MITRE ATT&CK Mapping
 The 48 behavioral rules map to **14 out of 14 Enterprise Tactics** and cover **36 specific techniques** in the ATT&CK Matrix:
+
+![MITRE ATT&CK Matrix Navigator](demo/screenshots/fresh/23_mitre_navigator_matrix.png)
+*Figure 3: Interactive MITRE ATT&CK matrix heatmap displaying tactic and technique coverage (October 2026).*
 
 | Tactic | Mapped Rules | Representative Techniques |
 |---|---|---|
@@ -306,7 +319,7 @@ The 48 behavioral rules map to **14 out of 14 Enterprise Tactics** and cover **3
 | **Exfiltration** | `fanout-contact` | T1048 (Exfiltration Over Alternative Protocol) |
 | **Impact** | `shadow-copy-deletion` | T1490 (Inhibit System Recovery), T1486 (Data Encrypted for Impact) |
 
-*Note: Tactic coverage indicates that at least one behavioral rule is mapped to each MITRE ATT&CK tactic. It does not imply exhaustive detection coverage across all known attacker sub-techniques.*
+*Note: Tactic coverage indicates that at least one behavioral rule is mapped to each MITRE ATT&CK tactic. It does not imply exhaustive detection coverage across all known attacker sub-techniques. Full rule logic and technique definitions are detailed in [`docs/11-DETECTION-LOGIC.md`](docs/11-DETECTION-LOGIC.md).*
 
 ---
 
@@ -314,18 +327,20 @@ The 48 behavioral rules map to **14 out of 14 Enterprise Tactics** and cover **3
 
 Detection accuracy and regression gates are tested against local automated fixtures:
 
-| Validation Target | Method | Dataset | Measured Result |
-|---|---|---|---|
-| **Benign System Tooling** | Static analysis evaluation | 5 synthetic clean binaries/scripts | 0.0% False Positive Rate (0 misclassifications) |
-| **Threat Sample Detection** | Static analysis evaluation | 5 synthetic malicious binaries/scripts | 100.0% True Positive Rate (5/5 detected) |
-| **Linux Collector Soak** | 30-minute replay soak test | 1,200 modeled benign events | 0 false alerts; core detections triggered on malicious trace |
-| **Windows Sysmon Soak** | 30-minute replay soak test | 1,500 modeled Sysmon events | 0 false alerts; core detections triggered on malicious trace |
+| Validation Target | Method | Dataset | True Positive | Miss Rate | False Positive | Reproduction Command |
+|---|---|---|---|---|---|---|
+| **Benign System Tooling** | Static analysis evaluation | 5 synthetic clean binaries/scripts | N/A (Benign) | 0.0% | 0.0% (0 FP) | `pytest backend/app/tests/test_validation_corpus_gate.py` |
+| **Threat Sample Detection** | Static analysis evaluation | 5 synthetic malicious binaries/scripts | 100.0% (5/5) | 0.0% | 0.0% | `pytest backend/app/tests/test_validation_corpus_gate.py` |
+| **Linux Collector Soak** | 30-minute replay soak test | 1,200 modeled benign events | 100.0% | 0.0% | 0.0% (0 FP) | `.venv/bin/python scripts/soak_linux_collector.py --gate` |
+| **Windows Sysmon Soak** | 30-minute replay soak test | 1,500 modeled Sysmon events | 100.0% | 0.0% | 0.0% (0 FP) | `.venv/bin/python scripts/soak_windows_collector.py --gate` |
 
-*Note: These metrics are derived from the local test corpus in [`backend/app/services/validation_corpus.py`](backend/app/services/validation_corpus.py) and automated collector soak scripts (`scripts/soak_linux_collector.py`, `scripts/soak_windows_collector.py`). They validate that detection heuristics do not regress during development, rather than benchmarking production fleet deployments.*
+*Note: These metrics are derived from the local test corpus in [`backend/app/services/validation_corpus.py`](backend/app/services/validation_corpus.py) (queryable live at `/corpus/report`) and automated collector soak scripts. They validate that detection heuristics do not regress during development, rather than benchmarking production fleet deployments.*
 
 ---
 
 ## Security Model
+
+Security architecture and threat boundaries are defined in the formal [Threat Model](docs/20-THREAT-MODEL.md) and [Security Policy](SECURITY.md).
 
 ### Authentication Defaults
 - **Loopback Default**: When bound to `127.0.0.1` or `localhost`, API authentication is disabled by default for single-user local operation.
@@ -358,16 +373,28 @@ Malware binaries uploaded to the vault are stored with `0600` permissions at `ba
 
 ## Known Limitations
 
-- **macOS Telemetry Resolution**: Telemetry collection on macOS relies on polling `/bin/ps` and `psutil` every 2 seconds. Ephemeral processes that start and exit within that window are not captured.
-- **Linux Container Visibility**: The Linux collector requires access to the host audit daemon. Containers running without audit netlink access do not generate telemetry.
-- **Windows Driver Emulation**: The dynamic sandbox running on Linux cannot execute Windows kernel-mode drivers or binaries requiring specialized Windows GUI subsystems.
-- **Process Termination Verification**: Start-time identity validation prevents terminating recycled PIDs, but this validation relies on `psutil.create_time()`. If `psutil` is unavailable on POSIX fallbacks, signals are sent directly to the PID.
-- **Synchronous Ingestion Limits**: Rule evaluation occurs in-process during event ingestion. Ingest bursts exceeding 2,000 events per second can cause batch delivery latency on SQLite.
-- **Single-Node Scale**: OutPost is designed for triage and lab analysis; it is not architected for continuous multi-thousand-node enterprise fleet management.
+*(Dated: October 2026)*
+
+- **Unsupported Platforms**: BSD, Solaris, and Windows versions older than Server 2016 / Windows 10 are unsupported. Dynamic sandboxing is unsupported on macOS hosts (relies on Linux user namespaces).
+- **Rules Requiring Specific Telemetry**:
+  - Windows registry persistence rules (`registry-persistence`, `ifeo-persistence`) require Sysmon Event ID 12 or 13. Without registry auditing active in Sysmon, these rules cannot fire.
+  - SUID and Linux process execution rules require auditd rules loaded into the kernel (`auditctl -R collectors/linux/audit.rules`). If the host auditd daemon is stopped or rules are missing, auditd telemetry ceases.
+  - Beaconing and DNS tunneling rules require socket connect telemetry (`network_connection`).
+- **Sandbox Fidelity**:
+  - Windows PE execution on Linux relies on a user-mode Wine64 translation layer inside Bubblewrap. Binaries requiring Windows kernel-mode drivers, specific hypervisor extensions, or proprietary Windows GUI subsystems will fail to execute.
+  - Sandbox network sinkholing and PCAP generation are post-execution synthetic reconstructions parsed from stdout/stderr regular expressions, not raw network interface taps.
+- **Containment Enforcement per Platform**:
+  - Linux containment requires root privileges for `iptables`/`nftables` manipulation. Process termination start-time validation relies on `psutil.create_time()`; if `psutil` is unavailable on POSIX fallbacks, signals are sent directly to the PID.
+  - Windows containment requires elevated Administrator privileges for Windows Firewall rule application and Win32 process termination.
+  - macOS containment uses `pfctl` and POSIX signals, requiring root privileges for system-wide network blocking.
+- **Synchronous Ingestion Limits**: Rule evaluation occurs in-process during event ingestion. Ingest bursts exceeding 1,500 to 2,000 events per second on SQLite can cause batch delivery latency.
+- **Single-Node Scale**: OutPost is architected as an offline workstation for incident analysis, lab research, and homelabs; it is not designed to manage enterprise fleets of tens of thousands of endpoints.
 
 ---
 
 ## Documentation Index
+
+Every technical document in [`docs/`](docs/) is maintained with its current status and scope:
 
 | Specification | Description | Status |
 |---|---|---|
@@ -377,16 +404,24 @@ Malware binaries uploaded to the vault are stored with `0600` permissions at `ba
 | [`03-COLLECTOR-SPEC.md`](docs/03-COLLECTOR-SPEC.md) | Telemetry collection specifications for Linux, Windows, and macOS | Maintained |
 | [`04-FRONTEND-SPEC.md`](docs/04-FRONTEND-SPEC.md) | React component hierarchy, routing, and state management | Maintained |
 | [`05-DEPLOYMENT-SETUP.md`](docs/05-DEPLOYMENT-SETUP.md) | Systemd deployment, reverse proxy setup, and service config | Maintained |
+| [`06-BUILD-PLAN.md`](docs/06-BUILD-PLAN.md) | Phase roadmap and technical milestone track | Historical / Archive |
 | [`07-UI-DESIGN-SYSTEM.md`](docs/07-UI-DESIGN-SYSTEM.md) | Color palettes, typography tokens, and UI layout rules | Maintained |
 | [`08-INTEGRATIONS.md`](docs/08-INTEGRATIONS.md) | External threat intel feeds, webhooks, and sandbox APIs | Maintained |
 | [`09-CLI-SPEC.md`](docs/09-CLI-SPEC.md) | Reference manual for the 39 Typer CLI command groups | Maintained |
 | [`10-STANDOUT-FEATURES.md`](docs/10-STANDOUT-FEATURES.md) | Technical deep dives into the sandbox, audit trail, and engine | Maintained |
 | [`11-DETECTION-LOGIC.md`](docs/11-DETECTION-LOGIC.md) | Behavioral detection heuristics and MITRE technique rationale | Maintained |
+| [`12-BRANDING-ASSETS.md`](docs/12-BRANDING-ASSETS.md) | Brand visual assets, iconography, and logo specifications | Maintained |
+| [`13-CAMPAIGN-DEMO.md`](docs/13-CAMPAIGN-DEMO.md) | Seeded adversary campaign storylines and demo scenarios | Maintained |
 | [`16-POSTGRES-MIGRATION.md`](docs/16-POSTGRES-MIGRATION.md) | PostgreSQL configuration, schema translation, and migration | Maintained |
 | [`17-CI-GATES.md`](docs/17-CI-GATES.md) | Continuous integration regression gates and benchmark guarantees | Maintained |
 | [`18-AIR-GAP.md`](docs/18-AIR-GAP.md) | Air-gap verification procedures and offline deployment rules | Maintained |
 | [`19-PRODUCT-COHERENCE-SPEC.md`](docs/19-PRODUCT-COHERENCE-SPEC.md) | User experience patterns, navigation contracts, and design tokens | Maintained |
 | [`20-THREAT-MODEL.md`](docs/20-THREAT-MODEL.md) | Threat model, trust boundaries, and asset definitions | Maintained |
+| [`docs/adr/0001-single-node-design.md`](docs/adr/0001-single-node-design.md) | Single-node architecture design rationale and trade-offs | Maintained |
+| [`docs/adr/0002-sqlite-and-postgres-support.md`](docs/adr/0002-sqlite-and-postgres-support.md) | Dual SQLite and PostgreSQL storage engine support | Maintained |
+| [`docs/adr/0003-pull-based-control-channel.md`](docs/adr/0003-pull-based-control-channel.md) | Pull-based agent control and heartbeat channel | Maintained |
+| [`docs/adr/0004-in-process-vs-worker-detection.md`](docs/adr/0004-in-process-vs-worker-detection.md) | In-process synchronous detection pipeline architecture | Maintained |
+| [`docs/adr/0005-bubblewrap-and-bwrap-sandbox-design.md`](docs/adr/0005-bubblewrap-and-bwrap-sandbox-design.md) | Bubblewrap (bwrap) unshared namespace sandbox design | Maintained |
 | [`SECURITY.md`](SECURITY.md) | Security vulnerability disclosure and malware handling policies | Maintained |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Contributor guidelines, testing standards, and pull request workflow | Current |
 | [`CHANGELOG.md`](CHANGELOG.md) | Project release history and documented corrections | Current |
@@ -405,7 +440,7 @@ Malware binaries uploaded to the vault are stored with `0600` permissions at `ba
 | `backend/app/services/` | Detection engine, risk scoring, static analysis, and sandbox |
 | `backend/app/tests/` | Pytest test suite for backend services and API routes |
 | `cli/outpost/` | Typer CLI commands, rendering helpers, and Rich TUI |
-| `collectors/linux/` | Linux auditd telemetry collector and install scripts |
+| `collectors/linux/` | Linux auditd and ftrace telemetry collectors and install scripts |
 | `collectors/windows/` | Windows Sysmon telemetry collector and PowerShell scripts |
 | `collectors/macos/` | macOS process polling telemetry collector |
 | `frontend/src/` | React 19 web console components, pages, and hooks |
@@ -432,21 +467,23 @@ cd frontend && npm test
 # Frontend TypeScript check
 cd frontend && npx tsc --noEmit
 
-# Backend linting
-ruff check backend/
+# Backend linting under curated rules
+.venv/bin/python scripts/gate_ruff.py
 ```
 
-### Full Verification Sweep
-Execute the complete CI verification pipeline locally:
-```bash
-bash scripts/verify.sh
-```
+### Continuous Integration Configuration
+OutPost CI runs via GitHub Actions in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) on push to `main` and pull requests. The pipeline executes:
+1. **Fast-Fail Gates**: Frontend TypeScript compiler (`tsc --noEmit`), badge freshness check (`refresh-badges.sh --check`), Docker image budget checks (`gate_image_budget_docs.py`), and repair hint regression tests (`gate_hint_coverage.py`).
+2. **Full Sweep (`scripts/verify.sh`)**: Runs backend pytest, 14/14 ATT&CK coverage gate, collector pytest, CLI pytest, curated ruff lint, frontend test and build, air-gap bundle scan (`gate_airgap_artifacts.py`), collector soak baselines (`soak_linux_collector.py`, `soak_windows_collector.py`), CLI network loopback gate (`gate_cli_network.py`), and post-deploy walk.
+
+### Contributing
+Contributions must adhere to the offline, evidence-integrity, and testing standards detailed in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ---
 
 ## Security Reporting, License, and Author
 
-- **Security Disclosures**: Please report vulnerabilities privately according to the procedure in [`SECURITY.md`](SECURITY.md).
+- **Security Disclosures**: Please report vulnerabilities privately according to the procedure in [`SECURITY.md`](SECURITY.md). Contact: `security@outpost-edr.internal`.
 - **License**: MIT License. See [`LICENSE`](LICENSE) for details.
-- **Author**: Krish Patel.
-- **AI Policy**: AI-assisted development tools were utilized during development under manual code review and automated regression gate validation.
+- **Author**: Krish Patel. Contact via [GitHub Issues](https://github.com/kripy17/OutPost/issues).
+- **AI Policy**: AI-assisted development tools were utilized during development under human code review and automated regression gate validation.
