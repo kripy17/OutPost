@@ -272,3 +272,31 @@ def test_mutating_endpoints_record_audit():
     events2 = audit_res2.json()["events"]
     assert len(events2) >= 1
     assert events2[0]["action"] == "settings.webhook_update"
+
+    # 3. Process kill audit check
+    kill_res = client.post(
+        "/system/forensics/process/999999/kill",
+        json={"signal": "SIGTERM"},
+    )
+    assert kill_res.status_code == 200
+
+    audit_res3 = client.get("/audit?action=process.terminate")
+    assert audit_res3.status_code == 200
+    events3 = audit_res3.json()["events"]
+    assert len(events3) >= 1
+    assert events3[0]["action"] == "process.terminate"
+    assert events3[0]["target_id"] == "999999"
+
+    # 4. Host isolation containment audit check
+    isolate_res = client.post(
+        "/agents/host-audit-01/isolate",
+        json={"isolated": True, "reason": "Compromised credential containment"},
+    )
+    assert isolate_res.status_code == 200
+
+    audit_res4 = client.get("/audit?action=agent.isolate")
+    assert audit_res4.status_code == 200
+    events4 = audit_res4.json()["events"]
+    assert len(events4) >= 1
+    assert events4[0]["action"] == "agent.isolate"
+    assert events4[0]["target_id"] == "host-audit-01"

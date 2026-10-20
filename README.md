@@ -3,7 +3,7 @@
 [![CI](https://github.com/kripy17/OutPost/actions/workflows/ci.yml/badge.svg)](https://github.com/kripy17/OutPost/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-OutPost is an offline, local-first security analysis workbench for ingesting, detecting, and investigating Linux and Windows host telemetry without external cloud dependencies.
+Offline-first workbench for triaging Linux and Windows host telemetry and analyzing suspicious files.
 
 Status: Experimental. Single-author project. Last verified: October 2026. 1,670 automated tests passing.
 
@@ -12,32 +12,18 @@ Status: Experimental. Single-author project. Last verified: October 2026. 1,670 
 
 ---
 
-## Problem and Audience
+## What It Does
 
-Security analysts investigating host incidents frequently inspect raw audit logs, process trees, and network connections across isolated machines. Correlating related processes, evaluating multi-stage attack behaviors, and determining whether an unexpected binary established persistence requires manual cross-referencing and external scripting.
-
-OutPost addresses this for incident responders, forensic analysts, threat hunters, and air-gapped lab researchers. The platform normalizes telemetry from Linux and Windows into a single temporal event graph, evaluates behavioral detection rules in-process, and renders process lineage and network flows in a local web interface and terminal UI. Analysts can pivot from an initial alert to child process execution trees, query historical executions, extract indicators of compromise, and export case findings on a single machine without forwarding telemetry to third-party services.
-
-### Why This Exists
-OutPost was built to provide an immediate, self-contained forensic workbench that functions without complex distributed cluster orchestration. Many commercial security tools require persistent cloud connectivity, multi-node backend clusters, and recurring telemetry export. OutPost provides behavioral detection and investigation capabilities that run entirely on a single laptop, analysis virtual machine, or air-gapped enclave.
+OutPost collects host events (`auditd` and ftrace on Linux, Sysmon on Windows), evaluates 48 behavioral heuristics and a Sigma rule evaluator, supports host triage, cases, and forensic exports, and provides static analysis and an unshared-namespace dynamic sandbox for suspicious files. Both a local web console and a terminal user interface (TUI) are provided for analyst inspection on a single node without external cloud dependencies.
 
 ---
 
-## Scope and Non-Goals
+## What It Is Not
 
-### In Scope
-- Single-node ingestion and normalization of Linux and Windows endpoint telemetry.
-- In-process behavioral detection engine mapping to MITRE ATT&CK Enterprise tactics.
-- Local static binary analysis and unshared-namespace dynamic execution sandboxing.
-- Analyst case management, timeline correlation, IOC tagging, and structured forensic reporting.
-- Tamper-evident, hash-chained operational audit logging with database-level immutability.
-- Python CLI and full-screen terminal user interface (TUI) for keyboard-driven triage.
-
-### Non-Goals
-- **Commercial Fleet EDR**: OutPost does not provide continuous automated kernel-level prevention or distributed fleet management across tens of thousands of corporate endpoints.
-- **Enterprise SIEM**: OutPost does not offer multi-terabyte distributed indexing, cloud data lakes, or cross-log correlation for arbitrary enterprise SaaS applications.
-- **Hosted Malware Detonation Service**: OutPost does not run full virtualized Windows operating systems with kernel hypervisors; dynamic execution relies on Linux user namespaces (Bubblewrap) and user-mode Wine emulation.
-- **Managed Cloud Service**: OutPost does not collect centralized telemetry, enforce phone-home licensing, or distribute proprietary cloud threat feeds.
+- **Not an EDR**: OutPost does not provide continuous automated kernel-level prevention or distributed fleet management across thousands of corporate endpoints.
+- **Not an Enterprise SIEM**: OutPost does not offer multi-terabyte distributed indexing, cloud data lakes, or cross-log correlation for arbitrary SaaS applications.
+- **Not a Hosted Sandbox Service**: OutPost does not run full virtualized Windows operating systems with kernel hypervisors; dynamic execution relies on Linux user namespaces (Bubblewrap) and user-mode Wine emulation.
+- **Not for Fleet Management**: OutPost is architected for triaging lab runs, local host incidents, and environments of up to a few dozen endpoints on a single workstation or analysis virtual machine.
 
 ---
 
@@ -74,6 +60,33 @@ OutPost was built to provide an immediate, self-contained forensic workbench tha
 
 ---
 
+## Static Analysis Format Support
+
+Untrusted binaries are analyzed in an isolated subprocess (`backend/app/services/static/worker.py`) constrained by OS resource limits (`RLIMIT_CPU`, `RLIMIT_AS` on Linux).
+
+| Format | What Is Extracted | Known Unsupported Variants | Automated Test |
+|---|---|---|---|
+| **PE (Windows Executable)** | Headers, sections (entropy, permissions), imports/IAT, exports, Authenticode security directory bytes & certificate serial [1], imphash, debug info, overlay | Corrupted DOS stubs with out-of-bounds PE headers; .NET CLR metadata deep decompilation | [`test_pe_analysis_format_extraction`](backend/app/tests/test_multiformat_static_analysis.py) |
+| **ELF (Linux Binary)** | Headers (32/64-bit, endianness), program segments, section headers, dynamic symbols, imported shared libraries (`DT_NEEDED`), entry point | Non-standard architectures; packed binaries without prior unpacking | [`test_elf_analysis_format_extraction`](backend/app/tests/test_multiformat_static_analysis.py) |
+| **Archives & ISO** | ZIP/TAR member names, compressed/uncompressed sizes, zip bomb ratio ceiling (>100:1 / 100MB max) [2], ISO9660 volume descriptors & directory walk | UDF (Universal Disk Format) ISOs; password-encrypted archives; 7z/RAR formats | [`test_archive_zip_bomb_safety_guard`](backend/app/tests/test_multiformat_static_analysis.py) |
+| **Office Documents** | OLE structured storage streams, VBA macro presence (AutoOpen/Workbook_Open strings), OOXML XML parts, external template injection URLs | Password-protected or encrypted Office documents; legacy Word 6.0/95 binary formats | [`test_office_macro_and_template_detection`](backend/app/tests/test_multiformat_static_analysis.py) |
+| **PDF Documents** | Dictionary elements, page count, `/JavaScript`, `/JS`, `/OpenAction`, `/AA`, `/EmbeddedFiles`, `/Launch` action streams | AES/RC4 password-encrypted PDFs; XFA dynamic script forms | [`test_pdf_openaction_and_javascript`](backend/app/tests/test_multiformat_static_analysis.py) |
+| **Windows Shortcuts (LNK)** | Shell link header, CLSID, LinkFlags, LocalBasePath target, command-line arguments, icon location, show window flags | Corrupted extra data blocks | [`test_lnk_stealth_sw_hide_and_lolbin`](backend/app/tests/test_multiformat_static_analysis.py) |
+| **Scripts (PS1, Bash, Py, Bat)** | Language identification, base64 encoded payload decompression, obfuscated invocation patterns (`-enc`, `iex`, `downloadstring`) | Proprietary tokenized script formats; polymorphic runtime decrypters | [`test_script_layered_deobfuscation`](backend/app/tests/test_multiformat_static_analysis.py) |
+| **Family Config Decoders** | AgentTesla (SMTP/FTP/HTTP C2 config extraction), Cobalt Strike (standard XOR 0x2e / 0x69 beacon configuration blocks) | Non-standard salt XOR/AES keys; variants using external stage-two downloaders | [`test_family_config_decoder_agent_tesla`](backend/app/tests/test_multiformat_static_analysis.py) |
+
+- **[1] Authenticode Verification Limit**: Certificate structures and serials are parsed directly from the binary security directory. Offline trust chain validation against root certificate authorities is not performed without a configured local root trust store.
+- **[2] Decompression Limits**: Ingested archives and HTTP request payloads enforce an upper ceiling of 50 MB compressed and a 100:1 decompression ratio limit to abort zip bombs.
+
+### Verdict Vocabulary
+The static analysis engine classifies samples into four explicit verdicts defined in [`backend/app/services/static/verdict.py`](backend/app/services/static/verdict.py):
+- `malicious`: Triggered when weighted evidence score >= 60 (or any high-confidence threat indicator with weight >= 30, such as verified C2 endpoints, process injection imports, or ransomware crypto APIs) and net score >= 35 after subtracting benign mitigations.
+- `suspicious`: Triggered when net score >= 25 or at least 2 anomalous factors are present (such as high entropy with overlay, hidden window flags, suspicious API imports, or anomalous section headers).
+- `no_indicators_found_limited`: Triggered when zero threat indicators or structural anomalies are detected within the parsed layers. Indicates that no indicators were discovered within the tool's parsing boundaries, without claiming the file is benign.
+- `insufficient_evidence`: Triggered when minor non-conclusive signals are observed that do not reach the threshold for suspicious, or where parsing was partially obstructed.
+
+---
+
 ## Quick Start
 
 ### Prerequisites
@@ -87,6 +100,10 @@ OutPost was built to provide an immediate, self-contained forensic workbench tha
 - `yara-python`: For compiling and scanning custom YARA rules. If absent, engine falls back to ASCII/Unicode string matching and entropy extraction.
 - `flare-capa` (`capa`): For automated capability identification in PE files. If absent, capability mapping falls back to built-in string and API import pattern matching.
 - `postgresql` (`psycopg` via `backend[pg]`): Optional database backend. If absent, SQLite is used automatically.
+
+### Platform Support
+- **Server**: Runs on Linux (x86_64, aarch64) or Windows via WSL2.
+- **Collectors**: Linux collector runs natively on Linux (Python 3.8+, auditd); Windows collector runs natively on Windows (PowerShell 5.1+, Sysmon); macOS collector runs natively on macOS (Python 3.8+).
 
 ### Installation and Launch
 Clone the repository and run the setup script (takes approximately 1 to 2 minutes on a clean environment):
@@ -138,7 +155,7 @@ Launch the platform with the bundled demo dataset:
    ```
 
 ### Bundled Demo Dataset Details
-The `--demo` flag populates the database using [`backend/app/seed_demo.py`](backend/app/seed_demo.py). It contains simulated enterprise telemetry representing 4 distinct endpoints (`dc01.corp.internal`, `web01.dmz.internal`, `mac-analyst-01`, and `db01.prod.internal`), including process executions, network connections, 6 correlated behavioral alerts, and 2 investigation cases. Total seeded database size is under 2 MB. Licensed under the MIT License.
+The `--demo` flag populates the database using [`backend/app/seed_demo.py`](backend/app/seed_demo.py). It contains simulated telemetry representing 4 distinct endpoints (`dc01.corp.internal`, `web01.dmz.internal`, `mac-analyst-01`, and `db01.prod.internal`), including process executions, network connections, 6 correlated behavioral alerts, and 2 investigation cases. Total seeded database size is under 2 MB. Licensed under the MIT License.
 
 ---
 
@@ -204,8 +221,9 @@ Requires Windows 10/11 or Server 2016+, PowerShell 5.1+, and Microsoft Sysmon. N
    ```
 2. Execute in an elevated PowerShell terminal:
    ```powershell
-   .\install.ps1 -DryRun
-   .\install.ps1 -Server "http://<OUTPOST_SERVER>:8001" -Token "<ENROLLMENT_TOKEN>"
+   # Note: -ExecutionPolicy Bypass is required only if local script execution is restricted by PowerShell policy
+   powershell -ExecutionPolicy Bypass -File .\install.ps1 -DryRun
+   powershell -ExecutionPolicy Bypass -File .\install.ps1 -Server "http://<OUTPOST_SERVER>:8001" -Token "<ENROLLMENT_TOKEN>"
    ```
 3. Privilege boundaries:
    - **With Administrator**: Configures Sysmon service and tails the `Microsoft-Windows-Sysmon/Operational` event log channel.
@@ -323,21 +341,6 @@ The 48 behavioral rules map to **14 out of 14 Enterprise Tactics** and cover **3
 
 ---
 
-## Validation and Accuracy
-
-Detection accuracy and regression gates are tested against local automated fixtures:
-
-| Validation Target | Method | Dataset | True Positive | Miss Rate | False Positive | Reproduction Command |
-|---|---|---|---|---|---|---|
-| **Benign System Tooling** | Static analysis evaluation | 5 synthetic clean binaries/scripts | N/A (Benign) | 0.0% | 0.0% (0 FP) | `pytest backend/app/tests/test_validation_corpus_gate.py` |
-| **Threat Sample Detection** | Static analysis evaluation | 5 synthetic malicious binaries/scripts | 100.0% (5/5) | 0.0% | 0.0% | `pytest backend/app/tests/test_validation_corpus_gate.py` |
-| **Linux Collector Soak** | 30-minute replay soak test | 1,200 modeled benign events | 100.0% | 0.0% | 0.0% (0 FP) | `.venv/bin/python scripts/soak_linux_collector.py --gate` |
-| **Windows Sysmon Soak** | 30-minute replay soak test | 1,500 modeled Sysmon events | 100.0% | 0.0% | 0.0% (0 FP) | `.venv/bin/python scripts/soak_windows_collector.py --gate` |
-
-*Note: These metrics are derived from the local test corpus in [`backend/app/services/validation_corpus.py`](backend/app/services/validation_corpus.py) (queryable live at `/corpus/report`) and automated collector soak scripts. They validate that detection heuristics do not regress during development, rather than benchmarking production fleet deployments.*
-
----
-
 ## Security Model
 
 Security architecture and threat boundaries are defined in the formal [Threat Model](docs/20-THREAT-MODEL.md) and [Security Policy](SECURITY.md).
@@ -350,7 +353,7 @@ Security architecture and threat boundaries are defined in the formal [Threat Mo
 Agents authenticate using scoped enrollment tokens created via `POST /agents/enrollment-tokens`. Tokens carry explicit expiration timestamps and maximum usage counts.
 
 ### Dynamic Sandbox Isolation
-- Linux binary execution uses Bubblewrap (`bwrap`) to create temporary namespaces (`--unshare-pid`, `--unshare-ipc`, `--unshare-uts`, `--unshare-net`).
+- Linux binary execution uses Bubblewrap (`bwrap`) to create temporary unshared namespaces (`--unshare-pid`, `--unshare-ipc`, `--unshare-uts`, `--unshare-net`).
 - Linux capabilities are dropped (`--cap-drop ALL`).
 - Sandbox filesystem mounts are read-only except for a designated temporary scratch directory.
 - Network access is disabled by default. "Sinkhole" and PCAP files generated for sandbox runs are reconstructed post-execution via pattern matching on stdout/stderr, not live packet captures.
@@ -359,7 +362,8 @@ Agents authenticate using scoped enrollment tokens created via `POST /agents/enr
 - Operational mutations (containment, process termination, rule edits, sample uploads) write to `audit_log`.
 - Entries are cryptographically chained using SHA-256 (`entry_hash = SHA256(prev_hash:ts:actor:action:target...)`).
 - Database triggers (`trg_audit_log_no_update` and `trg_audit_log_no_delete`) prevent modification or deletion of existing rows within the database engine.
-- Head states can be exported and signed with a local HMAC key (`data/audit_signing.key`) for out-of-band verification.
+- Head states can be exported and signed with a local HMAC key (`data/audit_signing.key`) for out-of-band verification via `GET /audit/verify`.
+- Gated in CI via [`backend/app/tests/test_audit_chain_integrity.py`](backend/app/tests/test_audit_chain_integrity.py), asserting sequential chaining, tamper detection, trigger rejection, and mutating endpoint logging.
 - Audit logging does not record read-only GET queries.
 
 ### Network Egress
@@ -368,6 +372,22 @@ Agents authenticate using scoped enrollment tokens created via `POST /agents/enr
 
 ### Sample Storage
 Malware binaries uploaded to the vault are stored with `0600` permissions at `backend/data/samples/{sample_id}.bin`. Samples are never given executable permissions on the host filesystem.
+
+---
+
+## Regression Fixtures
+
+The platform maintains an automated test fixture corpus in [`backend/app/services/validation_corpus.py`](backend/app/services/validation_corpus.py) to prevent parser regressions and heuristic drift during development:
+
+| Fixture Target | Method | Dataset | Measured Result | Reproduction Command |
+|---|---|---|---|---|
+| **Benign System Tooling** | Static analysis evaluation | 5 synthetic clean binaries/scripts | 0/5 false positives (0.0% FP) | `pytest backend/app/tests/test_validation_corpus_gate.py` |
+| **Threat Sample Detection** | Static analysis evaluation | 5 synthetic malicious binaries/scripts | 5/5 detected (100.0% TP) | `pytest backend/app/tests/test_validation_corpus_gate.py` |
+| **Linux Collector Soak** | Replay soak gate | 1,200 modeled benign events | 0 false alerts | `.venv/bin/python scripts/soak_linux_collector.py --gate` |
+| **Windows Sysmon Soak** | Replay soak gate | 1,500 modeled Sysmon events | 0 false alerts | `.venv/bin/python scripts/soak_windows_collector.py --gate` |
+
+### Statistical Limitations
+At a sample size of 10 synthetic files (5 benign, 5 threat samples), statistical confidence intervals are wide: a one-sided 95% upper bound on the false-positive rate after 0 false positives in 5 benign files is approximately 45%, and a 5/5 detection rate has a lower bound of approximately 55%. These fixtures test parser resilience and rule logic against regression; **a measured validation lab with real telemetry and live threat samples does not exist yet.**
 
 ---
 
@@ -389,6 +409,17 @@ Malware binaries uploaded to the vault are stored with `0600` permissions at `ba
   - macOS containment uses `pfctl` and POSIX signals, requiring root privileges for system-wide network blocking.
 - **Synchronous Ingestion Limits**: Rule evaluation occurs in-process during event ingestion. Ingest bursts exceeding 1,500 to 2,000 events per second on SQLite can cause batch delivery latency.
 - **Single-Node Scale**: OutPost is architected as an offline workstation for incident analysis, lab research, and homelabs; it is not designed to manage enterprise fleets of tens of thousands of endpoints.
+
+---
+
+## Design Decisions
+
+Key architectural choices and trade-offs are documented in formal Architectural Decision Records:
+- **Single-Node Architecture** ([ADR 0001](docs/adr/0001-single-node-design.md)): Opted for an in-process, single-node architecture over a distributed microservice cluster to enable rapid deployment on single laptops and air-gapped enclaves without external orchestration.
+- **Dual SQLite and PostgreSQL Storage** ([ADR 0002](docs/adr/0002-sqlite-and-postgres-support.md)): SQLite serves as the zero-configuration default for single-user triage, while PostgreSQL provides concurrent multi-host scaling.
+- **Pull-Based Control Channel** ([ADR 0003](docs/adr/0003-pull-based-control-channel.md)): Agents pull actions via heartbeat cycles rather than opening inbound listening ports on endpoints, preserving host firewall boundaries.
+- **In-Process Synchronous Detection** ([ADR 0004](docs/adr/0004-in-process-vs-worker-detection.md)): Rule evaluation runs synchronously within the ingestion pipeline to provide immediate alert correlation at the cost of peak ingest throughput.
+- **Bubblewrap User Namespaces** ([ADR 0005](docs/adr/0005-bubblewrap-and-bwrap-sandbox-design.md)): Unprivileged Linux user namespaces confine suspicious binary execution without requiring full hypervisor virtualization.
 
 ---
 
