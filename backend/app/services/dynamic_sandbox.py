@@ -173,6 +173,42 @@ def get_available_isolation_drivers() -> list[dict[str, Any]]:
     return drivers
 
 
+def _format_pcap_log_line(pcap_art: dict[str, Any]) -> str:
+    """Format an honest log line describing synthetic PCAP metadata generation."""
+    pkt_count = pcap_art.get("packet_count", 0)
+    size_b = pcap_art.get("size_bytes", 0)
+    return (
+        f"[OutPost Network Synthesizer] Generated reconstructed traffic.pcap with {pkt_count} "
+        f"synthetic packet(s) ({size_b} B) from event metadata (reconstructed, not wire capture)"
+    )
+
+
+def _build_sandbox_rlimits(timeout_seconds: int = 10, memory_limit_mb: int = 1024, max_procs: int = 128):
+    """Build preexec_fn for POSIX subprocess execution enforcing CPU, memory, process-count, and file size limits."""
+    def _apply_rlimits():
+        if os.name != "posix":
+            return
+        # 1. CPU / execution time limits (fail visibly if cannot be applied)
+        resource.setrlimit(resource.RLIMIT_CPU, (timeout_seconds + 5, timeout_seconds + 10))
+        # 2. Maximum file size (50MB)
+        resource.setrlimit(resource.RLIMIT_FSIZE, (50 * 1024 * 1024, 50 * 1024 * 1024))
+        # 3. Disable core dumps
+        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+        # 4. Memory limit (RLIMIT_AS or RLIMIT_DATA)
+        mem_bytes = memory_limit_mb * 1024 * 1024
+        if hasattr(resource, "RLIMIT_AS"):
+            resource.setrlimit(resource.RLIMIT_AS, (mem_bytes, mem_bytes))
+        elif hasattr(resource, "RLIMIT_DATA"):
+            resource.setrlimit(resource.RLIMIT_DATA, (mem_bytes, mem_bytes))
+        # 5. Process count limit (RLIMIT_NPROC)
+        if hasattr(resource, "RLIMIT_NPROC"):
+            cur_soft, cur_hard = resource.getrlimit(resource.RLIMIT_NPROC)
+            target_nproc = min(cur_soft, max(1024, max_procs))
+            resource.setrlimit(resource.RLIMIT_NPROC, (target_nproc, cur_hard))
+
+    return _apply_rlimits
+
+
 async def execute_bytes_sandbox(
     run_id: str,
     sample_name: str,
@@ -359,20 +395,7 @@ async def execute_bytes_sandbox(
                 detail="Safe isolation provider unavailable. Execution blocked to prevent host contamination.",
             )
 
-        def _apply_rlimits():
-            if os.name == "posix":
-                try:
-                    resource.setrlimit(resource.RLIMIT_CPU, (timeout_seconds + 5, timeout_seconds + 10))
-                except Exception:
-                    pass
-                try:
-                    resource.setrlimit(resource.RLIMIT_FSIZE, (50 * 1024 * 1024, 50 * 1024 * 1024))
-                except Exception:
-                    pass
-                try:
-                    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
-                except Exception:
-                    pass
+        sandbox_rlimits = _build_sandbox_rlimits(timeout_seconds=timeout_seconds)
 
         stop_poller = asyncio.Event()
         try:
@@ -383,7 +406,7 @@ async def execute_bytes_sandbox(
                 stderr=asyncio.subprocess.PIPE,
                 env=child_env,
                 close_fds=True,
-                preexec_fn=_apply_rlimits if os.name == "posix" else None,
+                preexec_fn=sandbox_rlimits if os.name == "posix" else None,
             )
             main_pid = getattr(proc, "pid", os.getpid())
 
@@ -503,7 +526,7 @@ async def execute_bytes_sandbox(
         if pcap_art:
             dropped_artifacts.append(pcap_art)
             await _emit({"type": "artifact", "data": pcap_art})
-            await _emit({"type": "log", "line": f"[OutPost Traffic Recorder] Captured {pcap_art['packet_count']} network packet(s) -> traffic.pcap ({pcap_art['size_bytes']} B)"})
+            await _emit({"type": "log", "line": _format_pcap_log_line(pcap_art)})
         for art in dropped_artifacts:
             if art.get("filename") != "traffic.pcap":
                 await _emit({"type": "artifact", "data": art})
@@ -1631,7 +1654,7 @@ async def execute_sample_detonation(
     if sinkhole_traffic:
         terminal_logs.append(f"[OutPost C2 Sinkhole] Intercepted {len(sinkhole_traffic)} network beacon/DNS requests.")
     if pcap_artifact:
-        terminal_logs.append(f"[OutPost Traffic Recorder] Captured {pcap_artifact['packet_count']} network packet(s) -> traffic.pcap ({pcap_artifact['size_bytes']} B)")
+        terminal_logs.append(_format_pcap_log_line(pcap_artifact))
 
     with db_session() as conn:
         for ev in events:
