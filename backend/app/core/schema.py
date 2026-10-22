@@ -188,6 +188,7 @@ class Alert(BaseModel):
     last_seen_at: datetime | None = None
     entity_key: str | None = None
     pid_fallback: bool = False
+    host_id: str | None = None
 
     @field_validator("related_pids", "evidence_event_ids", mode="before")
     @classmethod

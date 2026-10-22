@@ -307,8 +307,17 @@ class Shipper:
         event.setdefault("boot_id", self.boot_id)
         if "source_event_id" not in event or not event["source_event_id"]:
             event["source_event_id"] = str(uuid.uuid4())
-        if event.get("event_type") == "process_create" and not event.get("process_start_time"):
-            event["process_start_time"] = event.get("timestamp")
+        pid = event.get("pid")
+        if event.get("event_type") == "process_create":
+            if not event.get("process_start_time"):
+                event["process_start_time"] = event.get("timestamp")
+            if pid is not None and event.get("process_start_time"):
+                if not hasattr(self, "_pid_start_times"):
+                    self._pid_start_times = {}
+                self._pid_start_times[pid] = event["process_start_time"]
+        elif pid is not None and not event.get("process_start_time"):
+            if hasattr(self, "_pid_start_times") and pid in self._pid_start_times:
+                event["process_start_time"] = self._pid_start_times[pid]
         plat = (event.get("platform") or "").lower()
         if plat == "linux":
             event.setdefault("log_source", "auditd")

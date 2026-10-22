@@ -7,50 +7,87 @@ from ..core.schema import Alert
 
 
 def insert_event(conn: sqlite3.Connection, event: dict) -> int:
-    cur = conn.execute(
-        """
-        INSERT INTO events (
-            run_id, platform, event_type, timestamp, pid, ppid, process_name,
-            command_line, exe_path, dest_ip, dest_port, protocol, file_path, registry_key,
-            host_id, raw_record, log_source, query, tls_sni,
-            source_event_id, boot_id, process_start_time,
-            user, parent_image, parent_command_line, hashes,
-            integrity_level, session_id, connection_status, process_guid
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            event["run_id"],
-            event["platform"],
-            event["event_type"],
-            event["timestamp"],
-            event.get("pid"),
-            event.get("ppid"),
-            event.get("process_name"),
-            event.get("command_line"),
-            event.get("exe_path"),
-            event.get("dest_ip"),
-            event.get("dest_port"),
-            event.get("protocol"),
-            event.get("file_path"),
-            event.get("registry_key"),
-            event.get("host_id", "local"),
-            event.get("raw_record"),
-            event.get("log_source"),
-            event.get("query"),
-            event.get("tls_sni"),
-            event.get("source_event_id"),
-            event.get("boot_id"),
-            event.get("process_start_time"),
-            event.get("user"),
-            event.get("parent_image"),
-            event.get("parent_command_line"),
-            event.get("hashes"),
-            event.get("integrity_level"),
-            event.get("session_id"),
-            event.get("connection_status"),
-            event.get("process_guid"),
-        ),
-    )
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(events)").fetchall()}
+    if "user" in cols:
+        cur = conn.execute(
+            """
+            INSERT INTO events (
+                run_id, platform, event_type, timestamp, pid, ppid, process_name,
+                command_line, exe_path, dest_ip, dest_port, protocol, file_path, registry_key,
+                host_id, raw_record, log_source, query, tls_sni,
+                source_event_id, boot_id, process_start_time,
+                user, parent_image, parent_command_line, hashes,
+                integrity_level, session_id, connection_status, process_guid
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event["run_id"],
+                event["platform"],
+                event["event_type"],
+                event["timestamp"],
+                event.get("pid"),
+                event.get("ppid"),
+                event.get("process_name"),
+                event.get("command_line"),
+                event.get("exe_path"),
+                event.get("dest_ip"),
+                event.get("dest_port"),
+                event.get("protocol"),
+                event.get("file_path"),
+                event.get("registry_key"),
+                event.get("host_id", "local"),
+                event.get("raw_record"),
+                event.get("log_source"),
+                event.get("query"),
+                event.get("tls_sni"),
+                event.get("source_event_id"),
+                event.get("boot_id"),
+                event.get("process_start_time"),
+                event.get("user"),
+                event.get("parent_image"),
+                event.get("parent_command_line"),
+                event.get("hashes"),
+                event.get("integrity_level"),
+                event.get("session_id"),
+                event.get("connection_status"),
+                event.get("process_guid"),
+            ),
+        )
+    else:
+        cur = conn.execute(
+            """
+            INSERT INTO events (
+                run_id, platform, event_type, timestamp, pid, ppid, process_name,
+                command_line, exe_path, dest_ip, dest_port, protocol, file_path, registry_key,
+                host_id, raw_record, log_source, query, tls_sni,
+                source_event_id, boot_id, process_start_time
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event["run_id"],
+                event["platform"],
+                event["event_type"],
+                event["timestamp"],
+                event.get("pid"),
+                event.get("ppid"),
+                event.get("process_name"),
+                event.get("command_line"),
+                event.get("exe_path"),
+                event.get("dest_ip"),
+                event.get("dest_port"),
+                event.get("protocol"),
+                event.get("file_path"),
+                event.get("registry_key"),
+                event.get("host_id", "local"),
+                event.get("raw_record"),
+                event.get("log_source"),
+                event.get("query"),
+                event.get("tls_sni"),
+                event.get("source_event_id"),
+                event.get("boot_id"),
+                event.get("process_start_time"),
+            ),
+        )
     return cur.lastrowid or 0
 
 
@@ -64,33 +101,42 @@ def list_events_for_run(conn: sqlite3.Connection, run_id: str) -> list[dict]:
 
 def insert_alert(conn: sqlite3.Connection, alert: Alert) -> int:
     last_seen = alert.last_seen_at.isoformat() if alert.last_seen_at else alert.triggered_at.isoformat()
+    cols = [
+        "run_id", "rule_id", "rule_name", "severity", "triggered_at", "related_pid",
+        "related_ip", "related_pids", "details", "confidence", "evidence_event_ids",
+        "rule_condition", "occurrence_count", "last_seen_at", "entity_key", "pid_fallback"
+    ]
+    vals = [
+        alert.run_id,
+        alert.rule_id,
+        alert.rule_name,
+        alert.severity,
+        alert.triggered_at.isoformat(),
+        alert.related_pid,
+        alert.related_ip,
+        json.dumps(alert.related_pids),
+        alert.details,
+        alert.confidence,
+        json.dumps(alert.evidence_event_ids or []),
+        alert.rule_condition,
+        alert.occurrence_count or 1,
+        last_seen,
+        alert.entity_key,
+        1 if alert.pid_fallback else 0,
+    ]
+    try:
+        table_cols = {row[1] for row in conn.execute("PRAGMA table_info(alerts)").fetchall()}
+    except Exception:
+        table_cols = set()
+    if "host_id" in table_cols:
+        cols.append("host_id")
+        vals.append(alert.host_id or "local")
+
+    col_str = ", ".join(cols)
+    placeholders = ", ".join(["?"] * len(vals))
     cur = conn.execute(
-        """
-        INSERT INTO alerts (
-            run_id, rule_id, rule_name, severity, triggered_at, related_pid,
-            related_ip, related_pids, details, confidence, evidence_event_ids,
-            rule_condition, occurrence_count, last_seen_at, entity_key, pid_fallback
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            alert.run_id,
-            alert.rule_id,
-            alert.rule_name,
-            alert.severity,
-            alert.triggered_at.isoformat(),
-            alert.related_pid,
-            alert.related_ip,
-            json.dumps(alert.related_pids),
-            alert.details,
-            alert.confidence,
-            json.dumps(alert.evidence_event_ids or []),
-            alert.rule_condition,
-            alert.occurrence_count or 1,
-            last_seen,
-            alert.entity_key,
-            1 if alert.pid_fallback else 0,
-        ),
+        f"INSERT INTO alerts ({col_str}) VALUES ({placeholders})",
+        tuple(vals),
     )
     alert_id = cur.lastrowid or 0
     if alert_id and alert.evidence_event_ids:

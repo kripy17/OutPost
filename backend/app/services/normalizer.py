@@ -19,6 +19,7 @@ _PASSTHROUGH = (
     "source_event_id", "boot_id", "process_start_time",
     "user", "parent_image", "parent_command_line", "hashes",
     "integrity_level", "session_id", "connection_status", "process_guid",
+    "missing_process_start_time",
 )
 
 _AUDIT_MSG_RE = re.compile(r"audit\(([\d.]+):(\d+)\)")
@@ -91,6 +92,12 @@ def normalize_event(raw: dict) -> dict:
         out["process_start_time"] = out["timestamp"]
     else:
         out["process_start_time"] = None
+
+    # Flag events that carry a PID but lack an authoritative process start time
+    if out.get("pid") is not None and out.get("pid") != 0 and not out.get("process_start_time"):
+        out["missing_process_start_time"] = True
+    else:
+        out["missing_process_start_time"] = False
 
     # Source event ID: preserve provided string; if missing, try extracting from raw_record.
     sid = out.get("source_event_id")

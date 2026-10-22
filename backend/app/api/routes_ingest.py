@@ -103,10 +103,39 @@ async def ingest_batch(events: list[EventIn]) -> dict:
             seen_source_ids = set()
 
         stored_events: list[dict] = []
+        known_proc_starts: dict[tuple[str, str, int], str] = {}
+
         for event_in in events:
             # mode="json" serializes datetimes to ISO strings — sqlite-safe.
             raw_payload = event_in.model_dump(mode="json")
             normalized = normalizer.normalize_event(raw_payload)
+
+            # Propagate compound process_start_time to non-process events sharing (host_id, boot_id, pid)
+            p_host = normalized.get("host_id", "local")
+            p_boot = normalized.get("boot_id", "default")
+            p_pid = normalized.get("pid")
+
+            if p_pid is not None and p_pid != 0:
+                compound_p_key = (p_host, p_boot, p_pid)
+                if normalized.get("event_type") == "process_create" and normalized.get("process_start_time"):
+                    known_proc_starts[compound_p_key] = normalized["process_start_time"]
+                    normalized["missing_process_start_time"] = False
+                elif not normalized.get("process_start_time"):
+                    if compound_p_key in known_proc_starts:
+                        normalized["process_start_time"] = known_proc_starts[compound_p_key]
+                        normalized["missing_process_start_time"] = False
+                    else:
+                        row = conn.execute(
+                            "SELECT process_start_time FROM events WHERE run_id = ? AND host_id = ? AND boot_id = ? AND pid = ? AND process_start_time IS NOT NULL ORDER BY id DESC LIMIT 1",
+                            (run_id, p_host, p_boot, p_pid),
+                        ).fetchone()
+                        if row and row["process_start_time"]:
+                            known_proc_starts[compound_p_key] = row["process_start_time"]
+                            normalized["process_start_time"] = row["process_start_time"]
+                            normalized["missing_process_start_time"] = False
+                else:
+                    normalized["missing_process_start_time"] = False
+
             # Keep the original source as the event's raw record (Event Viewer
             # "raw record" pane — pivot from a normalized row to the source).
             # Collectors ship the raw auditd/Sysmon line themselves; webapp /
