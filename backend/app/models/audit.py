@@ -115,11 +115,12 @@ class AuditVerificationReport(dict):
 
 
 def _serialize_state(val: Any) -> str:
+    """Canonical compact JSON serialization (RFC 8785) with sorted keys and no whitespace."""
     if val is None:
         return ""
     if isinstance(val, (dict, list)):
         try:
-            return json.dumps(val, sort_keys=True)
+            return json.dumps(val, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
         except Exception:
             return str(val)
     return str(val)
@@ -204,9 +205,19 @@ def log(
     ts = datetime.now(timezone.utc).isoformat()
     try:
         cur = conn.execute("SELECT entry_hash FROM audit_log ORDER BY id DESC LIMIT 1").fetchone()
-        prev_hash = cur["entry_hash"] if (cur and cur["entry_hash"]) else ("0" * 64)
-    except Exception:
-        prev_hash = "0" * 64
+        if cur is None:
+            prev_hash = "0" * 64
+        elif not cur["entry_hash"]:
+            raise RuntimeError("Fatal audit chain integrity violation: preceding entry has empty or invalid entry_hash")
+        else:
+            prev_hash = cur["entry_hash"]
+    except sqlite3.OperationalError as exc:
+        if "no such table" in str(exc).lower():
+            prev_hash = "0" * 64
+        else:
+            raise RuntimeError(f"Fatal audit log error: failed to read previous entry hash from database: {exc}") from exc
+    except Exception as exc:
+        raise RuntimeError(f"Fatal audit log error: failed to read previous entry hash from database: {exc}") from exc
 
     entry_hash = compute_entry_hash(
         prev_hash=prev_hash,
@@ -342,8 +353,29 @@ def verify_audit_chain(conn: sqlite3.Connection) -> AuditVerificationReport:
             reason=r["reason"],
         )
 
+        # Strictly reject missing or empty entry_hash
+        if not r["entry_hash"]:
+            err = f"Tampered entry detected at audit ID {entry_id} (row {idx}): entry_hash is missing or NULL"
+            return AuditVerificationReport({
+                "valid": False,
+                "intact": False,
+                "entries_verified": idx,
+                "verified_through": rows[idx - 1]["id"] if idx > 0 else 0,
+                "total_entries": len(rows),
+                "status": "tampered",
+                "first_break": {
+                    "index": idx,
+                    "id": entry_id,
+                    "expected_hash": expected_hash,
+                    "found_hash": None,
+                    "reason": "missing entry_hash",
+                },
+                "error": err,
+                "verified_at": now_iso,
+            })
+
         # Allow fallback to standard legacy canonical format for legacy rows
-        if r["entry_hash"] and r["entry_hash"] != expected_hash:
+        if r["entry_hash"] != expected_hash:
             legacy_expected = compute_entry_hash(
                 prev_hash=actual_prev,
                 ts=r["ts"],
@@ -376,9 +408,44 @@ def verify_audit_chain(conn: sqlite3.Connection) -> AuditVerificationReport:
                     "verified_at": now_iso,
                 })
 
-        expected_prev = r["entry_hash"] or expected_hash
+        expected_prev = r["entry_hash"]
 
     total = len(rows)
+
+    # Check for tail truncation against latest signed checkpoint
+    try:
+        latest_cp = conn.execute(
+            "SELECT checkpoint_seq, created_at, last_audit_id, last_entry_hash, signature, public_key FROM audit_checkpoints ORDER BY checkpoint_seq DESC LIMIT 1"
+        ).fetchone()
+    except Exception:
+        latest_cp = None
+
+    if latest_cp:
+        cp_audit_id = int(latest_cp["last_audit_id"])
+        cp_entry_hash = str(latest_cp["last_entry_hash"])
+        cp_seq = int(latest_cp["checkpoint_seq"])
+
+        current_max_id = rows[-1]["id"] if rows else 0
+        if current_max_id < cp_audit_id:
+            err = f"Tail truncation detected: signed checkpoint seq {cp_seq} committed through audit ID {cp_audit_id} ({cp_entry_hash[:16]}...), but audit log terminates early at ID {current_max_id}"
+            return AuditVerificationReport({
+                "valid": False,
+                "intact": False,
+                "entries_verified": total,
+                "verified_through": current_max_id,
+                "total_entries": total,
+                "status": "truncated",
+                "first_break": {
+                    "index": total,
+                    "id": cp_audit_id,
+                    "expected_hash": cp_entry_hash,
+                    "found_hash": rows[-1]["entry_hash"] if rows else None,
+                    "reason": f"tail truncation: missing committed entries up to ID {cp_audit_id}",
+                },
+                "error": err,
+                "verified_at": now_iso,
+            })
+
     return AuditVerificationReport({
         "valid": True,
         "intact": True,
@@ -437,11 +504,15 @@ def create_checkpoint(conn: sqlite3.Connection) -> dict[str, Any]:
 
 
 def verify_checkpoint(checkpoint: dict[str, Any], key: bytes | None = None) -> bool:
-    """Verify an exported checkpoint's cryptographic signature."""
+    """Verify an exported checkpoint's cryptographic signature and keypair fingerprint."""
     if key is None:
         key, pub = get_or_create_signing_key()
     else:
         pub = hashlib.sha256(key).hexdigest()
+
+    cp_pub = checkpoint.get("public_key_fingerprint") or checkpoint.get("public_key")
+    if cp_pub and cp_pub != pub:
+        return False
 
     seq = checkpoint.get("checkpoint_seq")
     created_at = checkpoint.get("created_at")

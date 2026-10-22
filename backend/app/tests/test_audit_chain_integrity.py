@@ -300,3 +300,139 @@ def test_mutating_endpoints_record_audit():
     assert len(events4) >= 1
     assert events4[0]["action"] == "agent.isolate"
     assert events4[0]["target_id"] == "host-audit-01"
+
+
+def test_verify_audit_chain_rejects_missing_entry_hash():
+    """Verify that rows with empty or NULL entry_hash are strictly rejected as tampered."""
+    raw_conn = sqlite3.connect(":memory:")
+    raw_conn.row_factory = sqlite3.Row
+    raw_conn.execute(
+        """
+        CREATE TABLE audit_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT NOT NULL,
+            actor TEXT NOT NULL,
+            action TEXT NOT NULL,
+            target_type TEXT,
+            target_id TEXT,
+            detail TEXT,
+            outcome TEXT NOT NULL DEFAULT 'success',
+            prev_hash TEXT NOT NULL DEFAULT '0000000000000000000000000000000000000000000000000000000000000000',
+            entry_hash TEXT,
+            source_ip TEXT,
+            before_state TEXT,
+            after_state TEXT,
+            reason TEXT
+        )
+        """
+    )
+    h1 = audit.log(raw_conn, actor="user1", action="auth.login")
+    raw_conn.execute("INSERT INTO audit_log (ts, actor, action, prev_hash, entry_hash) VALUES ('2026-01-01', 'adversary', 'auth.login', ?, NULL)", (h1,))
+
+    report = audit.verify_audit_chain(raw_conn)
+    assert report["valid"] is False
+    assert report["status"] == "tampered"
+    assert "missing" in report["first_break"]["reason"].lower() or "entry_hash" in report["first_break"]["reason"].lower()
+    raw_conn.close()
+
+
+def test_verify_audit_chain_detects_tail_truncation():
+    """Verify that if the audit log is truncated at the tail, checkpoints detect the missing entries."""
+    raw_conn = sqlite3.connect(":memory:")
+    raw_conn.row_factory = sqlite3.Row
+    raw_conn.execute(
+        """
+        CREATE TABLE audit_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT NOT NULL,
+            actor TEXT NOT NULL,
+            action TEXT NOT NULL,
+            target_type TEXT,
+            target_id TEXT,
+            detail TEXT,
+            outcome TEXT NOT NULL DEFAULT 'success',
+            prev_hash TEXT NOT NULL DEFAULT '0000000000000000000000000000000000000000000000000000000000000000',
+            entry_hash TEXT NOT NULL,
+            source_ip TEXT,
+            before_state TEXT,
+            after_state TEXT,
+            reason TEXT
+        )
+        """
+    )
+    raw_conn.execute(
+        """
+        CREATE TABLE audit_checkpoints (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            checkpoint_seq INTEGER NOT NULL UNIQUE,
+            created_at TEXT NOT NULL,
+            last_audit_id INTEGER NOT NULL,
+            last_entry_hash TEXT NOT NULL,
+            signature TEXT NOT NULL,
+            public_key TEXT NOT NULL
+        )
+        """
+    )
+    audit.log(raw_conn, actor="user1", action="auth.login")
+    audit.log(raw_conn, actor="user2", action="rules.modify")
+    cp = audit.create_checkpoint(raw_conn)
+    assert cp["last_audit_id"] == 2
+
+    # Simulate adversary deleting the last row (tail truncation)
+    raw_conn.execute("DELETE FROM audit_log WHERE id = 2")
+
+    report = audit.verify_audit_chain(raw_conn)
+    assert report["valid"] is False
+    assert report["status"] == "truncated"
+    assert "truncat" in report["error"].lower()
+    raw_conn.close()
+
+
+def test_log_loud_failure_on_read_error():
+    """Verify that audit.log fails loudly and raises an error if previous hash cannot be read."""
+    raw_conn = sqlite3.connect(":memory:")
+    raw_conn.row_factory = sqlite3.Row
+    raw_conn.execute(
+        """
+        CREATE TABLE audit_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT NOT NULL,
+            actor TEXT NOT NULL,
+            action TEXT NOT NULL,
+            target_type TEXT,
+            target_id TEXT,
+            detail TEXT,
+            outcome TEXT NOT NULL DEFAULT 'success',
+            prev_hash TEXT NOT NULL DEFAULT '0000000000000000000000000000000000000000000000000000000000000000',
+            entry_hash TEXT NOT NULL
+        )
+        """
+    )
+    # Put a valid entry first
+    audit.log(raw_conn, actor="user1", action="auth.login")
+
+    class FailingConnection:
+        def __init__(self, conn):
+            self._conn = conn
+        def execute(self, query, *args, **kwargs):
+            if "ORDER BY id DESC LIMIT 1" in query:
+                raise sqlite3.OperationalError("Simulated database read failure: disk I/O error")
+            return self._conn.execute(query, *args, **kwargs)
+        def __getattr__(self, name):
+            return getattr(self._conn, name)
+
+    failing_conn = FailingConnection(raw_conn)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        audit.log(failing_conn, actor="user2", action="auth.logout")
+    assert "fatal" in str(exc_info.value).lower() or "read previous" in str(exc_info.value).lower()
+    raw_conn.close()
+
+
+def test_canonical_json_encoding_is_compact_and_deterministic():
+    """Verify state serialization produces compact RFC 8785 canonical JSON without whitespace."""
+    state = {"b": 2, "a": 1, "nested": {"y": True, "x": [3, 2, 1]}}
+    serialized = audit._serialize_state(state)
+    assert " " not in serialized
+    assert serialized == '{"a":1,"b":2,"nested":{"x":[3,2,1],"y":true}}'
+
