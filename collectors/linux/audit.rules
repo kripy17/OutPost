@@ -1,23 +1,71 @@
-## OutPost Linux Kernel Audit Rules
-## Monitor process execution (execve and execveat)
+## OutPost Linux Kernel Audit Rules (docs/03)
+## Architecture: b64 and b32 multi-arch support
+
+## ---------------------------------------------------------------------------
+## 1. Process Execution Monitoring
+## ---------------------------------------------------------------------------
 -a always,exit -F arch=b64 -S execve,execveat -k vantage_exec
 -a always,exit -F arch=b32 -S execve,execveat -k vantage_exec
 
-## Monitor outbound network sockets (connect)
+## ---------------------------------------------------------------------------
+## 2. Network Connect Monitoring
+## Noise Control: The user-space collector filters unroutable AF_UNIX / Netlink
+## socket connects (which account for ~44% of local IPC noise).
+## ---------------------------------------------------------------------------
 -a always,exit -F arch=b64 -S connect -k vantage_net
 -a always,exit -F arch=b32 -S connect -k vantage_net
 
-## Monitor file creation, rename, and permission modifications
--a always,exit -F arch=b64 -S creat,open,openat,unlink,unlinkat -F exit=-EACCES -k vantage_file_denied
--a always,exit -F arch=b32 -S creat,open,openat,unlink,unlinkat -F exit=-EACCES -k vantage_file_denied
+## ---------------------------------------------------------------------------
+## 3. Successful File Creation & Write Opens
+## Noise Control: Filtered on write/creation flags. Read-only opens (O_RDONLY = 0)
+## are excluded to prevent flooding from shared library linkers and config readers.
+## - creat: Always creates a file for writing
+## - open / openat / openat2: Filtered by O_CREAT (0100 octal / 0x40) or write flags (O_WRONLY=01, O_RDWR=02)
+## ---------------------------------------------------------------------------
+# creat syscall
+-a always,exit -F arch=b64 -S creat -F exit>=0 -k vantage_file_create
+-a always,exit -F arch=b32 -S creat -F exit>=0 -k vantage_file_create
+
+# open / openat with O_CREAT (octal 0100 = 64)
+-a always,exit -F arch=b64 -S open -F a1&0100 -F exit>=0 -k vantage_file_create
+-a always,exit -F arch=b32 -S open -F a1&0100 -F exit>=0 -k vantage_file_create
+-a always,exit -F arch=b64 -S openat,openat2 -F a2&0100 -F exit>=0 -k vantage_file_create
+-a always,exit -F arch=b32 -S openat,openat2 -F a2&0100 -F exit>=0 -k vantage_file_create
+
+# open / openat with write opens (O_WRONLY=01, O_RDWR=02 -> mask 03)
+-a always,exit -F arch=b64 -S open -F a1&03 -F exit>=0 -k vantage_file_write
+-a always,exit -F arch=b32 -S open -F a1&03 -F exit>=0 -k vantage_file_write
+-a always,exit -F arch=b64 -S openat,openat2 -F a2&03 -F exit>=0 -k vantage_file_write
+-a always,exit -F arch=b32 -S openat,openat2 -F a2&03 -F exit>=0 -k vantage_file_write
+
+## ---------------------------------------------------------------------------
+## 4. File Deletion & Renames
+## ---------------------------------------------------------------------------
+-a always,exit -F arch=b64 -S unlink,unlinkat -F exit>=0 -k vantage_file_delete
+-a always,exit -F arch=b32 -S unlink,unlinkat -F exit>=0 -k vantage_file_delete
 -a always,exit -F arch=b64 -S rename,renameat,renameat2 -k vantage_file_rename
 -a always,exit -F arch=b32 -S rename,renameat,renameat2 -k vantage_file_rename
--a always,exit -F arch=b64 -S chmod,fchmod,fchmodat,chown,fchown,fchownat -k vantage_file_perm
--a always,exit -F arch=b32 -S chmod,fchmod,fchmodat,chown,fchown,fchownat -k vantage_file_perm
 
-## Monitor critical identity & privilege escalation file modifications
+## ---------------------------------------------------------------------------
+## 5. File Permission & Attribute Changes (chmod, chown, setxattr)
+## ---------------------------------------------------------------------------
+-a always,exit -F arch=b64 -S chmod,fchmod,fchmodat -k vantage_file_perm
+-a always,exit -F arch=b32 -S chmod,fchmod,fchmodat -k vantage_file_perm
+-a always,exit -F arch=b64 -S chown,fchown,fchownat,lchown -k vantage_file_perm
+-a always,exit -F arch=b32 -S chown,fchown,fchownat,lchown -k vantage_file_perm
+-a always,exit -F arch=b64 -S setxattr,lsetxattr,fsetxattr,removexattr,lremovexattr,fremovexattr -k vantage_file_perm
+-a always,exit -F arch=b32 -S setxattr,lsetxattr,fsetxattr,removexattr,lremovexattr,fremovexattr -k vantage_file_perm
+
+## ---------------------------------------------------------------------------
+## 6. Access Denials & Unauthorized Probes
+## ---------------------------------------------------------------------------
+-a always,exit -F arch=b64 -S creat,open,openat,unlink,unlinkat -F exit=-EACCES -k vantage_file_denied
+-a always,exit -F arch=b32 -S creat,open,openat,unlink,unlinkat -F exit=-EACCES -k vantage_file_denied
+
+## ---------------------------------------------------------------------------
+## 7. Critical Identity & Privilege Escalation File Modifications
+## ---------------------------------------------------------------------------
 -w /etc/passwd -p wa -k vantage_auth
 -w /etc/shadow -p wa -k vantage_auth
 -w /etc/sudoers -p wa -k vantage_auth
 -w /etc/sudoers.d/ -p wa -k vantage_auth
-

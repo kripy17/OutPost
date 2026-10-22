@@ -194,11 +194,15 @@ def parse_audit_line(line: str, pid_cache: dict, conn_state: dict | None = None)
         comm = body_comm or proc_comm
         ip, port = _parse_saddr(body)
         ts_float = float(ts)
+        succ_m = re.search(r"\bsuccess=(yes|no)", body)
+        exit_m = re.search(r"\bexit=(-?\d+)", body)
+        conn_status = "established" if (succ_m and succ_m.group(1) == "yes") or (exit_m and exit_m.group(1) == "0") else "attempted"
+
         if conn_state is not None:
             if pid is not None and ip is None:
                 # The SYSCALL half: identity without a destination. Hold it
                 # for the SOCKADDR record that follows at the same timestamp.
-                conn_state["identity"] = (ts_float, pid, comm, exe_path, source_event_id)
+                conn_state["identity"] = (ts_float, pid, comm, exe_path, source_event_id, conn_status)
                 return None
             if pid is None:
                 stashed = conn_state.get("identity")
@@ -206,6 +210,8 @@ def parse_audit_line(line: str, pid_cache: dict, conn_state: dict | None = None)
                     _ts_s, _pid, _comm, _exe = stashed[:4]
                     if len(stashed) > 4:
                         source_event_id = stashed[4]
+                    if len(stashed) > 5 and stashed[5]:
+                        conn_status = stashed[5]
                     pid, comm, exe_path = _pid, _comm or comm, _exe or exe_path
                     conn_state["identity"] = None  # consumed
         if ip is None:
@@ -214,9 +220,6 @@ def parse_audit_line(line: str, pid_cache: dict, conn_state: dict | None = None)
             # network rules and only bloats the Event Log. The real-feed
             # re-measurement showed ~44% of events were these.
             return None
-        succ_m = re.search(r"\bsuccess=(yes|no)", body)
-        exit_m = re.search(r"\bexit=(-?\d+)", body)
-        conn_status = "established" if (succ_m and succ_m.group(1) == "yes") or (exit_m and exit_m.group(1) == "0") else "attempted"
 
         return {
             "platform": "linux",
@@ -237,11 +240,88 @@ def parse_audit_line(line: str, pid_cache: dict, conn_state: dict | None = None)
         }
 
     # File creation, deletion, rename, and permission modifications
-    if any(k in body for k in ("vantage_file", "syscall=82", "syscall=257", "syscall=87", "syscall=263", "syscall=90", "syscall=268")) or record_type == "PATH":
+    is_file_syscall = any(
+        k in body
+        for k in (
+            "vantage_file",
+            "syscall=5",
+            "syscall=85",
+            "syscall=82",
+            "syscall=257",
+            "syscall=87",
+            "syscall=263",
+            "syscall=90",
+            "syscall=268",
+            "syscall=264",
+            "syscall=316",
+            "syscall=92",
+            "syscall=260",
+        )
+    )
+
+    if is_file_syscall and record_type == "SYSCALL":
+        pid = _pid_from_syscall(body)
+        ppid = _ppid_from_syscall(body)
+        body_comm, exe_path = _body_comm_exe(body)
+        name_m = re.search(r'name="([^"]*)"', body)
+
+        if "rename" in body or any(k in body for k in ("vantage_file_rename", "syscall=82", "syscall=264", "syscall=316")):
+            ev_type = "file_rename"
+        elif any(k in body for k in ("vantage_file_perm", "syscall=90", "syscall=268", "syscall=92", "syscall=260", "chmod", "chown", "xattr")):
+            ev_type = "file_permission"
+        elif any(k in body for k in ("vantage_file_delete", "syscall=87", "syscall=263", "unlink")):
+            ev_type = "file_delete"
+        else:
+            ev_type = "file_write"
+
+        if name_m:
+            return {
+                "platform": "linux",
+                "log_source": "auditd",
+                "event_type": ev_type,
+                "timestamp": _ts(ts),
+                "pid": pid,
+                "ppid": ppid,
+                "process_name": body_comm,
+                "exe_path": exe_path,
+                "file_path": name_m.group(1),
+                "source_event_id": source_event_id,
+                "raw_record": line.strip(),
+            }
+        elif conn_state is not None:
+            conn_state["file"] = (float(ts), seq, pid, ppid, body_comm, exe_path, source_event_id, ev_type)
+            return None
+
+    if record_type == "PATH":
         name_m = re.search(r'name="([^"]*)"', body)
         if name_m:
             path = name_m.group(1)
-            is_del = "unlink" in body or "syscall=87" in body or "syscall=263" in body
+            if not path or path == "(null)":
+                return None
+            if conn_state is not None and "file" in conn_state:
+                stashed = conn_state.get("file")
+                if stashed and abs(stashed[0] - float(ts)) < 2.0:
+                    _ts_f, _seq, s_pid, s_ppid, s_comm, s_exe, s_sid, s_type = stashed
+                    nametype_m = re.search(r'\bnametype=(\w+)', body)
+                    nametype = nametype_m.group(1) if nametype_m else ""
+                    if s_type == "file_rename" and nametype == "DELETE" and "item=0" in body:
+                        conn_state["file_old_path"] = path
+                        return None
+                    return {
+                        "platform": "linux",
+                        "log_source": "auditd",
+                        "event_type": s_type,
+                        "timestamp": _ts(ts),
+                        "pid": s_pid,
+                        "ppid": s_ppid,
+                        "process_name": s_comm,
+                        "exe_path": s_exe,
+                        "file_path": path,
+                        "source_event_id": s_sid or source_event_id,
+                        "raw_record": line.strip(),
+                    }
+
+            is_del = "unlink" in body or "syscall=87" in body or "syscall=263" in body or "nametype=DELETE" in body
             pid = _pid_from_syscall(body)
             body_comm, exe_path = _body_comm_exe(body)
             return {
