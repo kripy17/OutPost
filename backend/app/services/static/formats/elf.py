@@ -206,27 +206,15 @@ def parse_deep_elf(data: bytes) -> dict[str, Any]:
                 "sha256": sec_hash,
             })
 
-    # Stripped indicator
-    if is_stripped:
-        prov = create_provenance("parser_field", "ELF Section Header Table", "parsed", "confirmed")
-        findings.append(create_finding(
-            "elf-stripped-symbols",
-            "structure",
-            "Stripped ELF Binary (Symbol Table Removed)",
-            "The binary lacks .symtab and debug symbol entries, standard for deployed malware and production code.",
-            prov,
-            [],
-        ))
-
     return {
         "is_elf": True,
+        "is_stripped": is_stripped,
         "bits": bits,
         "class": bits,
         "endian": endian,
         "type": _ELF_TYPES.get(e_type, str(e_type)),
         "machine": machine_str,
         "entry_point": f"0x{e_entry:08X}",
-        "is_stripped": is_stripped,
         "has_rwx_segment": has_rwx_segment,
         "segments": segments,
         "sections": sections,

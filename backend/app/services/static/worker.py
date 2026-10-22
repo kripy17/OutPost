@@ -27,20 +27,59 @@ from .verdict import assess_static_evidence
 logger = logging.getLogger(__name__)
 
 
+def _build_minimal_worker_env() -> dict[str, str]:
+    """Build a minimal, networkless environment for the worker child process without host secrets."""
+    backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+    repo_dir = os.path.abspath(os.path.join(backend_dir, ".."))
+
+    existing_pythonpath = os.environ.get("PYTHONPATH", "")
+    paths = [backend_dir, repo_dir]
+    if existing_pythonpath:
+        paths.append(existing_pythonpath)
+    combined_pythonpath = os.pathsep.join(paths)
+
+    clean_env: dict[str, str] = {
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "PYTHONPATH": combined_pythonpath,
+        "PYTHONUNBUFFERED": "1",
+        "LC_ALL": "C.UTF-8",
+        "LANG": "C.UTF-8",
+        # Explicitly neutralize network proxies to enforce zero egress
+        "HTTP_PROXY": "",
+        "HTTPS_PROXY": "",
+        "ALL_PROXY": "",
+        "NO_PROXY": "*",
+        "http_proxy": "",
+        "https_proxy": "",
+        "all_proxy": "",
+        "no_proxy": "*",
+    }
+
+    if "TMPDIR" in os.environ:
+        clean_env["TMPDIR"] = os.environ["TMPDIR"]
+    elif "TEMP" in os.environ:
+        clean_env["TEMP"] = os.environ["TEMP"]
+
+    if os.name == "nt" and "SYSTEMROOT" in os.environ:
+        clean_env["SYSTEMROOT"] = os.environ["SYSTEMROOT"]
+
+    return clean_env
+
+
 def _set_worker_rlimits() -> None:
-    """Apply strict resource limits to child worker process."""
+    """Apply strict resource limits to child worker process, raising on failure."""
     try:
         # 512 MB Virtual Memory limit
         mem_limit = 512 * 1024 * 1024
         resource.setrlimit(resource.RLIMIT_AS, (mem_limit, mem_limit))
-    except (ValueError, OSError):
-        pass
+    except (ValueError, OSError) as exc:
+        raise OSError(f"Failed to enforce RLIMIT_AS (512MB): {exc}") from exc
 
     try:
         # 5 CPU seconds
         resource.setrlimit(resource.RLIMIT_CPU, (5, 5))
-    except (ValueError, OSError):
-        pass
+    except (ValueError, OSError) as exc:
+        raise OSError(f"Failed to enforce RLIMIT_CPU (5s): {exc}") from exc
 
 
 def execute_in_isolated_worker(
@@ -71,14 +110,36 @@ def execute_in_isolated_worker(
         with open(input_file, "wb") as f:
             f.write(data)
 
-        cmd = [sys.executable, "-m", "backend.app.services.static.worker", input_file, output_file]
+        cmd = [sys.executable, "-m", "app.services.static.worker", input_file, output_file]
+        worker_env = _build_minimal_worker_env()
 
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            preexec_fn=_set_worker_rlimits if os.name != "nt" else None,  # noqa: PLW1509
-        )
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=worker_env,
+                preexec_fn=_set_worker_rlimits if os.name != "nt" else None,  # noqa: PLW1509
+            )
+        except (subprocess.SubprocessError, OSError) as exc:
+            elapsed_ms = int((time.monotonic() - start_time) * 1000)
+            logger.error("Failed to launch static worker subprocess with rlimits: %s", exc)
+            return {
+                "status": "rlimit_enforcement_failed",
+                "error": f"Failed to enforce mandatory worker resource limits: {exc}",
+                "could_not_analyze": ["Worker launch aborted due to rlimit enforcement failure"],
+                "analysis_fidelity": create_static_fidelity_block(duration_ms=elapsed_ms, worker_sandboxed=True),
+                **assess_static_evidence(
+                    findings=[],
+                    capabilities=[],
+                    embedded_indicators=[],
+                    structural_anomalies=[],
+                    benign_signals=[],
+                    could_not_analyze=["Worker launch aborted due to rlimit enforcement failure"],
+                    is_parser_error=True,
+                    parser_error_reason=f"Mandatory worker resource limit enforcement failed: {exc}",
+                ),
+            }
 
         try:
             stdout, stderr = proc.communicate(timeout=timeout_sec)
@@ -108,10 +169,24 @@ def execute_in_isolated_worker(
         if proc.returncode != 0:
             err_msg = stderr.decode("latin1", "ignore").strip()[:300]
             logger.warning("Static analysis worker failed (exit %d): %s", proc.returncode, err_msg)
+
+            # Detect resource limit signals
+            status_code = "parser_failed"
+            reason = f"Worker crashed or aborted (exit code {proc.returncode})"
+            if proc.returncode in (-24, 152):  # SIGXCPU
+                status_code = "rlimit_cpu_exceeded"
+                reason = "Worker exceeded allocated CPU time budget (5.0s)"
+            elif proc.returncode in (-9, 137, -6, 134):  # SIGKILL / SIGABRT (OOM killer or rlimit)
+                status_code = "rlimit_memory_exceeded"
+                reason = "Worker exceeded allocated virtual memory budget (512MB)"
+            elif "MemoryError" in err_msg:
+                status_code = "rlimit_memory_exceeded"
+                reason = "Worker exhausted memory (RLIMIT_AS 512MB enforced)"
+
             return {
-                "status": "parser_failed",
-                "error": f"Worker crashed or aborted (exit code {proc.returncode}): {err_msg}",
-                "could_not_analyze": ["Parser terminated unexpectedly on hostile input"],
+                "status": status_code,
+                "error": f"{reason}: {err_msg}",
+                "could_not_analyze": [reason],
                 "analysis_fidelity": create_static_fidelity_block(duration_ms=elapsed_ms, worker_sandboxed=True),
                 **assess_static_evidence(
                     findings=[],
@@ -119,9 +194,9 @@ def execute_in_isolated_worker(
                     embedded_indicators=[],
                     structural_anomalies=[],
                     benign_signals=[],
-                    could_not_analyze=["Parser crashed on malformed input"],
+                    could_not_analyze=[reason],
                     is_parser_error=True,
-                    parser_error_reason=f"Parser worker crashed (exit code {proc.returncode})",
+                    parser_error_reason=reason,
                 ),
             }
 
@@ -169,7 +244,15 @@ if __name__ == "__main__":
         with open(in_path, "rb") as f_in:
             blob = f_in.read()
 
-        from .pipeline import run_complete_static_pipeline
+        try:
+            from .pipeline import run_complete_static_pipeline
+        except (ImportError, ValueError):
+            import pathlib
+            backend_dir = str(pathlib.Path(__file__).resolve().parent.parent.parent.parent)
+            if backend_dir not in sys.path:
+                sys.path.insert(0, backend_dir)
+            from app.services.static.pipeline import run_complete_static_pipeline
+
         parsed_result = run_complete_static_pipeline(blob)
 
         with open(out_path, "w", encoding="utf-8") as f_out:

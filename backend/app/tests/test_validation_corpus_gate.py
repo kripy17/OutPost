@@ -34,3 +34,18 @@ def test_corpus_api_report_endpoint(client):
     assert data["metrics"]["false_positive_rate"] == 0.0
     assert data["metrics"]["detection_rate"] >= 0.95
     assert len(data["sample_results"]) >= 10
+
+
+def test_stock_os_files_validation_gate():
+    """Verify that OutPost evaluates at least 50 real OS system files with zero malicious false positives."""
+    res = validation_corpus.evaluate_stock_os_files()
+    assert res["total_files"] >= 50
+    assert res["malicious_count"] == 0, f"Stock OS files flagged as malicious: {res['malicious_files']}"
+    assert res["false_positive_rate"] == 0.0
+    for file_res in res["files"]:
+        assert "provenance" in file_res
+        assert "sha256" in file_res["provenance"]
+        assert "path" in file_res["provenance"]
+        assert "format" in file_res
+        assert file_res["verdict"] != "malicious"
+

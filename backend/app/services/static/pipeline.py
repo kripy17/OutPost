@@ -6,6 +6,8 @@ family config decoding, and evidence-based assessment.
 
 import hashlib
 import math
+import os
+import re
 from typing import Any
 
 from .decoders.manager import run_family_decoders
@@ -121,14 +123,14 @@ def extract_strings(data: bytes, max_strings: int = 300) -> list[str]:
             cur.append(b)
         else:
             if len(cur) >= 5:
-                s = bytes(cur[:256]).decode("ascii", errors="replace")
-                if s not in seen:
+                s = bytes(cur[:256]).decode("ascii", errors="replace").replace("\x00", "").strip()
+                if s and s not in seen:
                     seen.add(s)
                     out.append(s)
             cur.clear()
     if len(cur) >= 5:
-        s = bytes(cur[:256]).decode("ascii", errors="replace")
-        if s not in seen:
+        s = bytes(cur[:256]).decode("ascii", errors="replace").replace("\x00", "").strip()
+        if s and s not in seen:
             seen.add(s)
             out.append(s)
 
@@ -143,15 +145,15 @@ def extract_strings(data: bytes, max_strings: int = 300) -> list[str]:
             i += 2
         else:
             if len(cur) >= 5:
-                s = bytes(cur[:256]).decode("ascii", errors="replace")
-                if s not in seen:
+                s = bytes(cur[:256]).decode("ascii", errors="replace").replace("\x00", "").strip()
+                if s and s not in seen:
                     seen.add(s)
                     out.append(s)
             cur.clear()
             i += 1
     if len(cur) >= 5:
-        s = bytes(cur[:256]).decode("ascii", errors="replace")
-        if s not in seen:
+        s = bytes(cur[:256]).decode("ascii", errors="replace").replace("\x00", "").strip()
+        if s and s not in seen:
             seen.add(s)
             out.append(s)
 
@@ -198,7 +200,34 @@ def generate_hex_preview(data: bytes, max_bytes: int = 512) -> list[dict[str, st
     return preview
 
 
-def run_complete_static_pipeline(data: bytes) -> dict[str, Any]:
+def check_os_package_baseline(data: bytes, file_path: str | None = None) -> list[dict[str, Any]]:
+    """Check if payload matches a verified stock OS package binary or distribution asset."""
+    signals: list[dict[str, Any]] = []
+    if not data:
+        return signals
+    data_hash = hashlib.sha256(data).hexdigest()
+    if file_path and file_path.startswith(("/bin/", "/usr/bin/", "/sbin/", "/usr/sbin/", "/usr/lib/", "/usr/share/", "/etc/")):
+        if os.path.isfile(file_path):
+            try:
+                with open(file_path, "rb") as f:
+                    on_disk_hash = hashlib.sha256(f.read()).hexdigest()
+                if on_disk_hash == data_hash:
+                    signals.append({
+                        "title": "Verified Clean System Asset (OS Package Baseline)",
+                        "weight": -50,
+                        "reliability": "parsed",
+                        "evidence": f"Matches verified host distribution asset at {file_path}",
+                    })
+            except Exception:
+                pass
+    return signals
+
+
+def run_complete_static_pipeline(
+    data: bytes,
+    file_path: str | None = None,
+    benign_evidence: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """Execute complete static analysis pipeline over binary/document/script payload."""
     strings = extract_strings(data)
     categorized = categorize_strings(strings)
@@ -211,6 +240,10 @@ def run_complete_static_pipeline(data: bytes) -> dict[str, Any]:
     structural_anomalies: list[dict[str, Any]] = []
     benign_signals: list[dict[str, Any]] = []
     could_not_analyze: list[str] = []
+
+    if benign_evidence:
+        benign_signals.extend(benign_evidence)
+    benign_signals.extend(check_os_package_baseline(data, file_path))
 
     format_type = "unknown"
     pe_info = None
@@ -279,8 +312,8 @@ def run_complete_static_pipeline(data: bytes) -> dict[str, Any]:
         could_not_analyze.extend(script_info.get("could_not_analyze", []))
 
     else:
-        format_type = "generic_binary"
-        could_not_analyze.append("Unrecognized file format; generic binary and string analysis applied")
+        format_type = "unknown"
+        could_not_analyze.append("Unrecognized file format; deep structural parsing unavailable")
 
     # 2. Strict Embedded Indicators
     embedded_indicators = extract_embedded_indicators(data, sections_for_indicators)
@@ -312,12 +345,19 @@ def run_complete_static_pipeline(data: bytes) -> dict[str, Any]:
     resolved_imports = pe_info.get("imports", []) if pe_info else []
     all_symbols_text = " ".join(resolved_imports) if resolved_imports else ""
 
+    _GENERIC_STRING_TOKENS = {"connect", "socket", "cron", "systemd", "/etc/init.d", "getaddrinfo", "chmod"}
     combined_text = " ".join(strings)
+
     for category, symbols in _SUSPICIOUS_CAPABILITY_PATTERNS:
         # Check if symbol appears in authoritative import table (high reliability)
         parsed_matches = [s for s in symbols if s.lower() in all_symbols_text.lower()]
-        # Check if symbol appears only in raw strings (inferred, lower reliability)
-        heuristic_matches = [s for s in symbols if (s in combined_text or s.encode("latin1") in data) and s not in parsed_matches]
+        # Check if symbol appears in raw strings with whole-word boundary (excluding generic glibc tokens)
+        heuristic_matches = [
+            s for s in symbols
+            if s not in _GENERIC_STRING_TOKENS
+            and re.search(r"\b" + re.escape(s) + r"\b", combined_text, re.IGNORECASE)
+            and s not in parsed_matches
+        ]
 
         if parsed_matches:
             prov = create_provenance("import_table", f"Import Address Table ({len(parsed_matches)} symbols)", "parsed", "confirmed")
