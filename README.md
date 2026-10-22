@@ -5,7 +5,7 @@
 
 Offline-first workbench for triaging Linux and Windows host telemetry and analyzing suspicious files.
 
-Status: Experimental. Single-author project. Last verified: October 2026. 1,670 automated tests passing.
+Status: Experimental. Single-author project. Last verified: October 2026. 1,706 automated tests passing.
 
 ![OutPost SOC Workbench Overview](demo/screenshots/fresh/01_overview.png)
 *Figure 1: OutPost investigation console populated with multi-host seeded demo telemetry (October 2026).*

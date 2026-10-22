@@ -11,6 +11,7 @@ dependencies = [
     "httpx>=0.27",
     "reportlab>=4.0",
     "psutil>=5.9",
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -28,7 +29,17 @@ pg = [
 testpaths = ["app/tests"]
 
 [tool.setuptools]
-packages = ["app", "app.api", "app.core", "app.models", "app.services", "app.tests"]
+packages = [
+    "app",
+    "app.api",
+    "app.core",
+    "app.models",
+    "app.services",
+    "app.services.static",
+    "app.services.static.formats",
+    "app.services.static.decoders",
+    "app.tests",
+]
 
 [tool.ruff]
 line-length = 120
