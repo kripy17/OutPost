@@ -161,7 +161,8 @@ CREATE TABLE IF NOT EXISTS alerts (
     occurrence_count INTEGER DEFAULT 1,
     last_seen_at TEXT,
     entity_key TEXT,
-    pid_fallback INTEGER DEFAULT 0
+    pid_fallback INTEGER DEFAULT 0,
+    host_id TEXT DEFAULT 'local'
 );
 
 CREATE TABLE IF NOT EXISTS events (
@@ -359,6 +360,13 @@ CREATE TABLE IF NOT EXISTS enrolled_agents (
     status TEXT NOT NULL DEFAULT 'active'
 );
 CREATE INDEX IF NOT EXISTS idx_enrolled_agents_host_id ON enrolled_agents(host_id);
+
+-- Single-use agent nonces for replay attack prevention across server instances and restarts.
+CREATE TABLE IF NOT EXISTS agent_nonces (
+    nonce_key TEXT PRIMARY KEY,
+    seen_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_agent_nonces_seen_at ON agent_nonces(seen_at);
 
 -- Active host containment & remediation: stores isolation lifecycle and queued actions.
 CREATE TABLE IF NOT EXISTS host_containment (
@@ -770,6 +778,15 @@ def _migrate_enrolled_agents(conn: sqlite3.Connection) -> None:
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS agent_nonces (
+            nonce_key TEXT PRIMARY KEY,
+            seen_at REAL NOT NULL
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_nonces_seen_at ON agent_nonces(seen_at)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_enrolled_agents_host_id ON enrolled_agents(host_id)")
     conn.commit()
 
@@ -934,6 +951,7 @@ def _migrate_alerts_evidence_and_dedup(conn: sqlite3.Connection) -> None:
         ("last_seen_at", "TEXT"),
         ("entity_key", "TEXT"),
         ("pid_fallback", "INTEGER DEFAULT 0"),
+        ("host_id", "TEXT DEFAULT 'local'"),
     ):
         if name not in cols:
             conn.execute(f"ALTER TABLE alerts ADD COLUMN {name} {decl}")

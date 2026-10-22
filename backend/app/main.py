@@ -8,6 +8,8 @@ mounts the API routers. Run with:
 """
 
 import asyncio
+import hashlib
+import hmac
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -232,7 +234,20 @@ async def auth_gate(request: Request, call_next):
     nonce = headers.get("x-outpost-nonce")
     digest = headers.get("x-outpost-digest")
     role = None
+    agent_host_id = None
+
     if agent_id and ts and sig:
+        body_bytes = await request.body()
+        computed_digest = hashlib.sha256(body_bytes).hexdigest() if body_bytes else ""
+        client_digest = (digest or "").strip()
+
+        # Enforce strict body digest validation against X-OutPost-Digest header
+        if client_digest:
+            if not hmac.compare_digest(client_digest.lower(), computed_digest.lower()):
+                return JSONResponse(status_code=401, content={"detail": "Request body digest mismatch (X-OutPost-Digest)"})
+
+        effective_digest = client_digest or computed_digest
+
         if auth_service.verify_agent_hmac_headers(
             agent_id,
             ts,
@@ -240,10 +255,21 @@ async def auth_gate(request: Request, call_next):
             request.method,
             path,
             query_string=request.url.query,
-            body_digest=digest,
+            body_digest=effective_digest,
             nonce=nonce,
         ):
             role = "agent"
+            # Bind agent identity to enrolled host_id
+            try:
+                from .core.db import db_session
+                with db_session() as conn:
+                    row = conn.execute("SELECT host_id FROM enrolled_agents WHERE agent_id = ?", (agent_id,)).fetchone()
+                    if row:
+                        agent_host_id = row["host_id"]
+            except Exception:
+                pass
+            request.state.agent_id = agent_id
+            request.state.agent_host_id = agent_host_id
 
     if role is None:
         token = auth_service.token_from_request(
@@ -259,12 +285,43 @@ async def auth_gate(request: Request, call_next):
         # a stolen agent token can't triage alerts or touch settings.
         if role is None and auth_service.verify_agent_token(token):
             role = "agent"
+            request.state.agent_id = "shared_agent_token"
+            request.state.agent_host_id = None
+
     if role is None:
         return JSONResponse(status_code=401, content={"detail": "Authentication required"})
     if role == "analyst" and request.method not in ("GET", "HEAD", "OPTIONS"):
         return JSONResponse(status_code=403, content={"detail": "Read-only analyst role cannot modify data"})
-    if role == "agent" and not _agent_allowed(request.method, path):
-        return JSONResponse(status_code=403, content={"detail": "Agent credential is limited to telemetry endpoints"})
+    if role == "agent":
+        if not _agent_allowed(request.method, path):
+            return JSONResponse(status_code=403, content={"detail": "Agent credential is limited to telemetry endpoints"})
+
+        # Host-scoping gate: verify agent credential is authorized for the target host
+        if path.startswith("/agents/"):
+            parts = path.strip("/").split("/")
+            if len(parts) >= 2:
+                target_host_id = parts[1]
+                if agent_host_id and agent_host_id != target_host_id:
+                    return JSONResponse(
+                        status_code=403,
+                        content={"detail": f"Agent credential is not authorized for host '{target_host_id}'"},
+                    )
+                if not agent_host_id and (path.endswith("/actions/ack") or path.endswith("/containment/report")):
+                    try:
+                        from .core.db import db_session
+                        with db_session() as conn:
+                            enrolled_row = conn.execute(
+                                "SELECT 1 FROM enrolled_agents WHERE host_id = ? AND status = 'active'",
+                                (target_host_id,),
+                            ).fetchone()
+                            if enrolled_row:
+                                return JSONResponse(
+                                    status_code=403,
+                                    content={"detail": "Shared agent token retired for enrolled hosts; host containment and action acknowledgments require enrolled cryptographic agent credentials."},
+                                )
+                    except Exception:
+                        pass
+
     return await call_next(request)
 
 

@@ -63,15 +63,31 @@ def _check_and_record_signature(sig_key: str, now: float) -> bool:
 
 
 def _check_and_record_nonce(nonce_key: str, now: float) -> bool:
-    with _SEEN_LOCK:
-        cutoff = now - 180.0
-        expired = [k for k, v in _SEEN_NONCES.items() if v < cutoff]
-        for k in expired:
-            _SEEN_NONCES.pop(k, None)
-        if nonce_key in _SEEN_NONCES:
-            return False
-        _SEEN_NONCES[nonce_key] = now
-        return True
+    cutoff = now - 180.0
+    try:
+        from ..core.db import db_session
+        with db_session() as conn:
+            conn.execute("DELETE FROM agent_nonces WHERE seen_at < ?", (cutoff,))
+            try:
+                conn.execute(
+                    "INSERT INTO agent_nonces (nonce_key, seen_at) VALUES (?, ?)",
+                    (nonce_key, now),
+                )
+                conn.commit()
+                return True
+            except Exception:
+                # Primary key constraint violation (nonce already seen)
+                return False
+    except Exception:
+        # Fallback to in-memory lock if DB not initialized
+        with _SEEN_LOCK:
+            expired = [k for k, v in _SEEN_NONCES.items() if v < cutoff]
+            for k in expired:
+                _SEEN_NONCES.pop(k, None)
+            if nonce_key in _SEEN_NONCES:
+                return False
+            _SEEN_NONCES[nonce_key] = now
+            return True
 
 
 def _server_secret() -> bytes:
