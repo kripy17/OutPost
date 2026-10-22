@@ -61,6 +61,14 @@ def generate_behavioral_forecast(
     ]
     candidate_urls = iocs.get("urls", [])
 
+    for u in candidate_urls:
+        m = re.search(r"https?://([^/:\s]+)", u)
+        if m:
+            host = m.group(1).lower()
+            if not _RE_INTERNAL_IP.match(host) and not host.endswith((".local", ".internal", "example.com", "localhost")):
+                if host not in candidate_domains:
+                    candidate_domains.append(host)
+
     has_net_apis = False
     net_api_names: list[str] = []
 

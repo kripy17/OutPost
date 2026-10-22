@@ -14,7 +14,7 @@ by this field, so a drift would miscolor a rule (e.g. lolbin-abuse is
 malicious at weight 14; suid-set is suspicious at weight 18).
 """
 
-from typing import TypedDict
+from typing import Any, TypedDict
 
 
 class RuleMeta(TypedDict, total=False):
@@ -23,6 +23,7 @@ class RuleMeta(TypedDict, total=False):
     weight: int
     severity: str  # the alert severity the rule actually fires with
     confidence: str  # default analytical confidence: high | medium | low
+    required_telemetry: list[str]
 
 
 RULE_META: dict[str, RuleMeta] = {
@@ -315,6 +316,116 @@ RULE_META: dict[str, RuleMeta] = {
         "severity": "malicious",
     },
 }
+
+_RULE_REQUIRED_TELEMETRY: dict[str, list[str]] = {
+    "network-scan": ["network"],
+    "toolchain-build": ["process"],
+    "document-dropper": ["process"],
+    "lateral-rdp-smb": ["network"],
+    "screen-capture": ["process"],
+    "masquerading": ["process"],
+    "suspicious-parent-child": ["process"],
+    "lolbin-abuse": ["process"],
+    "beaconing": ["network"],
+    "registry-persistence": ["registry"],
+    "autostart-persistence": ["file", "registry"],
+    "ssh-authorized-keys": ["file"],
+    "scheduled-task": ["process"],
+    "suid-set": ["file"],
+    "credential-dump": ["process"],
+    "suspicious-extension": ["file"],
+    "shell-history-wipe": ["file", "process"],
+    "enumeration-burst": ["process"],
+    "data-staging": ["file", "process"],
+    "rename-burst": ["file"],
+    "first-seen-process": ["process"],
+    "unusual-port": ["network"],
+    "attack-chain": ["process"],
+    "baseline-anomaly": ["network"],
+    "lateral-psexec-smb": ["file", "network"],
+    "lateral-winrm-wmi": ["process", "network"],
+    "lateral-smb-share": ["network"],
+    "rdp-brute-force": ["network"],
+    "log-service-stop": ["process"],
+    "log-clearing": ["process", "file"],
+    "dns-tunneling": ["dns", "network"],
+    "dns-long-label": ["dns", "network"],
+    "dns-unusual-port": ["dns", "network"],
+    "tls-sni-suspicious": ["tls", "network"],
+    "tls-ja3-c2": ["tls", "network"],
+    "doh-resolver-use": ["dns", "network"],
+    "fanout-contact": ["network"],
+    "fanout-recurring": ["network"],
+    "shadow-copy-deletion": ["process"],
+    "remote-thread-injection": ["process"],
+    "ifeo-persistence": ["registry"],
+    "macos-tcc-bypass": ["process", "file"],
+    "macos-launchagent-persistence": ["file"],
+    "macos-dylib-hijack": ["file", "process"],
+    "macos-gatekeeper-bypass": ["process", "file"],
+    "anonymous-rwx-memory": ["process"],
+    "fileless-unlinked-binary": ["process", "file"],
+    "gtfobins-suid-execution": ["process"],
+}
+
+for _rid, _meta in RULE_META.items():
+    _meta["required_telemetry"] = _RULE_REQUIRED_TELEMETRY.get(_rid, ["process"])
+
+
+def evaluate_rule_coverage_for_run(conn, run_id: str) -> dict[str, Any]:
+    """Inspect event types present in a run and return rule coverage status.
+    Rules whose required telemetry is missing from the run are marked 'not_evaluable'."""
+    rows = conn.execute("SELECT DISTINCT event_type FROM events WHERE run_id = ?", (run_id,)).fetchall()
+    present_types = {r["event_type"] for r in rows if r["event_type"]}
+
+    has_dns = False
+    has_tls = False
+    if "network_connection" in present_types or "dns_query" in present_types:
+        try:
+            sample_net = conn.execute(
+                "SELECT query, tls_sni, ja3 FROM events WHERE run_id = ? AND (query IS NOT NULL OR tls_sni IS NOT NULL OR ja3 IS NOT NULL) LIMIT 1",
+                (run_id,),
+            ).fetchone()
+            if sample_net:
+                if sample_net["query"]:
+                    has_dns = True
+                if sample_net["tls_sni"] or sample_net["ja3"]:
+                    has_tls = True
+        except Exception:
+            pass
+
+    present_categories = set()
+    if "process_create" in present_types:
+        present_categories.add("process")
+    if "network_connection" in present_types:
+        present_categories.add("network")
+    if any(t in present_types for t in ("file_write", "file_delete", "file_permission")):
+        present_categories.add("file")
+    if any(t in present_types for t in ("registry_set", "registry_key")):
+        present_categories.add("registry")
+    if has_dns or "dns_query" in present_types:
+        present_categories.add("dns")
+    if has_tls:
+        present_categories.add("tls")
+
+    rule_statuses = {}
+    for rule_id, meta in RULE_META.items():
+        reqs = meta.get("required_telemetry", ["process"])
+        evaluable = any(req in present_categories for req in reqs)
+        missing = [req for req in reqs if req not in present_categories]
+        rule_statuses[rule_id] = {
+            "rule_id": rule_id,
+            "status": "evaluable" if evaluable else "not_evaluable",
+            "evaluable": evaluable,
+            "required_telemetry": reqs,
+            "missing_telemetry": missing,
+        }
+
+    return {
+        "run_id": run_id,
+        "present_telemetry": sorted(present_categories),
+        "rule_statuses": rule_statuses,
+    }
 
 
 import math

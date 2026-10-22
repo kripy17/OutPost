@@ -15,7 +15,7 @@ from fastapi import APIRouter, HTTPException, Query, Response
 
 from ..core.db import db_session
 from ..models.run import SYNTHETIC_SOURCES
-from ..services.risk import RULE_META, RULE_REMEDIATION, rule_name
+from ..services.risk import RULE_META, RULE_REMEDIATION, evaluate_rule_coverage_for_run, rule_name
 
 router = APIRouter(tags=["analysis"])
 
@@ -669,17 +669,38 @@ def export_events(
 
 
 @router.get("/rules/meta", response_model=None)
-def get_rules_meta():
+def get_rules_meta(run_id: str | None = Query(None)):
     """ATT&CK technique/tactic + risk weight + remediation per rule."""
-    return [
-        {
+    run_coverage = None
+    if run_id:
+        with db_session() as conn:
+            run_coverage = evaluate_rule_coverage_for_run(conn, run_id)
+
+    res = []
+    for rid in sorted(RULE_META):
+        item = {
             "rule_id": rid,
             "rule_name": rule_name(rid),
             "remediation": RULE_REMEDIATION.get(rid, []),
             **RULE_META[rid],
         }
-        for rid in sorted(RULE_META)
-    ]
+        if run_coverage and "rule_statuses" in run_coverage:
+            st = run_coverage["rule_statuses"].get(rid, {})
+            item["evaluable"] = st.get("evaluable", True)
+            item["status"] = st.get("status", "evaluable")
+            item["missing_telemetry"] = st.get("missing_telemetry", [])
+        res.append(item)
+    return res
+
+
+@router.get("/runs/{run_id}/coverage", response_model=None)
+def get_run_coverage(run_id: str):
+    """Evaluate MITRE ATT&CK detection rule evaluability against telemetry present in this run."""
+    with db_session() as conn:
+        run = conn.execute("SELECT run_id FROM runs WHERE run_id = ?", (run_id,)).fetchone()
+        if not run:
+            raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+        return evaluate_rule_coverage_for_run(conn, run_id)
 
 
 @router.get("/coverage/navigator", response_model=None)
