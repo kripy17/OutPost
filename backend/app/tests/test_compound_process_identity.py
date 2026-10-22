@@ -162,6 +162,111 @@ def test_normalizer_flags_event_with_pid_but_no_start_time():
     assert ev_proc_create["missing_process_start_time"] is False
 
 
+def test_same_host_pid_reuse_both_processes_spawn_children_and_write_files(client):
+    """PID reuse on the same host and boot correctly partitions lineage and file events."""
+    run_id = make_run(client)
+
+    events = [
+        # Process 1 on PID 500: legitimate notepad.exe (started at 09:00:00)
+        {
+            "run_id": run_id,
+            "platform": "windows",
+            "event_type": "process_create",
+            "timestamp": "2026-08-01T09:00:00Z",
+            "pid": 500,
+            "ppid": 4,
+            "process_name": "notepad.exe",
+            "host_id": "host-alpha",
+            "boot_id": "boot-1",
+            "process_start_time": "2026-08-01T09:00:00Z",
+        },
+        # Child of Process 1: conhost.exe spawned at 09:01:00
+        {
+            "run_id": run_id,
+            "platform": "windows",
+            "event_type": "process_create",
+            "timestamp": "2026-08-01T09:01:00Z",
+            "pid": 501,
+            "ppid": 500,
+            "process_name": "conhost.exe",
+            "host_id": "host-alpha",
+            "boot_id": "boot-1",
+            "process_start_time": "2026-08-01T09:01:00Z",
+        },
+        # Non-process event for Process 1: file write at 09:02:00
+        {
+            "run_id": run_id,
+            "platform": "windows",
+            "event_type": "file_write",
+            "timestamp": "2026-08-01T09:02:00Z",
+            "pid": 500,
+            "file_path": "C:\\Users\\user\\notes.txt",
+            "host_id": "host-alpha",
+            "boot_id": "boot-1",
+        },
+        # Process 2 (PID 500 reused): malicious winword.exe (started at 10:00:00)
+        {
+            "run_id": run_id,
+            "platform": "windows",
+            "event_type": "process_create",
+            "timestamp": "2026-08-01T10:00:00Z",
+            "pid": 500,
+            "ppid": 4,
+            "process_name": "winword.exe",
+            "host_id": "host-alpha",
+            "boot_id": "boot-1",
+            "process_start_time": "2026-08-01T10:00:00Z",
+        },
+        # Child of Process 2: powershell.exe spawned at 10:01:00
+        {
+            "run_id": run_id,
+            "platform": "windows",
+            "event_type": "process_create",
+            "timestamp": "2026-08-01T10:01:00Z",
+            "pid": 602,
+            "ppid": 500,
+            "process_name": "powershell.exe",
+            "command_line": "powershell.exe -enc malicious",
+            "host_id": "host-alpha",
+            "boot_id": "boot-1",
+            "process_start_time": "2026-08-01T10:01:00Z",
+        },
+        # Non-process event for Process 2: file write at 10:02:00
+        {
+            "run_id": run_id,
+            "platform": "windows",
+            "event_type": "file_write",
+            "timestamp": "2026-08-01T10:02:00Z",
+            "pid": 500,
+            "file_path": "C:\\Users\\user\\payload.ps1",
+            "host_id": "host-alpha",
+            "boot_id": "boot-1",
+        },
+    ]
+
+    ingest_res = client.post("/ingest/batch", json=events)
+    assert ingest_res.status_code == 202
+
+    # Verify event propagation
+    with db_session() as conn:
+        rows = conn.execute(
+            "SELECT event_type, file_path, process_start_time FROM events WHERE run_id = ? AND event_type = 'file_write' ORDER BY timestamp ASC",
+            (run_id,),
+        ).fetchall()
+
+    assert len(rows) == 2
+    assert rows[0]["file_path"] == "C:\\Users\\user\\notes.txt"
+    assert rows[0]["process_start_time"] == "2026-08-01T09:00:00Z"
+    assert rows[1]["file_path"] == "C:\\Users\\user\\payload.ps1"
+    assert rows[1]["process_start_time"] == "2026-08-01T10:00:00Z"
+
+    # Verify alerts: only winword -> powershell triggers suspicious-parent-child
+    alerts = client.get(f"/runs/{run_id}/alerts").json()
+    parent_child = [a for a in alerts if a["rule_id"] == "suspicious-parent-child"]
+    assert len(parent_child) == 1
+    assert "winword.exe spawned powershell.exe" in parent_child[0]["details"]
+
+
 def test_process_identity_pid_reuse_isolated(client):
     """PID reuse on the same host with different start times does not confuse parent attribution."""
     run_id = make_run(client)

@@ -429,6 +429,59 @@ def test_log_loud_failure_on_read_error():
     raw_conn.close()
 
 
+def test_audit_format_version_column_and_mixed_verification():
+    """Verify that audit log tracks format_version and correctly validates mixed v1 and v2 entries."""
+    raw_conn = sqlite3.connect(":memory:")
+    raw_conn.row_factory = sqlite3.Row
+    raw_conn.execute(
+        """
+        CREATE TABLE audit_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT NOT NULL,
+            actor TEXT NOT NULL,
+            action TEXT NOT NULL,
+            target_type TEXT,
+            target_id TEXT,
+            detail TEXT,
+            outcome TEXT NOT NULL DEFAULT 'success',
+            prev_hash TEXT NOT NULL,
+            entry_hash TEXT NOT NULL,
+            source_ip TEXT,
+            before_state TEXT,
+            after_state TEXT,
+            reason TEXT,
+            format_version INTEGER DEFAULT 1
+        )
+        """
+    )
+
+    # 1. Standard entry without extended fields gets format_version=1
+    h1 = audit.log(raw_conn, actor="admin", action="auth.login", detail="v1 format entry")
+    r1 = raw_conn.execute("SELECT format_version FROM audit_log WHERE id = 1").fetchone()
+    assert r1["format_version"] == 1
+
+    # 2. Extended entry with state and source_ip gets format_version=2
+    h2 = audit.log(
+        raw_conn,
+        actor="admin",
+        action="agent.isolate",
+        target_type="host",
+        target_id="host-omega",
+        source_ip="10.0.0.5",
+        before_state={"isolated": False},
+        after_state={"isolated": True},
+        reason="Compromised C2 beaconing detected",
+    )
+    r2 = raw_conn.execute("SELECT format_version FROM audit_log WHERE id = 2").fetchone()
+    assert r2["format_version"] == 2
+
+    # Verification must successfully validate the chain across format versions
+    report = audit.verify_audit_chain(raw_conn)
+    assert report["valid"] is True
+    assert report["entries_verified"] == 2
+    raw_conn.close()
+
+
 def test_canonical_json_encoding_is_compact_and_deterministic():
     """Verify state serialization produces compact RFC 8785 canonical JSON without whitespace."""
     state = {"b": 2, "a": 1, "nested": {"y": True, "x": [3, 2, 1]}}

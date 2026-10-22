@@ -26,23 +26,38 @@ COLLECTOR_VERSION = "outpost-collector/1.0"
 log = logging.getLogger("outpost.shipper")
 
 
-def compute_hmac_headers(agent_id: str, agent_secret: str, method: str = "GET", path: str = "/") -> dict:
-    """Compute HMAC-SHA256 signature headers for an enrolled agent."""
+def compute_hmac_headers(
+    agent_id: str,
+    agent_secret: str,
+    method: str = "GET",
+    path: str = "/",
+    query_string: str = "",
+    body_bytes: bytes | None = None,
+) -> dict:
+    """Compute HMAC-SHA256 signature headers (v2) for an enrolled agent."""
     ts = str(int(time.time()))
+    nonce = uuid.uuid4().hex
     method_clean = (method or "GET").upper()
     path_clean = path or "/"
-    canonical = f"{agent_id}:{ts}:{method_clean}:{path_clean}"
+    body_digest = hashlib.sha256(body_bytes).hexdigest() if body_bytes else ""
+    canonical = f"{agent_id}:{ts}:{method_clean}:{path_clean}:{query_string}:{nonce}:{body_digest}"
     sig = hmac.new(agent_secret.encode("utf-8"), canonical.encode("utf-8"), hashlib.sha256).hexdigest()
-    return {
+    headers = {
         "X-OutPost-Agent-Id": agent_id,
         "X-OutPost-Timestamp": ts,
         "X-OutPost-Signature": sig,
+        "X-OutPost-Nonce": nonce,
     }
+    if body_digest:
+        headers["X-OutPost-Digest"] = body_digest
+    return headers
 
 
 def _auth_headers(
     method: str = "GET",
     path: str = "/",
+    query_string: str = "",
+    body_bytes: bytes | None = None,
     agent_id: str | None = None,
     agent_secret: str | None = None,
 ) -> dict:
@@ -55,7 +70,7 @@ def _auth_headers(
     aid = agent_id or os.environ.get("OUTPOST_AGENT_ID", "").strip()
     asec = agent_secret or os.environ.get("OUTPOST_AGENT_SECRET", "").strip()
     if aid and asec:
-        return compute_hmac_headers(aid, asec, method, path)
+        return compute_hmac_headers(aid, asec, method, path, query_string=query_string, body_bytes=body_bytes)
     tok = os.environ.get("OUTPOST_AGENT_TOKEN", "").strip()
     return {"Authorization": f"Bearer {tok}"} if tok else {}
 
@@ -287,9 +302,22 @@ class Shipper:
         else:
             self._sqlite_spool = None
 
-    def get_auth_headers(self, method: str = "GET", path: str = "/") -> dict:
+    def get_auth_headers(
+        self,
+        method: str = "GET",
+        path: str = "/",
+        query_string: str = "",
+        body_bytes: bytes | None = None,
+    ) -> dict:
         """Resolve current authorization headers (HMAC signature or Bearer token)."""
-        return _auth_headers(method, path, self.agent_id, self.agent_secret)
+        return _auth_headers(
+            method,
+            path,
+            query_string=query_string,
+            body_bytes=body_bytes,
+            agent_id=self.agent_id,
+            agent_secret=self.agent_secret,
+        )
 
     def add(self, event: dict) -> None:
         """Queue one normalized event dict; flush when thresholds are hit.
@@ -438,10 +466,11 @@ class Shipper:
             if getattr(self, "source_health", None):
                 payload["source_health"] = self.source_health
 
+            body_bytes = json.dumps(payload).encode("utf-8")
             resp = requests.post(
                 f"{self.backend_url}{path}",
                 json=payload,
-                headers=self.get_auth_headers("POST", path),
+                headers=self.get_auth_headers("POST", path, body_bytes=body_bytes),
                 timeout=5,
             )
             resp.raise_for_status()
@@ -577,10 +606,11 @@ class Shipper:
         try:
             payload = snapshot_mod.collect_snapshot(self.host_id, platform)
             path = "/ingest/snapshot"
+            body_bytes = json.dumps(payload).encode("utf-8")
             resp = requests.post(
                 f"{self.backend_url}{path}",
                 json=payload,
-                headers=self.get_auth_headers("POST", path),
+                headers=self.get_auth_headers("POST", path, body_bytes=body_bytes),
                 timeout=5,
             )
             resp.raise_for_status()
@@ -594,15 +624,18 @@ class Shipper:
         self.buffer = []
 
         if batch:
-            headers = self.get_auth_headers("POST", "/ingest/batch")
+            raw = json.dumps(batch).encode("utf-8")
+            if self.compress:
+                import gzip as _gzip
+                payload = _gzip.compress(raw)
+                headers = {**self.get_auth_headers("POST", "/ingest/batch", body_bytes=payload), "Content-Encoding": "gzip", "Content-Type": "application/json"}
+            else:
+                payload = raw
+                headers = {**self.get_auth_headers("POST", "/ingest/batch", body_bytes=payload), "Content-Type": "application/json"}
             for attempt in range(self.max_retries):
                 try:
                     if self.compress:
-                        import gzip as _gzip
-                        raw = json.dumps(batch).encode("utf-8")
-                        payload = _gzip.compress(raw)
-                        headers_comp = {**headers, "Content-Encoding": "gzip", "Content-Type": "application/json"}
-                        resp = requests.post(f"{self.backend_url}/ingest/batch", data=payload, headers=headers_comp, timeout=5)
+                        resp = requests.post(f"{self.backend_url}/ingest/batch", data=payload, headers=headers, timeout=5)
                     else:
                         resp = requests.post(f"{self.backend_url}/ingest/batch", json=batch, headers=headers, timeout=5)
                     resp.raise_for_status()

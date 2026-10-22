@@ -67,6 +67,63 @@ def test_coverage_not_evaluable_state_for_missing_telemetry(client):
     assert statuses["dns-tunneling"]["evaluable"] is False
 
 
+def test_coverage_evaluable_derived_from_collector_sensor_health_even_without_events(client):
+    """When a host's collector reports healthy file/network sensor capabilities, rules requiring those
+    telemetries are marked 'evaluable', even if the specific quiet run contains zero file events."""
+    from app.core.db import db_session
+
+    run_id = make_run(client, platform="linux")
+    host_id = "collector-host-01"
+
+    # Enrol collector host with healthy execution and file telemetry in agent_heartbeats
+    with db_session() as conn:
+        conn.execute(
+            """
+            INSERT INTO agent_heartbeats (host_id, last_heartbeat, platform, version, source_health_json)
+            VALUES (?, '2026-08-01T12:00:00Z', 'linux', '1.0.0', ?)
+            ON CONFLICT(host_id) DO UPDATE SET source_health_json = excluded.source_health_json
+            """,
+            (
+                host_id,
+                '{"execution": "healthy", "file": "healthy", "network": "absent", "dns": "absent"}',
+            ),
+        )
+
+    # Ingest ONLY process events for this host (zero file events in the run)
+    events = [
+        {
+            "run_id": run_id,
+            "platform": "linux",
+            "event_type": "process_create",
+            "timestamp": "2026-08-01T12:00:01Z",
+            "pid": 100,
+            "ppid": 1,
+            "process_name": "bash",
+            "host_id": host_id,
+        }
+    ]
+    res = client.post("/ingest/batch", json=events)
+    assert res.status_code == 202
+
+    # Query run coverage endpoint
+    cov_res = client.get(f"/runs/{run_id}/coverage")
+    assert cov_res.status_code == 200
+    cov = cov_res.json()
+
+    assert "file" in cov["collector_capabilities"]
+    assert "file" in cov["present_telemetry"]
+    statuses = cov["rule_statuses"]
+
+    # File rule must be evaluable based on collector capability, despite 0 file events
+    assert statuses["rename-burst"]["status"] == "evaluable"
+    assert statuses["rename-burst"]["evaluable"] is True
+
+    # Network / DNS rule must be not_evaluable because collector source_health is 'absent' and 0 network events
+    assert statuses["beaconing"]["status"] == "not_evaluable"
+    assert statuses["beaconing"]["evaluable"] is False
+    assert "network" in statuses["beaconing"]["missing_telemetry"]
+
+
 def test_alert_cap_preserves_first_alert_for_distinct_entities(client):
     """When a rule hits its alert cap, the FIRST alert for a new entity is still preserved, and repeat occurrences update the first alert."""
     run_id = make_run(client, platform="windows")

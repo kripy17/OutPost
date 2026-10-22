@@ -28,10 +28,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-# Path for out-of-band audit checkpoint signing keys
+# Path for out-of-band audit checkpoint signing keys and key fingerprints
 _DATA_DIR = Path(__file__).resolve().parent.parent.parent.parent / "data"
 _KEY_FILE = _DATA_DIR / "audit_signing.key"
-_PUB_FILE = _DATA_DIR / "audit_signing.pub"
+_FINGERPRINT_FILE = _DATA_DIR / "audit_signing_key.fingerprint"
+_PUB_FILE = _DATA_DIR / "audit_signing.pub"  # Backward compatibility alias
 
 # Comprehensive operational action vocabulary
 ACTIONS = (
@@ -115,7 +116,7 @@ class AuditVerificationReport(dict):
 
 
 def _serialize_state(val: Any) -> str:
-    """Canonical compact JSON serialization (RFC 8785) with sorted keys and no whitespace."""
+    """Deterministic sorted compact JSON serialization with sorted keys and no whitespace."""
     if val is None:
         return ""
     if isinstance(val, (dict, list)):
@@ -127,7 +128,10 @@ def _serialize_state(val: Any) -> str:
 
 
 def get_or_create_signing_key() -> tuple[bytes, str]:
-    """Retrieve or generate the local 256-bit audit checkpoint signing key and public fingerprint."""
+    """Retrieve or generate the local 256-bit symmetric checkpoint signing key (HMAC-SHA256) and key fingerprint.
+    Checkpoints use symmetric HMAC-SHA256 with this local secret key; the fingerprint file records the key ID,
+    not an asymmetric public key.
+    """
     _DATA_DIR.mkdir(parents=True, exist_ok=True)
     if _KEY_FILE.exists():
         try:
@@ -144,6 +148,9 @@ def get_or_create_signing_key() -> tuple[bytes, str]:
 
     fingerprint = hashlib.sha256(key).hexdigest()
     try:
+        if not _FINGERPRINT_FILE.exists() or _FINGERPRINT_FILE.read_text().strip() != fingerprint:
+            _FINGERPRINT_FILE.write_text(fingerprint)
+            os.chmod(_FINGERPRINT_FILE, 0o644)
         if not _PUB_FILE.exists() or _PUB_FILE.read_text().strip() != fingerprint:
             _PUB_FILE.write_text(fingerprint)
             os.chmod(_PUB_FILE, 0o644)
@@ -166,8 +173,12 @@ def compute_entry_hash(
     before_state: Any = None,
     after_state: Any = None,
     reason: str | None = None,
+    format_version: int | None = None,
 ) -> str:
-    """Compute the authoritative SHA-256 digest committing to every audit field."""
+    """Compute the authoritative SHA-256 digest committing to audit fields.
+    format_version 1: Legacy 8-field canonical format.
+    format_version 2: Extended 12-field canonical format (with source_ip, state snapshots, reason).
+    """
     before_str = _serialize_state(before_state)
     after_str = _serialize_state(after_state)
     target_type_str = target_type or ""
@@ -176,14 +187,22 @@ def compute_entry_hash(
     source_ip_str = source_ip or ""
     reason_str = reason or ""
 
-    if source_ip_str or before_str or after_str or reason_str:
+    if format_version == 1:
+        canonical = f"{prev_hash}:{ts}:{actor}:{action}:{target_type_str}:{target_id_str}:{outcome}:{detail_str}"
+    elif format_version == 2:
         canonical = (
             f"{prev_hash}:{ts}:{actor}:{source_ip_str}:{action}:{target_type_str}:"
             f"{target_id_str}:{before_str}:{after_str}:{reason_str}:{outcome}:{detail_str}"
         )
     else:
-        # Standard canonical format (backward compatible with existing test entries)
-        canonical = f"{prev_hash}:{ts}:{actor}:{action}:{target_type_str}:{target_id_str}:{outcome}:{detail_str}"
+        # Backward-compatible determination when format_version is omitted
+        if source_ip_str or before_str or after_str or reason_str:
+            canonical = (
+                f"{prev_hash}:{ts}:{actor}:{source_ip_str}:{action}:{target_type_str}:"
+                f"{target_id_str}:{before_str}:{after_str}:{reason_str}:{outcome}:{detail_str}"
+            )
+        else:
+            canonical = f"{prev_hash}:{ts}:{actor}:{action}:{target_type_str}:{target_id_str}:{outcome}:{detail_str}"
 
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
@@ -204,12 +223,14 @@ def log(
     """Append one entry chained into the tamper-evident audit log."""
     ts = datetime.now(timezone.utc).isoformat()
     try:
-        cur = conn.execute("SELECT entry_hash FROM audit_log ORDER BY id DESC LIMIT 1").fetchone()
-        if cur is None:
+        count_row = conn.execute("SELECT COUNT(*) as cnt FROM audit_log").fetchone()
+        row_count = count_row["cnt"] if count_row else 0
+        if row_count == 0:
             prev_hash = "0" * 64
-        elif not cur["entry_hash"]:
-            raise RuntimeError("Fatal audit chain integrity violation: preceding entry has empty or invalid entry_hash")
         else:
+            cur = conn.execute("SELECT entry_hash FROM audit_log ORDER BY id DESC LIMIT 1").fetchone()
+            if cur is None or not cur["entry_hash"]:
+                raise RuntimeError("Fatal audit chain integrity violation: audit_log contains rows but previous entry_hash could not be retrieved")
             prev_hash = cur["entry_hash"]
     except sqlite3.OperationalError as exc:
         if "no such table" in str(exc).lower():
@@ -219,6 +240,7 @@ def log(
     except Exception as exc:
         raise RuntimeError(f"Fatal audit log error: failed to read previous entry hash from database: {exc}") from exc
 
+    format_version = 2 if (source_ip or before_state is not None or after_state is not None or reason) else 1
     entry_hash = compute_entry_hash(
         prev_hash=prev_hash,
         ts=ts,
@@ -232,6 +254,7 @@ def log(
         before_state=before_state,
         after_state=after_state,
         reason=reason,
+        format_version=format_version,
     )
 
     before_str = _serialize_state(before_state) if before_state is not None else None
@@ -243,7 +266,21 @@ def log(
     except Exception:
         cur_cols = set()
 
-    if "source_ip" in cur_cols:
+    if "format_version" in cur_cols:
+        conn.execute(
+            """
+            INSERT INTO audit_log (
+                ts, actor, action, target_type, target_id, detail, outcome,
+                prev_hash, entry_hash, source_ip, before_state, after_state, reason, format_version
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                ts, actor, action, target_type, target_id, detail, outcome,
+                prev_hash, entry_hash, source_ip, before_str, after_str, reason, format_version
+            ),
+        )
+    elif "source_ip" in cur_cols:
         conn.execute(
             """
             INSERT INTO audit_log (
@@ -268,6 +305,8 @@ def log(
 
     return entry_hash
 
+    return entry_hash
+
 
 def verify_audit_chain(conn: sqlite3.Connection) -> AuditVerificationReport:
     """Verify cryptographic integrity of the entire audit trail hash chain.
@@ -283,7 +322,7 @@ def verify_audit_chain(conn: sqlite3.Connection) -> AuditVerificationReport:
         rows = conn.execute(
             """
             SELECT id, ts, actor, action, target_type, target_id, detail, outcome,
-                   prev_hash, entry_hash, source_ip, before_state, after_state, reason
+                   prev_hash, entry_hash, source_ip, before_state, after_state, reason, format_version
             FROM audit_log ORDER BY id ASC
             """
         ).fetchall()
@@ -292,7 +331,7 @@ def verify_audit_chain(conn: sqlite3.Connection) -> AuditVerificationReport:
         rows = conn.execute(
             """
             SELECT id, ts, actor, action, target_type, target_id, detail, outcome,
-                   prev_hash, entry_hash, NULL as source_ip, NULL as before_state, NULL as after_state, NULL as reason
+                   prev_hash, entry_hash, NULL as source_ip, NULL as before_state, NULL as after_state, NULL as reason, 1 as format_version
             FROM audit_log ORDER BY id ASC
             """
         ).fetchall()
@@ -337,7 +376,8 @@ def verify_audit_chain(conn: sqlite3.Connection) -> AuditVerificationReport:
 
         outcome = r["outcome"] or "success"
 
-        # Try extended canonical format first if extended fields exist
+        version = int(r["format_version"]) if "format_version" in r.keys() and r["format_version"] is not None else None
+
         expected_hash = compute_entry_hash(
             prev_hash=actual_prev,
             ts=r["ts"],
@@ -351,6 +391,7 @@ def verify_audit_chain(conn: sqlite3.Connection) -> AuditVerificationReport:
             before_state=r["before_state"],
             after_state=r["after_state"],
             reason=r["reason"],
+            format_version=version,
         )
 
         # Strictly reject missing or empty entry_hash
@@ -374,8 +415,8 @@ def verify_audit_chain(conn: sqlite3.Connection) -> AuditVerificationReport:
                 "verified_at": now_iso,
             })
 
-        # Allow fallback to standard legacy canonical format for legacy rows
         if r["entry_hash"] != expected_hash:
+            # Fallback check format_version=1 for rows created prior to v2 format migration
             legacy_expected = compute_entry_hash(
                 prev_hash=actual_prev,
                 ts=r["ts"],
@@ -385,6 +426,7 @@ def verify_audit_chain(conn: sqlite3.Connection) -> AuditVerificationReport:
                 target_id=r["target_id"],
                 outcome=outcome,
                 detail=r["detail"],
+                format_version=1,
             )
             if r["entry_hash"] == legacy_expected:
                 expected_hash = legacy_expected

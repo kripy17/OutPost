@@ -73,7 +73,7 @@ def test_isolated_worker_when_launched_from_backend_directory():
         sample_code = b"#!/usr/bin/env python3\nprint('sandbox worker verification')\n"
         res = worker.execute_in_isolated_worker(sample_code, timeout_sec=5.0)
         assert res.get("status") != "parser_failed"
-        assert res.get("verdict") in ("no_indicators_found_limited", "clean")
+        assert res.get("verdict") == "no_indicators_found_limited"
         assert res.get("format") == "script"
     finally:
         os.chdir(orig_cwd)

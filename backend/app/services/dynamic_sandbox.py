@@ -16,6 +16,7 @@ import re
 import resource
 import shutil
 import signal
+import subprocess
 import sys
 import tempfile
 import time
@@ -183,24 +184,42 @@ def _format_pcap_log_line(pcap_art: dict[str, Any]) -> str:
     )
 
 
-def _build_sandbox_rlimits(timeout_seconds: int = 10, memory_limit_mb: int = 1024, max_procs: int = 128):
-    """Build preexec_fn for POSIX subprocess execution enforcing CPU, memory, process-count, and file size limits."""
+def _build_sandbox_rlimits(timeout_seconds: int = 10, memory_limit_mb: int = 1024, max_procs: int = 128, is_wine: bool = False):
+    """Build preexec_fn for POSIX subprocess execution enforcing CPU, memory, and file size limits.
+
+    Memory constraint design:
+    - Standard native ELF/scripts: RLIMIT_AS enforces virtual memory ceiling (1024MB default).
+    - Wine (Windows PE detonation): Wine pre-allocates large virtual address maps (>= 3GB) on init.
+      Enforcing RLIMIT_AS at 1GB aborts Wine immediately with mmap ENOMEM. For Wine, RLIMIT_AS is
+      left unconstrained and physical heap memory is bounded via RLIMIT_DATA.
+
+    Process limit design:
+    - RLIMIT_NPROC is scoped per-real-UID across the entire operating system, not per child tree.
+      Setting RLIMIT_NPROC inside preexec_fn risks starving user-session background tasks or failing
+      fork() globally. In production, process-tree quotas belong in cgroup v2 (pids.max / TasksMax=)
+      or bubblewrap private PID namespaces (--unshare-pid).
+    """
     def _apply_rlimits():
         if os.name != "posix":
             return
-        # 1. CPU / execution time limits (fail visibly if cannot be applied)
+        # 1. CPU / execution time limits
         resource.setrlimit(resource.RLIMIT_CPU, (timeout_seconds + 5, timeout_seconds + 10))
         # 2. Maximum file size (50MB)
         resource.setrlimit(resource.RLIMIT_FSIZE, (50 * 1024 * 1024, 50 * 1024 * 1024))
         # 3. Disable core dumps
         resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
-        # 4. Memory limit (RLIMIT_AS or RLIMIT_DATA)
+        # 4. Memory limit: handle Wine vs native binaries
         mem_bytes = memory_limit_mb * 1024 * 1024
-        if hasattr(resource, "RLIMIT_AS"):
-            resource.setrlimit(resource.RLIMIT_AS, (mem_bytes, mem_bytes))
-        elif hasattr(resource, "RLIMIT_DATA"):
-            resource.setrlimit(resource.RLIMIT_DATA, (mem_bytes, mem_bytes))
-        # 5. Process count limit (RLIMIT_NPROC)
+        if is_wine:
+            # Bound heap/data memory; leave virtual address map unconstrained for Wine mmap layout
+            if hasattr(resource, "RLIMIT_DATA"):
+                resource.setrlimit(resource.RLIMIT_DATA, (mem_bytes, mem_bytes))
+        else:
+            if hasattr(resource, "RLIMIT_AS"):
+                resource.setrlimit(resource.RLIMIT_AS, (mem_bytes, mem_bytes))
+            elif hasattr(resource, "RLIMIT_DATA"):
+                resource.setrlimit(resource.RLIMIT_DATA, (mem_bytes, mem_bytes))
+        # 5. Process count limit (RLIMIT_NPROC): applied as safety bound when cgroup v2 pids controller is unconfigured
         if hasattr(resource, "RLIMIT_NPROC"):
             cur_soft, cur_hard = resource.getrlimit(resource.RLIMIT_NPROC)
             target_nproc = min(cur_soft, max(1024, max_procs))
@@ -395,7 +414,8 @@ async def execute_bytes_sandbox(
                 detail="Safe isolation provider unavailable. Execution blocked to prevent host contamination.",
             )
 
-        sandbox_rlimits = _build_sandbox_rlimits(timeout_seconds=timeout_seconds)
+        is_wine_runner = any("wine" in str(x).lower() for x in (runner or [])) or any("wine" in str(x).lower() for x in (cmd or []))
+        sandbox_rlimits = _build_sandbox_rlimits(timeout_seconds=timeout_seconds, is_wine=is_wine_runner)
 
         stop_poller = asyncio.Event()
         try:

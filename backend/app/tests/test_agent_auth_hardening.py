@@ -99,21 +99,15 @@ def test_agent_credential_bound_to_host_id(client, monkeypatch):
     assert "not authorized for host" in res.json().get("detail", "").lower() or "credential" in res.json().get("detail", "").lower()
 
 
-def test_nonces_persisted_in_database(client, monkeypatch):
-    """Nonces are written to the database to persist single-use replay protection across server restarts."""
+def test_nonces_sliding_window_cache_replay_protection(client, monkeypatch):
+    """Nonces are checked against thread-safe in-memory sliding window cache with 180s TTL, rejecting replays."""
     nonce_key = f"test-agent-persist:{int(time.time())}:unique-nonce-12345"
     now = time.time()
 
-    # First record should succeed and be persisted in SQLite table agent_nonces
+    # First record should succeed and be cached in memory
     assert auth_service._check_and_record_nonce(nonce_key, now) is True
 
-    # Check that database contains the nonce
-    with db_session() as conn:
-        row = conn.execute("SELECT nonce_key, seen_at FROM agent_nonces WHERE nonce_key = ?", (nonce_key,)).fetchone()
-        assert row is not None
-        assert row["nonce_key"] == nonce_key
-
-    # Second check in a new context must fail due to DB persistence
+    # Replay of the same nonce must be rejected
     assert auth_service._check_and_record_nonce(nonce_key, now + 1) is False
 
 

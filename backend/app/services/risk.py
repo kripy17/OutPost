@@ -14,6 +14,7 @@ by this field, so a drift would miscolor a rule (e.g. lolbin-abuse is
 malicious at weight 14; suid-set is suspicious at weight 18).
 """
 
+import json
 from typing import Any, TypedDict
 
 
@@ -373,8 +374,60 @@ for _rid, _meta in RULE_META.items():
 
 
 def evaluate_rule_coverage_for_run(conn, run_id: str) -> dict[str, Any]:
-    """Inspect event types present in a run and return rule coverage status.
-    Rules whose required telemetry is missing from the run are marked 'not_evaluable'."""
+    """Inspect collector capabilities and event telemetry to determine rule coverage status.
+
+    Derived primarily from collector capability / sensor health reports on enrolled hosts:
+    If a sensor is active and healthy on the host (e.g. auditd/Sysmon file auditing is active),
+    rules requiring that telemetry are 'evaluable', even if no events occurred during a quiet window.
+    Rules are marked 'not_evaluable' when the sensor capability is missing, unconfigured, or disabled.
+    """
+    # 1. Identify associated host(s) for this run
+    host_row = conn.execute(
+        "SELECT DISTINCT host_id FROM events WHERE run_id = ? AND host_id IS NOT NULL LIMIT 1",
+        (run_id,),
+    ).fetchone()
+    host_id = host_row["host_id"] if host_row else None
+
+    collector_capabilities = set()
+    sensor_health = {}
+
+    if host_id:
+        # Check collector heartbeat source health
+        hb_row = conn.execute(
+            "SELECT source_health_json FROM agent_heartbeats WHERE host_id = ?",
+            (host_id,),
+        ).fetchone()
+        if hb_row and hb_row["source_health_json"]:
+            try:
+                sh = json.loads(hb_row["source_health_json"])
+                if isinstance(sh, dict):
+                    sensor_health = sh
+                    if sh.get("execution") in ("healthy", "ok", "degraded"):
+                        collector_capabilities.add("process")
+                    if sh.get("network") in ("healthy", "ok", "degraded"):
+                        collector_capabilities.add("network")
+                    if sh.get("file") in ("healthy", "ok", "degraded"):
+                        collector_capabilities.add("file")
+                    if sh.get("dns") in ("healthy", "ok", "degraded"):
+                        collector_capabilities.add("dns")
+            except Exception:
+                pass
+
+        # Check enrolled agent enforcement / telemetry capabilities
+        agent_row = conn.execute(
+            "SELECT enforcement_capabilities FROM enrolled_agents WHERE host_id = ?",
+            (host_id,),
+        ).fetchone()
+        if agent_row and agent_row["enforcement_capabilities"]:
+            try:
+                caps = json.loads(agent_row["enforcement_capabilities"])
+                if isinstance(caps, list):
+                    for c in caps:
+                        collector_capabilities.add(str(c).lower())
+            except Exception:
+                pass
+
+    # 2. Check event types present in the run (for offline / synthetic runs without agent health)
     rows = conn.execute("SELECT DISTINCT event_type FROM events WHERE run_id = ?", (run_id,)).fetchall()
     present_types = {r["event_type"] for r in rows if r["event_type"]}
 
@@ -394,25 +447,28 @@ def evaluate_rule_coverage_for_run(conn, run_id: str) -> dict[str, Any]:
         except Exception:
             pass
 
-    present_categories = set()
+    observed_categories = set()
     if "process_create" in present_types:
-        present_categories.add("process")
+        observed_categories.add("process")
     if "network_connection" in present_types:
-        present_categories.add("network")
+        observed_categories.add("network")
     if any(t in present_types for t in ("file_write", "file_delete", "file_permission")):
-        present_categories.add("file")
+        observed_categories.add("file")
     if any(t in present_types for t in ("registry_set", "registry_key")):
-        present_categories.add("registry")
+        observed_categories.add("registry")
     if has_dns or "dns_query" in present_types:
-        present_categories.add("dns")
+        observed_categories.add("dns")
     if has_tls:
-        present_categories.add("tls")
+        observed_categories.add("tls")
+
+    # Authoritative evaluable telemetry: collector capability (if reported) union observed events
+    effective_evaluable_categories = collector_capabilities | observed_categories
 
     rule_statuses = {}
     for rule_id, meta in RULE_META.items():
         reqs = meta.get("required_telemetry", ["process"])
-        evaluable = any(req in present_categories for req in reqs)
-        missing = [req for req in reqs if req not in present_categories]
+        evaluable = any(req in effective_evaluable_categories for req in reqs)
+        missing = [req for req in reqs if req not in effective_evaluable_categories]
         rule_statuses[rule_id] = {
             "rule_id": rule_id,
             "status": "evaluable" if evaluable else "not_evaluable",
@@ -423,7 +479,11 @@ def evaluate_rule_coverage_for_run(conn, run_id: str) -> dict[str, Any]:
 
     return {
         "run_id": run_id,
-        "present_telemetry": sorted(present_categories),
+        "host_id": host_id,
+        "present_telemetry": sorted(effective_evaluable_categories),
+        "observed_telemetry": sorted(observed_categories),
+        "collector_capabilities": sorted(collector_capabilities),
+        "sensor_health": sensor_health,
         "rule_statuses": rule_statuses,
     }
 

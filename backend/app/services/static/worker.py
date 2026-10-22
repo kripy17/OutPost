@@ -5,7 +5,7 @@ memory exhaustion, and parser segfaults:
 1. Memory limit (512 MB via RLIMIT_AS).
 2. CPU time budget (5.0 seconds via RLIMIT_CPU).
 3. Wall-clock timeout (10.0 seconds).
-4. No network access.
+4. Proxy environment hygiene (proxy variables cleared; not kernel network namespace isolation).
 5. Crashes and timeouts are caught and reported as structured results, never
    swallowed or crashing the API.
 """
@@ -28,14 +28,19 @@ logger = logging.getLogger(__name__)
 
 
 def _build_minimal_worker_env() -> dict[str, str]:
-    """Build a minimal, networkless environment for the worker child process without host secrets."""
+    """Build a minimal sanitized environment for the worker child process without host secrets."""
     backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
     repo_dir = os.path.abspath(os.path.join(backend_dir, ".."))
 
     existing_pythonpath = os.environ.get("PYTHONPATH", "")
-    paths = [backend_dir, repo_dir]
+    paths = [p for p in sys.path if p]
+    for d in (backend_dir, repo_dir):
+        if d not in paths:
+            paths.append(d)
     if existing_pythonpath:
-        paths.append(existing_pythonpath)
+        for ep in existing_pythonpath.split(os.pathsep):
+            if ep and ep not in paths:
+                paths.append(ep)
     combined_pythonpath = os.pathsep.join(paths)
 
     clean_env: dict[str, str] = {
@@ -44,7 +49,7 @@ def _build_minimal_worker_env() -> dict[str, str]:
         "PYTHONUNBUFFERED": "1",
         "LC_ALL": "C.UTF-8",
         "LANG": "C.UTF-8",
-        # Explicitly neutralize network proxies to enforce zero egress
+        # Neutralize network proxy environment variables (does not constitute OS network namespace isolation)
         "HTTP_PROXY": "",
         "HTTPS_PROXY": "",
         "ALL_PROXY": "",

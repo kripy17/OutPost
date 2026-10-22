@@ -63,31 +63,19 @@ def _check_and_record_signature(sig_key: str, now: float) -> bool:
 
 
 def _check_and_record_nonce(nonce_key: str, now: float) -> bool:
+    """Thread-safe in-memory sliding window cache for single-use agent nonces (180s TTL).
+    Completely eliminates SQLite write lock contention on high-throughput agent ingest.
+    """
     cutoff = now - 180.0
-    try:
-        from ..core.db import db_session
-        with db_session() as conn:
-            conn.execute("DELETE FROM agent_nonces WHERE seen_at < ?", (cutoff,))
-            try:
-                conn.execute(
-                    "INSERT INTO agent_nonces (nonce_key, seen_at) VALUES (?, ?)",
-                    (nonce_key, now),
-                )
-                conn.commit()
-                return True
-            except Exception:
-                # Primary key constraint violation (nonce already seen)
-                return False
-    except Exception:
-        # Fallback to in-memory lock if DB not initialized
-        with _SEEN_LOCK:
+    with _SEEN_LOCK:
+        if len(_SEEN_NONCES) > 100:
             expired = [k for k, v in _SEEN_NONCES.items() if v < cutoff]
             for k in expired:
                 _SEEN_NONCES.pop(k, None)
-            if nonce_key in _SEEN_NONCES:
-                return False
-            _SEEN_NONCES[nonce_key] = now
-            return True
+        if nonce_key in _SEEN_NONCES:
+            return False
+        _SEEN_NONCES[nonce_key] = now
+        return True
 
 
 def _server_secret() -> bytes:
@@ -250,20 +238,13 @@ def verify_agent_hmac_headers(
     path_clean = path or "/"
     query_clean = query_string or ""
 
-    matched = False
-    if nonce:
-        canonical_v2 = f"{agent_id}:{timestamp_str}:{method_clean}:{path_clean}:{query_clean}:{nonce}:{body_digest or ''}"
-        expected_v2 = hmac.new(secret.encode("utf-8"), canonical_v2.encode("utf-8"), hashlib.sha256).hexdigest()
-        if hmac.compare_digest(signature.lower(), expected_v2.lower()):
-            matched = True
+    # Strictly enforce v2 HMAC signatures committing to nonce, query string, and body digest
+    if not nonce:
+        return False
 
-    if not matched:
-        canonical_v1 = f"{agent_id}:{timestamp_str}:{method_clean}:{path_clean}"
-        expected_v1 = hmac.new(secret.encode("utf-8"), canonical_v1.encode("utf-8"), hashlib.sha256).hexdigest()
-        if hmac.compare_digest(signature.lower(), expected_v1.lower()):
-            matched = True
-
-    if not matched:
+    canonical_v2 = f"{agent_id}:{timestamp_str}:{method_clean}:{path_clean}:{query_clean}:{nonce}:{body_digest or ''}"
+    expected_v2 = hmac.new(secret.encode("utf-8"), canonical_v2.encode("utf-8"), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(signature.lower(), expected_v2.lower()):
         return False
 
     replay_key = f"{agent_id}:{signature.lower()}"

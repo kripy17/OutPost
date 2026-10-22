@@ -103,7 +103,7 @@ async def ingest_batch(events: list[EventIn]) -> dict:
             seen_source_ids = set()
 
         stored_events: list[dict] = []
-        known_proc_starts: dict[tuple[str, str, int], str] = {}
+        known_proc_starts: dict[tuple[str, str, int], list[str]] = {}
 
         for event_in in events:
             # mode="json" serializes datetimes to ISO strings — sqlite-safe.
@@ -114,25 +114,38 @@ async def ingest_batch(events: list[EventIn]) -> dict:
             p_host = normalized.get("host_id", "local")
             p_boot = normalized.get("boot_id", "default")
             p_pid = normalized.get("pid")
+            ev_ts = normalized.get("timestamp") or ""
 
             if p_pid is not None and p_pid != 0:
                 compound_p_key = (p_host, p_boot, p_pid)
                 if normalized.get("event_type") == "process_create" and normalized.get("process_start_time"):
-                    known_proc_starts[compound_p_key] = normalized["process_start_time"]
+                    starts = known_proc_starts.setdefault(compound_p_key, [])
+                    if normalized["process_start_time"] not in starts:
+                        starts.append(normalized["process_start_time"])
+                        starts.sort()
                     normalized["missing_process_start_time"] = False
                 elif not normalized.get("process_start_time"):
+                    matched_pst = None
                     if compound_p_key in known_proc_starts:
-                        normalized["process_start_time"] = known_proc_starts[compound_p_key]
-                        normalized["missing_process_start_time"] = False
-                    else:
+                        starts = known_proc_starts[compound_p_key]
+                        candidates = [s for s in starts if not ev_ts or s <= ev_ts]
+                        if candidates:
+                            matched_pst = candidates[-1]
+                        elif starts:
+                            matched_pst = starts[0]
+
+                    if not matched_pst:
                         row = conn.execute(
-                            "SELECT process_start_time FROM events WHERE run_id = ? AND host_id = ? AND boot_id = ? AND pid = ? AND process_start_time IS NOT NULL ORDER BY id DESC LIMIT 1",
-                            (run_id, p_host, p_boot, p_pid),
+                            "SELECT process_start_time FROM events WHERE run_id = ? AND host_id = ? AND boot_id = ? AND pid = ? AND event_type = 'process_create' AND (timestamp <= ? OR ? = '') AND process_start_time IS NOT NULL ORDER BY timestamp DESC LIMIT 1",
+                            (run_id, p_host, p_boot, p_pid, ev_ts, ev_ts),
                         ).fetchone()
                         if row and row["process_start_time"]:
-                            known_proc_starts[compound_p_key] = row["process_start_time"]
-                            normalized["process_start_time"] = row["process_start_time"]
-                            normalized["missing_process_start_time"] = False
+                            matched_pst = row["process_start_time"]
+                            known_proc_starts.setdefault(compound_p_key, []).append(matched_pst)
+
+                    if matched_pst:
+                        normalized["process_start_time"] = matched_pst
+                        normalized["missing_process_start_time"] = False
                 else:
                     normalized["missing_process_start_time"] = False
 

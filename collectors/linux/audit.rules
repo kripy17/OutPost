@@ -17,24 +17,36 @@
 
 ## ---------------------------------------------------------------------------
 ## 3. Successful File Creation & Write Opens
-## Noise Control: Filtered on write/creation flags. Read-only opens (O_RDONLY = 0)
-## are excluded to prevent flooding from shared library linkers and config readers.
+## Noise Control: Suppress virtual filesystem, dev, run mounts and logger daemons
+## prior to general write-open rules to prevent event log flooding.
 ## - creat: Always creates a file for writing
-## - open / openat / openat2: Filtered by O_CREAT (0100 octal / 0x40) or write flags (O_WRONLY=01, O_RDWR=02)
+## - open: Flags checked via argument a1 (O_CREAT=0100, O_WRONLY=01, O_RDWR=02)
+## - openat / openat2: Flags checked via argument a2 (O_CREAT=0100, write mask=03)
 ## ---------------------------------------------------------------------------
+-a never,exit -F dir=/proc
+-a never,exit -F dir=/sys
+-a never,exit -F dir=/dev
+-a never,exit -F dir=/run
+-a never,exit -F exe=/usr/sbin/auditd
+-a never,exit -F exe=/usr/lib/systemd/systemd-journald
+
 # creat syscall
 -a always,exit -F arch=b64 -S creat -F exit>=0 -k vantage_file_create
 -a always,exit -F arch=b32 -S creat -F exit>=0 -k vantage_file_create
 
-# open / openat with O_CREAT (octal 0100 = 64)
+# open with O_CREAT (flags in argument a1: octal 0100 = 64)
 -a always,exit -F arch=b64 -S open -F a1&0100 -F exit>=0 -k vantage_file_create
 -a always,exit -F arch=b32 -S open -F a1&0100 -F exit>=0 -k vantage_file_create
+
+# openat / openat2 with O_CREAT (flags in argument a2: octal 0100 = 64)
 -a always,exit -F arch=b64 -S openat,openat2 -F a2&0100 -F exit>=0 -k vantage_file_create
 -a always,exit -F arch=b32 -S openat,openat2 -F a2&0100 -F exit>=0 -k vantage_file_create
 
-# open / openat with write opens (O_WRONLY=01, O_RDWR=02 -> mask 03)
+# open with write opens (flags in argument a1: O_WRONLY=01, O_RDWR=02 -> mask 03)
 -a always,exit -F arch=b64 -S open -F a1&03 -F exit>=0 -k vantage_file_write
 -a always,exit -F arch=b32 -S open -F a1&03 -F exit>=0 -k vantage_file_write
+
+# openat / openat2 with write opens (flags in argument a2: O_WRONLY=01, O_RDWR=02 -> mask 03)
 -a always,exit -F arch=b64 -S openat,openat2 -F a2&03 -F exit>=0 -k vantage_file_write
 -a always,exit -F arch=b32 -S openat,openat2 -F a2&03 -F exit>=0 -k vantage_file_write
 

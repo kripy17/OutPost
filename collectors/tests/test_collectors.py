@@ -830,6 +830,8 @@ def test_shipper_hmac_request_signing(monkeypatch, tmp_path):
     assert h["X-OutPost-Agent-Id"] == "agt_secret123"
     assert "X-OutPost-Timestamp" in h
     assert len(h["X-OutPost-Signature"]) == 64
+    assert "X-OutPost-Nonce" in h
+    assert "X-OutPost-Digest" in h
 
 
 def test_shipper_telemetry_metrics_collection_and_heartbeat(monkeypatch, tmp_path):

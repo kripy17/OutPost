@@ -171,7 +171,7 @@ def assess_static_evidence(
         else:
             verdict = "no_indicators_found_limited"
             verdict_reason = "Verified benign attributes (trusted signature, package hash, clean infrastructure) present."
-            confidence = "high"
+            confidence = "medium"
         legacy_severity = "clean"
     # 3. Anomaly threshold without authoritative signals caps at 'suspicious'
     elif net_score >= 25 or len(assessment_factors) >= 2:
@@ -189,7 +189,7 @@ def assess_static_evidence(
         else:
             verdict = "no_indicators_found_limited"
             verdict_reason = "No threat indicators detected within static analysis boundaries; runtime execution required."
-            confidence = "medium" if could_not_analyze else "high"
+            confidence = "medium"
             legacy_severity = "clean"
     # 5. Low-confidence or inconclusive signals
     else:

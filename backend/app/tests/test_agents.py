@@ -483,6 +483,7 @@ def test_agent_hmac_authentication_and_tamper_protection(client, monkeypatch):
     """HMAC-SHA256 signatures authenticate collector traffic as 'agent' and reject tampered/expired requests."""
     import hashlib
     import hmac
+    import json
     import time
 
     # Register sensor
@@ -492,17 +493,24 @@ def test_agent_hmac_authentication_and_tamper_protection(client, monkeypatch):
 
     now_ts = str(int(time.time()))
     path = "/agents/hmac-host-01/heartbeat"
-    canonical = f"{agent_id}:{now_ts}:POST:{path}"
+    nonce = f"nonce-{time.time()}-1"
+    body = {"platform": "linux", "version": "1.0"}
+    body_bytes = json.dumps(body).encode("utf-8")
+    body_digest = hashlib.sha256(body_bytes).hexdigest()
+    canonical = f"{agent_id}:{now_ts}:POST:{path}::{nonce}:{body_digest}"
     valid_sig = hmac.new(secret.encode(), canonical.encode(), hashlib.sha256).hexdigest()
 
     headers = {
         "X-OutPost-Agent-Id": agent_id,
         "X-OutPost-Timestamp": now_ts,
+        "X-OutPost-Nonce": nonce,
+        "X-OutPost-Digest": body_digest,
         "X-OutPost-Signature": valid_sig,
+        "Content-Type": "application/json",
     }
 
     # Valid signature succeeds and attributes role: agent
-    hb = client.post(path, json={"platform": "linux", "version": "1.0"}, headers=headers)
+    hb = client.post(path, content=body_bytes, headers=headers)
     assert hb.status_code == 200
 
     agents_list = client.get("/agents").json()["agents"]
@@ -514,24 +522,31 @@ def test_agent_hmac_authentication_and_tamper_protection(client, monkeypatch):
     tampered_headers = {
         "X-OutPost-Agent-Id": agent_id,
         "X-OutPost-Timestamp": now_ts,
+        "X-OutPost-Nonce": f"nonce-{time.time()}-2",
+        "X-OutPost-Digest": body_digest,
         "X-OutPost-Signature": "0" * 64,
+        "Content-Type": "application/json",
     }
     # With fail-closed auth enabled, tampered signature produces 401
     monkeypatch.setenv("OUTPOST_AUTH_REQUIRED", "1")
     monkeypatch.setenv("OUTPOST_ADMIN_PASSWORD", "test-admin-pass")
-    tampered_res = client.post(path, json={"platform": "linux"}, headers=tampered_headers)
+    tampered_res = client.post(path, content=body_bytes, headers=tampered_headers)
     assert tampered_res.status_code == 401
 
     # Expired timestamp (> 300s) fails
     expired_ts = str(int(time.time()) - 400)
-    expired_canon = f"{agent_id}:{expired_ts}:POST:{path}"
+    expired_nonce = f"nonce-{time.time()}-3"
+    expired_canon = f"{agent_id}:{expired_ts}:POST:{path}::{expired_nonce}:{body_digest}"
     expired_sig = hmac.new(secret.encode(), expired_canon.encode(), hashlib.sha256).hexdigest()
     expired_headers = {
         "X-OutPost-Agent-Id": agent_id,
         "X-OutPost-Timestamp": expired_ts,
+        "X-OutPost-Nonce": expired_nonce,
+        "X-OutPost-Digest": body_digest,
         "X-OutPost-Signature": expired_sig,
+        "Content-Type": "application/json",
     }
-    expired_res = client.post(path, json={"platform": "linux"}, headers=expired_headers)
+    expired_res = client.post(path, content=body_bytes, headers=expired_headers)
     assert expired_res.status_code == 401
 
 

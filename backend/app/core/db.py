@@ -297,7 +297,8 @@ CREATE TABLE IF NOT EXISTS audit_log (
     source_ip TEXT,
     before_state TEXT,
     after_state TEXT,
-    reason TEXT
+    reason TEXT,
+    format_version INTEGER DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS audit_checkpoints (
@@ -1084,6 +1085,8 @@ def _migrate_audit_log_hash_chain(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE audit_log ADD COLUMN after_state TEXT")
     if "reason" not in cols:
         conn.execute("ALTER TABLE audit_log ADD COLUMN reason TEXT")
+    if "format_version" not in cols:
+        conn.execute("ALTER TABLE audit_log ADD COLUMN format_version INTEGER DEFAULT 1")
     conn.commit()
 
     conn.execute(

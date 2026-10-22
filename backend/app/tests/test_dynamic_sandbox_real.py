@@ -17,6 +17,23 @@ from fastapi.testclient import TestClient
 from ..core import config
 from ..services import dynamic_sandbox
 
+def _can_create_user_namespaces() -> bool:
+    bwrap = shutil.which("bwrap")
+    if not bwrap:
+        return False
+    import subprocess
+    try:
+        res = subprocess.run([bwrap, "--ro-bind", "/", "/", "true"], capture_output=True, timeout=1)
+        return res.returncode == 0
+    except Exception:
+        return False
+
+
+pytestmark = pytest.mark.skipif(
+    not _can_create_user_namespaces(),
+    reason="Dynamic sandbox real execution requires kernel unprivileged user namespace support",
+)
+
 
 @pytest.fixture()
 def client():

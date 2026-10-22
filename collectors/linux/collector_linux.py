@@ -34,6 +34,55 @@ AUDIT_LOG = "/var/log/audit/audit.log"
 # which handler applies.
 _AUDIT_RE = re.compile(r"type=([A-Z]+) msg=audit\(([\d.]+):(\d+)\):\s*(.+)")
 
+_BOOT_TIME: int | None = None
+_CLK_TCK: int | None = None
+
+
+def _get_boot_time() -> int | None:
+    global _BOOT_TIME
+    if _BOOT_TIME is None:
+        try:
+            with open("/proc/stat", "r") as f:
+                for line in f:
+                    if line.startswith("btime "):
+                        _BOOT_TIME = int(line.split()[1])
+                        break
+        except Exception:
+            pass
+    return _BOOT_TIME
+
+
+def _get_clk_tck() -> int:
+    global _CLK_TCK
+    if _CLK_TCK is None:
+        try:
+            _CLK_TCK = os.sysconf("SC_CLK_TCK") if hasattr(os, "sysconf") else 100
+        except Exception:
+            _CLK_TCK = 100
+    return _CLK_TCK or 100
+
+
+def _proc_start_time(pid: int) -> str | None:
+    """Read authoritative process start time from /proc/{pid}/stat (field 22)."""
+    try:
+        with open(f"/proc/{pid}/stat", "r") as fh:
+            content = fh.read()
+        rparen = content.rfind(")")
+        if rparen == -1:
+            return None
+        rest = content[rparen + 2:].split()
+        if len(rest) < 20:
+            return None
+        starttime_ticks = int(rest[19])
+        btime = _get_boot_time()
+        if not btime:
+            return None
+        clk_tck = _get_clk_tck()
+        start_epoch = btime + (starttime_ticks / clk_tck)
+        return datetime.datetime.fromtimestamp(start_epoch, datetime.timezone.utc).isoformat()
+    except (FileNotFoundError, IndexError, ValueError, OSError):
+        return None
+
 
 def _pid_from_syscall(body: str) -> int | None:
     # \b is required: real auditd emits `ppid=… pid=…` (ppid first), and a
@@ -181,7 +230,7 @@ def parse_audit_line(line: str, pid_cache: dict, conn_state: dict | None = None)
             "exe_path": exe_path,
             "user": user,
             "source_event_id": source_event_id,
-            "process_start_time": _ts(ts),
+            "process_start_time": (_proc_start_time(pid) if pid else None) or _ts(ts),
             "raw_record": line.strip(),
         }
 

@@ -54,27 +54,59 @@ def _register_proc_in_map(process_map: dict, r: Any) -> None:
         "boot_id": boot_id,
         "process_start_time": pst,
     }
-    # Compound keys: (host_id + boot_id + pid) and (host_id + boot_id + pid + pst)
-    process_map[f"{host_id}:{boot_id}:{pid}"] = entry
+    # Compound key with authoritative start time
     if pst:
         process_map[f"{host_id}:{boot_id}:{pid}:{pst}"] = entry
+
+    # Timeline of process instances per (host_id, boot_id, pid) for same-host PID-reuse disambiguation
+    timeline_key = f"timeline:{host_id}:{boot_id}:{pid}"
+    if timeline_key not in process_map:
+        process_map[timeline_key] = []
+    timeline = process_map[timeline_key]
+    if not any(p.get("process_start_time") == pst and p.get("process_name") == entry["process_name"] for p in timeline):
+        timeline.append(entry)
+        timeline.sort(key=lambda x: str(x.get("process_start_time") or ""))
+
+    # Latest instance fallback
+    process_map[f"{host_id}:{boot_id}:{pid}"] = entry
     # Legacy integer key (fallback if not already set)
     if pid not in process_map:
         process_map[pid] = entry
 
 
 def lookup_parent_process(process_map: dict, event: dict) -> dict | None:
-    """Look up parent process using compound process identity (host_id + boot_id + ppid)."""
+    """Look up parent process using compound process identity (host_id + boot_id + ppid + start_time)."""
     ppid = event.get("ppid")
     if ppid is None:
         return None
     host_id = event.get("host_id") or "local"
     boot_id = event.get("boot_id") or "default"
-    # 1. Exact compound match
+    parent_pst = event.get("parent_process_start_time")
+
+    # 1. Exact match with explicit parent_process_start_time if supplied
+    if parent_pst:
+        parent = process_map.get(f"{host_id}:{boot_id}:{ppid}:{parent_pst}")
+        if parent:
+            return parent
+
+    # 2. Timeline lookup: resolve the parent instance that started BEFORE or AT child event
+    timeline_key = f"timeline:{host_id}:{boot_id}:{ppid}"
+    timeline = process_map.get(timeline_key)
+    child_time = event.get("process_start_time") or event.get("timestamp")
+
+    if timeline:
+        if child_time:
+            # Candidates that started at or before the child event
+            candidates = [p for p in timeline if not p.get("process_start_time") or p.get("process_start_time") <= child_time]
+            if candidates:
+                return max(candidates, key=lambda p: str(p.get("process_start_time") or ""))
+        return timeline[-1]
+
+    # 3. Fallback to latest compound key (host_id + boot_id + ppid)
     parent = process_map.get(f"{host_id}:{boot_id}:{ppid}")
     if parent:
         return parent
-    # 2. Fallback to integer PID
+    # 4. Fallback to integer PID
     return process_map.get(ppid)
 
 

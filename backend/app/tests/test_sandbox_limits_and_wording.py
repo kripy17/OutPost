@@ -32,6 +32,22 @@ def test_sandbox_rlimits_enforce_memory_and_proc_limits(monkeypatch):
     assert resource.RLIMIT_NPROC in applied_limits, "RLIMIT_NPROC (process count limit) was not applied"
 
 
+def test_sandbox_rlimits_wine_memory_handling(monkeypatch):
+    """Wine execution must not set RLIMIT_AS (breaks Wine's 3GB+ mmap), using RLIMIT_DATA instead."""
+    applied_limits = {}
+
+    def mock_setrlimit(res, limits):
+        applied_limits[res] = limits
+
+    monkeypatch.setattr(dynamic_sandbox.resource, "setrlimit", mock_setrlimit)
+
+    fn = dynamic_sandbox._build_sandbox_rlimits(timeout_seconds=15, is_wine=True)
+    fn()
+
+    assert resource.RLIMIT_AS not in applied_limits, "RLIMIT_AS must not be constrained for Wine"
+    assert resource.RLIMIT_DATA in applied_limits, "RLIMIT_DATA should bound heap memory for Wine"
+
+
 def test_sandbox_rlimits_fail_visibly_on_error(monkeypatch):
     """If an rlimit cannot be applied, it must fail visibly and raise an error, not pass silently."""
     def mock_setrlimit_fail(res, limits):
