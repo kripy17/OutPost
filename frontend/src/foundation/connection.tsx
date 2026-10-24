@@ -1,16 +1,18 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
 import { RefreshCw, WifiOff } from "lucide-react";
 
-export type HealthStatus = "healthy" | "degraded" | "offline";
+export type HealthStatus = "connected" | "idle" | "polling" | "offline";
 
 export interface ConnectionState {
   apiReachable: boolean;
   streamLive: boolean;
   status: HealthStatus;
   lastEventTime: Date | null;
+  lastEventAgeSec: number | null;
+  ingestLagMs: number | null;
   errorDetail: string | null;
   retryPing: () => Promise<void>;
-  markEventReceived: () => void;
+  markEventReceived: (eventTimestamp?: string | Date) => void;
   setStreamStatus: (live: boolean) => void;
 }
 
@@ -20,8 +22,10 @@ export const ConnectionProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [apiReachable, setApiReachable] = useState<boolean>(true);
   const [streamLive, setStreamLive] = useState<boolean>(false);
   const [lastEventTime, setLastEventTime] = useState<Date | null>(null);
+  const [ingestLagMs, setIngestLagMs] = useState<number | null>(null);
   const [errorDetail, setErrorDetail] = useState<string | null>(null);
   const [isRetrying, setIsRetrying] = useState<boolean>(false);
+  const [backoffSec, setBackoffSec] = useState<number>(2);
 
   const pingApi = useCallback(async () => {
     try {
@@ -32,11 +36,13 @@ export const ConnectionProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       }
       setApiReachable(true);
       setErrorDetail(null);
+      setBackoffSec(2); // reset backoff on success
     } catch (err: unknown) {
       setApiReachable(false);
       setStreamLive(false);
       const msg = err instanceof Error ? err.message : "Connection refused";
       setErrorDetail(msg);
+      setBackoffSec((prev) => Math.min(prev * 2, 30)); // exponential backoff
     } finally {
       setIsRetrying(false);
     }
@@ -44,24 +50,44 @@ export const ConnectionProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   useEffect(() => {
     pingApi();
-    const interval = window.setInterval(pingApi, 15000);
+    const interval = window.setInterval(pingApi, apiReachable ? 15000 : backoffSec * 1000);
     return () => window.clearInterval(interval);
-  }, [pingApi]);
+  }, [pingApi, apiReachable, backoffSec]);
 
-  const markEventReceived = useCallback(() => {
-    setLastEventTime(new Date());
+  const markEventReceived = useCallback((eventTimestamp?: string | Date) => {
+    const now = new Date();
+    setLastEventTime(now);
     setStreamLive(true);
+    if (eventTimestamp) {
+      const evDate = new Date(eventTimestamp);
+      if (!Number.isNaN(evDate.getTime())) {
+        setIngestLagMs(Math.max(0, now.getTime() - evDate.getTime()));
+      }
+    }
   }, []);
 
   const setStreamStatus = useCallback((live: boolean) => {
     setStreamLive(live);
   }, []);
 
-  const status: HealthStatus = !apiReachable
-    ? "offline"
-    : streamLive
-    ? "healthy"
-    : "degraded";
+  // Compute event age in seconds
+  const lastEventAgeSec = lastEventTime
+    ? Math.max(0, Math.floor((Date.now() - lastEventTime.getTime()) / 1000))
+    : null;
+
+  // Determine distinct health state
+  let status: HealthStatus = "offline";
+  if (apiReachable) {
+    if (streamLive) {
+      if (lastEventTime && lastEventAgeSec !== null && lastEventAgeSec <= 60) {
+        status = "connected";
+      } else {
+        status = "idle";
+      }
+    } else {
+      status = "polling";
+    }
+  }
 
   return (
     <ConnectionContext.Provider
@@ -70,6 +96,8 @@ export const ConnectionProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         streamLive,
         status,
         lastEventTime,
+        lastEventAgeSec,
+        ingestLagMs,
         errorDetail,
         retryPing: pingApi,
         markEventReceived,
@@ -83,7 +111,10 @@ export const ConnectionProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             <span>API unreachable: {errorDetail ?? "Check backend server status"}</span>
           </div>
           <button
-            onClick={() => pingApi()}
+            onClick={() => {
+              setBackoffSec(2);
+              pingApi();
+            }}
             disabled={isRetrying}
             className="flex items-center gap-1.5 rounded-[3px] bg-[#f85149]/20 px-2 py-0.5 text-[11px] font-medium text-white transition hover:bg-[#f85149]/30 disabled:opacity-50"
           >
@@ -106,13 +137,13 @@ export const useConnectionState = (): ConnectionState => {
 };
 
 export const HealthIndicator: React.FC<{ className?: string }> = ({ className = "" }) => {
-  const { errorDetail, streamLive, apiReachable } = useConnectionState();
+  const { status, errorDetail, lastEventAgeSec, ingestLagMs } = useConnectionState();
 
-  if (!apiReachable) {
+  if (status === "offline") {
     return (
       <div
         className={`flex items-center gap-1.5 text-[11px] font-mono text-[#ff7b72] ${className}`}
-        title={`Offline: ${errorDetail}`}
+        title={`Offline: ${errorDetail ?? "Unable to contact API"}`}
       >
         <span className="h-2 w-2 rounded-full bg-[#f85149]" />
         <span>offline</span>
@@ -120,14 +151,31 @@ export const HealthIndicator: React.FC<{ className?: string }> = ({ className = 
     );
   }
 
-  if (streamLive) {
+  if (status === "connected") {
     return (
       <div
         className={`flex items-center gap-1.5 text-[11px] font-mono text-[#56d364] ${className}`}
-        title="API reachable, live stream active"
+        title={`API reachable · Stream active · Lag: ${ingestLagMs ?? 0}ms`}
       >
         <span className="h-2 w-2 rounded-full bg-[#3fb950]" />
         <span>connected</span>
+        {ingestLagMs !== null && ingestLagMs > 0 && (
+          <span className="text-[10px] text-[#7d8590]">({ingestLagMs}ms)</span>
+        )}
+      </div>
+    );
+  }
+
+  if (status === "idle") {
+    return (
+      <div
+        className={`flex items-center gap-1.5 text-[11px] font-mono text-[#7d8590] ${className}`}
+        title="API reachable · Stream listening · No events received recently"
+      >
+        <span className="h-2 w-2 rounded-full bg-[#7d8590]" />
+        <span>
+          idle {lastEventAgeSec !== null ? `(${lastEventAgeSec}s)` : "(0 events)"}
+        </span>
       </div>
     );
   }
@@ -135,7 +183,7 @@ export const HealthIndicator: React.FC<{ className?: string }> = ({ className = 
   return (
     <div
       className={`flex items-center gap-1.5 text-[11px] font-mono text-[#e3b341] ${className}`}
-      title="API reachable, stream reconnecting"
+      title="API reachable · Stream disconnected · Polling active"
     >
       <span className="h-2 w-2 rounded-full bg-[#d29922]" />
       <span>polling</span>

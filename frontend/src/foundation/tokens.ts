@@ -57,7 +57,8 @@ export const TOKENS = {
   borderHairline: "border-[0.5px] border-[#26292e]",
   textPrimary: "text-[#e6edf3]",
   textMuted: "text-[#8b949e]",
-  textFaint: "text-[#5a626c]",
+  textMetadata: "text-[#7d8590]",
+  textDisabled: "text-[#5a626c]",
   accent: "#2f81f7",
   accentBg: "bg-[#2f81f7]",
   accentText: "text-[#58a6ff]",
@@ -66,8 +67,20 @@ export const TOKENS = {
   radiusSm: "rounded-[2px]",
   fontBody: "text-[13px] leading-normal font-sans",
   fontTable: "text-[12px] leading-tight font-sans",
-  fontMeta: "text-[11px] leading-tight font-sans",
+  fontMeta: "text-[11px] leading-tight font-sans text-[#7d8590]",
   fontMono: "font-mono text-[12px]",
   fontMonoSm: "font-mono text-[11px]",
   tabularNums: "tabular-nums text-right",
+} as const;
+
+export const RAW_COLORS = {
+  bgBase: "#0c0d0e",
+  bgSurface: "#141618",
+  bgRaised: "#1a1d20",
+  border: "#26292e",
+  textPrimary: "#e6edf3",
+  textMuted: "#8b949e",
+  textMetadata: "#7d8590",
+  textDisabled: "#5a626c",
+  accent: "#2f81f7",
 } as const;

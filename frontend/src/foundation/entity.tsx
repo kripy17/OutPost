@@ -21,11 +21,21 @@ export interface EntityProps {
   onAddToCase?: (type: EntityType, value: string) => void;
 }
 
-export const defangIndicator = (val: string): string => {
-  return val
-    .replace(/\./g, "[.]")
-    .replace(/http:\/\//gi, "hxxp://")
-    .replace(/https:\/\//gi, "hxxps://");
+export const defangIndicator = (val: string, type?: EntityType): string => {
+  if (!val || type === "hash") {
+    // Hashes must never be defanged
+    return val;
+  }
+
+  // Linear O(n) defanging without catastrophic regex backtracking
+  let res = val;
+  if (res.includes("://")) {
+    res = res.replace(/^http:\/\//i, "hxxp://").replace(/^https:\/\//i, "hxxps://");
+  }
+  if (res.includes("@")) {
+    res = res.replace(/@/g, "[@]");
+  }
+  return res.replace(/\./g, "[.]");
 };
 
 export const Entity: React.FC<EntityProps> = ({
@@ -40,7 +50,7 @@ export const Entity: React.FC<EntityProps> = ({
   const [copied, setCopied] = useState<boolean>(false);
   const [isDefanged, setIsDefanged] = useState<boolean>(defang);
 
-  const displayValue = isDefanged ? defangIndicator(value) : value;
+  const displayValue = isDefanged ? defangIndicator(value, type) : value;
 
   const handleCopy = (e: React.MouseEvent, text: string) => {
     e.stopPropagation();

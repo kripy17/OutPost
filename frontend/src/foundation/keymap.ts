@@ -20,6 +20,12 @@ const isInputFocused = (): boolean => {
   return false;
 };
 
+const isModalOrMenuOpen = (): boolean => {
+  return !!document.querySelector(
+    '[role="dialog"], [role="alertdialog"], [role="menu"][data-state="open"], [data-radix-popper-content-wrapper]'
+  );
+};
+
 export const useKeymap = (
   bindings: KeymapBindings,
   options: UseKeymapOptions = {}
@@ -34,7 +40,8 @@ export const useKeymap = (
     if (!enabled) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (isInputFocused() && e.key !== "Escape") {
+      // Suppress global keybindings when typing in inputs or when a dialog/menu is open
+      if ((isInputFocused() || isModalOrMenuOpen()) && e.key !== "Escape") {
         return;
       }
 

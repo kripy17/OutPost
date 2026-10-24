@@ -122,13 +122,19 @@ export function DataTable<TData>({
       ref={parentRef}
       className="relative h-full overflow-auto border border-[#26292e] bg-[#0c0d0e]"
     >
-      <table className="w-full border-collapse text-left">
+      <table
+        role="grid"
+        aria-rowcount={rows.length}
+        aria-colcount={columns.length}
+        className="w-full border-collapse text-left"
+      >
         <thead className="sticky top-0 z-20 border-b border-[#26292e] bg-[#141618]">
           {table.getHeaderGroups().map((headerGroup) => (
-            <tr key={headerGroup.id}>
+            <tr key={headerGroup.id} role="row">
               {headerGroup.headers.map((header) => (
                 <th
                   key={header.id}
+                  role="columnheader"
                   className="px-3 py-2 text-[11px] font-medium uppercase tracking-wider text-[#8b949e]"
                   style={{ width: header.getSize() !== 150 ? header.getSize() : undefined }}
                 >
@@ -149,11 +155,15 @@ export function DataTable<TData>({
             return (
               <tr
                 key={row.id}
+                role="row"
+                aria-rowindex={virtualRow.index + 1}
+                aria-selected={isSelected}
+                tabIndex={isFocused ? 0 : -1}
                 onClick={() => {
                   onFocusChange?.(virtualRow.index);
                   onRowClick?.(row.original, virtualRow.index);
                 }}
-                className={`cursor-pointer border-b border-[#26292e]/40 text-[12px] transition ${
+                className={`cursor-pointer border-b border-[#26292e]/40 text-[12px] transition outline-none ${
                   isFocused
                     ? "bg-[#2f81f7]/15 ring-1 ring-inset ring-[#2f81f7]"
                     : isSelected
@@ -166,7 +176,7 @@ export function DataTable<TData>({
                 }}
               >
                 {row.getVisibleCells().map((cell) => (
-                  <td key={cell.id} className="px-3 py-1.5 text-[#e6edf3]">
+                  <td key={cell.id} role="gridcell" className="px-3 py-1.5 text-[#e6edf3]">
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                   </td>
                 ))}
