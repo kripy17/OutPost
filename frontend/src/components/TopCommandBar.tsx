@@ -275,6 +275,15 @@ export default function TopCommandBar() {
           </Link>
         )}
 
+        {/* Modern v2 Triage Pill */}
+        <Link
+          to="/v2/alerts"
+          className="hidden sm:inline-flex items-center gap-1 rounded-md border border-accent/40 bg-accent/10 px-2 py-1 text-[10px] font-mono font-semibold text-accent hover:bg-accent/20 transition"
+          title="Switch to modern v2 triage deck"
+        >
+          <span>v2 Alerts</span>
+        </Link>
+
         {/* Global Shortcuts Trigger */}
         <button
           onClick={openShortcuts}

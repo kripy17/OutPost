@@ -21,11 +21,15 @@ import TopCommandBar from "./components/TopCommandBar";
 import WatchlistToaster from "./components/WatchlistToaster/WatchlistToaster";
 import { getMe, getMeta } from "./lib/api";
 import { shouldShowLogin } from "./routes/authGate";
+import { Shell } from "./foundation";
 
 // Route-level code splitting: each page ships as its own chunk so first paint
 // only loads the shell + the page you land on (kills the single-bundle chunk
 // warning). The Monitor page pulls in the SSE/process-tree machinery, so it
 // stays on its own chunk like everything else.
+const AlertsPageV2 = lazy(() =>
+  import("./features/alerts/AlertsView").then((m) => ({ default: m.AlertsView }))
+);
 const LoginPage = lazy(() => import("./routes/login"));
 const AgentsPage = lazy(() => import("./routes/agents"));
 const AuditPage = lazy(() => import("./routes/audit"));
@@ -271,6 +275,20 @@ function Layout() {
 
 export const router = createBrowserRouter([
   {
+    path: "/v2",
+    element: (
+      <Shell>
+        <Suspense fallback={<RouteFallback />}>
+          <Outlet />
+        </Suspense>
+      </Shell>
+    ),
+    children: [
+      { index: true, element: <Navigate to="/v2/alerts" replace /> },
+      { path: "alerts", element: <AlertsPageV2 /> },
+    ],
+  },
+  {
     element: <Layout />,
     children: [
       { path: "/", element: <OverviewPage /> },
@@ -284,7 +302,7 @@ export const router = createBrowserRouter([
       { path: "/hosts/:hostId", element: <HostDetailPage /> },
       { path: "/audit", element: <AuditPage /> },
       { path: "/findings", element: <FindingsPage /> },
-      { path: "/alerts", element: <Navigate to="/findings" replace /> }, // alias redirect to findings
+      { path: "/alerts", element: <Navigate to="/v2/alerts" replace /> }, // redirects to modern alerts queue
       { path: "/forensics", element: <Navigate to="/tasks" replace /> }, // alias redirect to host tasks & forensics
       { path: "/investigations", element: <InvestigationsPage /> },
       { path: "/investigations/:investigationId", element: <InvestigationDetailPage /> },
