@@ -1,5 +1,13 @@
 # OutPost
 
+> [!WARNING]
+> **SCOPE RESET & REBUILD IN PROGRESS (STEPS 1–8)**
+> OutPost is being re-scoped and rebuilt into a **Static and Dynamic Malware Analysis Workbench**.
+> Fleet collectors, host forensics, incident cases, alert queues, campaigns, and Postgres have been parked on branch `forensics-platform`.
+> Core malware analysis tasks are defined in [docs/analyst-tasks.md](file:///home/kripy/.gemini/antigravity/worktrees/OutPost/inspect_project_state/docs/analyst-tasks.md).
+> Target screens: Samples, Sample report, Detonation Cockpit (Live processes in Step 6), Rules, Settings.
+> Architecture and feature descriptions below are stale pending completion of the analysis core rebuild.
+
 [![CI](https://github.com/kripy17/OutPost/actions/workflows/ci.yml/badge.svg)](https://github.com/kripy17/OutPost/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 

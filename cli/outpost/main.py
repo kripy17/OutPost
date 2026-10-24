@@ -38,8 +38,9 @@ def _register_commands() -> None:
     from .commands.status import doctor
     from .commands.watch import watch
     from .commands.watchlist import app as watchlist_app
-    from .commands.yara import app as yara_app
+    from .commands.yara import app as yara_app, scan_path
 
+    app.command("scan")(scan_path)
     app.command("list")(list_runs)
     app.command()(show)
     app.command()(export)

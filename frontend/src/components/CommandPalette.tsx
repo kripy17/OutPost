@@ -19,20 +19,9 @@ interface Item {
 }
 
 const NAV_ITEMS: Item[] = [
-  { kind: "nav", label: "Overview", hint: "Console home & threat posture", icon: "grid", to: "/" },
-  { kind: "nav", label: "Security Telemetry Lake", hint: "Raw security event stream & forensic queries", icon: "activity", to: "/events" },
-  { kind: "nav", label: "Host Volatiles & Process Forensics", hint: "Live process table, tree, sockets & kernel triage", icon: "process", to: "/tasks" },
-  { kind: "nav", label: "Simulation Lab", hint: "Adversary emulation & live rule testing", icon: "activity", to: "/monitor" },
-  { kind: "nav", label: "Findings Queue", hint: "SOC alert triage & allowlisting", icon: "alert", to: "/findings" },
-  { kind: "nav", label: "Investigations", hint: "Incident response cases & evidence locker", icon: "notes", to: "/investigations" },
-  { kind: "nav", label: "Threat Campaigns", hint: "Adversary tracking & IOC graph", icon: "flag", to: "/campaigns" },
-  { kind: "nav", label: "Malware Analysis Vault", hint: "Binary static/dynamic detonation analyzer", icon: "box", to: "/samples" },
-  { kind: "nav", label: "ATT&CK Matrix", hint: "Enterprise tactic coverage & gap heatmap", icon: "target", to: "/coverage" },
-  { kind: "nav", label: "Detection Rules", hint: "Sigma / YAML rules engine & test runner", icon: "shield", to: "/rules" },
-  { kind: "nav", label: "Sensor Fleet", hint: "Auditd, Sysmon & Process collectors", icon: "terminal", to: "/agents" },
-  { kind: "nav", label: "Threat Watchlist", hint: "Real-time IOC surveillance", icon: "star", to: "/watchlist" },
-  { kind: "nav", label: "Forensic Search", hint: "Deep query syntax hunting", icon: "search", to: "/search" },
-  { kind: "nav", label: "Audit Log", hint: "Immutable write provenance trail", icon: "notes", to: "/audit" },
+  { kind: "nav", label: "Samples", hint: "Malware analysis vault & detonation history", icon: "box", to: "/samples" },
+  { kind: "nav", label: "Detonation Cockpit", hint: "Live simulation, dynamic execution & technique tests", icon: "activity", to: "/monitor" },
+  { kind: "nav", label: "Detection Rules", hint: "YARA, behavior & capability rules", icon: "shield", to: "/rules" },
   { kind: "nav", label: "Settings", hint: "Air-gap, webhooks & preferences", icon: "sliders", to: "/settings" },
 ];
 
@@ -235,48 +224,6 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
         hint: "Open SigmaHQ detection workbench editor",
         icon: "shield" as IconName,
         to: "/rules?create=1",
-      },
-      {
-        kind: "action",
-        label: "Open Incident Investigation Case",
-        hint: "Spin up a new forensic case dossier",
-        icon: "notes" as IconName,
-        to: "/investigations?create=1",
-      },
-      {
-        kind: "action",
-        label: "Digital Footprint & Topology",
-        hint: "View network topology graph & cluster connections",
-        icon: "network" as IconName,
-        to: "/footprint",
-      },
-      {
-        kind: "action",
-        label: "MITRE ATT&CK Matrix Heatmap",
-        hint: "Analyze enterprise detection coverage and gap metrics",
-        icon: "target" as IconName,
-        to: "/coverage",
-      },
-      {
-        kind: "action",
-        label: "Sensor Fleet Agent Setup",
-        hint: "Deploy Auditd, Sysmon & Process collectors",
-        icon: "terminal" as IconName,
-        to: "/agents",
-      },
-      {
-        kind: "action",
-        label: "Threat Infrastructure Watchlist",
-        hint: "Inspect monitored adversary IPs, domains, and hashes",
-        icon: "star" as IconName,
-        to: "/watchlist",
-      },
-      {
-        kind: "action",
-        label: "Audit Trail & Write Provenance",
-        hint: "View tamper-evident action logs and export CSV",
-        icon: "notes" as IconName,
-        to: "/audit",
       },
       {
         kind: "action",

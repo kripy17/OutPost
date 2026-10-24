@@ -1,156 +1,136 @@
-# OutPost Core Analyst Tasks
+# OutPost Malware Analysis Workbench — Core Analyst Tasks
 
-This document defines the 8 primary analyst workflows supported by OutPost. Every page, navigation element, API route, and CLI command exists to serve one or more of these tasks. Features, routes, or visual elements that do not directly support these tasks are removed or decoupled.
-
----
-
-## Task 1: Triage a Queue of 20 Alerts by Keyboard
-
-- **Analyst Intent**: Rapidly review, classify, and disposition incoming high-volume alerts without taking hands off the keyboard or waiting for page reloads.
-- **Measurable Target**:
-  - **Action Count**: $\le 20$ keyboard keystrokes to disposition 20 alerts (1 keystroke per alert disposition).
-  - **Time**: $< 60$ seconds total ($\le 3$ seconds per alert).
-  - **Interaction**:
-    - `j` / `k` or `Down` / `Up`: Navigate queue rows.
-    - `a`: Acknowledge alert (marks `acknowledged` and automatically advances cursor to next unreviewed alert).
-    - `x`: Resolve / Suppress alert (opens quick resolution prompt, records disposition, advances to next).
-    - `Enter`: Toggle focus between queue list and docked detail inspection pane.
-- **Screen State**:
-  - Dense, high-information-density table displaying: Severity badge, Alert Timestamp (UTC), Rule Name, Host ID / Hostname, Primary Entity (PID/Process or Source IP), Status, and Occurrence Count.
-  - Active keyboard selection row visibly highlighted with distinct focus outline.
-  - Disposition counter header showing real-time progress: `X unreviewed remaining`.
-  - Zero full-page reloads; status changes apply optimistically with immediate visual confirmation.
-- **Dataset Used**: 20 replayed enterprise detection alerts (sourced from public multi-stage telemetry replays).
-- **Measurement Methodology**: Automated Playwright keystroke audit recording per-keystroke timestamps and UI state transitions, supplemented by human operator stopwatch verification.
-- **Pass Criterion**: All 20 alerts dispositioned in $< 60$ seconds with 0 mouse clicks, unreviewed counter decreases to 0, and database state confirms all 20 rows updated.
+> **Architecture Transition Notice**: This document specifies the 8 core analyst workflows for the **OutPost Static and Dynamic Malware Analysis Workbench**. OutPost is dedicated to malware analysis: uploading samples, detonating them in isolated environments, observing process trees, file drops, network sockets, and system mutations, matching behavioral and YARA rules, and evaluating live background processes.
 
 ---
 
-## Task 2: Explain Why an Alert Fired Without Leaving It
+## Task 1: Upload Sample & Perform Static Triage
 
-- **Analyst Intent**: Understand root cause, triggering rule criteria, process lineage, and environmental context directly from the triage screen without losing position in the alert queue.
+- **Analyst Intent**: Ingest an unknown binary or script (PE, ELF, shell script, document), extract metadata, hashes, sections, entropy, imports/exports, strings, and run static YARA and capability rules without executing code.
 - **Measurable Target**:
-  - **Action Count**: 0 additional actions (instant update in docked pane upon row selection) or $\le 1$ action (press `Enter` or click row).
-  - **Time**: $< 3$ seconds to locate the explanation and evidence.
+  - **Action Count**: $\le 2$ actions (file drop/select + click "Analyze").
+  - **Time**: $< 15$ seconds to complete static extraction and render triage summary.
 - **Screen State**:
-  - Docked detail pane rendered alongside the queue containing:
-    1. **Detection Logic & Rationale**: Plain-language description of what triggered the rule and MITRE ATT&CK technique mapping.
-    2. **Triggering Fields**: Table of exact event field values that satisfied the rule (e.g., `process.command_line`, `network.destination_ip`, `file.path`), with triggering tokens highlighted.
-    3. **Process Lineage Tree**: Visual parent-child hierarchy with process names, PIDs, and process start times.
-    4. **Correlated Event Window**: Chronological list of neighboring telemetry events from the same host within $\pm 5$ minutes of the alert timestamp.
-    5. **Host Context**: Host status, OS platform, IP address, and collector agent health.
-- **Dataset Used**: Replayed alert with complete correlated host telemetry window.
-- **Measurement Methodology**: Time from row selection change to full render of rule rationale, matched tokens, and process lineage in the DOM.
-- **Pass Criterion**: Docked inspector updates synchronously in $< 200$ ms; all 5 context components are visible on screen without modal overlays or route navigation.
+  - Identification strip displaying: SHA-256, SHA-1, MD5, ssdeep, TLSH, MIME type, file size, architecture, and packer detection flags.
+  - Section entropy visualization highlighting packed/encrypted sections (entropy $\ge 7.2$).
+  - Grouped imports/exports matrix identifying sensitive API families (process injection, cryptography, anti-analysis, evasion).
+  - ASCII and UTF-16 strings search with IOC auto-extraction (IPs, URLs, domains, registry paths).
+  - YARA matches displayed with exact rule IDs, match offsets, and matched strings.
+- **Dataset Used**: Standard corpus of benign and malicious PE/ELF samples.
+- **Measurement Methodology**: Time from sample upload completion to full DOM rendering of static analysis results.
+- **Pass Criterion**: Complete static triage rendered within 15 seconds; zero unhandled parser crashes; all findings show provenance and confidence.
 
 ---
 
-## Task 3: Find All Hosts That Ran a Binary in the Last 7 Days
+## Task 2: Dynamic Detonation & Process Tree Observation
 
-- **Analyst Intent**: Execute a fleet-wide retrohunt for a suspicious binary executable name or cryptographic hash (SHA-256/MD5) across historical host executions.
+- **Analyst Intent**: Execute a sample inside an isolated, resource-constrained Linux sandbox to observe process spawning, command-line arguments, parent-child relationships, syscalls, and termination codes.
 - **Measurable Target**:
-  - **Action Count**: $\le 3$ actions (Navigate to Events, enter binary name or hash in query bar with 7d time range, press `Enter`).
-  - **Time**: $< 3$ seconds query latency across 100,000+ indexed events; $< 10$ seconds total workflow.
+  - **Action Count**: 1 click ("Detonate Sample").
+  - **Time**: Real-time streaming updates during execution; full process tree rendered $< 5$ seconds after execution run finishes.
 - **Screen State**:
-  - Events workspace opening directly on search input and primary events table.
-  - Time range selector set to `Last 7 Days` (persisted in URL query parameter `?range=7d`).
-  - Search query bar accepting syntax such as `process_name:"mimikatz.exe"` or `sha256:<hash>` or plain-text token.
-  - Facet sidebar showing distinct `host_id` values with execution count distribution.
-  - Primary data table columns: `Timestamp`, `Host`, `Process Name`, `Executable Path`, `Command Line`, `SHA-256`, `User`.
-  - Clicking any `Host` cell pivots directly to that host's timeline.
-- **Dataset Used**: Minimum 100,000 events spanning 7 days across at least 5 hosts, stored in SQLite/PostgreSQL with compound indexes on `(run_id, timestamp)` and `(host_id, timestamp)`.
-- **Measurement Methodology**: Automated performance test issuing API queries with SQL `EXPLAIN QUERY PLAN` verification confirming index usage, plus UI stopwatch measurement.
-- **Pass Criterion**: Backend query executes in $< 500$ ms on 100k events; UI renders matching host list and facets in $< 3$ seconds; index scan verified.
+  - Interactive process lineage tree showing parent PID, child PIDs, executable paths, invocation timestamps, CLI arguments, and exit codes.
+  - Syscall timeline (from strace/eBPF) with filtering by category (file, net, process, memory).
+  - Resource usage meters tracking CPU, memory, process count (pids cgroup), and execution timeout status.
+- **Dataset Used**: Detonation runs of Linux ELF malware and test emulation binaries.
+- **Measurement Methodology**: Execution timing audit verifying sandbox launch, real-time process event delivery, and tree layout rendering.
+- **Pass Criterion**: Full process hierarchy accurately constructed; every process node includes PID, start timestamp, and command line; short-lived child processes captured without omission.
 
 ---
 
-## Task 4: Open a Case from an Alert and Attach Evidence
+## Task 3: File System & Mutation Verification (Dropped & Modified Files)
 
-- **Analyst Intent**: Escalate an alert into an active investigation case, attaching triggering alerts, events, and entity artifacts with immutable cryptographic provenance.
+- **Analyst Intent**: Detect all file creations, modifications, and deletions executed by the sample during detonation, extract dropped payloads, and identify persistence mechanisms.
 - **Measurable Target**:
-  - **Action Count**: $\le 4$ actions (Click "Open Case" on alert detail, input or confirm title/severity, confirm creation, attach related telemetry items as evidence).
-  - **Time**: $< 15$ seconds to complete case creation and evidence linkage.
+  - **Action Count**: 1 click (switch to "Files & Persistence" tab).
+  - **Time**: $< 3$ seconds to render the complete file mutation list.
 - **Screen State**:
-  - Modal or docked drawer with pre-filled case title (derived from alert and host) and severity.
-  - On submit, redirects or links directly to the created Case URL: `/cases/{case_id}`.
-  - Case workspace renders:
-    1. **Case Overview**: Title, Status (`Open`, `In Progress`, `Closed`), Severity, Assignee, Created Date.
-    2. **Evidence Locker**: Table of attached evidence items showing Evidence Type (Alert, Event, File, Network Flow), Identifier, Cryptographic Hash (SHA-256), Added By, and Timestamp.
-    3. **Investigation Timeline**: Consolidated chronological timeline of all attached events.
-    4. **Analyst Notes**: Markdown-capable incident notebook with audit tracking.
-- **Dataset Used**: Active alert linked to host events.
-- **Measurement Methodology**: End-to-end case escalation flow test asserting case creation, evidence foreign key constraints, and hash computation.
-- **Pass Criterion**: Case created with attached alert and event; SHA-256 evidence hash recorded; audit chain checkpoint created; case URL resolvable.
+  - Table of filesystem mutations classified by action: `CREATED`, `MODIFIED`, `DELETED`.
+  - For dropped/created files: file path, size, SHA-256 hash, and one-click artifact download.
+  - Highlighted persistence indicators (crontab entries, systemd service units, autostart scripts, shell profile modifications).
+  - Diff viewer for modified system configuration files.
+- **Dataset Used**: Sandboxed detonation runs with multi-stage droppers.
+- **Measurement Methodology**: DOM rendering audit comparing filesystem diffs against sandbox overlayfs/snapshot ground truth.
+- **Pass Criterion**: 100% of created/modified files logged; cryptographic hashes computed for all dropped artifacts; clear provenance indicating observed filesystem diffs.
 
 ---
 
-## Task 5: Isolate a Host and See Verified Enforcement
+## Task 4: Network & DNS Traffic Inspection with Real PCAP
 
-- **Analyst Intent**: Sever network connectivity to an actively compromised endpoint to stop lateral movement, and verify that the agent on the host has confirmed enforcement.
+- **Analyst Intent**: Observe network connections, DNS lookups, HTTP requests, and raw socket traffic initiated by the malware; download a true capture file for Wireshark inspection.
 - **Measurable Target**:
-  - **Action Count**: $\le 3$ actions (Select host in Hosts table, click "Isolate Host", confirm isolation modal).
-  - **Time**:
-    - `Isolation Requested` state: $< 1$ second (immediate UI and DB update).
-    - `Isolated (Enforced)` state: within 1 agent heartbeat interval ($\le 35$ seconds with default 30s heartbeat interval, or $< 5$ seconds after agent check-in).
+  - **Action Count**: 1 click (switch to "Network & Traffic" tab) + 1 click ("Download PCAP").
+  - **Time**: $< 3$ seconds to display network IOC table; instant download trigger for `.pcap`.
 - **Screen State**:
-  - Host Detail header displaying an unambiguous containment status pill:
-    - `Active / Uncontained` (normal operating state).
-    - `Isolation Requested` (command queued; displays timestamp dispatched, last agent check-in time, and a visible countdown/timer to next expected heartbeat).
-    - `Isolated (Enforced)` (agent confirmed local firewall / interface cut with agent timestamp).
-    - `Isolation Failed` (agent reported failure, displaying specific error reason).
-  - Containment event recorded with agent cryptographic verification in the audit trail.
-  - Prominent "Release Isolation" action enabled only when host is in confirmed contained state.
-- **Dataset Used**: Real or simulated local collector agent connected to backend via authenticated heartbeat loop.
-- **Measurement Methodology**: Integration test triggering isolation command, asserting immediate `isolation_requested` database state, simulating agent report receipt, and asserting transition to `enforced`.
-- **Pass Criterion**: Console never shows `enforced` until agent submits containment report; requested state displays immediately with last check-in timestamp; countdown timer active.
+  - Network connections table: timestamp, protocol, source IP/port, destination IP/port, connection state, byte counters.
+  - DNS query log: queried domain, record type, resolved IP responses, resolution latency.
+  - HTTP transaction stream: request method, URL, headers, status code, response MIME type.
+  - Prominent "Download PCAP" button serving real raw traffic captured via `tcpdump` inside the network namespace (never synthetic or reconstructed).
+- **Dataset Used**: Detonation run exhibiting outbound beaconing and DNS queries in isolated netns.
+- **Measurement Methodology**: Network event count validation and verification of downloaded PCAP headers (`0xa1b2c3d4` magic).
+- **Pass Criterion**: All network connections and DNS queries visible with timestamps; downloaded PCAP opens cleanly in tshark/Wireshark with verified packet data.
 
 ---
 
-## Task 6: Analyze a Suspicious File and Read a Verdict with Evidence
+## Task 5: Detection Rules Evaluation & ATT&CK Mapping
 
-- **Analyst Intent**: Submit an unknown executable, script, or document for static analysis and receive an evidence-backed risk verdict without synthetic certainty or heuristic inflation.
+- **Analyst Intent**: Review all detection rules triggered across static and dynamic analysis stages, understand why each rule fired, and map techniques to the MITRE ATT&CK matrix.
 - **Measurable Target**:
-  - **Static Triage**: $< 5$ seconds for file ingestion, format detection, indicator extraction, and evidence verdict.
-  - **Dynamic Analysis** (Supporting / Experimental): Bounded by explicit sandbox timeout ($\le 60$ seconds), with mandatory Analysis Fidelity Block disclosing environment limits.
+  - **Action Count**: 0 additional actions (summary card on Report Overview) or 1 click to view detailed rule match drawer.
+  - **Time**: $< 2$ seconds to inspect firing criteria for any flagged behavior.
 - **Screen State**:
-  - Sample workspace displaying:
-    1. **Verdict Block**: Evidence-bounded verdict (`clean`, `no_indicators_found_limited`, `suspicious`, `malicious`, or `insufficient_evidence`). A `malicious` verdict strictly requires at least one authoritative threat signal (matched YARA signature, decoded C2 configuration, known threat hash).
-    2. **Analysis Fidelity Disclosures**: Discloses format identification, parser coverage, worker subprocess isolation status, and explicit list of "What could not be analyzed".
-    3. **Extracted Indicators**: Deduped URLs, IPs, domains, and cryptographic hashes with physical location rankings (`.text`, `.data`, `.rsrc`, overlay) and provenance tags.
-    4. **Format Structure**: Deep format inspector (PE sections, ELF segments, script deobfuscation stages, Office macros, PDF objects) and hex view.
-- **Dataset Used**: Corpus of clean system binaries (`/bin/ls`, `/usr/bin/python3`), synthetic threat samples, and unknown/random data blobs.
-- **Measurement Methodology**: Automated API timing test measuring time from file upload POST to static report return; verdict regression test against clean binaries.
-- **Pass Criterion**: Static analysis finishes in $< 5$ seconds; clean binaries return `no_indicators_found_limited` with 0 false positives; random data returns `insufficient_evidence`; fidelity disclosures populated.
+  - Fired rules table categorized by engine: Static YARA, Behavioral Event Stream, Capability (capa).
+  - Per-rule card detailing: Rule ID, severity (Critical, High, Medium, Low), MITRE ATT&CK technique IDs and names, plain-language description.
+  - Triggering evidence panel: exact event tokens, offsets, or syscall parameters that satisfied the rule logic, with `source` provenance clearly tagged (`traced`, `polled`, `observed-by-hook`).
+- **Dataset Used**: Analysis runs across benign utilities and multi-stage malware samples.
+- **Measurement Methodology**: Audit of rule evaluation engine execution time and UI detail drawer render latency.
+- **Pass Criterion**: All triggered rules listed with severity and ATT&CK mappings; zero silent false-positive suppressions; triggering events explicitly linked to the analysis event stream.
 
 ---
 
-## Task 7: Create a Rule from an Event and See Its Historical Matches
+## Task 6: Author, Test, and Backtest Custom Detection Rules
 
-- **Analyst Intent**: Rapidly author a custom detection rule directly from an observed adversary event in the telemetry stream and test its efficacy against historical event data before activating it.
+- **Analyst Intent**: Create custom behavioral YAML rules or YARA signatures, validate syntax, and test them against historical sample runs in the library before production deployment.
 - **Measurable Target**:
-  - **Action Count**: $\le 4$ actions (Click "Create Rule from Event" in event drawer, refine pre-populated matching condition, click "Run Backtest", save rule).
-  - **Time**: $< 20$ seconds to author and backtest; $< 3$ seconds backtest query latency across 100,000 historical events.
+  - **Action Count**: $\le 3$ clicks (Open Rules Editor -> Paste/Edit -> Click "Backtest").
+  - **Time**: $< 10$ seconds to run backtest against existing sample library.
 - **Screen State**:
-  - Rule creation drawer pre-populating rule fields from selected event (e.g. process name, command-line regex, parent process, target file path).
-  - Syntax validator checking detection syntax in real-time.
-  - "Backtest" button executing search against historical ingested events.
-  - Match count result banner: `Backtest matched X events across Y hosts in the last 30 days`, with a preview table of matching records to confirm rule precision and false-positive risk before activation.
-- **Dataset Used**: 100,000 historical event records spanning 30 days.
-- **Measurement Methodology**: Automated backtest performance benchmark measuring query execution time and verifying result record preview.
-- **Pass Criterion**: Backtest completes in $< 3$ seconds on 100k events; preview displays exact matching historical rows; rule saves with `testing` or `active` status.
+  - In-browser rule editor with YAML/YARA syntax validation, schema linting, and auto-completion.
+  - Backtest results pane displaying: hit count, matching sample IDs, execution run timestamps, and matched event tokens.
+  - Single-click action to save and activate the rule in the active rule set.
+- **Dataset Used**: Existing sample library containing historical analysis event streams.
+- **Measurement Methodology**: Time from backtest submission to completion report render across sample archive.
+- **Pass Criterion**: Rule validates against schema; backtest returns accurate matches without false positives on known-clean baseline samples.
 
 ---
 
-## Task 8: Export a Report
+## Task 7: Live Process Inspection & Triage (Background Process Flagging)
 
-- **Analyst Intent**: Generate an audit-ready, shareable incident report or static file analysis brief for stakeholders, team leads, or regulatory recordkeeping.
+- **Analyst Intent**: Snapshot live background processes on the host, evaluate static and behavioral heuristics to flag suspicious processes, and inspect process memory and open sockets.
 - **Measurable Target**:
-  - **Action Count**: $\le 2$ actions (Click "Export Report" on Case or Sample page, select format PDF or JSON, confirm).
-  - **Time**: $< 5$ seconds to generate and trigger browser file download.
+  - **Action Count**: 1 click ("Refresh Process Snapshot") or search input to filter.
+  - **Time**: $< 5$ seconds to snapshot live processes, evaluate heuristics, and display flagged list.
 - **Screen State**:
-  - Modal or dropdown offering export formats: `PDF (Executive & Forensic Brief)` or `JSON (Structured Case Bundle)`.
-  - Generated report contains: Case summary, timeline of key events, host identity and attribution, attached evidence table with SHA-256 hashes, remediation actions taken (e.g. isolation status), and cryptographic audit chain checkpoint references.
-  - No marketing or decorative filler; strictly data, timestamps, hashes, and analyst notes.
-- **Dataset Used**: Active case with $\ge 5$ evidence items and timeline entries.
-- **Measurement Methodology**: Automated API test checking `/investigations/{id}/export/pdf` and `/investigations/{id}/export/json` response times and PDF/JSON structural validation.
-- **Pass Criterion**: Export finishes in $< 5$ seconds; PDF is valid binary document; JSON parses with all evidence hashes; audit log records export event.
+  - Dense live process table: PID, PPID, executable path, command line, user/UID, CPU %, Memory (RSS), open sockets.
+  - Suspicious process highlights: badge indicating risk score, flagged heuristic reasons (e.g., hidden executable, unlinked binary, suspicious network listening port, masquerading process name).
+  - Process detail drawer: memory map, environment variables, loaded shared libraries, and safe kill action.
+- **Dataset Used**: Live host system process snapshot with test benign and anomalous background processes.
+- **Measurement Methodology**: psutil capture latency and heuristic evaluation execution time measurement.
+- **Pass Criterion**: Accurate host process table rendered in $< 5$ seconds; suspicious processes prominently highlighted; kill action prompts confirmation and cleanly dispatches signal.
+
+---
+
+## Task 8: Structured Analysis Report Export (JSON & PDF)
+
+- **Analyst Intent**: Export a comprehensive, self-contained forensic report of an analysis run for archiving, sharing with threat intel platforms, or executive reporting.
+- **Measurable Target**:
+  - **Action Count**: 1 click ("Export" -> select JSON or PDF).
+  - **Time**: $< 5$ seconds to generate and deliver the complete report file.
+- **Screen State**:
+  - Export menu offering:
+    1. **Structured JSON**: Full analysis event stream, static metadata, rule matches, and IOC list conforming to the Analysis Event Model schema.
+    2. **Executive & Technical PDF**: Formatted document with sample identification strip, static entropy visual, process execution timeline, network connections, and triggered rule details.
+  - Strict provenance attribution on every section: labeled as `traced`, `polled`, `observed-by-hook`, or `static-extracted`.
+- **Dataset Used**: Completed analysis run with rich static and dynamic telemetry.
+- **Measurement Methodology**: Generation latency measurement and schema validation of exported JSON; PDF layout verification.
+- **Pass Criterion**: JSON validates against Analysis Event Model schema; PDF renders all tables, hashes, and ATT&CK matrices cleanly without layout overflow.

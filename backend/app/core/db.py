@@ -47,67 +47,6 @@ CREATE TABLE IF NOT EXISTS runs (
 --
 -- Declared BEFORE `alerts` (not at the schema tail like the other P0 tables):
 -- alerts carries an `investigation_id REFERENCES investigations(id)`, and the
--- Postgres runtime executes the translated DDL in declaration order — PG
--- requires a FK target to exist when the referencing table is created,
--- while SQLite resolves FKs lazily. Definition order here must therefore
--- satisfy both engines.
-CREATE TABLE IF NOT EXISTS investigations (
-    id TEXT PRIMARY KEY,
-    title TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'created'
-        CHECK(status IN ('created', 'triage', 'active', 'contained', 'resolved', 'closed')),
-    severity TEXT,
-    conclusion TEXT,
-    created_by TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT,
-    closed_at TEXT
-);
-
-CREATE TABLE IF NOT EXISTS investigation_notes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    investigation_id TEXT NOT NULL REFERENCES investigations(id),
-    note TEXT NOT NULL,
-    actor TEXT NOT NULL,
-    created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS investigation_tags (
-    investigation_id TEXT NOT NULL REFERENCES investigations(id),
-    tag TEXT NOT NULL,
-    PRIMARY KEY (investigation_id, tag)
-);
-
--- Evidence references are pointers, not copies: an investigation links to
--- artifacts/runs/hosts/iocs/campaigns by id, never duplicates their data.
--- UNIQUE(investigation_id, ref_type, ref_id) keeps attach/detach idempotent.
-CREATE TABLE IF NOT EXISTS investigation_refs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    investigation_id TEXT NOT NULL REFERENCES investigations(id),
-    ref_type TEXT NOT NULL
-        CHECK(ref_type IN ('artifact', 'run', 'host', 'ioc', 'campaign')),
-    ref_id TEXT NOT NULL,
-    added_at TEXT NOT NULL,
-    UNIQUE (investigation_id, ref_type, ref_id)
-);
-
-CREATE TABLE IF NOT EXISTS investigation_tasks (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    investigation_id TEXT NOT NULL REFERENCES investigations(id),
-    title TEXT NOT NULL,
-    category TEXT NOT NULL DEFAULT 'triage'
-        CHECK(category IN ('containment', 'eradication', 'evidence_collection', 'remediation', 'triage')),
-    status TEXT NOT NULL DEFAULT 'todo'
-        CHECK(status IN ('todo', 'in_progress', 'completed', 'cancelled')),
-    priority TEXT NOT NULL DEFAULT 'medium'
-        CHECK(priority IN ('low', 'medium', 'high', 'critical')),
-    assignee TEXT,
-    due_at TEXT,
-    completed_at TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT
-);
-
 CREATE TABLE IF NOT EXISTS technique_validations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     test_id TEXT NOT NULL,
@@ -155,7 +94,7 @@ CREATE TABLE IF NOT EXISTS alerts (
         CHECK(disposition IS NULL OR disposition IN
             ('false-positive', 'confirmed-malicious', 'benign', 'watchlisted', 'escalated')),
     seen_at TEXT,
-    investigation_id TEXT REFERENCES investigations(id),
+    investigation_id TEXT,
     evidence_event_ids TEXT DEFAULT '[]',
     rule_condition TEXT,
     occurrence_count INTEGER DEFAULT 1,
@@ -320,15 +259,6 @@ CREATE TABLE IF NOT EXISTS rule_fp (
     last_fp_at TEXT NOT NULL
 );
 
--- Latest live-system snapshot per host (processes + listening ports), shipped
--- by the collectors on an interval while an agent is running. Payload is the
--- JSON snapshot; the webapp renders it as the "running now" view.
-CREATE TABLE IF NOT EXISTS host_snapshots (
-    host_id TEXT PRIMARY KEY,
-    payload TEXT NOT NULL,
-    collected_at TEXT NOT NULL
-);
-
 -- Agent liveness: the collector pings every ~60s (HEARTBEAT_INTERVAL) so the
 -- fleet view can show last-seen/uptime per host and flag hosts that went
 -- silent — independent of whether the host shipped events in that window.
@@ -368,49 +298,6 @@ CREATE TABLE IF NOT EXISTS agent_nonces (
     seen_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_agent_nonces_seen_at ON agent_nonces(seen_at);
-
--- Active host containment & remediation: stores isolation lifecycle and queued actions.
-CREATE TABLE IF NOT EXISTS host_containment (
-    host_id TEXT PRIMARY KEY,
-    isolated INTEGER NOT NULL DEFAULT 0,
-    isolated_at TEXT,
-    isolated_by TEXT,
-    reason TEXT,
-    pending_actions TEXT NOT NULL DEFAULT '[]',
-    containment_state TEXT NOT NULL DEFAULT 'released',
-    enforcement_mode TEXT NOT NULL DEFAULT 'none',
-    probe_details TEXT,
-    deadman_expires_at TEXT,
-    updated_at TEXT NOT NULL
-);
-
--- Proper per-action queue for endpoint containment and remediation actions
-CREATE TABLE IF NOT EXISTS host_actions (
-    action_id TEXT PRIMARY KEY,
-    host_id TEXT NOT NULL,
-    action_type TEXT NOT NULL,
-    target TEXT,
-    payload TEXT NOT NULL DEFAULT '{}',
-    status TEXT NOT NULL DEFAULT 'pending',
-    timeout_seconds INTEGER NOT NULL DEFAULT 300,
-    result TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_host_actions_host_status ON host_actions(host_id, status);
-
--- Per-host behavioral baseline (roadmap 4.x): what binaries execute and which
--- IPs a host talks to, learned from its own telemetry. The learner upserts
--- counts on every ingested batch; the deviation check flags first-time
--- process/IPs once the baseline is established.
-CREATE TABLE IF NOT EXISTS host_baselines (
-    host_id TEXT NOT NULL,
-    kind TEXT NOT NULL CHECK(kind IN ('process', 'net')),
-    value TEXT NOT NULL,
-    count INTEGER NOT NULL DEFAULT 1,
-    last_seen TEXT NOT NULL,
-    PRIMARY KEY (host_id, kind, value)
-);
 
 -- Watchlist live-alerting: first-seen-per-run dedup. A (run, ioc) row is
 -- written the first time the IOC appears; ingestion only fires the webhook /
@@ -1147,6 +1034,9 @@ def _migrate_audit_log_hash_chain(conn: sqlite3.Connection) -> None:
 
 def _migrate_host_containment_lifecycle(conn: sqlite3.Connection) -> None:
     """Idempotent: add lifecycle state and verification columns to host_containment."""
+    existing_tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    if "host_containment" not in existing_tables:
+        return
     cols = _column_names(conn, "host_containment")
     if "containment_state" not in cols:
         conn.execute("ALTER TABLE host_containment ADD COLUMN containment_state TEXT NOT NULL DEFAULT 'released'")
@@ -1178,6 +1068,30 @@ def _migrate_host_actions(conn: sqlite3.Connection) -> None:
         """
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_host_actions_host_status ON host_actions(host_id, status)")
+    conn.commit()
+
+
+def _migrate_scope_reset_remove_soc_tables(conn: sqlite3.Connection) -> None:
+    """Step 1 Scope Reset: Drop parked SOC and fleet tables from active database.
+
+    Drops orphaned tables: investigations, investigation_notes,
+    investigation_tags, investigation_refs, investigation_tasks,
+    technique_validations, host_containment, host_actions,
+    host_snapshots, host_baselines.
+    """
+    tables_to_drop = [
+        "investigation_tasks",
+        "investigation_refs",
+        "investigation_tags",
+        "investigation_notes",
+        "investigations",
+        "host_containment",
+        "host_actions",
+        "host_snapshots",
+        "host_baselines",
+    ]
+    for tbl in tables_to_drop:
+        conn.execute(f"DROP TABLE IF EXISTS {tbl}")
     conn.commit()
 
 
@@ -1242,6 +1156,7 @@ ORDERED_MIGRATIONS = [
     (29, "audit_log_hash_chain", _migrate_audit_log_hash_chain, "Drop audit_log triggers and chain columns."),
     (30, "host_containment_lifecycle", _migrate_host_containment_lifecycle, "Rebuild host_containment table."),
     (31, "host_actions", _migrate_host_actions, "Drop host_actions table."),
+    (32, "scope_reset_remove_soc_tables", _migrate_scope_reset_remove_soc_tables, "Recreate dropped SOC and fleet tables."),
 ]
 
 

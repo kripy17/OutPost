@@ -1161,7 +1161,7 @@ export default function SettingsPage() {
             Settings &amp; Audit <span className="font-normal text-text-muted">— preferences, integrations &amp; governance</span>
           </>
         }
-        lede="Tune theme styling and telemetry settings, manage threat-intel API credentials, configure alert webhooks, and inspect the tamper-evident audit log."
+        lede="Tune theme styling and telemetry settings, manage threat-intel API credentials, configure alert webhooks, and inspect the system audit log."
       />
 
       {/* Main Tab Switcher */}
@@ -1193,7 +1193,7 @@ export default function SettingsPage() {
       {activeTab === "audit" ? (
         <div className="rounded-xl border border-border-subtle bg-bg-surface p-8 text-center text-text-muted">
           <p className="font-medium text-text-primary">System Audit Log</p>
-          <p className="mt-1 text-xs">The tamper-evident audit chain is parked for the future forensics platform.</p>
+          <p className="mt-1 text-xs">The cryptographic audit chain is parked for the future forensics platform.</p>
         </div>
       ) : (
         <>

@@ -17,12 +17,16 @@ from .banners import show_banner
 console = Console()
 
 
-def proc_label(ev: dict) -> str:
+def proc_label(ev: Any) -> str:
     """A process's display identity, mirroring the backend's fallback:
     `process_name`, else the resolved `exe_path` basename, else '?'.
 
     The API ships exe_path on every event (auditd exe= / Sysmon Image), so a
     nameless row renders its real binary instead of the anonymous '?'."""
+    if hasattr(ev, "model_dump"):
+        ev = ev.model_dump()
+    elif not isinstance(ev, dict):
+        ev = getattr(ev, "__dict__", {})
     name = ev.get("process_name")
     if not name:
         exe = (ev.get("exe_path") or "").strip()
@@ -138,7 +142,11 @@ def render_run_table(runs: list[dict]) -> Table:
     return table
 
 
-def _add_tree_children(tree: Tree, node: dict, recon_pids: set[int]) -> None:
+def _add_tree_children(tree: Tree, node: Any, recon_pids: set[int]) -> None:
+    if hasattr(node, "model_dump"):
+        node = node.model_dump()
+    elif not isinstance(node, dict):
+        node = getattr(node, "__dict__", {})
     label = f"[bold]{proc_label(node)}[/bold]"
     pid = node.get("pid")
     if pid is not None:

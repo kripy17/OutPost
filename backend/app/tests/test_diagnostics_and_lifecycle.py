@@ -46,7 +46,7 @@ def test_diagnostics_endpoint_contract(client):
 
     # Evidence integrity
     assert "audit_chain_length" in data["evidence_integrity"]
-    assert data["evidence_integrity"]["status"] == "tamper-evident SHA-256 chain verified"
+    assert data["evidence_integrity"]["status"] == "standard audit log (cryptographic chain parked)"
 
 
 def test_support_bundle_export_contract(client):

@@ -23,7 +23,7 @@ export interface NavItem {
 
 export const NAV_ITEMS: NavItem[] = [
   { name: "Samples", href: "/samples", icon: Binary, keyChord: "g s" },
-  { name: "Live Processes", href: "/monitor", icon: Activity, keyChord: "g p" },
+  { name: "Detonation Cockpit", href: "/monitor", icon: Activity, keyChord: "g d" },
   { name: "Rules", href: "/rules", icon: FileCode, keyChord: "g r" },
   { name: "Settings", href: "/settings", icon: SettingsIcon, keyChord: "g ," },
 ];
@@ -42,7 +42,7 @@ export const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => 
     "ctrl+k": () => setPaletteOpen(true),
     "?": () => setShortcutsOpen(true),
     "g s": () => navigate("/samples"),
-    "g p": () => navigate("/monitor"),
+    "g d": () => navigate("/monitor"),
     "g r": () => navigate("/rules"),
     "g ,": () => navigate("/settings"),
   });

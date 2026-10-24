@@ -1,5 +1,13 @@
 # Architecture & Repo Structure
 
+> [!WARNING]
+> **STALE ARCHITECTURE DOCUMENTATION (PENDING STEPS 2–8 REWRITE)**
+> This document describes the legacy fleet/SOC architecture (auditd/sysmon collectors, alerts queue, incident investigations, campaigns).
+> OutPost has been re-scoped to a **Static and Dynamic Malware Analysis Workbench**.
+> Fleet and host-forensic components are parked on branch `forensics-platform`.
+> Core malware analysis tasks are defined in [analyst-tasks.md](file:///home/kripy/.gemini/antigravity/worktrees/OutPost/inspect_project_state/docs/analyst-tasks.md).
+> This document will be completely updated across Steps 2 through 8.
+
 ## System Overview
 
 ```

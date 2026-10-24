@@ -26,10 +26,6 @@ from ..core.db import _column_names, get_connection, init_db
 from ..models import run as run_store
 
 NEW_TABLES = {
-    "investigations",
-    "investigation_notes",
-    "investigation_tags",
-    "investigation_refs",
     "iocs",
     "ioc_provenance",
     "ioc_findings",
@@ -346,19 +342,6 @@ def test_init_db_is_idempotent_on_fresh_db():
 # ---------------------------------------------------------------------------
 
 
-def test_invalid_investigation_status_rejected():
-    with _isolated_db() as conn:
-        with pytest.raises(sqlite3.IntegrityError):
-            conn.execute(
-                "INSERT INTO investigations (id, title, status, created_at) "
-                "VALUES ('inv-1', 'x', 'bogus', '2026-08-17T00:00:00+00:00')"
-            )
-        conn.execute(
-            "INSERT INTO investigations (id, title, status, created_at) "
-            "VALUES ('inv-1', 'x', 'active', '2026-08-17T00:00:00+00:00')"
-        )
-
-
 def test_invalid_ioc_type_and_disposition_rejected():
     with _isolated_db() as conn:
         with pytest.raises(sqlite3.IntegrityError):
@@ -450,54 +433,6 @@ def test_iocs_unique_value_type():
 # ---------------------------------------------------------------------------
 # E. Foreign keys
 # ---------------------------------------------------------------------------
-
-
-def test_investigation_references_work():
-    with _isolated_db() as conn:
-        conn.execute(
-            "INSERT INTO investigations (id, title, status, created_at) "
-            "VALUES ('inv-fk', 'Case', 'active', '2026-08-17T00:00:00+00:00')"
-        )
-        conn.execute(
-            "INSERT INTO investigation_notes (investigation_id, note, actor, created_at) "
-            "VALUES ('inv-fk', 'note', 'analyst', '2026-08-17T00:00:00+00:00')"
-        )
-        conn.execute(
-            "INSERT INTO investigation_tags (investigation_id, tag) VALUES ('inv-fk', 'tag1')"
-        )
-        conn.execute(
-            "INSERT INTO investigation_refs (investigation_id, ref_type, ref_id, added_at) "
-            "VALUES ('inv-fk', 'run', 'some-run', '2026-08-17T00:00:00+00:00')"
-        )
-        # Attach/detach stays idempotent — duplicate ref is rejected.
-        with pytest.raises(sqlite3.IntegrityError):
-            conn.execute(
-                "INSERT INTO investigation_refs (investigation_id, ref_type, ref_id, added_at) "
-                "VALUES ('inv-fk', 'run', 'some-run', '2026-08-17T00:00:00+00:00')"
-            )
-        # Orphaned children are rejected.
-        with pytest.raises(sqlite3.IntegrityError):
-            conn.execute(
-                "INSERT INTO investigation_refs (investigation_id, ref_type, ref_id, added_at) "
-                "VALUES ('missing', 'run', 'r', '2026-08-17T00:00:00+00:00')"
-            )
-
-
-def test_alert_investigation_fk():
-    with _isolated_db() as conn:
-        conn.execute(
-            "INSERT INTO runs (run_id, sample_name, platform, session_type, kind, source, started_at) "
-            "VALUES ('fk-run', 'f.bin', 'windows', 'analysis', 'analysis_job', 'cli', '2026-08-17T00:00:00+00:00')"
-        )
-        conn.execute(
-            "INSERT INTO investigations (id, title, status, created_at) "
-            "VALUES ('inv-a', 'Case A', 'triage', '2026-08-17T00:00:00+00:00')"
-        )
-        aid = _insert_alert(conn, "fk-run", investigation_id="inv-a")
-        row = conn.execute("SELECT investigation_id FROM alerts WHERE id = ?", (aid,)).fetchone()
-        assert row["investigation_id"] == "inv-a"
-        with pytest.raises(sqlite3.IntegrityError):
-            _insert_alert(conn, "fk-run", investigation_id="inv-nope")
 
 
 def test_ioc_provenance_and_findings_fk():

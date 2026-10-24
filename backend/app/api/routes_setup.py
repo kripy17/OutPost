@@ -100,10 +100,13 @@ def reset_store(body: ResetIn | None = None) -> dict:
             # IOC linkage first — ioc_findings has an FK into alerts, and
             # provenance must not outlive the evidence it points at (P3.1).
             counts.update(iocs_store.purge_for_runs(conn, doomed))
+            existing_tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
             for table in ("investigation_refs",):
-                conn.execute(f"DELETE FROM {table} WHERE ref_type = 'run' AND ref_id IN ({marks})", doomed)
+                if table in existing_tables:
+                    conn.execute(f"DELETE FROM {table} WHERE ref_type = 'run' AND ref_id IN ({marks})", doomed)
             for table in ("analysis_jobs", "rule_suppressions", "alerts", "run_notes", "run_allowlist", "watchlist_hits"):
-                counts[f"deleted_{table}"] = conn.execute(f"DELETE FROM {table} WHERE run_id IN ({marks})", doomed).rowcount
+                if table in existing_tables:
+                    counts[f"deleted_{table}"] = conn.execute(f"DELETE FROM {table} WHERE run_id IN ({marks})", doomed).rowcount
             counts["deleted_events"] = conn.execute(f"DELETE FROM events WHERE run_id IN ({marks})", doomed).rowcount
             counts["deleted_runs"] = conn.execute(f"DELETE FROM runs WHERE run_id IN ({marks})", doomed).rowcount
 
