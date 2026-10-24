@@ -32,12 +32,6 @@ def onboard(body: OnboardIn) -> dict:
     from io import StringIO
 
     if body.choice == "demo":
-        # Same seed the CLI runs — in-process, stdout suppressed so the
-        # server log doesn't fill with the seed's banner lines.
-        from ..seed_demo import main as seed_demo_main
-
-        with redirect_stdout(StringIO()):
-            seed_demo_main()
         demo_mode = "1"
     else:
         demo_mode = "0"

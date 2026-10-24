@@ -94,23 +94,7 @@ def test_custom_rule_backtest(client):
     assert data["sample_matches"][0]["process_name"] == "curl"
 
 
-def test_footprint_target_query(client):
-    # Query an IP target with mock=1
-    resp = client.get("/footprint/target/query?target=198.51.100.44&mock=1")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["sample"]["name"] == "198.51.100.44"
-    assert len(data["seed_ips"]) == 1
-    assert data["seed_ips"][0]["ip"] == "198.51.100.44"
-    assert len(data["passive"]["resolutions"]) > 0
-    assert len(data["passive"]["passive_dns"]) > 0
 
-    # Query a domain target with mock=1
-    resp = client.get("/footprint/target/query?target=c2-tracker.org&mock=1")
-    assert resp.status_code == 200
-    domain_data = resp.json()
-    assert domain_data["sample"]["name"] == "c2-tracker.org"
-    assert len(domain_data["seed_ips"]) >= 1
 
 
 def test_sigma_bundle_import_and_export(client):

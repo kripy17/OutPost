@@ -18,7 +18,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config, db_pg
+from . import config
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
@@ -1190,7 +1190,7 @@ def get_connection():
     config.DATABASE_PATH.
     """
     if config.DATABASE_URL:
-        return db_pg.pg_connection()
+        raise RuntimeError("Postgres runtime is parked. OutPost operates on SQLite.")
     Path(config.DATABASE_PATH).parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(config.DATABASE_PATH)
     conn.row_factory = sqlite3.Row
@@ -1350,8 +1350,7 @@ def init_db() -> None:
     ALTER migrations entirely.
     """
     if config.DATABASE_URL:
-        db_pg.pg_init_db()
-        return
+        raise RuntimeError("Postgres runtime is parked. OutPost operates on SQLite.")
     with get_connection() as conn:
         conn.executescript(SCHEMA)
         apply_migrations(conn)

@@ -3693,19 +3693,18 @@ def evaluate_batch(conn: sqlite3.Connection, run_id: str, events: list[dict]) ->
         fire(chain_alert)
 
     # Baseline anomalies (roadmap 4.x) — the anomaly layer under the rule
-    # engine: learn what this host normally executes/talks to from its own
-    # telemetry, then flag first-time observations once the baseline is
-    # established (BASELINE_MIN_EVENTS). Check-then-learn ordering means each
-    # novel item fires exactly once — it's not in the baseline when the batch
-    # arrives, we alert, we learn it, and the next batch sees it as known.
-    from ..services import baseline as baseline_svc
+    # engine (parked with fleet & agents).
+    try:
+        from ..services import baseline as baseline_svc
 
-    for host, kind, value, ev in baseline_svc.check_deviations(
-        conn, events, min_events=int(t["BASELINE_MIN_EVENTS"])
-    ):
-        if not _alert_exists(conn, run_id, "baseline-anomaly", value):
-            fire(baseline_svc.build_alert(run_id, host, kind, value, ev), ev)
-    baseline_svc.learn(conn, events)
+        for host, kind, value, ev in baseline_svc.check_deviations(
+            conn, events, min_events=int(t["BASELINE_MIN_EVENTS"])
+        ):
+            if not _alert_exists(conn, run_id, "baseline-anomaly", value):
+                fire(baseline_svc.build_alert(run_id, host, kind, value, ev), ev)
+        baseline_svc.learn(conn, events)
+    except ImportError:
+        pass
 
     return new_alerts
 

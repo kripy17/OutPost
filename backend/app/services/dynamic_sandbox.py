@@ -174,16 +174,6 @@ def get_available_isolation_drivers() -> list[dict[str, Any]]:
     return drivers
 
 
-def _format_pcap_log_line(pcap_art: dict[str, Any]) -> str:
-    """Format an honest log line describing synthetic PCAP metadata generation."""
-    pkt_count = pcap_art.get("packet_count", 0)
-    size_b = pcap_art.get("size_bytes", 0)
-    return (
-        f"[OutPost Network Synthesizer] Generated reconstructed traffic.pcap with {pkt_count} "
-        f"synthetic packet(s) ({size_b} B) from event metadata (reconstructed, not wire capture)"
-    )
-
-
 def _build_sandbox_rlimits(timeout_seconds: int = 10, memory_limit_mb: int = 1024, max_procs: int = 128, is_wine: bool = False):
     """Build preexec_fn for POSIX subprocess execution enforcing CPU, memory, and file size limits.
 
@@ -542,15 +532,9 @@ async def execute_bytes_sandbox(
 
         # Extract persistent dropped artifacts before cleaning up
         dropped_artifacts = sandbox_forensics.extract_dropped_artifacts(sandbox_dir, target_file, run_id)
-        pcap_art = sandbox_forensics.generate_pcap_capture(events_batch, None, run_id)
-        if pcap_art:
-            dropped_artifacts.append(pcap_art)
-            await _emit({"type": "artifact", "data": pcap_art})
-            await _emit({"type": "log", "line": _format_pcap_log_line(pcap_art)})
         for art in dropped_artifacts:
-            if art.get("filename") != "traffic.pcap":
-                await _emit({"type": "artifact", "data": art})
-                await _emit({"type": "log", "line": f"[OutPost Artifact Extractor] Captured dropped file: {art['name']} ({art['size_bytes']} B)"})
+            await _emit({"type": "artifact", "data": art})
+            await _emit({"type": "log", "line": f"[OutPost Artifact Extractor] Captured dropped file: {art['name']} ({art['size_bytes']} B)"})
             timeline_events.append({
                 "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 "elapsed_ms": int((time.monotonic() - start_mono) * 1000),
@@ -959,8 +943,8 @@ async def execute_simulation_scenario_live(scenario_id: str) -> dict[str, Any]:
         )
 
     # Capture pre-detonation baseline snapshot
-    from .host_forensics import capture_baseline_snapshot, compute_snapshot_diff
     try:
+        from .host_forensics import capture_baseline_snapshot
         capture_baseline_snapshot()
     except Exception:
         pass
@@ -1108,6 +1092,7 @@ async def execute_simulation_scenario_live(scenario_id: str) -> dict[str, Any]:
     # Compute post-detonation differential delta
     detonation_delta = None
     try:
+        from .host_forensics import compute_snapshot_diff
         detonation_delta = compute_snapshot_diff()
     except Exception:
         pass
@@ -1577,8 +1562,8 @@ async def execute_sample_detonation(
         )
 
     # Capture baseline before detonation
-    from .host_forensics import capture_baseline_snapshot, compute_snapshot_diff
     try:
+        from .host_forensics import capture_baseline_snapshot
         capture_baseline_snapshot()
     except Exception:
         pass
@@ -1598,6 +1583,7 @@ async def execute_sample_detonation(
     # Compute post-detonation differential delta
     detonation_delta = None
     try:
+        from .host_forensics import compute_snapshot_diff
         detonation_delta = compute_snapshot_diff()
     except Exception:
         pass
@@ -1652,9 +1638,7 @@ async def execute_sample_detonation(
                     "action": "sinkholed",
                 })
 
-    pcap_artifact = sandbox_forensics.generate_pcap_capture(events, sinkhole_traffic, run_id)
-    if pcap_artifact and not any(a.get("filename") == "traffic.pcap" for a in dropped_artifacts):
-        dropped_artifacts.append(pcap_artifact)
+    pcap_artifact = None
 
     terminal_logs: list[str] = [
         f"[OutPost Dynamic Sandbox] Detonating sample '{sample_name}' (ID: {sample_id})",
@@ -1673,8 +1657,6 @@ async def execute_sample_detonation(
         terminal_logs.append(f"[OutPost Artifact Extractor] Captured {len(dropped_artifacts)} dropped file(s).")
     if sinkhole_traffic:
         terminal_logs.append(f"[OutPost C2 Sinkhole] Intercepted {len(sinkhole_traffic)} network beacon/DNS requests.")
-    if pcap_artifact:
-        terminal_logs.append(_format_pcap_log_line(pcap_artifact))
 
     with db_session() as conn:
         for ev in events:

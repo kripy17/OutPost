@@ -18,7 +18,6 @@ import {
 } from "react";
 import { NavLink } from "react-router-dom";
 import CommandPalette from "./CommandPalette";
-import { ThemePalettePopover } from "./ThemePalettePopover";
 import { getAgents, getAlertQueue, getHealth, getMeta, getRecentAlerts, getRuns, listInvestigations } from "../lib/api";
 import { useEventStream } from "../lib/useEventStream";
 import { Icon, IconMenu, type IconName } from "./Icon";
@@ -611,7 +610,13 @@ export default function Nav() {
           <CommandButton onClick={openPalette} collapsed={railCollapsed} makeTip={railCollapsed ? makeTip : undefined} />
           <div className={`flex items-center gap-2 rounded-lg border border-border-subtle ${railCollapsed ? "flex-col bg-bg-elevated/30 p-1.5" : "bg-bg-elevated/30 px-2.5 py-2"}`}>
             <StatusCluster collapsed={railCollapsed} makeTip={railCollapsed ? makeTip : undefined} />
-            <ThemePalettePopover theme={theme} toggleTheme={toggle} />
+            <button
+              onClick={toggle}
+              className="flex h-7 w-7 items-center justify-center rounded-md border border-border-subtle bg-bg-surface text-text-muted hover:text-text-primary"
+              title="Toggle theme"
+            >
+              <Icon name={theme === "dark" ? "sun" : "moon"} size={13} />
+            </button>
           </div>
         </footer>
       </aside>
@@ -633,7 +638,13 @@ export default function Nav() {
             <span className="flex items-center gap-1 text-[11px] text-text-faint">
               <StatusCluster compact />
             </span>
-            <ThemePalettePopover theme={theme} toggleTheme={toggle} />
+            <button
+              onClick={toggle}
+              className="flex h-7 w-7 items-center justify-center rounded-md border border-border-subtle bg-bg-surface text-text-muted hover:text-text-primary"
+              title="Toggle theme"
+            >
+              <Icon name={theme === "dark" ? "sun" : "moon"} size={13} />
+            </button>
           </div>
         </div>
       </header>

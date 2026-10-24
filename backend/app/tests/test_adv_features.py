@@ -2,7 +2,6 @@ from fastapi.testclient import TestClient
 
 from ..core.db import db_session
 from ..main import app
-from ..models import investigation as inv_store
 from ..services.dynamic_sandbox import extract_c2_sinkhole_events, extract_syscalls_from_trace
 
 client = TestClient(app)
@@ -43,15 +42,4 @@ def test_rule_backtest_endpoint():
     assert "estimated_fp_risk" in data
 
 
-def test_investigation_synthesize_endpoint():
-    with db_session() as conn:
-        inv = inv_store.create(conn, "Advanced Threat Campaign Investigation", "analyst", ["malware", "apt"])
-        inv_id = inv["id"]
 
-    resp = client.post(f"/investigations/{inv_id}/synthesize")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["investigation_id"] == inv_id
-    assert "executive_summary" in data
-    assert "remediation_checklist" in data
-    assert len(data["remediation_checklist"]) > 0

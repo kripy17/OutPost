@@ -2,10 +2,7 @@ import React, { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Command } from "cmdk";
 import {
-  ShieldAlert,
   Activity,
-  Server,
-  FolderLock,
   Binary,
   FileCode,
   Settings as SettingsIcon,
@@ -25,11 +22,8 @@ export interface NavItem {
 }
 
 export const NAV_ITEMS: NavItem[] = [
-  { name: "Alerts", href: "/v2/alerts", icon: ShieldAlert, keyChord: "g a" },
-  { name: "Events", href: "/events", icon: Activity, keyChord: "g e" },
-  { name: "Hosts", href: "/hosts", icon: Server, keyChord: "g h" },
-  { name: "Cases", href: "/cases", icon: FolderLock, keyChord: "g c" },
   { name: "Samples", href: "/samples", icon: Binary, keyChord: "g s" },
+  { name: "Live Processes", href: "/monitor", icon: Activity, keyChord: "g p" },
   { name: "Rules", href: "/rules", icon: FileCode, keyChord: "g r" },
   { name: "Settings", href: "/settings", icon: SettingsIcon, keyChord: "g ," },
 ];
@@ -47,11 +41,8 @@ export const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => 
     "meta+k": () => setPaletteOpen(true),
     "ctrl+k": () => setPaletteOpen(true),
     "?": () => setShortcutsOpen(true),
-    "g a": () => navigate("/v2/alerts"),
-    "g e": () => navigate("/events"),
-    "g h": () => navigate("/hosts"),
-    "g c": () => navigate("/cases"),
     "g s": () => navigate("/samples"),
+    "g p": () => navigate("/monitor"),
     "g r": () => navigate("/rules"),
     "g ,": () => navigate("/settings"),
   });
@@ -131,15 +122,6 @@ export const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => 
           >
             <HelpCircle className="h-4 w-4" />
           </button>
-
-          {/* Switch to legacy UI */}
-          <Link
-            to="/findings"
-            className="rounded-[3px] border border-[#26292e] bg-[#0c0d0e] px-2 py-0.5 text-[11px] font-mono text-[#8b949e] hover:border-[#388bfd] hover:text-[#e6edf3]"
-            title="Switch to legacy deck"
-          >
-            Legacy
-          </Link>
         </div>
       </header>
 

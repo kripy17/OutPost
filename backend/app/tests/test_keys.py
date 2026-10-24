@@ -69,9 +69,9 @@ def test_test_endpoint_requires_key(client):
     assert resp.status_code == 422
 
 
-def test_key_write_is_audited(client):
+def test_key_write_is_audited(client, conn):
     client.put("/settings/keys/virustotal", json={"value": "audit-me-1234"})
-    entries = client.get("/audit").json()["events"]
+    entries = conn.execute("SELECT * FROM audit_log").fetchall()
     assert any(e["action"] == "keys.set" for e in entries)
     client.delete("/settings/keys/virustotal")
 
@@ -98,7 +98,7 @@ def _net(run_id: str, ip: str, ts: int) -> dict:
     }
 
 
-def test_re_enrich_clears_cached_intel_then_reruns(client, monkeypatch):
+def test_re_enrich_clears_cached_intel_then_reruns(client, monkeypatch, conn):
     """POST /runs/{id}/re-enrich deletes the run's cached IP rows before
     re-running enrichment (stub observes an EMPTY cache at call time)."""
     run_id = client.post("/runs", json={"sample_name": "reenrich.bin", "platform": "linux"}).json()["run_id"]
@@ -122,7 +122,7 @@ def test_re_enrich_clears_cached_intel_then_reruns(client, monkeypatch):
     assert resp.status_code == 200
     assert resp.json()["ips_cleared"] == 2
     assert captured["remaining"] == 0  # the DELETE happened before re-enrich ran
-    entries = client.get("/audit").json()["events"]
+    entries = conn.execute("SELECT * FROM audit_log").fetchall()
     assert any(e["action"] == "run.re-enrich" for e in entries)
 
 
@@ -168,7 +168,7 @@ def test_refresh_ip_bypasses_ttl_once(client, monkeypatch, conn):
     assert body["reputation"] == "malicious" and body["abuse_score"] == 55
     assert body["checked_at"] and body["checked_at"] > (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
 
-    entries = client.get("/audit").json()["events"]
+    entries = conn.execute("SELECT * FROM audit_log").fetchall()
     assert any(e["action"] == "intel.refresh-ip" for e in entries)
 
 

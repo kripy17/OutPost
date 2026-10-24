@@ -13,7 +13,6 @@ from datetime import datetime, timezone
 from ..core.db import db_session
 from ..models import event as event_store
 from ..models import run as run_store
-from ..services import campaigns as campaigns_service
 
 
 def build_json_report(run_id: str) -> dict:
@@ -46,7 +45,7 @@ def build_json_report(run_id: str) -> dict:
             except (ValueError, TypeError):
                 suppressed_alerts = {}
         # Campaign references — links this analysis back to its cluster(s).
-        campaigns = campaigns_service.campaigns_for_run(conn, run_id)
+        campaigns: list[dict] = []
         # Network connections — cache-first reputation reads (no new external
         # calls in the export; `checked_at` shows how old each verdict is, so
         # exported analyses carry the same staleness the UI surfaces).

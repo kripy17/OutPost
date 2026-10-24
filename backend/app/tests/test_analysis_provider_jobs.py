@@ -164,10 +164,10 @@ def test_demo_provider_completes_inline_with_persisted_result(client, conn):
         assert obs["backend"] == "external-provider"
         assert obs["observations"]
         # Audited with the provider named.
-        data = client.get("/audit").json()
+        rows = conn.execute("SELECT * FROM audit_log WHERE target_id = ?", (run_id,)).fetchall()
         assert any(
-            e["action"] == "analysis.create" and e["target_id"] == run_id and "via demo" in (e["detail"] or "")
-            for e in data["events"]
+            e["action"] == "analysis.create" and "via demo" in (e["detail"] or "")
+            for e in rows
         )
     finally:
         _cleanup(conn, run_id, meta["sample_id"])

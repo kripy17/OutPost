@@ -151,25 +151,4 @@ def test_attack_chain_needs_three_stages(client):
     assert fired == []
 
 
-# ---------------------------------------------------------------------------
-# Global /alerts feed (dashboard)
-# ---------------------------------------------------------------------------
 
-def test_global_alerts_feed_includes_newest_with_sample(client):
-    marker = "feedalert-"
-    run_id = make_run(client, sample_name=f"{marker}gen.bin")
-    _ingest(client, run_id, [_proc(run_id, 70, 4, "powershell.exe", "powershell.exe -enc SQBFAFgAAGgBdAA=", ts=1)])
-
-    resp = client.get("/alerts")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert isinstance(data, list) and data
-    assert all("sample_name" in a for a in data)
-    # The freshly-generated alert (unique sample) is in the global feed.
-    assert any(a["sample_name"] == f"{marker}gen.bin" for a in data)
-
-
-def test_global_alerts_feed_respects_limit(client):
-    resp = client.get("/alerts", params={"limit": 3})
-    assert resp.status_code == 200
-    assert len(resp.json()) <= 3

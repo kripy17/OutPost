@@ -85,9 +85,6 @@ def test_json_report_tolerates_corrupt_suppressed_alerts(client, conn):
 
 def test_export_route_serves_pcap(client):
     run_id = _make_run_with_events(client)
+    # Honest: when no real PCAP capture exists, 404 is returned (synthetic pcap removed)
     resp = client.get(f"/runs/{run_id}/export", params={"format": "pcap"})
-    assert resp.status_code == 200
-    assert resp.headers["content-type"] == "application/vnd.tcpdump.pcap"
-    assert "attachment; filename=" in resp.headers["content-disposition"]
-    magic = resp.content[:4]
-    assert magic in (b"\xd4\xc3\xb2\xa1", b"\xa1\xb2\xc3\xd4")
+    assert resp.status_code == 404

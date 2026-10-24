@@ -121,53 +121,6 @@ def _capture_webhook(monkeypatch):
     return captured
 
 
-def test_watchlist_webhook_payload_shape(client, monkeypatch):
-    client.put("/notifications/settings", json={"webhook_url": "http://hook.test/watch"})
-    captured = _capture_webhook(monkeypatch)
-
-    from ..services.notifications import notify_watchlist_hits
-
-    matches = [{"ioc_type": "ip", "ioc_value": "203.0.113.50", "label": "shared C2",
-                "event_type": "network_connection", "timestamp": "2026-08-08T12:00:01Z"}]
-    urls = asyncio.run(notify_watchlist_hits("run123", "evil.exe", "windows", matches))
-
-    assert urls == ["http://hook.test/watch"]
-    assert len(captured) == 1
-    body = captured[0]["json"]
-    assert body["event"] == "outpost.watchlist"
-    assert body["run_id"] == "run123" and body["sample_name"] == "evil.exe"
-    assert body["platform"] == "windows"
-    assert body["matches"] == matches
-    assert "sent_at" in body
-
-
-def test_watchlist_webhook_silent_without_url(client, conn, monkeypatch):
-    # Clear the webhook URL another test may have set (shared session DB).
-    conn.execute("DELETE FROM settings WHERE key = 'NOTIFY_WEBHOOK_URL'")
-    conn.commit()
-    captured = _capture_webhook(monkeypatch)
-
-    from ..services.notifications import notify_watchlist_hits
-
-    urls = asyncio.run(notify_watchlist_hits(
-        "run123", "evil.exe", "windows",
-        [{"ioc_type": "ip", "ioc_value": "203.0.113.50", "label": "C2", "event_type": "net"}],
-    ))
-    assert urls == []
-    assert captured == []
-
-
-def test_watchlist_webhook_silent_without_matches(client, monkeypatch):
-    client.put("/notifications/settings", json={"webhook_url": "http://hook.test/watch"})
-    captured = _capture_webhook(monkeypatch)
-
-    from ..services.notifications import notify_watchlist_hits
-
-    urls = asyncio.run(notify_watchlist_hits("run123", "evil.exe", "windows", []))
-    assert urls == []
-    assert captured == []
-
-
 def test_ingest_with_watched_ioc_succeeds(client, conn):
     """A batch touching a watched IOC ingests normally (202) and the hit is
     visible to match_events — the wiring doesn't disturb ingestion."""

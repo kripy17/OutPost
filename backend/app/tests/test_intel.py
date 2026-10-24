@@ -72,7 +72,7 @@ def test_refresh_stale_only_refreshes_past_ttl_rows(client, monkeypatch, conn):
     from ..models.event import get_cache
 
     assert get_cache(conn, "198.51.100.61")["reputation"] in ("unknown", "clean", "suspicious")
-    entries = client.get("/audit").json()["events"]
+    entries = conn.execute("SELECT * FROM audit_log").fetchall()
     assert any(e["action"] == "intel.refresh-stale" for e in entries)
 
 
@@ -113,8 +113,8 @@ def test_global_ip_refresh_bypasses_ttl_once(client, monkeypatch, conn):
     body = resp.json()
     assert body["reputation"] == "malicious" and body["abuse_score"] == 70
     assert body["checked_at"]
-    entries = client.get("/audit").json()["events"]
-    assert any(e["action"] == "intel.refresh-ip" and ip in (e.get("target_id") or "") for e in entries)
+    entries = conn.execute("SELECT * FROM audit_log").fetchall()
+    assert any(e["action"] == "intel.refresh-ip" and ip in (e["target_id"] or "") for e in entries)
 
 
 def test_json_report_carries_network_connections_with_checked_at(client, conn):

@@ -61,24 +61,4 @@ def test_sandbox_rlimits_fail_visibly_on_error(monkeypatch):
         fn()
 
 
-def test_network_pcap_logs_reworded_away_from_captured_traffic():
-    """Telemetry/log lines must describe PCAP as synthetic/reconstructed, never 'Captured ... network packet(s)'."""
-    from app.services import sandbox_forensics
 
-    events = [
-        {
-            "event_type": "network_connection",
-            "dest_ip": "198.51.100.23",
-            "dest_port": 4444,
-            "protocol": "TCP",
-            "timestamp": "2026-08-01T12:00:00Z",
-        }
-    ]
-    pcap_art = sandbox_forensics.generate_pcap_capture(events, None, "test_run_limits")
-    assert pcap_art is not None
-    assert pcap_art["capture_type"] == "reconstructed_metadata"
-
-    # Test the formatted log line helper
-    log_line = dynamic_sandbox._format_pcap_log_line(pcap_art)
-    assert "Captured " not in log_line
-    assert "reconstructed" in log_line.lower() or "synthes" in log_line.lower()

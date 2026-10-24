@@ -18,29 +18,19 @@ from fastapi.responses import JSONResponse
 
 from .api.routes_admin import auto_prune_loop
 from .api.routes_admin import router as admin_router
-from .api.routes_agents import router as agents_router
-from .api.routes_alerts import router as alerts_router
 from .api.routes_analysis import router as analysis_router
 from .api.routes_analysis_jobs import router as analysis_jobs_router
-from .api.routes_audit import router as audit_router
 from .api.routes_auth import router as auth_router
-from .api.routes_campaigns import router as campaigns_router
 from .api.routes_corpus import router as corpus_router
 from .api.routes_diagnostics import router as diagnostics_router
 from .api.routes_events import router as events_router
-from .api.routes_findings import router as findings_router
-from .api.routes_footprint import router as footprint_router
 from .api.routes_health import router as health_router
-from .api.routes_host_forensics import router as host_forensics_router
-from .api.routes_hosts import router as hosts_router
 from .api.routes_ingest import router as ingest_router
 from .api.routes_intel import router as intel_router
-from .api.routes_investigations import router as investigations_router
 from .api.routes_ioc import router as ioc_router
 from .api.routes_iocs import router as iocs_router
 from .api.routes_keys import router as keys_router
 from .api.routes_metrics import router as metrics_router
-from .api.routes_notifications import router as notifications_router
 from .api.routes_rules import router as rules_router
 from .api.routes_runs import router as runs_router
 from .api.routes_samples import router as samples_router
@@ -70,16 +60,10 @@ async def lifespan(app: FastAPI):
     # Background auto-prune scheduler (off by default) — wakes every 60s and
     # runs the retention prune when a schedule is set. Canceled on shutdown.
     prune_task = asyncio.create_task(auto_prune_loop())
-    # Fleet health watcher — pages when a heartbeat-enabled host goes silent
-    # (one page per incident; recovery clears the flag).
-    from .services import fleet_health
-
-    fleet_task = asyncio.create_task(fleet_health.fleet_health_loop())
     try:
         yield
     finally:
         prune_task.cancel()
-        fleet_task.cancel()
 
 
 app = FastAPI(
@@ -340,33 +324,23 @@ app.add_middleware(
 
 app.include_router(auth_router)
 app.include_router(health_router)
-app.include_router(hosts_router)
 app.include_router(metrics_router)
-app.include_router(keys_router)
 app.include_router(setup_router)
+app.include_router(keys_router)
 app.include_router(intel_router)
-app.include_router(footprint_router)
-app.include_router(ingest_router)
-app.include_router(alerts_router)
-app.include_router(findings_router)
 app.include_router(analysis_jobs_router)
 app.include_router(events_router)
-app.include_router(investigations_router)
+app.include_router(ingest_router)
 app.include_router(runs_router)
 app.include_router(ioc_router)
 app.include_router(iocs_router)
 app.include_router(search_router)
 app.include_router(watchlist_router)
 app.include_router(samples_router)
-app.include_router(campaigns_router)
 app.include_router(analysis_router)
 app.include_router(rules_router)
-app.include_router(notifications_router)
 app.include_router(yara_router)
 app.include_router(sandbox_router)
-app.include_router(agents_router)
-app.include_router(host_forensics_router)
-app.include_router(audit_router)
 app.include_router(admin_router)
 app.include_router(diagnostics_router)
 app.include_router(corpus_router)
