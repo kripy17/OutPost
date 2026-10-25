@@ -137,9 +137,10 @@ def scan_path(
         sys.path.insert(0, backend_path)
 
     try:
+        from app.services import static_analysis
         from app.services import yara as yara_engine
     except Exception as e:
-        console.print(f"[bold #C4453B]Failed to initialize YARA engine: {e}[/bold #C4453B]")
+        console.print(f"[bold #C4453B]Failed to initialize inspection engines: {e}[/bold #C4453B]")
         raise typer.Exit(1)
 
     # Compile rules to scan with
@@ -199,6 +200,7 @@ def scan_path(
 
     total_scanned = 0
     threat_hits: list[dict] = []
+    file_profiles: list[dict] = []
 
     for fpath in files_to_scan:
         try:
@@ -208,14 +210,29 @@ def scan_path(
             for r in compiled_rules:
                 if r.matches(data):
                     matches.append(r.name)
-            if matches:
-                sha = hashlib.sha256(data).hexdigest()
-                threat_hits.append({
-                    "path": str(fpath),
-                    "size": len(data),
-                    "sha256": sha,
-                    "matches": matches,
-                })
+
+            # Connect to static analysis pipeline for format and capability extraction
+            static_res = {}
+            if static_analysis is not None:
+                try:
+                    static_res = static_analysis.analyze_sample(data)
+                except Exception:
+                    pass
+
+            sha = hashlib.sha256(data).hexdigest()
+            profile = {
+                "path": str(fpath),
+                "size": len(data),
+                "sha256": sha,
+                "matches": matches,
+                "format": static_res.get("format", "unknown"),
+                "risk_score": static_res.get("static_risk_score", 0),
+                "verdict": static_res.get("verdict", "clean"),
+                "capabilities": [c.get("name", "") for c in static_res.get("capabilities", []) if isinstance(c, dict)],
+            }
+            file_profiles.append(profile)
+            if matches or profile["risk_score"] >= 40:
+                threat_hits.append(profile)
         except Exception:
             continue
 
@@ -226,28 +243,48 @@ def scan_path(
         Panel(
             f"[bold]Target:[/bold] [white]{path}[/white]\n"
             f"[dim]Files Scanned:[/dim] [bold]{total_scanned}[/bold]  ·  "
-            f"[dim]Rules Applied:[/dim] [bold]{len(compiled_rules)}[/bold]\n"
-            f"[dim]Threat Matches:[/dim] [{hit_color}]{hit_count} file(s) matched signature(s)[/{hit_color}]",
-            title="[bold #3B82F6]Local Disk YARA Inspection Results[/bold #3B82F6]",
+            f"[dim]Rules Applied:[/dim] [bold]{len(compiled_rules)}[/bold] (static pipeline + YARA catalog)\n"
+            f"[dim]Threat Matches:[/dim] [{hit_color}]{hit_count} file(s) flagged with threats or high static risk[/{hit_color}]",
+            title="[bold #3B82F6]Static Analysis & YARA Inspection Results[/bold #3B82F6]",
             border_style="red" if hit_count > 0 else "green",
         )
     )
 
+    if len(files_to_scan) == 1 and file_profiles:
+        p = file_profiles[0]
+        verdict = p["verdict"]
+        if verdict in ("insufficient_evidence", "no_indicators_found_limited"):
+            score_str = f"N/A ({verdict})"
+        else:
+            score_str = f"{p['risk_score']}/100"
+        console.print(f"[bold]Format:[/bold] {p['format'].upper()}  ·  [bold]Risk Score:[/bold] {score_str}  ·  [bold]Verdict:[/bold] {verdict}")
+        if p["capabilities"]:
+            caps = [c for c in p["capabilities"] if c.strip()]
+            if caps:
+                console.print(f"[bold]Detected Capabilities:[/bold] {', '.join(caps)}")
+
     if threat_hits:
-        table = Table(title="Detected YARA Threat Matches", border_style="dim")
+        table = Table(title="Detected Threat Matches & Suspicious Profiles", border_style="dim")
         table.add_column("File Path", style="bold")
-        table.add_column("Size", justify="right")
+        table.add_column("Format", style="cyan")
+        table.add_column("Risk", justify="right")
         table.add_column("SHA-256", style="dim")
-        table.add_column("Matched Signatures", style="bold yellow")
+        table.add_column("Signatures / Findings", style="bold yellow")
 
         for th in threat_hits:
+            findings = []
+            if th["matches"]:
+                findings.extend(th["matches"])
+            if th["capabilities"]:
+                findings.extend(th["capabilities"])
             table.add_row(
                 th["path"],
-                f"{th['size']} B",
+                th["format"],
+                str(th["risk_score"]),
                 th["sha256"][:16] + "...",
-                ", ".join(th["matches"]),
+                ", ".join(findings) if findings else "-",
             )
         console.print(table)
     else:
-        console.print("[green]✓ All scanned files passed YARA signature verification cleanly.[/green]")
+        console.print("[green]✓ All scanned files passed static pipeline and signature verification cleanly.[/green]")
 

@@ -6,7 +6,6 @@ lock the matching semantics (exact value, distinct per IOC) and the webhook
 contract (silent when unconfigured, quiet on failure).
 """
 
-import asyncio
 
 from ..models import watchlist as watchlist_store
 

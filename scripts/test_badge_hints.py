@@ -81,10 +81,11 @@ def build_fixture(tmp: Path) -> None:
         else:
             child.unlink()
     for d in SRC_DIRS:
-        shutil.copytree(
-            ROOT / d, tmp / d,
-            ignore=shutil.ignore_patterns("__pycache__", "node_modules", ".venv", "dist", ".pytest_cache"),
-        )
+        if (ROOT / d).exists():
+            shutil.copytree(
+                ROOT / d, tmp / d,
+                ignore=shutil.ignore_patterns("__pycache__", "node_modules", ".venv", "dist", ".pytest_cache"),
+            )
     for rel, src in SRC_FILES.items():
         (tmp / rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(src, tmp / rel)
@@ -92,6 +93,8 @@ def build_fixture(tmp: Path) -> None:
 
 
 def collect_count(cwd: Path) -> int:
+    if not cwd.exists():
+        return 0
     p = subprocess.run(
         [str(VENV_PY), "-m", "pytest", "--collect-only", "-q"],
         cwd=cwd, capture_output=True, text=True,

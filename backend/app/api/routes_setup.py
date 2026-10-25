@@ -28,8 +28,6 @@ class OnboardIn(BaseModel):
 @router.post("/setup/onboard", response_model=None)
 def onboard(body: OnboardIn) -> dict:
     """Record the first-run choice; `demo` also seeds the labeled campaign."""
-    from contextlib import redirect_stdout
-    from io import StringIO
 
     if body.choice == "demo":
         demo_mode = "1"

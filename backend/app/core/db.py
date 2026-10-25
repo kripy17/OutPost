@@ -12,6 +12,8 @@ placeholders, LIKE/ILIKE, INSERT OR IGNORE, GROUP_CONCAT and lastrowid
 semantics, and `db_session()` yields the same commit/rollback lifecycle.
 """
 
+import logging
+import os
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -33,6 +35,8 @@ CREATE TABLE IF NOT EXISTS runs (
     kind TEXT NOT NULL DEFAULT 'monitoring_session'
         CHECK(kind IN ('monitoring_session', 'analysis_job')),
     source TEXT NOT NULL DEFAULT 'monitor',
+    origin TEXT NOT NULL DEFAULT 'observed'
+        CHECK(origin IN ('observed', 'replayed', 'imported', 'simulated', 'test')),
     started_at TEXT NOT NULL,
     completed_at TEXT,
     suppressed_alerts TEXT
@@ -79,6 +83,8 @@ CREATE TABLE IF NOT EXISTS alerts (
     status_comment TEXT,
     status_at TEXT,
     assignee TEXT,
+    origin TEXT NOT NULL DEFAULT 'observed'
+        CHECK(origin IN ('observed', 'replayed', 'imported', 'simulated', 'test')),
     -- Finding-layer columns (P0, additive): who/what produced the alert
     -- ('detection' = rule engine, 'analyst' = hand-created, 'correlation' =
     -- derived), the analyst's confidence and disposition verdicts, when the
@@ -110,6 +116,8 @@ CREATE TABLE IF NOT EXISTS events (
     platform TEXT NOT NULL,
     event_type TEXT NOT NULL,
     timestamp TEXT NOT NULL,
+    origin TEXT NOT NULL DEFAULT 'observed'
+        CHECK(origin IN ('observed', 'replayed', 'imported', 'simulated', 'test')),
     pid INTEGER,
     ppid INTEGER,
     process_name TEXT,
@@ -323,6 +331,8 @@ CREATE TABLE IF NOT EXISTS samples (
     detected_platform TEXT NOT NULL CHECK(detected_platform IN ('windows', 'linux', 'macos', 'unknown')),
     size INTEGER NOT NULL,
     created_at TEXT NOT NULL,
+    origin TEXT NOT NULL DEFAULT 'imported'
+        CHECK(origin IN ('observed', 'replayed', 'imported', 'simulated', 'test')),
     family TEXT,
     vt_detections INTEGER,
     malware_family TEXT,
@@ -1095,6 +1105,89 @@ def _migrate_scope_reset_remove_soc_tables(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _migrate_runs_origin(conn: sqlite3.Connection) -> None:
+    """Add origin column to runs table with domain validation CHECK constraint."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(runs)").fetchall()}
+    if "origin" not in cols:
+        conn.execute(
+            "ALTER TABLE runs ADD COLUMN origin TEXT NOT NULL DEFAULT 'observed' "
+            "CHECK(origin IN ('observed', 'replayed', 'imported', 'simulated', 'test'))"
+        )
+    conn.execute(
+        """
+        UPDATE runs SET origin = 'simulated'
+        WHERE source IN ('seed', 'webapp-demo', 'simulation', 'sandbox:demo', 'monitor')
+           OR sample_name LIKE 'demo%'
+           OR sample_name LIKE 'syn_%'
+           OR sample_name LIKE 'ben_%'
+           OR sample_name LIKE '%demo%'
+        """
+    )
+    conn.commit()
+
+
+def _migrate_tables_origin(conn: sqlite3.Connection) -> None:
+    """Add origin column and domain validation CHECK constraint to samples, events, alerts."""
+    # 1. runs backfill (ensure seed/demo/simulation rows are marked simulated)
+    conn.execute(
+        """
+        UPDATE runs SET origin = 'simulated'
+        WHERE source IN ('seed', 'webapp-demo', 'simulation', 'sandbox:demo', 'monitor')
+           OR sample_name LIKE 'demo%'
+           OR sample_name LIKE 'syn_%'
+           OR sample_name LIKE 'ben_%'
+           OR sample_name LIKE '%demo%'
+        """
+    )
+
+    # 2. samples
+    cols_samples = {r["name"] for r in conn.execute("PRAGMA table_info(samples)").fetchall()}
+    if "origin" not in cols_samples:
+        conn.execute(
+            "ALTER TABLE samples ADD COLUMN origin TEXT NOT NULL DEFAULT 'imported' "
+            "CHECK(origin IN ('observed', 'replayed', 'imported', 'simulated', 'test'))"
+        )
+    name_col = "original_name" if "original_name" in cols_samples else "name"
+    conn.execute(
+        f"""
+        UPDATE samples SET origin = 'simulated'
+        WHERE {name_col} LIKE 'demo%'
+           OR {name_col} LIKE 'syn_%'
+           OR {name_col} LIKE 'ben_%'
+           OR {name_col} LIKE '%demo%'
+        """
+    )
+
+    # 3. events
+    cols_events = {r["name"] for r in conn.execute("PRAGMA table_info(events)").fetchall()}
+    if "origin" not in cols_events:
+        conn.execute(
+            "ALTER TABLE events ADD COLUMN origin TEXT NOT NULL DEFAULT 'observed' "
+            "CHECK(origin IN ('observed', 'replayed', 'imported', 'simulated', 'test'))"
+        )
+    conn.execute(
+        """
+        UPDATE events SET origin = 'simulated'
+        WHERE run_id IN (SELECT run_id FROM runs WHERE origin = 'simulated')
+        """
+    )
+
+    # 4. alerts
+    cols_alerts = {r["name"] for r in conn.execute("PRAGMA table_info(alerts)").fetchall()}
+    if "origin" not in cols_alerts:
+        conn.execute(
+            "ALTER TABLE alerts ADD COLUMN origin TEXT NOT NULL DEFAULT 'observed' "
+            "CHECK(origin IN ('observed', 'replayed', 'imported', 'simulated', 'test'))"
+        )
+    conn.execute(
+        """
+        UPDATE alerts SET origin = 'simulated'
+        WHERE run_id IN (SELECT run_id FROM runs WHERE origin = 'simulated')
+        """
+    )
+    conn.commit()
+
+
 def get_connection():
     """Open a connection with a Row factory and foreign keys on.
 
@@ -1157,7 +1250,38 @@ ORDERED_MIGRATIONS = [
     (30, "host_containment_lifecycle", _migrate_host_containment_lifecycle, "Rebuild host_containment table."),
     (31, "host_actions", _migrate_host_actions, "Drop host_actions table."),
     (32, "scope_reset_remove_soc_tables", _migrate_scope_reset_remove_soc_tables, "Recreate dropped SOC and fleet tables."),
+    (33, "runs_origin", _migrate_runs_origin, "Rebuild runs table to drop origin column."),
+    (34, "tables_origin", _migrate_tables_origin, "Rebuild samples, events, alerts to drop origin column."),
 ]
+
+DESTRUCTIVE_MIGRATIONS = {32}
+
+
+def _backup_database_before_migration(conn: sqlite3.Connection) -> str | None:
+    """Create an automated timestamped backup of the database file before applying destructive migrations using SQLite online backup API."""
+    try:
+        rows = conn.execute("PRAGMA database_list").fetchall()
+        db_path = None
+        for row in rows:
+            name = row[1] if isinstance(row, tuple) else row["name"]
+            path = row[2] if isinstance(row, tuple) else row["file"]
+            if name == "main" and path:
+                db_path = path
+                break
+        if db_path and os.path.exists(db_path):
+            timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+            backup_path = f"{db_path}.backup-{timestamp}"
+            backup_conn = sqlite3.connect(backup_path)
+            try:
+                conn.backup(backup_conn)
+            finally:
+                backup_conn.close()
+            logging.getLogger("outpost.db").info("Created atomic online backup before destructive migration: %s", backup_path)
+            print(f"Created timestamped backup before destructive migration: {backup_path}")
+            return backup_path
+    except Exception as exc:
+        logging.getLogger("outpost.db").warning("Failed to create pre-migration database backup: %s", exc)
+    return None
 
 
 def apply_migrations(conn: sqlite3.Connection, dry_run: bool = False) -> list[dict]:
@@ -1168,6 +1292,11 @@ def apply_migrations(conn: sqlite3.Connection, dry_run: bool = False) -> list[di
     conn.executescript(SCHEMA_MIGRATIONS_TABLE)
     applied_rows = conn.execute("SELECT version, name, applied_at, downgrade_note FROM schema_migrations ORDER BY version ASC").fetchall()
     applied_versions = {r["version"] for r in applied_rows}
+
+    # If any pending migration is destructive, create automated timestamped backup prior to execution
+    pending = [ver for ver, _, _, _ in ORDERED_MIGRATIONS if ver not in applied_versions]
+    if not dry_run and any(ver in DESTRUCTIVE_MIGRATIONS for ver in pending):
+        _backup_database_before_migration(conn)
 
     results = []
     for ver, name, fn, downgrade_note in ORDERED_MIGRATIONS:

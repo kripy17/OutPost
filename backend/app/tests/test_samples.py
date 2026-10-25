@@ -552,7 +552,7 @@ def test_sample_dynamic_detonation_endpoint(client):
     bwrap_path = shutil.which("bwrap")
     if bwrap_path:
         try:
-            can_userns = (subprocess.run([bwrap_path, "--ro-bind", "/", "/", "true"], capture_output=True, timeout=1).returncode == 0)
+            can_userns = (subprocess.run([bwrap_path, "--ro-bind", "/", "/", "true"], capture_output=True, timeout=1, check=False).returncode == 0)
         except Exception:
             pass
 

@@ -8,6 +8,7 @@ from ..core.schema import Alert
 
 def insert_event(conn: sqlite3.Connection, event: dict) -> int:
     cols = {r[1] for r in conn.execute("PRAGMA table_info(events)").fetchall()}
+    origin_val = event.get("origin", "observed")
     if "user" in cols:
         cur = conn.execute(
             """
@@ -17,8 +18,8 @@ def insert_event(conn: sqlite3.Connection, event: dict) -> int:
                 host_id, raw_record, log_source, query, tls_sni,
                 source_event_id, boot_id, process_start_time,
                 user, parent_image, parent_command_line, hashes,
-                integrity_level, session_id, connection_status, process_guid
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                integrity_level, session_id, connection_status, process_guid, origin
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 event["run_id"],
@@ -51,6 +52,7 @@ def insert_event(conn: sqlite3.Connection, event: dict) -> int:
                 event.get("session_id"),
                 event.get("connection_status"),
                 event.get("process_guid"),
+                origin_val,
             ),
         )
     else:
@@ -60,8 +62,8 @@ def insert_event(conn: sqlite3.Connection, event: dict) -> int:
                 run_id, platform, event_type, timestamp, pid, ppid, process_name,
                 command_line, exe_path, dest_ip, dest_port, protocol, file_path, registry_key,
                 host_id, raw_record, log_source, query, tls_sni,
-                source_event_id, boot_id, process_start_time
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                source_event_id, boot_id, process_start_time, origin
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 event["run_id"],
@@ -86,6 +88,7 @@ def insert_event(conn: sqlite3.Connection, event: dict) -> int:
                 event.get("source_event_id"),
                 event.get("boot_id"),
                 event.get("process_start_time"),
+                origin_val,
             ),
         )
     return cur.lastrowid or 0
@@ -131,6 +134,9 @@ def insert_alert(conn: sqlite3.Connection, alert: Alert) -> int:
     if "host_id" in table_cols:
         cols.append("host_id")
         vals.append(alert.host_id or "local")
+    if "origin" in table_cols:
+        cols.append("origin")
+        vals.append(getattr(alert, "origin", None) or "observed")
 
     col_str = ", ".join(cols)
     placeholders = ", ".join(["?"] * len(vals))

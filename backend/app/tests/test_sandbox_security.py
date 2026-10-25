@@ -136,7 +136,7 @@ async def test_nonzero_exit_alone_is_clean(client, monkeypatch, dynamic_sandbox)
     result = await dynamic_sandbox.execute_and_trace(sample_id)
     assert result["exit_code"] != 0
     assert result["alerts_count"] == 0
-    assert result["verdict"] == "clean"
+    assert result["verdict"] == "no_indicators_found_limited"
     _cleanup(result["run_id"], sample_id)
 
 

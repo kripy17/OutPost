@@ -3,7 +3,6 @@
 
 from datetime import datetime, timedelta, timezone
 
-from ..core.schema import Alert
 from .conftest import make_run
 
 
@@ -265,10 +264,15 @@ def test_macos_windows_event_does_not_fire_linux_rule(client):
 def test_runs_filter_by_sample_name(client):
     """Sample vault → detonation history: GET /runs?q=<sample> filters."""
     a = make_run(client, sample_name="qfilter-sample-a.exe")
-    make_run(client, sample_name="qfilter-sample-b.exe")
-    hit = client.get("/runs", params={"q": "qfilter-sample-a", "include_synthetic": "true"}).json()
+    b = make_run(client, sample_name="qfilter-sample-b.exe")
+    res_all = client.get("/runs", params={"limit": "50", "include_synthetic": "true", "include_simulated": "true"}).json()
+    assert len(res_all) >= 2
+    hit = client.get("/runs", params={"q": "qfilter-sample-a", "include_synthetic": "true", "include_simulated": "true"}).json()
+    assert len(hit) == 1
     assert [r["run_id"] for r in hit] == [a]
-    miss = client.get("/runs", params={"q": "no-such-sample-xyz", "include_synthetic": "true"}).json()
+    assert b not in [r["run_id"] for r in hit]
+    assert all("qfilter-sample-a" in r["sample_name"].lower() for r in hit)
+    miss = client.get("/runs", params={"q": "no-such-sample-xyz", "include_synthetic": "true", "include_simulated": "true"}).json()
     assert miss == []
 
 

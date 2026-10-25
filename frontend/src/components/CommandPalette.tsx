@@ -20,9 +20,9 @@ interface Item {
 
 const NAV_ITEMS: Item[] = [
   { kind: "nav", label: "Samples", hint: "Malware analysis vault & detonation history", icon: "box", to: "/samples" },
-  { kind: "nav", label: "Detonation Cockpit", hint: "Live simulation, dynamic execution & technique tests", icon: "activity", to: "/monitor" },
   { kind: "nav", label: "Detection Rules", hint: "YARA, behavior & capability rules", icon: "shield", to: "/rules" },
   { kind: "nav", label: "Settings", hint: "Air-gap, webhooks & preferences", icon: "sliders", to: "/settings" },
+  { kind: "nav", label: "Developer Test Harness", hint: "QA attack emulation scenarios (non-product)", icon: "terminal", to: "/monitor" },
 ];
 
 export default function CommandPalette({ onClose }: { onClose: () => void }) {

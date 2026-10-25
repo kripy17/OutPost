@@ -2,7 +2,6 @@ import React, { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Command } from "cmdk";
 import {
-  Activity,
   Binary,
   FileCode,
   Settings as SettingsIcon,
@@ -23,7 +22,6 @@ export interface NavItem {
 
 export const NAV_ITEMS: NavItem[] = [
   { name: "Samples", href: "/samples", icon: Binary, keyChord: "g s" },
-  { name: "Detonation Cockpit", href: "/monitor", icon: Activity, keyChord: "g d" },
   { name: "Rules", href: "/rules", icon: FileCode, keyChord: "g r" },
   { name: "Settings", href: "/settings", icon: SettingsIcon, keyChord: "g ," },
 ];

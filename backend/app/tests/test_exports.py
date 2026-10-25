@@ -3,8 +3,6 @@
 
 import datetime
 
-from .conftest import make_run
-
 
 def _ts(offset: int = 0) -> str:
     return (

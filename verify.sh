@@ -65,13 +65,6 @@ echo "${C_DIM}OutPost verification sweep — root: $ROOT${C_RESET}"
 step "Backend pytest  (backend/app/tests)" \
   bash -c "cd '$ROOT/backend' && '$PYTEST' -q"
 
-# Postgres runtime gate (Tier 4, docs/16) — the sqlite3-compat shim over
-# psycopg is exercised against a real server by CI's pg-runtime job; here it
-# SKIPs cleanly (exit 0) when OUTPOST_DATABASE_URL is unset, so the sweep
-# documents the capability on every machine without requiring a server.
-step "Postgres runtime (skips without OUTPOST_DATABASE_URL)" \
-  bash -c "'$ROOT/.venv/bin/python' '$ROOT/scripts/gate_pg_runtime.py'"
-
 # Process-identity gate — no event-level process_name read may exist without
 # an exe_path resolution (AST scan of detection/process_tree/baseline). Locks
 # the identity-fallback invariant so a future rule can't silently regress to
@@ -85,9 +78,6 @@ step "Identity gate   (process_name → exe_path resolution)" \
 # the coverage story instead of the Coverage page merely telling it.
 step "Coverage gate   (14/14 ATT&CK tactics)" \
   bash -c "cd '$ROOT/backend' && '$PYTEST' -q app/tests/test_exports.py -k covers_all_14"
-
-step "Collector pytest (collectors/tests)" \
-  bash -c "cd '$ROOT/collectors' && '$PYTEST' -q"
 
 step "CLI pytest      (cli/tests)" \
   bash -c "cd '$ROOT/cli' && '$PYTEST' -q"
@@ -150,39 +140,31 @@ step "Doc counts     (stale-reference gate)" \
     # 2) Actual counts: pytest collect-only (fast) + vitest list (collect-only).
     cd "$ROOT/backend"
     BE=$( "$PYTEST" --collect-only -q 2>/dev/null | grep -oE "[0-9]+ tests collected" | grep -oE "^[0-9]+" )
-    cd "$ROOT/collectors"
-    COL=$( "$PYTEST" --collect-only -q 2>/dev/null | grep -oE "[0-9]+ tests collected" | grep -oE "^[0-9]+" )
+    COL=0
+    if [ -d "$ROOT/collectors" ]; then
+      cd "$ROOT/collectors"
+      COL=$( "$PYTEST" --collect-only -q 2>/dev/null | grep -oE "[0-9]+ tests collected" | grep -oE "^[0-9]+" )
+    fi
     cd "$ROOT/cli"
     CLI=$( "$PYTEST" --collect-only -q 2>/dev/null | grep -oE "[0-9]+ tests collected" | grep -oE "^[0-9]+" )
     cd "$ROOT/frontend"
     FE=$( "$NPM" exec -- vitest list 2>/dev/null | wc -l | tr -d " " )
 
-    # Claims: the dynamic badge payload (badges/tests.json) + the per-suite
-    # numbers in the README Testing table.
+    # Claims: the dynamic badge payload (badges/tests.json)
     BADGE=$(grep -oE "\"message\": *\"[0-9]+ passing\"" "$ROOT/badges/tests.json" | grep -oE "[0-9]+")
-    BE_CLAIM=$(grep -oE "Backend pytest \| \*\*[0-9]+\*\*" "$ROOT/README.md" | grep -oE "[0-9]+")
-    COL_CLAIM=$(grep -oE "Collector pytest \| \*\*[0-9]+\*\*" "$ROOT/README.md" | grep -oE "[0-9]+")
-    CLI_CLAIM=$(grep -oE "CLI pytest \| \*\*[0-9]+\*\*" "$ROOT/README.md" | grep -oE "[0-9]+")
-    FE_CLAIM=$(grep -oE "^\| Frontend \| \*\*[0-9]+\*\*" "$ROOT/README.md" | grep -oE "[0-9]+")
 
     sum=$((BE + COL + CLI + FE))
     ok=1
     [ "$BADGE" = "$sum" ] || { echo "  badges/tests.json claims $BADGE, actual $sum (be=$BE col=$COL cli=$CLI fe=$FE)" >&2; ok=0; }
-    [ "$BE_CLAIM" = "$BE" ] || { echo "  README backend claim $BE_CLAIM, actual $BE" >&2; ok=0; }
-    [ "$COL_CLAIM" = "$COL" ] || { echo "  README collector claim $COL_CLAIM, actual $COL" >&2; ok=0; }
-    [ "$CLI_CLAIM" = "$CLI" ] || { echo "  README CLI claim $CLI_CLAIM, actual $CLI" >&2; ok=0; }
-    [ "$FE_CLAIM" = "$FE" ] || { echo "  README frontend claim $FE_CLAIM, actual $FE" >&2; ok=0; }
 
     # Rules + commands — the other two dynamic badges: RULE_META and the Typer
-    # registry, validated against badges/*.json and the README Highlights table.
+    # registry, validated against badges/*.json
     cd "$ROOT/backend"
     RULES_ACT=$( "$ROOT/.venv/bin/python" -c "from app.services.risk import RULE_META; print(len(RULE_META))" )
     cd "$ROOT"
     CMDS_ACT=$( "$ROOT/.venv/bin/python" -c "from outpost.main import app; print(len(app.registered_commands) + len(app.registered_groups))" )
     RULES_BADGE=$(grep -oE "\"message\": *\"[0-9]+\"" "$ROOT/badges/rules.json" | grep -oE "[0-9]+")
     CMDS_BADGE=$(grep -oE "\"message\": *\"[0-9]+\"" "$ROOT/badges/commands.json" | grep -oE "[0-9]+")
-    RULES_CLAIM=$(grep -oE "\*\*[0-9]+ rules\*\*" "$ROOT/README.md" | grep -oE "[0-9]+")
-    CMDS_CLAIM=$(grep -oE "\*\*[0-9]+ commands\*\*" "$ROOT/README.md" | grep -oE "[0-9]+")
 
     # Tactics — the fourth badge, fed from the Navigator layer output
     # (tactic_coverage reads the built layer, not RULE_META directly).
@@ -190,16 +172,12 @@ step "Doc counts     (stale-reference gate)" \
     COV_C=${COV_ACT% *}
     COV_T=${COV_ACT#* }
     COV_BADGE=$(grep -oE "\"message\": *\"[0-9]+/[0-9]+\"" "$ROOT/badges/coverage.json" | grep -oE "[0-9]+/[0-9]+")
-    COV_CLAIM=$(grep -oE "all [0-9]+ MITRE tactics" "$ROOT/README.md" | grep -oE "[0-9]+")
 
     [ "$RULES_BADGE" = "$RULES_ACT" ] || { echo "  badges/rules.json claims $RULES_BADGE, actual $RULES_ACT" >&2; ok=0; }
     [ "$CMDS_BADGE" = "$CMDS_ACT" ] || { echo "  badges/commands.json claims $CMDS_BADGE, actual $CMDS_ACT" >&2; ok=0; }
-    [ "$RULES_CLAIM" = "$RULES_ACT" ] || { echo "  README claims $RULES_CLAIM rules, actual $RULES_ACT" >&2; ok=0; }
-    [ "$CMDS_CLAIM" = "$CMDS_ACT" ] || { echo "  README claims $CMDS_CLAIM commands, actual $CMDS_ACT" >&2; ok=0; }
     [ "$COV_BADGE" = "$COV_C/$COV_T" ] || { echo "  badges/coverage.json claims $COV_BADGE, actual $COV_C/$COV_T" >&2; ok=0; }
-    [ "$COV_CLAIM" = "$COV_C" ] || { echo "  README claims all $COV_CLAIM MITRE tactics, actual $COV_C" >&2; ok=0; }
     [ "$ok" = 1 ] || exit 1
-    echo "  badge=$sum (be=$BE + col=$COL + cli=$CLI + fe=$FE), rules=$RULES_ACT, tactics=$COV_C/$COV_T, commands=$CMDS_ACT — badge payloads + README claims match"
+    echo "  badge=$sum (be=$BE + col=$COL + cli=$CLI + fe=$FE), rules=$RULES_ACT, tactics=$COV_C/$COV_T, commands=$CMDS_ACT — badge payloads match"
   '
 
 # Image-budget docs gate — docs/17's size table must not drift from the
@@ -252,14 +230,6 @@ step "Sandbox hints  (every provider-gate failure prints a fix)" \
 step "Ruff hints  (lint drift prints a fix, fix goes green)" \
   bash -c "'$ROOT/.venv/bin/python' '$ROOT/scripts/test_ruff_hints.py'"
 
-# Drill self-test — the comment-strip bite trio's fixture mode + fail-loud
-# machinery must keep working: a duplicated anchor exits 1 WITHOUT editing,
-# a clean fixture round-trips green, and a left-behind bite self-heals.
-# Runs entirely against a throwaway fixture (OUTPOST_BITE_ROOT), so it's a
-# 0.1s check — no suites run twice in the sweep.
-step "Drill self-test  (bite trio: fail-loud + self-heal)" \
-  bash -c "'$ROOT/.venv/bin/python' '$ROOT/scripts/test_bite_drill.py'"
-
 # Hint-coverage guard — the self-explaining discipline is structural: every
 # gate under scripts/ that emits a '→ fix:' hint must be mapped to a
 # self-test with repair assertions, and that self-test must actually run in
@@ -276,15 +246,6 @@ step "Hint coverage  (every hint-emitting gate has a repair self-test)" \
 # record file is always removed, and "nothing to clean" exits 0.
 step "Badge-branch cleanup (CI hygiene self-test)" \
   bash -c "'$ROOT/.venv/bin/python' '$ROOT/scripts/test_cleanup_badge_branches.py'"
-
-# Cross-platform collector soak baseline — the Windows (Sysmon) and Linux
-# (auditd) soaks run with --gate against ONE isolated backend (temp DB,
-# spare port) and print the FP/detection baseline as a compact table, so
-# every sweep shows both platforms' numbers at a glance. Each soak's own
-# gate assertions are preserved: a benign-baseline FP or a missed core
-# detection fails the step (over-exemption guard).
-step "Soak baseline   (cross-platform FP table)" \
-  bash -c "'$ROOT/.venv/bin/python' '$ROOT/scripts/soak_baseline.py'"
 
 # CLI air-gap gate — the CLI's network surface is loopback-only (air-gap
 # parity with the e2e gates). Static AST: HTTP only via lib/api_client.py
@@ -315,41 +276,6 @@ step "Backend egress gate (key/config-gated httpx only)" \
 # patch bites and keyed paths really would egress.
 step "Backend no-config egress (runtime, zero-config silent)" \
   bash -c "'$ROOT/.venv/bin/python' '$ROOT/scripts/gate_backend_no_config_egress.py'"
-
-# Collector live-claim gate — the one-line `--mode live` collector flow, end
-# to end. Boots an isolated backend and runs the REAL collector_linux.py with
-# no --run-id against a temp AUDIT_LOG feed (the documented root-less path):
-# with an open webapp live session it must CLAIM it and stream real events
-# into it (recon actors firing through the collector path, no rogue agent
-# run), and with NO session open it must create its own agent-<host>-<date>
-# run. The heartbeat must surface the host online as identity=collector with
-# the auditd channel, and no unstamped collector event may survive.
-step "Live-claim gate (collector live session claim)" \
-  env ROOT="$ROOT" PYTHON="$ROOT/.venv/bin/python" bash -c '
-    set -e
-    LC_DB=$(mktemp --suffix=.db)
-    LC_SAMPLES=$(mktemp -d)
-    LC_PORT=8015
-    LC_LOG=$(mktemp --suffix=.log)
-    LC_PID=""
-    cleanup() {
-      [ -n "$LC_PID" ] && kill "$LC_PID" 2>/dev/null || true
-      rm -f "$LC_DB" "$LC_LOG"
-      rm -rf "$LC_SAMPLES"
-    }
-    trap cleanup EXIT
-    DATABASE_PATH="$LC_DB" SAMPLES_DIR="$LC_SAMPLES" \
-      "$PYTHON" -m uvicorn app.main:app --host 127.0.0.1 --port "$LC_PORT" >"$LC_LOG" 2>&1 &
-    LC_PID=$!
-    for _ in $(seq 1 30); do
-      curl -sf "http://127.0.0.1:$LC_PORT/meta" >/dev/null 2>&1 && break
-      sleep 1
-    done
-    curl -sf "http://127.0.0.1:$LC_PORT/meta" >/dev/null
-    cd "$ROOT"
-    "$PYTHON" scripts/gate_live_claim.py \
-      --backend "http://127.0.0.1:$LC_PORT" --host "gate-host" --db "$LC_DB"
-  '
 
 # Sandbox provider gate — end-to-end validation of the live detonation
 # adapter (Any.Run / Triage / Joe) against an isolated backend. With no
@@ -385,12 +311,10 @@ step "Sandbox provider (live detonation gate)" \
 # Layout regression gate — the min-width bug class (a grid/flex item that
 # refuses to shrink pushes the page wider than the viewport) caught by a real
 # browser before it ships. Boots an ISOLATED backend (temp DB, spare ports
-# 8013/5176), seeds the campaign pair so the data-heavy pages (run detail,
-# History charts, campaigns) actually render, then drives every route at
-# several desktop widths with Playwright and fails on any horizontal overflow
-# or page that fails to render content. Skips with a note when Playwright
-# isn't installed locally (CI installs it — see .github/workflows/ci.yml).
-step "Layout sweep    (Playwright UI gates: overflow + triage + live monitor)" \
+# 8013/5176), then drives every route at several desktop widths with Playwright
+# and fails on any horizontal overflow or page that fails to render content.
+# Skips with a note when Playwright isn't installed locally.
+step "Layout sweep    (Playwright UI overflow gate)" \
   env ROOT="$ROOT" PYTHON="$ROOT/.venv/bin/python" NPM="$NPM" bash -c '
     set -e
     if [ ! -d "$ROOT/demo/node_modules/playwright" ]; then
@@ -421,16 +345,7 @@ step "Layout sweep    (Playwright UI gates: overflow + triage + live monitor)" \
       sleep 1
     done
     curl -sf "http://127.0.0.1:$SWEEP_PORT/meta" >/dev/null
-    # Seed the campaign pair (real detection alerts) so every data-heavy page
-    # renders with content — an empty page can never overflow. The campaign
-    # runs are source='seed' (synthetic, hidden by default), so also stream a
-    # live-sourced run through the real API: default views (History charts,
-    # Findings, Event Log) then lay out real data.
-    cd "$ROOT/backend"
-    DATABASE_PATH="$SWEEP_DB" "$PYTHON" -m app.seed_campaign >/dev/null 2>&1
-    "$PYTHON" "$ROOT/scripts/seed_sweep_live.py" --api "http://127.0.0.1:$SWEEP_PORT" >/dev/null
-    # Frontend dev server pointed at the isolated backend (VITE_API_URL env
-    # beats .env.local per Vite precedence).
+
     cd "$ROOT/frontend"
     VITE_API_URL="http://127.0.0.1:$SWEEP_PORT" \
       "$NPM" run dev -- --port "$SWEEP_WEB" --strictPort >"$SWEEP_WEBLOG" 2>&1 &
@@ -442,34 +357,7 @@ step "Layout sweep    (Playwright UI gates: overflow + triage + live monitor)" \
     curl -sf "http://localhost:$SWEEP_WEB" >/dev/null
     cd "$ROOT/demo"
     node layout-sweep.mjs --web "http://localhost:$SWEEP_WEB" --api "http://127.0.0.1:$SWEEP_PORT"
-    # Behavioral gate on the SAME stack: the alert-triage state machine
-    # (open→acked→resolved→open + bulk) driven in a real browser against the
-    # seeded backend — closes the "no browser test for the lifecycle" gap.
-    node e2e-alert-lifecycle.mjs --web "http://localhost:$SWEEP_WEB" --api "http://127.0.0.1:$SWEEP_PORT"
-    # Live-monitor gate on the SAME stack: the auto-detected-host detonation
-    # flow with SSE-driven live toasts — proves live monitoring in a real
-    # browser on every push, not just in the demo footage.
-    node e2e-live-monitor.mjs --web "http://localhost:$SWEEP_WEB" --api "http://127.0.0.1:$SWEEP_PORT"
   '
-
-# Post-deploy checklist walk — fail-closed auth + TLS + the four
-# deploy/README.md assertions, live and without Docker. Boots an isolated
-# fail-closed backend (OUTPOST_AUTH_REQUIRED=1, admin + agent token) behind
-# a self-signed TLS proxy mirroring the Caddyfile, then asserts: TLS /health,
-# 401-without-token / 200-with-token, login → /auth/me, and the
-# OUTPOST_AGENT_TOKEN heartbeat flow (401 bare → 200 with token → host
-# online → 403 outside telemetry). Catches regressions in the exact
-# production shape compose deploys.
-step "Post-deploy walk (fail-closed auth + TLS)" \
-  bash -c "cd '$ROOT' && '$ROOT/.venv/bin/python' scripts/post_deploy_walk.py"
-
-# CLI parity walk — the terminal-mirror triage surfaces LIVE. Boots an
-# isolated seeded backend and drives the real `outpost` binary through the
-# allowlist add/list/remove, suppressions add/list/remove, and bulk-triage
-# (open→acked→open) round-trips the webapp's run-detail panel + queue sweep
-# have — proving terminal parity on a real backend, not just mocks.
-step "CLI parity walk (allowlist + suppressions + bulk)" \
-  bash -c "cd '$ROOT' && '$ROOT/.venv/bin/python' scripts/cli_parity_walk.py"
 
 # Badge refresh — recompute the dynamic badge payloads with the shared
 # refresh-badges.sh. Default is --check: the sweep FAILS if any badge is

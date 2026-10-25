@@ -12,7 +12,7 @@ import sqlite3
 import tempfile
 from pathlib import Path
 
-from ..core.db import apply_migrations, get_schema_version, list_migrations
+from ..core.db import apply_migrations, get_schema_version
 
 
 def test_upgrade_from_pre_scope_reset_database():
@@ -191,16 +191,21 @@ def test_upgrade_from_pre_scope_reset_database():
         )
         conn.commit()
 
-        # 4. Execute migrations to upgrade
+        # 4. Execute migrations to upgrade (includes 32 and 33)
         results = apply_migrations(conn)
         applied_names = [r["name"] for r in results if r["status"] == "applied"]
         assert "scope_reset_remove_soc_tables" in applied_names
+        assert "runs_origin" in applied_names
 
-        # 5. Verify schema version reports migration 32
+        # 5. Verify schema version reports migration 34
         v_info = get_schema_version(conn)
-        assert v_info["current_version"] == 32
+        assert v_info["current_version"] == 34
 
-        # 6. Verify obsolete tables are completely dropped
+        # 6. Verify automated pre-migration backup was created for destructive migration
+        backups = list(Path(db_path).parent.glob(f"{Path(db_path).name}.backup-*"))
+        assert len(backups) >= 1, "Expected automated backup copy to be created before destructive migration"
+
+        # 7. Verify obsolete tables are completely dropped
         tables_after = {
             r[0]
             for r in conn.execute(
@@ -217,13 +222,14 @@ def test_upgrade_from_pre_scope_reset_database():
         ):
             assert obsolete not in tables_after, f"Expected {obsolete} to be dropped by migration 32"
 
-        # 7. Verify all analysis core data is intact and uncorrupted
+        # 8. Verify all analysis core data is intact and uncorrupted
         sample_row = conn.execute("SELECT * FROM samples WHERE id = 's-1'").fetchone()
         assert sample_row["name"] == "malware.exe"
         assert sample_row["sha256"] == "abc123sha256"
 
         run_row = conn.execute("SELECT * FROM runs WHERE run_id = 'run-1'").fetchone()
         assert run_row["sample_name"] == "malware.exe"
+        assert run_row["origin"] == "observed"
 
         alert_row = conn.execute("SELECT * FROM alerts WHERE run_id = 'run-1'").fetchone()
         assert alert_row["rule_name"] == "Process Injection"
@@ -231,6 +237,21 @@ def test_upgrade_from_pre_scope_reset_database():
 
         event_row = conn.execute("SELECT * FROM events WHERE run_id = 'run-1'").fetchone()
         assert event_row["event_type"] == "process_create"
+
+        # Check origin on samples, events, alerts
+        assert sample_row["origin"] == "imported"
+        assert alert_row["origin"] == "observed"
+        assert event_row["origin"] == "observed"
+
+        # Check constraint on origin: only ('observed', 'replayed', 'imported', 'simulated', 'test') permitted
+        try:
+            conn.execute(
+                "INSERT INTO runs (run_id, sample_name, platform, session_type, origin, started_at) "
+                "VALUES ('bad-run', 'bad.exe', 'linux', 'analysis', 'invalid_origin', '2026-10-25T00:00:00Z')"
+            )
+            assert False, "Expected sqlite3.IntegrityError for invalid origin check constraint"
+        except sqlite3.IntegrityError:
+            pass
 
         audit_row = conn.execute("SELECT * FROM audit_log WHERE target_id = 's-1'").fetchone()
         assert audit_row["action"] == "sample.upload"
@@ -241,3 +262,20 @@ def test_upgrade_from_pre_scope_reset_database():
     finally:
         conn.close()
         Path(db_path).unlink(missing_ok=True)
+        for b in Path(db_path).parent.glob(f"{Path(db_path).name}.backup-*"):
+            b.unlink(missing_ok=True)
+
+
+def test_destructive_migrations_drop_table_registered():
+    """Ensure any migration that performs destructive table drops without recreation
+    is explicitly registered in DESTRUCTIVE_MIGRATIONS."""
+    import inspect
+
+    from ..core.db import DESTRUCTIVE_MIGRATIONS, ORDERED_MIGRATIONS
+
+    for ver, name, fn, _ in ORDERED_MIGRATIONS:
+        src = inspect.getsource(fn)
+        if "DROP TABLE" in src and "RENAME TO" not in src:
+            assert ver in DESTRUCTIVE_MIGRATIONS, (
+                f"Migration {ver} ({name}) drops tables destructively but is not in DESTRUCTIVE_MIGRATIONS"
+            )

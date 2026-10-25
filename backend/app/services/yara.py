@@ -60,15 +60,18 @@ def _compile_rule(patterns: list[str]) -> list[re.Pattern]:
 
 
 class _Rule:
-    __slots__ = ("description", "family", "name", "patterns")
+    __slots__ = ("condition_fn", "description", "family", "name", "patterns")
 
-    def __init__(self, name: str, family: str, description: str, patterns: list[str]):
+    def __init__(self, name: str, family: str, description: str, patterns: list[str], condition_fn=None):
         self.name = name
         self.family = family
         self.description = description
         self.patterns = _compile_rule(patterns)
+        self.condition_fn = condition_fn
 
     def matches(self, data: bytes) -> bool:
+        if self.condition_fn is not None:
+            return bool(self.condition_fn(self.patterns, data))
         return any(rx.search(data) for rx in self.patterns)
 
 
@@ -80,24 +83,28 @@ RULES: list[_Rule] = [
         "generic-windows",
         "PE executable header (MZ) — Windows binary",
         ["{ 4D 5A }"],
+        condition_fn=lambda pats, d: d.startswith(b"MZ"),
     ),
     _Rule(
         "elf-header",
         "generic-linux",
         "ELF executable header — Linux binary",
         ["{ 7F 45 4C 46 }"],
+        condition_fn=lambda pats, d: d.startswith(b"\x7fELF"),
     ),
     _Rule(
         "macho-header",
         "generic-macos",
         "Mach-O binary header — macOS executable",
         ["{ FE ED FA CE }", "{ FE ED FA CF }", "{ CA FE BA BE }"],
+        condition_fn=lambda pats, d: d[:4] in (b"\xfe\xed\xfa\xce", b"\xfe\xed\xfa\xcf", b"\xca\xfe\xba\xbe"),
     ),
     _Rule(
         "powershell-download-cradle",
         "download-cradle",
         "PowerShell IEX/WebClient download-and-execute cradle",
-        ["IEX(", "Invoke-Expression", "Net.WebClient", "DownloadString"],
+        ["Net.WebClient", "DownloadString", "IEX(", "Invoke-Expression"],
+        condition_fn=lambda pats, d: (pats[0].search(d) and pats[1].search(d)) or ((pats[2].search(d) or pats[3].search(d)) and pats[1].search(d)),
     ),
     _Rule(
         "encoded-powershell",
@@ -133,19 +140,22 @@ RULES: list[_Rule] = [
         "reverse-shell-bash",
         "reverse-shell",
         "Bash /dev/tcp reverse-shell idiom",
-        ["/dev/tcp/", "bash -i >&", "0>&1"],
+        ["/dev/tcp/", "bash -i", "0>&1"],
+        condition_fn=lambda pats, d: bool(pats[0].search(d) and (pats[1].search(d) or pats[2].search(d))),
     ),
     _Rule(
         "office-macro",
         "office-macro",
         "VBA macro auto-open marker",
-        ["Auto_Open", "Workbook_Open", "Document_Open", "VBA"],
+        ["{ D0 CF 11 E0 }", "{ 50 4B 03 04 }", "Auto_Open", "AutoOpen", "Workbook_Open", "Document_Open", "vbaProject"],
+        condition_fn=lambda pats, d: (pats[0].search(d) or pats[1].search(d)) and any(p.search(d) for p in pats[2:]),
     ),
     _Rule(
         "lnk-command",
         "lnk-lure",
         "Windows shortcut invoking a command/script",
-        ["powershell", "cmd /c", "wscript", "rundll32"],
+        ["{ 4C 00 00 00 }", "powershell", "cmd /c", "cmd.exe", "wscript", "rundll32"],
+        condition_fn=lambda pats, d: pats[0].search(d) and any(p.search(d) for p in pats[1:]),
     ),
 ]
 

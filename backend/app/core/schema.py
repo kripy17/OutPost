@@ -141,6 +141,7 @@ class RunSummary(BaseModel):
     # Provenance — where the run came from: monitor (webapp detonation), live
     # (host collector), sandbox:<provider> (external detonation), seed, cli.
     source: str = "monitor"
+    origin: str = "observed"
     # Fleet attribution — the distinct hosts whose events landed in this run
     # (webapp/sandbox runs are all 'local'). Lets the run card/detail show
     # which machines contributed, and the fleet link back to its runs.
@@ -189,6 +190,7 @@ class Alert(BaseModel):
     entity_key: str | None = None
     pid_fallback: bool = False
     host_id: str | None = None
+    origin: str = "observed"
 
     @field_validator("related_pids", "evidence_event_ids", mode="before")
     @classmethod
@@ -450,14 +452,15 @@ class RunCreate(BaseModel):
     # "cli"; the host collector path is forced to "live" server-side when
     # session_type=live.
     source: str = Field(default="webapp-demo", max_length=32)
+    origin: str = Field(default="observed", max_length=32)
     run_id: str | None = None
 
 
 class SandboxDetonateIn(BaseModel):
     """Push a vault sample to an external sandbox for dynamic detonation.
 
-    `provider` is one of anyrun/triage/joe/demo (or auto = the configured
-    provider, falling back to the labeled demo when none is configured).
+    `provider` is one of anyrun/triage/joe (or auto = the configured
+    provider, raising 422 when none is configured).
     `platform` overrides the sample's sniffed OS for the detonation VM;
     default is the sample's detected platform.
     """

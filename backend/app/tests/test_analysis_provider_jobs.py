@@ -138,51 +138,27 @@ def test_provider_backend_unconfigured_named_provider_422(client, conn, monkeypa
 # ---------------------------------------------------------------------------
 
 
-def test_demo_provider_completes_inline_with_persisted_result(client, conn):
-    meta = _upload_unique(client, "prov-demo", "prov-demo.exe")
+def test_unconfigured_provider_fails_validation(client, conn):
+    meta = _upload_unique(client, "prov-nokey", "prov-nokey.exe")
     run_id = None
     try:
         resp = client.post(
-            "/analysis", json={"backend": "external-provider", "sample_id": meta["sample_id"], "provider": "demo"}
+            "/analysis", json={"backend": "external-provider", "sample_id": meta["sample_id"], "provider": "anyrun"}
         )
-        assert resp.status_code == 201
-        job = resp.json()
-        run_id = job["run_id"]
-        assert job["status"] == "completed"
-        assert job["progress"] == 100
-        assert job["finished_at"] and job["started_at"]
-        assert job["result"]["provider"] == "demo"
-        assert job["result"]["task_id"]
-        # Real detonation output: events landed through the pipeline.
-        assert job["events"] > 0
-        # Persisted (not just shaped for the response): raw store reread.
-        row = jobs_store.get_job(conn, run_id)
-        assert row["status"] == "completed" and row["progress"] == 100
-        assert row["result"]["provider"] == "demo"
-        # Observations use the dynamic branch — the run's events.
-        obs = client.get(f"/analysis/{run_id}/observations").json()
-        assert obs["backend"] == "external-provider"
-        assert obs["observations"]
-        # Audited with the provider named.
-        rows = conn.execute("SELECT * FROM audit_log WHERE target_id = ?", (run_id,)).fetchall()
-        assert any(
-            e["action"] == "analysis.create" and "via demo" in (e["detail"] or "")
-            for e in rows
-        )
+        assert resp.status_code == 422
+        assert "requires ANYRUN_API_KEY" in resp.json()["detail"]
     finally:
         _cleanup(conn, run_id, meta["sample_id"])
 
 
-def test_auto_resolves_to_demo_without_configured_keys(client, conn, monkeypatch):
+def test_auto_refuses_without_configured_keys(client, conn, monkeypatch):
     monkeypatch.setattr(sandbox_service, "active_provider", lambda: "")
     meta = _upload_unique(client, "prov-auto", "prov-auto.exe")
     run_id = None
     try:
         resp = client.post("/analysis", json={"backend": "external-provider", "sample_id": meta["sample_id"]})
-        assert resp.status_code == 201
-        job = resp.json()
-        run_id = job["run_id"]
-        assert job["result"]["provider"] == "demo"
+        assert resp.status_code == 422
+        assert "No external sandbox provider is configured" in resp.json()["detail"]
     finally:
         _cleanup(conn, run_id, meta["sample_id"])
 

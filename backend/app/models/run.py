@@ -18,18 +18,20 @@ def create_run(
     platform: str,
     session_type: str = "analysis",
     source: str = "monitor",
+    origin: str = "observed",
 ) -> None:
     """Create a run. `source` records where it came from (monitor detonation,
     live host collector, sandbox:<provider>, seed data, cli) so the webapp can
-    badge provenance on every run card."""
+    badge provenance on every run card. `origin` records data fidelity
+    (observed, replayed, imported, simulated, test)."""
     # kind is the P0 domain profile of the run, kept in sync with the
     # session_type compatibility field: analysis sessions are analysis jobs,
     # everything else (live host telemetry) is a monitoring session.
     kind = "analysis_job" if session_type == "analysis" else "monitoring_session"
     conn.execute(
-        "INSERT INTO runs (run_id, sample_name, platform, session_type, kind, source, started_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (run_id, sample_name, platform, session_type, kind, source, utcnow()),
+        "INSERT INTO runs (run_id, sample_name, platform, session_type, kind, source, origin, started_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (run_id, sample_name, platform, session_type, kind, source, origin, utcnow()),
     )
 
 
@@ -71,15 +73,26 @@ def _soak_clause(include_soak: bool) -> str:
     return "" if include_soak else " AND r.sample_name NOT LIKE 'soak-%'"
 
 
-def list_runs(conn: sqlite3.Connection, q: str = "", host: str = "", include_synthetic: bool = False, include_soak: bool = False) -> list[dict]:
+def list_runs(
+    conn: sqlite3.Connection,
+    q: str = "",
+    host: str = "",
+    include_synthetic: bool = False,
+    include_soak: bool = False,
+    include_simulated: bool = False,
+) -> list[dict]:
     """All runs newest-first; `q` filters by sample-name substring (the
     sample-vault's detonation history links here with ?q=<sample>) and `host`
     filters to runs whose events came from that host_id (the fleet links here
     with ?host=<host>). Synthetic provenance (seeds / webapp detonations / the
-    keyless sandbox demo) is hidden unless `include_synthetic` is set, and
+    keyless sandbox demo) is hidden unless `include_synthetic` is set,
     soak-named collector baselines (soak-…) are hidden unless `include_soak`
-    is set — the archive reads as real telemetry first."""
+    is set, and simulated/test runs are hidden unless `include_simulated` is set."""
     excl = _synthetic_clause(include_synthetic) + _soak_clause(include_soak)
+    if not include_simulated:
+        cols = {col["name"] for col in conn.execute("PRAGMA table_info(runs)").fetchall()}
+        if "origin" in cols:
+            excl += " AND (r.origin IS NULL OR r.origin NOT IN ('simulated', 'test'))"
     args: tuple = SYNTHETIC_SOURCES if not include_synthetic else ()
     if q and host:
         rows = conn.execute(
@@ -95,12 +108,12 @@ def list_runs(conn: sqlite3.Connection, q: str = "", host: str = "", include_syn
         ).fetchall()
     elif q:
         rows = conn.execute(
-            f"SELECT * FROM runs WHERE sample_name LIKE ?{excl.replace('r.source', 'source').replace('r.sample_name', 'sample_name')} ORDER BY started_at DESC",
+            f"SELECT * FROM runs r WHERE r.sample_name LIKE ?{excl} ORDER BY r.started_at DESC",
             (f"%{q}%", *args),
         ).fetchall()
     else:
         rows = conn.execute(
-            f"SELECT * FROM runs WHERE 1=1{excl.replace('r.source', 'source').replace('r.sample_name', 'sample_name')} ORDER BY started_at DESC",
+            f"SELECT * FROM runs r WHERE 1=1{excl} ORDER BY r.started_at DESC",
             args,
         ).fetchall()
     return [dict(r) for r in rows]
@@ -162,12 +175,14 @@ def to_summary(conn: sqlite3.Connection, run: dict | sqlite3.Row) -> RunSummary:
     alert_count, highest = _alert_stats(conn, run["run_id"])
     # Accept dicts and sqlite3.Row (the active-live route passes a raw Row).
     source = run["source"] if "source" in run.keys() else "monitor"
+    origin = run["origin"] if "origin" in run.keys() else "observed"
     return RunSummary(
         run_id=run["run_id"],
         sample_name=run["sample_name"],
         platform=run["platform"],
         session_type=run["session_type"],
         source=source,
+        origin=origin,
         host_ids=_host_ids(conn, run["run_id"]),
         started_at=run["started_at"],
         completed_at=run["completed_at"],

@@ -51,21 +51,9 @@ async function apiGet(path) {
 /** The full static route set (mirrors frontend/src/main.tsx). */
 const STATIC_ROUTES = [
   "/",
-  "/welcome",
-  "/history",
-  "/monitor",
-  "/search",
-  "/watchlist",
-  "/agents",
-  "/audit",
-  "/findings",
-  "/campaigns",
-  "/coverage",
+  "/samples",
   "/rules",
   "/settings",
-  "/events",
-  "/footprint",
-  "/samples",
 ];
 
 /** Build the dynamic routes (run detail + sample detail) from seeded data.

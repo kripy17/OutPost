@@ -157,7 +157,9 @@ def build_pdf_report(run_id: str) -> bytes | None:
 
     story = []
     run = data["run"]
-    sev = (run.get("highest_severity") or "clean").lower()
+    sev = (run.get("highest_severity") or "no_indicators_found_limited").lower()
+    if sev == "clean":
+        sev = "no_indicators_found_limited"
     sev_color = "#DC2626" if sev == "malicious" else ("#F59E0B" if sev == "suspicious" else "#10B981")
     risk_score = run.get("risk_score", 0)
 
@@ -370,7 +372,7 @@ def synthesize_investigation_narrative(conn, investigation_id: str) -> dict:
             tactics_seen.add(meta["tactic"])
 
     severities = [a["severity"] for a in alerts]
-    max_severity = "critical" if "malicious" in severities and len(alerts) >= 3 else "malicious" if "malicious" in severities else "suspicious" if "suspicious" in severities else "clean"
+    max_severity = "critical" if "malicious" in severities and len(alerts) >= 3 else "malicious" if "malicious" in severities else "suspicious" if "suspicious" in severities else "no_indicators_found_limited"
 
     exec_summary = (
         f"Security incident '{title}' (ID: {investigation_id}) currently in '{status.upper()}' state with {len(alerts)} "

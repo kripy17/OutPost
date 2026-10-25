@@ -16,7 +16,6 @@ import re
 import resource
 import shutil
 import signal
-import subprocess
 import sys
 import tempfile
 import time
@@ -638,7 +637,7 @@ async def execute_and_trace(
     chain = killchain.correlate_chain(alerts)
 
     # Compute verdict
-    verdict = "clean"
+    verdict = "no_indicators_found_limited"
     if any(a.get("severity") == "malicious" for a in alerts):
         verdict = "malicious"
     elif alerts:
@@ -1201,7 +1200,7 @@ async def execute_simulation_scenario_live(scenario_id: str) -> dict[str, Any]:
                 })
 
     # Verdict & Threat Family determination
-    verdict = "clean"
+    verdict = "no_indicators_found_limited"
     if any(a.get("severity") == "malicious" for a in alerts):
         verdict = "malicious"
     elif alerts:
@@ -1676,7 +1675,7 @@ async def execute_sample_detonation(
     tree = [n.model_dump(mode="json") for n in tree_nodes]
     risk_score = risk.compute_risk_score([a["rule_id"] for a in alerts]) if alerts else 0
 
-    verdict = "clean"
+    verdict = "no_indicators_found_limited"
     if any(a.get("severity") == "malicious" for a in alerts):
         verdict = "malicious"
     elif alerts:

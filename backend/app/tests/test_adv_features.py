@@ -1,6 +1,5 @@
 from fastapi.testclient import TestClient
 
-from ..core.db import db_session
 from ..main import app
 from ..services.dynamic_sandbox import extract_c2_sinkhole_events, extract_syscalls_from_trace
 

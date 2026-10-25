@@ -9,10 +9,8 @@ Guarantees:
 6. Legitimate public endpoints (Slack, Discord, generic HTTPS) pass validation.
 """
 
-from fastapi.testclient import TestClient
 
 from ..core.ssrf import validate_outbound_url
-from ..main import app
 
 
 def test_validate_outbound_url_blocks_loopback():

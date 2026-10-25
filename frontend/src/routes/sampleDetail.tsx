@@ -176,9 +176,9 @@ export function StaticThreatTriageCard({
   const entropy = st.entropy ?? 0;
   const isPacked = Boolean(st.is_packed || entropy > 7.1);
 
-  let verdict = "Clean / Legitimate Binary";
+  let verdict = "No Suspicious Indicators Detected";
   let verdictColor = "text-emerald-400 border-emerald-500/40 bg-emerald-500/10";
-  let verdictBadge = "Clean";
+  let verdictBadge = "No Indicators";
 
   if (capCats.has("Cryptographic & Ransomware") || (st.risk_factors || []).some((rf) => rf.toLowerCase().includes("ransom"))) {
     verdict = "Ransomware / Cryptographic Extortion Payload";
@@ -862,7 +862,7 @@ function PreExecutionForecastView({
       ? "text-rose-400 bg-rose-500/20 border-rose-500/40"
       : threatLevel === "SUSPICIOUS"
         ? "text-amber-400 bg-amber-500/20 border-amber-500/40"
-        : threatLevel === "CLEAN"
+        : threatLevel === "CLEAN" || threatLevel === "NO_INDICATORS" || threatLevel === "NO_INDICATORS_FOUND_LIMITED"
           ? "text-emerald-400 bg-emerald-500/20 border-emerald-500/40"
           : "text-text-muted bg-bg-surface border-border-subtle";
 

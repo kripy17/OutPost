@@ -18,15 +18,30 @@ def add_sample(
     detected_platform: str,
     size: int,
     family: str | None = None,
+    origin: str = "imported",
 ) -> dict:
     created_at = datetime.now(timezone.utc).isoformat()
-    conn.execute(
-        """
-        INSERT INTO samples (sample_id, original_name, sha256, detected_platform, size, created_at, family)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        """,
-        (sample_id, original_name, sha256, detected_platform, size, created_at, family),
-    )
+    try:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(samples)").fetchall()}
+    except Exception:
+        cols = set()
+
+    if "origin" in cols:
+        conn.execute(
+            """
+            INSERT INTO samples (sample_id, original_name, sha256, detected_platform, size, created_at, family, origin)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (sample_id, original_name, sha256, detected_platform, size, created_at, family, origin),
+        )
+    else:
+        conn.execute(
+            """
+            INSERT INTO samples (sample_id, original_name, sha256, detected_platform, size, created_at, family)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (sample_id, original_name, sha256, detected_platform, size, created_at, family),
+        )
     return {
         "sample_id": sample_id,
         "original_name": original_name,
@@ -35,6 +50,7 @@ def add_sample(
         "size": size,
         "created_at": created_at,
         "family": family,
+        "origin": origin,
     }
 
 
@@ -43,19 +59,16 @@ def get_sample(conn: sqlite3.Connection, sample_id: str) -> dict | None:
     return dict(row) if row else None
 
 
-def _visibility_clause(include_synthetic: bool) -> tuple[str, list]:
-    """A sample is synthetic when its *entire* detonation history comes from
-    synthetic-provenance runs (seed / webapp-demo / legacy monitor /
-    sandbox:demo); a run-less upload or one with any real run is real. The
-    clause keeps exactly the non-synthetic set: samples with no runs, or with
-    at least one run outside the synthetic markers."""
-    if include_synthetic:
+def _visibility_clause(include_synthetic: bool = False, include_simulated: bool = False) -> tuple[str, list]:
+    """Exclude synthetic/simulated samples by default unless requested."""
+    if include_synthetic or include_simulated:
         return "", []
     marks = ",".join("?" for _ in SYNTHETIC_SOURCES)
     return (
+        "(samples.origin IS NULL OR samples.origin NOT IN ('simulated', 'test')) AND "
         "(NOT EXISTS (SELECT 1 FROM runs r WHERE r.sample_name = samples.original_name)"
         f" OR EXISTS (SELECT 1 FROM runs r WHERE r.sample_name = samples.original_name"
-        f" AND r.source NOT IN ({marks})))",
+        f" AND r.source NOT IN ({marks}) AND (r.origin IS NULL OR r.origin NOT IN ('simulated', 'test'))))",
         list(SYNTHETIC_SOURCES),
     )
 
@@ -66,6 +79,7 @@ def list_samples(
     limit: int = 100,
     offset: int = 0,
     include_synthetic: bool = False,
+    include_simulated: bool = False,
 ) -> list[dict]:
     """Sample library — newest first, optional name/hash/family filter.
     Synthetic-provenance binaries are hidden by default (archive parity)."""
@@ -76,7 +90,7 @@ def list_samples(
         like = f"%{q}%"
         conds.append("(original_name LIKE ? OR sha256 LIKE ? OR malware_family LIKE ?)")
         params += [like, like, like]
-    vis, vis_args = _visibility_clause(include_synthetic)
+    vis, vis_args = _visibility_clause(include_synthetic, include_simulated)
     if vis:
         conds.append(vis)
         params += vis_args

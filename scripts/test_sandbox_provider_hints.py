@@ -55,7 +55,7 @@ def check(name: str, ok: bool, detail: str = "") -> None:
 
 class _State:
     def __init__(self) -> None:
-        self.providers = {"anyrun": False, "triage": False, "joe": False}
+        self.providers = {"anyrun": True, "triage": False, "joe": False}
         self.upload_fail = False
         self.detonate_fail = False
         self.task_status = "completed"  # completed | error | running
@@ -63,7 +63,7 @@ class _State:
         self.events = 5
         self.alerts = 1
         self.run_completed = True
-        self.run_source = "sandbox:demo"
+        self.run_source = "sandbox:anyrun"
 
 
 STATE = _State()
@@ -88,7 +88,7 @@ class _Handler(BaseHTTPRequestHandler):
         if p == "/sandbox/providers":
             self._send(200, {
                 "providers": [{"id": k, "configured": v} for k, v in STATE.providers.items()],
-                "active": "demo",
+                "active": "anyrun" if STATE.providers.get("anyrun") else "",
             })
         elif p.startswith("/sandbox/tasks/"):
             if STATE.task_status == "completed":
@@ -120,12 +120,9 @@ class _Handler(BaseHTTPRequestHandler):
             if STATE.detonate_fail:
                 self._send(500, {"detail": "detonate boom"})
             else:
-                # The real backend resolves the demo provider INLINE, so the
-                # detonate response is already the full completed task (the
-                # gate reads last['events']/risk/severity straight from it).
                 done = STATE.task_status == "completed"
                 self._send(200, {"task_id": "t1", "run_id": "r1", "sample_id": "s1",
-                                 "provider": "demo", "status": STATE.task_status,
+                                 "provider": "anyrun", "status": STATE.task_status,
                                  "events": STATE.events if done else 0,
                                  "alerts": STATE.alerts if done else 0,
                                  "risk_score": 80 if done else 0,
@@ -178,80 +175,82 @@ def main() -> int:
         gate = build_fixture(Path(td))
         port = start_server()
 
-        # 0a. Happy path (labeled demo) — passes with no hint line.
-        rc, out = run_gate(gate, port, "--provider", "demo")
-        check("happy path passes", rc == 0 and "PASS" in out and "→ fix:" not in out, f"rc={rc}")
+        # 0a. Happy path (configured anyrun) — passes with no hint line.
+        rc, out = run_gate(gate, port, "--provider", "anyrun")
+        check("happy path passes", rc == 0 and "detonation task" in out and "→ fix:" not in out, f"rc={rc}")
 
         # 0b. auto + none configured — the clean SKIP, no hint line.
+        STATE.providers["anyrun"] = False
         rc, out = run_gate(gate, port)
         check("no keys + auto → clean skip", rc == 0 and "SKIP" in out and "→ fix:" not in out, f"rc={rc}")
+        STATE.providers["anyrun"] = True
 
         # 1. Backend unreachable — the hint names the fix (start / point it).
         dead = closed_port()
-        rc, out = run_gate(gate, dead, "--provider", "demo")
+        rc, out = run_gate(gate, dead, "--provider", "anyrun")
         expect_drift("backend unreachable", "→ fix: start the backend first", rc, out)
-        rc, out = run_gate(gate, port, "--provider", "demo")
+        rc, out = run_gate(gate, port, "--provider", "anyrun")
         check("backend unreachable → repair green", rc == 0, f"rc={rc}")
 
         # 2. Unknown provider — the hint lists the valid choices.
         rc, out = run_gate(gate, port, "--provider", "nope")
         expect_drift("unknown provider", "→ fix: pass --provider anyrun", rc, out)
-        rc, out = run_gate(gate, port, "--provider", "demo")
+        rc, out = run_gate(gate, port, "--provider", "anyrun")
         check("unknown provider → repair green", rc == 0, f"rc={rc}")
 
-        # 3. Requested provider not configured — the hint names the key + fallback.
+        # 3. Requested provider not configured — the hint names the key.
+        rc, out = run_gate(gate, port, "--provider", "triage")
+        expect_drift("provider requested but not configured", "→ fix: set TRIAGE_API_KEY", rc, out)
         rc, out = run_gate(gate, port, "--provider", "anyrun")
-        expect_drift("provider requested but not configured", "→ fix: set ANYRUN_API_KEY", rc, out)
-        rc, out = run_gate(gate, port, "--provider", "demo")
         check("provider requested but not configured → repair green", rc == 0, f"rc={rc}")
 
         # 4. Sample upload failure.
         STATE.upload_fail = True
-        rc, out = run_gate(gate, port, "--provider", "demo")
+        rc, out = run_gate(gate, port, "--provider", "anyrun")
         expect_drift("sample upload failure", "→ fix: confirm the backend is up", rc, out)
         STATE.upload_fail = False
-        rc, out = run_gate(gate, port, "--provider", "demo")
+        rc, out = run_gate(gate, port, "--provider", "anyrun")
         check("sample upload failure → repair green", rc == 0, f"rc={rc}")
 
         # 5. Detonation failure.
         STATE.detonate_fail = True
-        rc, out = run_gate(gate, port, "--provider", "demo")
+        rc, out = run_gate(gate, port, "--provider", "anyrun")
         expect_drift("detonate failure", "→ fix: check the provider key", rc, out)
         STATE.detonate_fail = False
-        rc, out = run_gate(gate, port, "--provider", "demo")
+        rc, out = run_gate(gate, port, "--provider", "anyrun")
         check("detonate failure → repair green", rc == 0, f"rc={rc}")
 
         # 6. Task error status.
         STATE.task_status = "error"
         STATE.task_error = "sample type not supported"
-        rc, out = run_gate(gate, port, "--provider", "demo")
+        rc, out = run_gate(gate, port, "--provider", "anyrun")
         expect_drift("task error", "→ fix: inspect the provider's task error", rc, out)
         STATE.task_status = "completed"
-        rc, out = run_gate(gate, port, "--provider", "demo")
+        rc, out = run_gate(gate, port, "--provider", "anyrun")
         check("task error → repair green", rc == 0, f"rc={rc}")
 
         # 7. Timeout — max-wait 0 skips the poll loop entirely (no 15s sleep).
         STATE.task_status = "running"
-        rc, out = run_gate(gate, port, "--provider", "demo", "--max-wait", "0")
+        rc, out = run_gate(gate, port, "--provider", "anyrun", "--max-wait", "0")
         expect_drift("did not complete (timeout)", "→ fix: raise --max-wait", rc, out)
         STATE.task_status = "completed"
-        rc, out = run_gate(gate, port, "--provider", "demo", "--max-wait", "30")
+        rc, out = run_gate(gate, port, "--provider", "anyrun", "--max-wait", "30")
         check("did not complete (timeout) → repair green", rc == 0, f"rc={rc}")
 
         # 8. Task completed with zero events.
         STATE.events = 0
-        rc, out = run_gate(gate, port, "--provider", "demo")
+        rc, out = run_gate(gate, port, "--provider", "anyrun")
         expect_drift("zero events", "→ fix: confirm the sample type", rc, out)
         STATE.events = 5
-        rc, out = run_gate(gate, port, "--provider", "demo")
+        rc, out = run_gate(gate, port, "--provider", "anyrun")
         check("zero events → repair green", rc == 0, f"rc={rc}")
 
         # 9. Run source not sandbox:<provider>.
         STATE.run_source = "webapp"
-        rc, out = run_gate(gate, port, "--provider", "demo")
+        rc, out = run_gate(gate, port, "--provider", "anyrun")
         expect_drift("run source wrong", "→ fix: the run must be created by the sandbox detonation path", rc, out)
-        STATE.run_source = "sandbox:demo"
-        rc, out = run_gate(gate, port, "--provider", "demo")
+        STATE.run_source = "sandbox:anyrun"
+        rc, out = run_gate(gate, port, "--provider", "anyrun")
         check("run source wrong → repair green", rc == 0, f"rc={rc}")
 
     print(f"Sandbox-provider hint self-test: {len(FAILURES)} failed" if FAILURES else "Sandbox-provider hint self-test: every failure path prints a repair hint")

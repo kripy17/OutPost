@@ -172,7 +172,7 @@ def assess_static_evidence(
             verdict = "no_indicators_found_limited"
             verdict_reason = "Verified benign attributes (trusted signature, package hash, clean infrastructure) present."
             confidence = "medium"
-        legacy_severity = "clean"
+        legacy_severity = "no_indicators_found_limited"
     # 3. Anomaly threshold without authoritative signals caps at 'suspicious'
     elif net_score >= 25 or len(assessment_factors) >= 2:
         verdict = "suspicious"
@@ -185,20 +185,23 @@ def assess_static_evidence(
             verdict = "insufficient_evidence"
             verdict_reason = "File format unrecognized or unparseable; static evidence is insufficient."
             confidence = "low"
-            legacy_severity = "clean"
+            legacy_severity = "insufficient_evidence"
         else:
             verdict = "no_indicators_found_limited"
             verdict_reason = "No threat indicators detected within static analysis boundaries; runtime execution required."
             confidence = "medium"
-            legacy_severity = "clean"
+            legacy_severity = "no_indicators_found_limited"
     # 5. Low-confidence or inconclusive signals
     else:
         verdict = "insufficient_evidence"
         verdict_reason = "Minor non-conclusive signals observed but insufficient to substantiate a threat verdict."
         confidence = "low"
-        legacy_severity = "clean"
+        legacy_severity = "insufficient_evidence"
 
     total_indicators = len(findings) + len(capabilities) + len(embedded_indicators)
+
+    # When verdict is insufficient_evidence or no_indicators_found_limited, risk score must not contradict it
+    reported_score = 0 if verdict in ("insufficient_evidence", "no_indicators_found_limited") else min(100, net_score)
 
     return {
         "verdict": verdict,
@@ -210,7 +213,7 @@ def assess_static_evidence(
         "benign_factors": benign_factors,
         "confidence": confidence,
         # Backward compatibility for existing schemas and tests
-        "static_risk_score": min(100, net_score),
+        "static_risk_score": reported_score,
         "static_severity": legacy_severity,
         "risk_factors": [f["factor"] for f in assessment_factors],
     }

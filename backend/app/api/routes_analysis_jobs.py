@@ -262,14 +262,19 @@ async def create_analysis_job(body: AnalysisJobCreateIn, request: Request) -> An
 
             want_provider = (body.provider or "").strip()
             if want_provider:
-                if want_provider not in ("demo", "triage", "anyrun", "joe", "hybrid-analysis", "filescan"):
+                if want_provider not in ("triage", "anyrun", "joe", "hybrid-analysis", "filescan"):
                     raise HTTPException(status_code=422, detail=f"Unknown sandbox provider: {want_provider}")
-                if want_provider != "demo" and not sandbox_service.is_configured(want_provider):
+                if not sandbox_service.is_configured(want_provider):
                     key_name = f"{want_provider.upper().replace('-', '_')}_API_KEY"
                     raise HTTPException(status_code=422, detail=f"Provider '{want_provider}' requires {key_name} to be configured")
                 chosen_provider = want_provider
             else:
-                chosen_provider = sandbox_service.active_provider() or "demo"
+                chosen_provider = sandbox_service.active_provider()
+                if not chosen_provider:
+                    raise HTTPException(
+                        status_code=422,
+                        detail="No external sandbox provider is configured. Configure ANYRUN_API_KEY, TRIAGE_API_KEY, or JOE_API_KEY.",
+                    )
 
             sample_name = sample["original_name"]
             platform = body.platform or sample["detected_platform"] or "windows"
@@ -285,71 +290,33 @@ async def create_analysis_job(body: AnalysisJobCreateIn, request: Request) -> An
             conn.commit()
 
             now = jobs_store._now()
-            if chosen_provider == "demo":
-                task = sandbox_service.create_task(run_id, body.sample_id, sample_name, chosen_provider, platform)
-                await sandbox_service.run_task(task, sample_bytes)
-                job = jobs_store.create_job(
-                    conn,
-                    run_id,
-                    "external-provider",
-                    status=jobs_store.COMPLETED,
-                    started_at=now,
-                    finished_at=now,
-                    progress=100,
-                    result={
-                        "provider": chosen_provider,
-                        "task_id": task["task_id"],
-                        "events": task.get("events", 0),
-                        "alerts": task.get("alerts", 0),
-                        "risk_score": task.get("risk_score", 0),
-                    },
-                )
-                audit.log(
-                    conn,
-                    auth.role_from_request(request),
-                    "analysis.create",
-                    target_type="analysis",
-                    target_id=run_id,
-                    detail=f"backend {body.backend} · {sample_name} ({platform}) via {chosen_provider}",
-                )
-                conn.commit()
-                events_stream.publish_run_update(
-                    run_id,
-                    0,
-                    completed=True,
-                    job_id=run_id,
-                    job_status=job["status"],
-                    progress=100,
-                )
-                return AnalysisJobDTO(**_dto(conn, job))
-            else:
-                task = sandbox_service.create_task(run_id, body.sample_id, sample_name, chosen_provider, platform)
-                job = jobs_store.create_job(
-                    conn,
-                    run_id,
-                    "external-provider",
-                    status=jobs_store.QUEUED,
-                    started_at=now,
-                    progress=0,
-                )
-                audit.log(
-                    conn,
-                    auth.role_from_request(request),
-                    "analysis.create",
-                    target_type="analysis",
-                    target_id=run_id,
-                    detail=f"backend {body.backend} · {sample_name} ({platform}) via {chosen_provider}",
-                )
-                asyncio.create_task(_finish_external_job(run_id, task["task_id"], chosen_provider, sample_bytes))
-                events_stream.publish_run_update(
-                    run_id,
-                    0,
-                    completed=False,
-                    job_id=run_id,
-                    job_status=job["status"],
-                    progress=0,
-                )
-                return AnalysisJobDTO(**_dto(conn, job))
+            task = sandbox_service.create_task(run_id, body.sample_id, sample_name, chosen_provider, platform)
+            job = jobs_store.create_job(
+                conn,
+                run_id,
+                "external-provider",
+                status=jobs_store.QUEUED,
+                started_at=now,
+                progress=0,
+            )
+            audit.log(
+                conn,
+                auth.role_from_request(request),
+                "analysis.create",
+                target_type="analysis",
+                target_id=run_id,
+                detail=f"backend {body.backend} · {sample_name} ({platform}) via {chosen_provider}",
+            )
+            asyncio.create_task(_finish_external_job(run_id, task["task_id"], chosen_provider, sample_bytes))
+            events_stream.publish_run_update(
+                run_id,
+                0,
+                completed=False,
+                job_id=run_id,
+                job_status=job["status"],
+                progress=0,
+            )
+            return AnalysisJobDTO(**_dto(conn, job))
 
     with db_session() as conn:
         sample_name, platform = _resolve_artifact(conn, body)

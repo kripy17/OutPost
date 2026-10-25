@@ -1,15 +1,12 @@
 """Sandbox detonation endpoints (roadmap 3.3).
 
-- GET  /sandbox/providers        — which providers are configured (live) vs
-                                   the labeled demo fallback, for the UI badges
+- GET  /sandbox/providers        — which providers are configured (live)
 - POST /sandbox/detonate         — push a vault sample to a sandbox: creates a
                                    run, starts the task, returns task + run ids
 - GET  /sandbox/tasks/{task_id}  — live status of one task (completed run id,
                                    event/alert counts, risk, or the error)
 
-The demo path (no provider key configured, or provider=demo) resolves inline
-and is already `completed` in the response; configured live providers run in a
-background task the frontend polls.
+Configured live providers run in a background task the frontend polls.
 """
 
 import asyncio
@@ -58,27 +55,21 @@ def _load_bytes(sample_id: str) -> bytes | None:
 
 @router.get("/sandbox/providers", response_model=None)
 def list_providers() -> dict:
-    """Provider registry with configured flags + the active mode (live/demo).
-
-    The webapp badges each provider chip: a configured provider detonates
-    against the real API; the demo provider is the always-available labeled
-    fallback.
-    """
+    """Provider registry with configured flags + the active mode (live/unconfigured)."""
     active = sandbox_service.active_provider()
     return {
         "providers": sandbox_service.providers_status(),
         "active": active,
-        "mode": "live" if active else "demo",
+        "mode": "live" if active else "unconfigured",
     }
 
 
 @router.post("/sandbox/detonate", status_code=202, response_model=SandboxTaskOut)
 async def detonate_sample(body: SandboxDetonateIn) -> SandboxTaskOut:
-    """Detonate a vault sample in a sandbox.
+    """Detonate a vault sample in an external sandbox provider.
 
-    `provider` auto-resolves (configured provider, else demo); `platform`
-    defaults to the sample's sniffed OS but can be overridden to pick the
-    detonation VM OS.
+    `provider` auto-resolves to the active configured provider; `platform`
+    defaults to the sample's sniffed OS but can be overridden.
     """
     with db_session() as conn:
         sample = samples_store.get_sample(conn, body.sample_id)
@@ -96,12 +87,6 @@ async def detonate_sample(body: SandboxDetonateIn) -> SandboxTaskOut:
         provider = sandbox_service.resolve_provider(body.provider)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
-
-    if provider != "demo" and not sandbox_service.is_configured(provider):
-        raise HTTPException(
-            status_code=422,
-            detail=f"{provider} is not configured — set the {provider.upper()}_API_KEY env var (or use provider=demo)",
-        )
 
     platform: Platform = body.platform or sample["detected_platform"] or "windows"
     run_id = sandbox_service.create_run_id()
@@ -126,21 +111,15 @@ async def detonate_sample(body: SandboxDetonateIn) -> SandboxTaskOut:
         )
 
     task = sandbox_service.create_task(run_id, body.sample_id, sample["original_name"], provider, platform)
-
-    # Demo (and auto→demo) resolves inline so the response is already complete;
-    # configured live providers detonate in the background (takes minutes).
-    if provider == "demo":
-        await sandbox_service.run_task(task, sample_bytes)
-    else:
-        asyncio.create_task(sandbox_service.run_task(task, sample_bytes))
+    asyncio.create_task(sandbox_service.run_task(task, sample_bytes))
 
     return SandboxTaskOut(**sandbox_service.task_out(task))
 
 
 @router.get("/sandbox/tasks/{task_id}", response_model=SandboxTaskOut)
 def get_task(task_id: str) -> SandboxTaskOut:
-    """Live status of a detonation task — the frontend polls this while a live
-    provider analysis runs (demo tasks are already complete on return)."""
+    """Live status of a detonation task — the frontend polls this while an external
+    provider analysis runs."""
     task = sandbox_service.get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail=f"Unknown sandbox task: {task_id}")

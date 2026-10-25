@@ -3,6 +3,7 @@
 *.db-shm
 *.db-wal
 *.db-*
+*.db.backup-*
 __pycache__/
 node_modules/
 dist/

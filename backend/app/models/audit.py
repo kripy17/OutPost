@@ -24,8 +24,6 @@ def log(
     before_state: str | dict | None = None,
     after_state: str | dict | None = None,
     reason: str | None = None,
-    *args,
-    **kwargs,
 ) -> None:
     """Log an audit event directly to the audit_log table.
 
@@ -54,6 +52,6 @@ def log(
     )
 
 
-def checkpoint(*args, **kwargs):
+def checkpoint() -> None:
     """No-op checkpoint for parked Merkle tree."""
     pass
