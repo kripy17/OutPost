@@ -198,7 +198,7 @@ def test_run_archive_hides_synthetic_by_default(client):
     assert not visible.intersection(synth_names)
 
     # Opt-in: everything shows, including all four synthetic markers.
-    shown = {r["sample_name"] for r in client.get("/runs", params={"include_synthetic": "true"}).json()}
+    shown = {r["sample_name"] for r in client.get("/runs", params={"origin": "all"}).json()}
     assert "host-real.bin" in shown
     assert set(synth_names).issubset(shown)
 

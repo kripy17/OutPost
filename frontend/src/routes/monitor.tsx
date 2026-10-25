@@ -769,17 +769,24 @@ export default function MonitorPage() {
   // Derive active live cockpit metrics
   const displayRunId = isStepModeActive ? stepRunId : activeResult?.run_id;
   const displayName = isStepModeActive ? stepScenario?.name : activeResult?.name;
-  const displayFiles: Array<{ name: string; path?: string; size_bytes?: number }> = isStepModeActive
-    ? (() => {
-        const map = new Map<string, { name: string; path?: string; size_bytes?: number }>();
-        stepCreatedFiles.forEach((f) => map.set(f.name, f));
-        stepDroppedArtifacts.forEach((d) => {
-          if (!map.has(d.name)) map.set(d.name, { name: d.name, size_bytes: d.size_bytes });
-        });
-        return Array.from(map.values());
-      })()
-    : activeResult?.created_files || [];
-  const displayArtifacts = isStepModeActive ? stepDroppedArtifacts : activeResult?.dropped_artifacts || [];
+  const displayFiles: Array<{ name: string; path?: string; size_bytes?: number }> = useMemo(
+    () =>
+      isStepModeActive
+        ? (() => {
+            const map = new Map<string, { name: string; path?: string; size_bytes?: number }>();
+            stepCreatedFiles.forEach((f) => map.set(f.name, f));
+            stepDroppedArtifacts.forEach((d) => {
+              if (!map.has(d.name)) map.set(d.name, { name: d.name, size_bytes: d.size_bytes });
+            });
+            return Array.from(map.values());
+          })()
+        : activeResult?.created_files || [],
+    [isStepModeActive, stepCreatedFiles, stepDroppedArtifacts, activeResult?.created_files],
+  );
+  const displayArtifacts = useMemo(
+    () => (isStepModeActive ? stepDroppedArtifacts : activeResult?.dropped_artifacts || []),
+    [isStepModeActive, stepDroppedArtifacts, activeResult?.dropped_artifacts],
+  );
   const displayAlerts = isStepModeActive ? cumulativeStepAlerts : activeResult?.alerts || [];
   const displayProcesses = isStepModeActive
     ? stageHistory.map((s, idx) => ({
@@ -789,7 +796,10 @@ export default function MonitorPage() {
         status: s.status,
       }))
     : activeResult?.process_tree || [];
-  const displayNetwork = activeResult?.network_connections || [];
+  const displayNetwork = useMemo(
+    () => activeResult?.network_connections || [],
+    [activeResult?.network_connections],
+  );
 
   const displaySyscalls = useMemo(() => {
     if (activeResult?.syscalls && activeResult.syscalls.length > 0) {

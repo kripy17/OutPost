@@ -1113,14 +1113,11 @@ def _migrate_runs_origin(conn: sqlite3.Connection) -> None:
             "ALTER TABLE runs ADD COLUMN origin TEXT NOT NULL DEFAULT 'observed' "
             "CHECK(origin IN ('observed', 'replayed', 'imported', 'simulated', 'test'))"
         )
+    # Backfill explicit seed/synthetic markers only (never match on sample name patterns)
     conn.execute(
         """
         UPDATE runs SET origin = 'simulated'
-        WHERE source IN ('seed', 'webapp-demo', 'simulation', 'sandbox:demo', 'monitor')
-           OR sample_name LIKE 'demo%'
-           OR sample_name LIKE 'syn_%'
-           OR sample_name LIKE 'ben_%'
-           OR sample_name LIKE '%demo%'
+        WHERE source IN ('seed', 'webapp-demo', 'simulation', 'sandbox:demo')
         """
     )
     conn.commit()
@@ -1128,37 +1125,23 @@ def _migrate_runs_origin(conn: sqlite3.Connection) -> None:
 
 def _migrate_tables_origin(conn: sqlite3.Connection) -> None:
     """Add origin column and domain validation CHECK constraint to samples, events, alerts."""
-    # 1. runs backfill (ensure seed/demo/simulation rows are marked simulated)
+    # 1. runs backfill (ensure seed/demo/simulation rows are marked simulated by explicit source marker only)
     conn.execute(
         """
         UPDATE runs SET origin = 'simulated'
-        WHERE source IN ('seed', 'webapp-demo', 'simulation', 'sandbox:demo', 'monitor')
-           OR sample_name LIKE 'demo%'
-           OR sample_name LIKE 'syn_%'
-           OR sample_name LIKE 'ben_%'
-           OR sample_name LIKE '%demo%'
+        WHERE source IN ('seed', 'webapp-demo', 'simulation', 'sandbox:demo')
         """
     )
 
-    # 2. samples
+    # 2. samples (default to imported; never heuristic match by file name)
     cols_samples = {r["name"] for r in conn.execute("PRAGMA table_info(samples)").fetchall()}
     if "origin" not in cols_samples:
         conn.execute(
             "ALTER TABLE samples ADD COLUMN origin TEXT NOT NULL DEFAULT 'imported' "
             "CHECK(origin IN ('observed', 'replayed', 'imported', 'simulated', 'test'))"
         )
-    name_col = "original_name" if "original_name" in cols_samples else "name"
-    conn.execute(
-        f"""
-        UPDATE samples SET origin = 'simulated'
-        WHERE {name_col} LIKE 'demo%'
-           OR {name_col} LIKE 'syn_%'
-           OR {name_col} LIKE 'ben_%'
-           OR {name_col} LIKE '%demo%'
-        """
-    )
 
-    # 3. events
+    # 3. events (propagate from simulated runs)
     cols_events = {r["name"] for r in conn.execute("PRAGMA table_info(events)").fetchall()}
     if "origin" not in cols_events:
         conn.execute(
@@ -1172,7 +1155,7 @@ def _migrate_tables_origin(conn: sqlite3.Connection) -> None:
         """
     )
 
-    # 4. alerts
+    # 4. alerts (propagate from simulated runs)
     cols_alerts = {r["name"] for r in conn.execute("PRAGMA table_info(alerts)").fetchall()}
     if "origin" not in cols_alerts:
         conn.execute(

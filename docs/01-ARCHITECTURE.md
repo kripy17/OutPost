@@ -1,5 +1,14 @@
 # Architecture & Repo Structure
 
+> [!CAUTION]
+> **SAFETY MANDATE: DO NOT DETONATE LIVE MALWARE ON THE HOST WORKSTATION**
+> The local Bubblewrap (`bwrap`) sandbox on the developer/analyst workstation is strictly for benign unit testing, development validation, and non-destructive triage scripts.
+> Real, untrusted malware samples **must never** be executed directly on the host machine. User namespace escapes, kernel privilege escalation vulnerabilities, and sandbox side-channel leaks can compromise host files and secrets.
+> All dynamic detonation of live malware requires a **Dedicated Malware Analysis Lab VM** (QEMU/KVM, Proxmox, or VirtualBox) featuring:
+> 1. Complete network isolation (non-routed host-only bridge or simulated gateway like INetSim/FakeNet-NG with zero route to the LAN/Internet).
+> 2. Clean snapshot revert capability before every detonation run.
+> 3. Strict hypervisor boundary isolation with no shared host mounts.
+
 > [!WARNING]
 > **STALE ARCHITECTURE DOCUMENTATION (PENDING STEPS 2–8 REWRITE)**
 > This document describes the legacy fleet/SOC architecture (auditd/sysmon collectors, alerts queue, incident investigations, campaigns).

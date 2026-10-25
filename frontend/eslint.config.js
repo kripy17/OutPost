@@ -31,6 +31,7 @@ export default tseslint.config(
       "react-hooks/refs": "off",
       "react-hooks/immutability": "off",
       "react-hooks/purity": "off",
+      "react-hooks/incompatible-library": "off",
       "react-refresh/only-export-components": ["warn", { allowConstantExport: true }],
       "@typescript-eslint/no-unused-vars": [
         "error",
@@ -49,7 +50,9 @@ export default tseslint.config(
     // fast-refresh the route table anyway (every page edit reloads it), and
     // the rule has nothing useful to say here. main.tsx stays export-less
     // (its own fast-refresh boundary), so it needs no exemption.
-    files: ["src/main.tsx", "src/appRouter.tsx"],
+    // Foundation files export design system contexts, hooks, and UI primitives
+    // together as module bundles.
+    files: ["src/main.tsx", "src/appRouter.tsx", "src/foundation/**"],
     rules: { "react-refresh/only-export-components": "off" },
   },
 );

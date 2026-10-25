@@ -24,6 +24,9 @@
 
 ## Task 2: Dynamic Detonation & Process Tree Observation
 
+> [!CAUTION]
+> **LAB ENVIRONMENT REQUIREMENT**: Real malware must never be detonated directly on an analyst's workstation or production host. While local bubblewrap (`bwrap`) provides user namespace isolation for unit tests and harmless diagnostic scripts, production detonation of real samples requires an isolated Lab Virtual Machine with snapshot rollback, no routable network connection to production, and full hypervisor confinement.
+
 - **Analyst Intent**: Execute a sample inside an isolated, resource-constrained Linux sandbox to observe process spawning, command-line arguments, parent-child relationships, syscalls, and termination codes.
 - **Measurable Target**:
   - **Action Count**: 1 click ("Detonate Sample").

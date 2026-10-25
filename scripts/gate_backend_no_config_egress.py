@@ -210,7 +210,7 @@ def main() -> int:
         return 1
     print("✓ Backend no-config egress gate: background flows silent with zero config "
           "(create/ingest/complete/detail/upload/unconfigured-sandbox-reject); keyed refresh caught; "
-          "cached reads silent; webhook delivery target-limited")
+          "cached reads silent")
     return 0
 
 

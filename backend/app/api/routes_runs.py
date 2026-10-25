@@ -148,16 +148,14 @@ async def refresh_ip_enrichment(run_id: str, ip: str = Query(..., min_length=1, 
 def list_runs(
     q: str = Query("", max_length=200),
     host: str = Query("", max_length=200),
-    include_synthetic: bool = Query(False, description="Show seeds / webapp-synthetic detonations / the sandbox demo in the archive"),
+    origin: str | None = Query(None, description="Filter by origin: observed, replayed, imported, simulated, test, or all"),
+    include_synthetic: bool = Query(False, description="Deprecated: use origin=all"),
     include_soak: bool = Query(False, description="Show soak-named collector baselines (soak-… modeled runs) in the archive"),
     include_simulated: bool = Query(False, description="Show simulated and test runs in the archive"),
 ) -> list[RunSummary]:
     """Run history, newest first. `?q=<sample>` filters by sample-name
-    substring; `?host=<host_id>` filters to runs whose events came from that
-    fleet host (the Agents page links here). Both combine when given.
-    Synthetic provenance (seed / webapp-demo / legacy monitor / sandbox:demo),
-    soak-named collector baselines (soak-…), and simulated/test runs are hidden
-    by default so the archive reads as real telemetry first."""
+    substring; `?origin=<origin>` filters by provenance.
+    Simulated and test runs are hidden by default."""
     with db_session() as conn:
         rows = run_store.list_runs(
             conn,
@@ -166,6 +164,7 @@ def list_runs(
             include_synthetic=include_synthetic,
             include_soak=include_soak,
             include_simulated=include_simulated,
+            origin=origin,
         )
         return [run_store.to_summary(conn, r) for r in rows]
 
