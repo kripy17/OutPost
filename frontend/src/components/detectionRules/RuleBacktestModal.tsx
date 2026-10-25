@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Icon } from "../Icon";
 import { backtestCustomRule, backtestRule } from "../../lib/api";
 import type { RuleBacktestResult } from "../../types";
@@ -29,7 +29,7 @@ export function RuleBacktestModal({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [onClose]);
 
-  const runBacktest = async () => {
+  const runBacktest = useCallback(async () => {
     setRunning(true);
     setError(null);
     try {
@@ -45,11 +45,11 @@ export function RuleBacktestModal({
     } finally {
       setRunning(false);
     }
-  };
+  }, [customYaml, ruleId, maxEvents]);
 
   useEffect(() => {
     void runBacktest();
-  }, [ruleId, customYaml]);
+  }, [runBacktest]);
 
   return (
     <div

@@ -8,7 +8,10 @@ from ..core.schema import Alert
 
 def insert_event(conn: sqlite3.Connection, event: dict) -> int:
     cols = {r[1] for r in conn.execute("PRAGMA table_info(events)").fetchall()}
-    origin_val = event.get("origin", "observed")
+    origin_val = event.get("origin")
+    if not origin_val:
+        run_row = conn.execute("SELECT origin FROM runs WHERE run_id = ?", (event["run_id"],)).fetchone()
+        origin_val = run_row["origin"] if run_row and "origin" in run_row.keys() and run_row["origin"] else "observed"
     if "user" in cols:
         cur = conn.execute(
             """

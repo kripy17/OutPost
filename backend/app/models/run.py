@@ -24,6 +24,8 @@ def create_run(
     live host collector, sandbox:<provider>, seed data, cli) so the webapp can
     badge provenance on every run card. `origin` records data fidelity
     (observed, replayed, imported, simulated, test)."""
+    if origin == "observed" and source in ("simulation", "seed", "webapp-demo", "sandbox:demo", "monitor"):
+        origin = "simulated"
     # kind is the P0 domain profile of the run, kept in sync with the
     # session_type compatibility field: analysis sessions are analysis jobs,
     # everything else (live host telemetry) is a monitoring session.
@@ -80,20 +82,28 @@ def list_runs(
     include_synthetic: bool = False,
     include_soak: bool = False,
     include_simulated: bool = False,
+    origin: str | None = None,
 ) -> list[dict]:
-    """All runs newest-first; `q` filters by sample-name substring (the
-    sample-vault's detonation history links here with ?q=<sample>) and `host`
-    filters to runs whose events came from that host_id (the fleet links here
-    with ?host=<host>). Synthetic provenance (seeds / webapp detonations / the
-    keyless sandbox demo) is hidden unless `include_synthetic` is set,
-    soak-named collector baselines (soak-…) are hidden unless `include_soak`
-    is set, and simulated/test runs are hidden unless `include_simulated` is set."""
-    excl = _synthetic_clause(include_synthetic) + _soak_clause(include_soak)
-    if not include_simulated:
+    """All runs newest-first; `q` filters by sample-name substring.
+
+    `origin` filters directly: 'observed', 'replayed', 'imported', 'simulated', 'test', or 'all'.
+    When `origin` is omitted, simulated/test runs are hidden by default unless
+    `include_simulated` or `include_synthetic` is True."""
+    soak_clause = _soak_clause(include_soak)
+    origin_clause = ""
+    origin_args: list = []
+
+    if origin and origin != "all":
+        origin_clause = " AND r.origin = ?"
+        origin_args.append(origin)
+    elif not origin and not (include_simulated or include_synthetic):
         cols = {col["name"] for col in conn.execute("PRAGMA table_info(runs)").fetchall()}
         if "origin" in cols:
-            excl += " AND (r.origin IS NULL OR r.origin NOT IN ('simulated', 'test'))"
-    args: tuple = SYNTHETIC_SOURCES if not include_synthetic else ()
+            origin_clause = " AND (r.origin IS NULL OR r.origin NOT IN ('simulated', 'test'))"
+
+    excl = soak_clause + origin_clause
+    args = tuple(origin_args)
+
     if q and host:
         rows = conn.execute(
             "SELECT DISTINCT r.* FROM runs r JOIN events e ON e.run_id = r.run_id "

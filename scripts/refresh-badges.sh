@@ -11,6 +11,7 @@
 # Usage:
 #   bash scripts/refresh-badges.sh          # dry-run: recompute, print, no write
 #   bash scripts/refresh-badges.sh --check  # gate: exit 1 if any badge is stale
+#   bash scripts/refresh-badges.sh --write  # write badges/*.json locally (no git commit)
 #   bash scripts/refresh-badges.sh --commit # write badges/*.json; commit+push if changed
 #   bash scripts/refresh-badges.sh --recover # regenerate the ENTIRE size story
 #                                            # (docs/17 table + stamps +
@@ -357,6 +358,14 @@ case "$MODE" in
     exit 0
     ;;
   --commit|--recover) ;;
+  --write)
+    printf '%s\n' "$T_BADGE" > "$ROOT/badges/tests.json"
+    printf '%s\n' "$R_BADGE" > "$ROOT/badges/rules.json"
+    printf '%s\n' "$CM_BADGE" > "$ROOT/badges/commands.json"
+    printf '%s\n' "$CV_BADGE" > "$ROOT/badges/coverage.json"
+    echo "badges written locally: tests=$SUM, rules=$RULES, tactics=$COV, commands=$CMDS"
+    exit 0
+    ;;
   "")
     echo "(dry-run — pass --check to gate or --commit to publish changes)"
     exit 0

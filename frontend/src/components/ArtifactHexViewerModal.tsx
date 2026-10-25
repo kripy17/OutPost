@@ -50,15 +50,25 @@ export function ArtifactHexViewerModal({ artifact, onClose }: ArtifactHexViewerM
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [onClose]);
 
-  const previewLines = artifact.preview || [
-    `# OutPost Carved Artifact: ${artifact.filename || artifact.name}`,
-    `# Size: ${artifact.size_bytes} bytes`,
-    `# SHA-256: ${artifact.sha256}`,
-    "",
-    "BIN_HEADER: 7f454c46020101000000000000000000",
-    "INTERPRETER: /lib64/ld-linux-x86-64.so.2",
-    "SECTION .text: execve socket connect openat",
-  ];
+  const previewLines = useMemo(
+    () =>
+      artifact.preview || [
+        `# OutPost Carved Artifact: ${artifact.filename || artifact.name}`,
+        `# Size: ${artifact.size_bytes} bytes`,
+        `# SHA-256: ${artifact.sha256}`,
+        "",
+        "BIN_HEADER: 7f454c46020101000000000000000000",
+        "INTERPRETER: /lib64/ld-linux-x86-64.so.2",
+        "SECTION .text: execve socket connect openat",
+      ],
+    [
+      artifact.preview,
+      artifact.filename,
+      artifact.name,
+      artifact.size_bytes,
+      artifact.sha256,
+    ],
+  );
 
   const hexRows = useMemo(() => generateHexDump(previewLines), [previewLines]);
 

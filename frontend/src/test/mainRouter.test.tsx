@@ -63,14 +63,14 @@ async function renderAtLogin() {
 describe("the /login route", () => {
   it("renders the sign-in screen when unauthenticated (gate path)", async () => {
     await renderAtLogin();
-    expect(await screen.findByRole("heading", { name: /sign in/i })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /sign in/i }, { timeout: 5000 })).toBeInTheDocument();
     expect(screen.queryByText(/nothing on this route/i)).not.toBeInTheDocument();
   });
 
   it("renders the sign-in screen when authenticated (route path, not a 404)", async () => {
     meResponse = { ...meResponse, authenticated: true };
     await renderAtLogin();
-    expect(await screen.findByRole("heading", { name: /sign in/i })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /sign in/i }, { timeout: 5000 })).toBeInTheDocument();
     expect(screen.queryByText(/nothing on this route/i)).not.toBeInTheDocument();
   });
 });

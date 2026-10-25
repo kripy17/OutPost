@@ -39,9 +39,7 @@ BACKEND_HTTPX_SANCTIONED = {
     "api/routes_keys.py",
     "api/routes_samples.py",
     "services/enrichment.py",
-    "services/footprint.py",  # crt.sh passive DNS + RDAP — operator-invoked lookups
     "services/sandbox.py",
-    "services/notifications.py",
 }
 
 FORBIDDEN_CLIENTS = ("requests", "aiohttp", "urllib.request", "http.client")

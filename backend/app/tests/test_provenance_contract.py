@@ -46,7 +46,7 @@ def test_live_views_strictly_exclude_synthetic_and_simulation(client):
         }],
     )
 
-    # 1. GET /events default (include_synthetic=False) must only show live events
+    # 1. GET /events default excludes simulated events
     r_live = client.get("/events")
     assert r_live.status_code == 200
     data = r_live.json()
@@ -54,17 +54,23 @@ def test_live_views_strictly_exclude_synthetic_and_simulation(client):
     assert run_live in run_ids
     assert run_sim not in run_ids
 
-    # 2. GET /events with include_synthetic=true shows simulation as well
-    r_all = client.get("/events?include_synthetic=true")
+    # 2. GET /events with origin=all or origin=simulated shows simulation
+    r_all = client.get("/events?origin=all")
     assert r_all.status_code == 200
     all_run_ids = [e["run_id"] for e in r_all.json()["events"]]
     assert run_sim in all_run_ids
 
+    r_sim_only = client.get("/events?origin=simulated")
+    assert r_sim_only.status_code == 200
+    sim_ids = [e["run_id"] for e in r_sim_only.json()["events"]]
+    assert run_sim in sim_ids
+    assert run_live not in sim_ids
+
     # 3. GET /runs default excludes simulation
-    r_runs = client.get("/runs?include_synthetic=false")
+    r_runs = client.get("/runs")
     assert r_runs.status_code == 200
     runs = r_runs.json()
-    assert all(r["source"] not in ("simulation", "seed", "webapp-demo", "monitor", "sandbox:demo") for r in runs)
+    assert all(r["origin"] not in ("simulated", "test") for r in runs)
     assert any(r["run_id"] == run_live for r in runs)
 
 

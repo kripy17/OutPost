@@ -1,7 +1,7 @@
 // Unit tests for IOC Workbench: defang, refang, indicator extraction, and RFC1918 classification
 
 import { describe, expect, it } from "vitest";
-import { defangText, extractIndicators, isPrivateIpv4, refangText } from "../components/IocWorkbench";
+import { defangText, extractIndicators, isPrivateIpv4, refangText } from "../lib/iocUtils";
 
 describe("IOC Workbench Defanging & Refanging", () => {
   it("refangs defanged URLs, domains, and emails", () => {

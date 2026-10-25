@@ -291,22 +291,39 @@ def list_samples(
     q: str = Query("", max_length=200, description="Filter by name / hash prefix / family"),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    origin: str | None = Query(None, description="Filter by origin: imported, observed, replayed, simulated, test, or all"),
     include_synthetic: bool = Query(
         False,
-        description="Show binaries whose entire detonation history is demo/synthetic (seed / webapp-demo / sandbox demo)",
+        description="Deprecated: use origin=all",
+    ),
+    include_simulated: bool = Query(
+        False,
+        description="Show simulated and test samples",
     ),
 ):
     """Sample library — every uploaded binary with its reputation evidence.
 
     Each row carries the parsed YARA hits, VirusTotal detection count, how
-    many runs used the same sample name, and whether that history is entirely
-    synthetic. Synthetic-provenance binaries are hidden by default (archive
-    parity); `include_synthetic` reveals them. Powers the webapp /samples
-    library page.
+    many runs used the same sample name, and its origin provenance.
+    Simulated/test binaries are hidden by default unless requested.
     """
     with db_session() as conn:
-        rows = samples_store.list_samples(conn, q=q.strip(), limit=limit, offset=offset, include_synthetic=include_synthetic)
-        total = samples_store.count_samples(conn, q=q.strip(), include_synthetic=include_synthetic)
+        rows = samples_store.list_samples(
+            conn,
+            q=q.strip(),
+            limit=limit,
+            offset=offset,
+            include_synthetic=include_synthetic,
+            include_simulated=include_simulated,
+            origin=origin,
+        )
+        total = samples_store.count_samples(
+            conn,
+            q=q.strip(),
+            include_synthetic=include_synthetic,
+            include_simulated=include_simulated,
+            origin=origin,
+        )
         synth_map = _sample_synthetic_map(conn)
         out = []
         for r in rows:
@@ -340,15 +357,20 @@ def list_samples(
 def export_samples(
     q: str = Query("", max_length=200),
     limit: int = Query(1000, ge=1, le=5000),
+    origin: str | None = Query(None, description="Filter by origin"),
     include_synthetic: bool = Query(
         False,
-        description="Show binaries whose entire detonation history is demo/synthetic",
+        description="Deprecated: use origin=all",
+    ),
+    include_simulated: bool = Query(
+        False,
+        description="Show simulated and test samples",
     ),
 ):
     """CSV of the sample vault (same filter as GET /samples) — name, hash,
     platform, size, family, YARA hits, VT detections, detonation count.
-    Honors the synthetic-hiding default so the export matches the page."""
-    data = list_samples(q=q, limit=limit, offset=0, include_synthetic=include_synthetic)
+    Honors the simulated-hiding default so the export matches the page."""
+    data = list_samples(q=q, limit=limit, offset=0, include_synthetic=include_synthetic, include_simulated=include_simulated, origin=origin)
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow(["sample_id", "original_name", "sha256", "detected_platform", "size", "family", "yara_rules", "vt_detections", "malware_family", "runs_count", "created_at"])

@@ -14,7 +14,6 @@ import io
 from fastapi import APIRouter, HTTPException, Query, Response
 
 from ..core.db import db_session
-from ..models.run import SYNTHETIC_SOURCES
 from ..services.risk import RULE_META, RULE_REMEDIATION, evaluate_rule_coverage_for_run, rule_name
 
 router = APIRouter(tags=["analysis"])
@@ -106,7 +105,8 @@ def _event_where(
     q: str | None,
     pids: list[int],
     source: str | None,
-    include_synthetic: bool,
+    include_synthetic: bool = False,
+    origin: str | None = None,
 ) -> tuple[list[str], list]:
     """Shared WHERE clause for the event feed and the channel-count split.
     Values must already be validated; pids must be parsed."""
@@ -137,10 +137,11 @@ def _event_where(
         frag, extra = _source_clause(source)
         where.append(frag)
         params += extra
-    if not include_synthetic:
-        marks = ",".join("?" for _ in SYNTHETIC_SOURCES)
-        where.append(f"r.source NOT IN ({marks})")
-        params += list(SYNTHETIC_SOURCES)
+    if origin and origin != "all":
+        where.append("e.origin = ?")
+        params.append(origin)
+    elif not origin and not include_synthetic:
+        where.append("(e.origin IS NULL OR e.origin NOT IN ('simulated', 'test'))")
     return where, params
 
 
@@ -152,9 +153,10 @@ def list_events(
     q: str | None = None,
     pid: str | None = None,
     source: str | None = None,
+    origin: str | None = Query(None, description="Filter by origin: observed, replayed, imported, simulated, test, or all"),
     include_synthetic: bool = Query(
         False,
-        description="Show events from synthetic-provenance runs (seeds / webapp detonations / the sandbox demo)",
+        description="Deprecated: use origin=all",
     ),
     limit: int = Query(_DEFAULT_LIMIT, ge=1, le=_MAX_LIMIT),
     offset: int = Query(0, ge=0),
@@ -178,7 +180,7 @@ def list_events(
     """
     _validate_event_filters(event_type, platform, severity, source)
     pids = _parse_pids(pid)
-    where, params = _event_where(event_type, platform, severity, q, pids, source, include_synthetic)
+    where, params = _event_where(event_type, platform, severity, q, pids, source, include_synthetic, origin)
     clause = " AND ".join(where)
 
     with db_session() as conn:
@@ -222,9 +224,10 @@ def event_counts(
     q: str | None = None,
     pid: str | None = None,
     source: str | None = None,
+    origin: str | None = Query(None, description="Filter by origin: observed, replayed, imported, simulated, test, or all"),
     include_synthetic: bool = Query(
         False,
-        description="Show events from synthetic-provenance runs (seeds / webapp detonations / the sandbox demo)",
+        description="Deprecated: use origin=all",
     ),
 ) -> dict:
     """One-query counts for the ENTIRE Event Log rail — category + channel.
@@ -252,7 +255,7 @@ def event_counts(
     pids = _parse_pids(pid)
     # event_type deliberately stays OUT of the base WHERE — it applies only to
     # the channel buckets via the CASE below.
-    where, params = _event_where(None, platform, severity, q, pids, None, include_synthetic)
+    where, params = _event_where(None, platform, severity, q, pids, None, include_synthetic, origin)
     clause = " AND ".join(where)
 
     # The active source facet applies to the TYPE buckets (a category badge
@@ -332,9 +335,10 @@ def event_channel_counts(
     severity: str | None = None,
     q: str | None = None,
     pid: str | None = None,
+    origin: str | None = Query(None, description="Filter by origin: observed, replayed, imported, simulated, test, or all"),
     include_synthetic: bool = Query(
         False,
-        description="Show events from synthetic-provenance runs (seeds / webapp detonations / the sandbox demo)",
+        description="Deprecated: use origin=all",
     ),
 ) -> dict:
     """Per-channel totals for the Event Log's source-tab rail — one query
@@ -352,7 +356,7 @@ def event_channel_counts(
     overlap live, so the channel values need not sum to total."""
     _validate_event_filters(event_type, platform, severity, None)
     pids = _parse_pids(pid)
-    where, params = _event_where(event_type, platform, severity, q, pids, None, include_synthetic)
+    where, params = _event_where(event_type, platform, severity, q, pids, None, include_synthetic, origin)
     clause = " AND ".join(where)
 
     with db_session() as conn:
@@ -633,14 +637,15 @@ def export_events(
     q: str | None = None,
     pid: str | None = None,
     source: str | None = None,
+    origin: str | None = Query(None, description="Filter by origin: observed, replayed, imported, simulated, test, or all"),
     include_synthetic: bool = Query(
         False,
-        description="Show events from synthetic-provenance runs (seeds / webapp detonations / the sandbox demo)",
+        description="Deprecated: use origin=all",
     ),
     limit: int = Query(1000, ge=1, le=5000),
 ):
     """CSV export of the filtered event feed (same filters as GET /events,
-    including the synthetic-hiding default — exports match what the feed
+    including the simulated-hiding default — exports match what the feed
     shows).
 
     `limit` defaults much higher than the feed's (1000, up to 5000) — export
@@ -648,7 +653,7 @@ def export_events(
     """
     feed = list_events(
         event_type=event_type, platform=platform, severity=severity, q=q, pid=pid,
-        source=source, include_synthetic=include_synthetic, limit=limit, offset=0,
+        source=source, origin=origin, include_synthetic=include_synthetic, limit=limit, offset=0,
     )
     buf = io.StringIO()
     writer = csv.writer(buf)

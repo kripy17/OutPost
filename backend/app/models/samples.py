@@ -7,8 +7,6 @@ can pre-fill a detonation and the hash is searchable via IOC search.
 import sqlite3
 from datetime import datetime, timezone
 
-from .run import SYNTHETIC_SOURCES
-
 
 def add_sample(
     conn: sqlite3.Connection,
@@ -59,17 +57,25 @@ def get_sample(conn: sqlite3.Connection, sample_id: str) -> dict | None:
     return dict(row) if row else None
 
 
-def _visibility_clause(include_synthetic: bool = False, include_simulated: bool = False) -> tuple[str, list]:
-    """Exclude synthetic/simulated samples by default unless requested."""
-    if include_synthetic or include_simulated:
+def _visibility_clause(include_synthetic: bool = False, include_simulated: bool = False, origin: str | None = None) -> tuple[str, list]:
+    """Filter samples by origin. Exclude simulated/test samples by default unless requested."""
+    if origin and origin != "all":
+        if origin == "simulated":
+            return (
+                "(samples.origin = 'simulated' OR EXISTS ("
+                "  SELECT 1 FROM runs r WHERE r.sample_name = samples.original_name AND r.origin = 'simulated'"
+                "))",
+                [],
+            )
+        return "samples.origin = ?", [origin]
+    if origin == "all" or include_synthetic or include_simulated:
         return "", []
-    marks = ",".join("?" for _ in SYNTHETIC_SOURCES)
     return (
         "(samples.origin IS NULL OR samples.origin NOT IN ('simulated', 'test')) AND "
         "(NOT EXISTS (SELECT 1 FROM runs r WHERE r.sample_name = samples.original_name)"
-        f" OR EXISTS (SELECT 1 FROM runs r WHERE r.sample_name = samples.original_name"
-        f" AND r.source NOT IN ({marks}) AND (r.origin IS NULL OR r.origin NOT IN ('simulated', 'test'))))",
-        list(SYNTHETIC_SOURCES),
+        " OR EXISTS (SELECT 1 FROM runs r WHERE r.sample_name = samples.original_name"
+        " AND (r.origin IS NULL OR r.origin NOT IN ('simulated', 'test'))))",
+        [],
     )
 
 
@@ -80,9 +86,10 @@ def list_samples(
     offset: int = 0,
     include_synthetic: bool = False,
     include_simulated: bool = False,
+    origin: str | None = None,
 ) -> list[dict]:
     """Sample library — newest first, optional name/hash/family filter.
-    Synthetic-provenance binaries are hidden by default (archive parity)."""
+    `origin` filters by provenance: 'imported', 'observed', 'replayed', 'simulated', 'test', or 'all'."""
     base = "SELECT * FROM samples"
     params: list = []
     conds: list[str] = []
@@ -90,7 +97,7 @@ def list_samples(
         like = f"%{q}%"
         conds.append("(original_name LIKE ? OR sha256 LIKE ? OR malware_family LIKE ?)")
         params += [like, like, like]
-    vis, vis_args = _visibility_clause(include_synthetic, include_simulated)
+    vis, vis_args = _visibility_clause(include_synthetic, include_simulated, origin)
     if vis:
         conds.append(vis)
         params += vis_args
@@ -101,7 +108,13 @@ def list_samples(
     return [dict(r) for r in conn.execute(base, params).fetchall()]
 
 
-def count_samples(conn: sqlite3.Connection, q: str = "", include_synthetic: bool = False) -> int:
+def count_samples(
+    conn: sqlite3.Connection,
+    q: str = "",
+    include_synthetic: bool = False,
+    include_simulated: bool = False,
+    origin: str | None = None,
+) -> int:
     base = "SELECT COUNT(*) FROM samples"
     params: list = []
     conds: list[str] = []
@@ -109,7 +122,7 @@ def count_samples(conn: sqlite3.Connection, q: str = "", include_synthetic: bool
         like = f"%{q}%"
         conds.append("(original_name LIKE ? OR sha256 LIKE ? OR malware_family LIKE ?)")
         params += [like, like, like]
-    vis, vis_args = _visibility_clause(include_synthetic)
+    vis, vis_args = _visibility_clause(include_synthetic, include_simulated, origin)
     if vis:
         conds.append(vis)
         params += vis_args

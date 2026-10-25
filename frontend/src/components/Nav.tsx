@@ -114,7 +114,7 @@ export interface NavItem {
   badgeTone?: "malicious" | "accent" | "clean";
 }
 
-export function getNavigationGroups(
+function getNavigationGroups(
   openAlerts = 0,
   activeCases = 0,
   onlineAgents = 0,
@@ -191,7 +191,6 @@ export function getNavigationGroups(
   ];
 }
 
-export const GROUPS = getNavigationGroups(0, 0, 0);
 
 /* ── Status cluster — docked in the rail footer ────────────────────────── */
 

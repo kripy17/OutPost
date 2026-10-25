@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Icon } from "./Icon";
 import { getProcessTree, controlProcessXRay } from "../lib/api";
 
@@ -36,7 +36,7 @@ export function ProcessCausalityTree({
     }
   }, [nodes]);
 
-  const fetchTree = async () => {
+  const fetchTree = useCallback(async () => {
     if (nodes) return;
     try {
       setLoading(true);
@@ -47,13 +47,13 @@ export function ProcessCausalityTree({
     } finally {
       setLoading(false);
     }
-  };
+  }, [nodes]);
 
   useEffect(() => {
     if (!nodes) {
       fetchTree();
     }
-  }, [nodes]);
+  }, [nodes, fetchTree]);
 
   const handleAction = async (e: React.MouseEvent, pid: number, action: "terminate" | "kill") => {
     e.stopPropagation();
