@@ -74,13 +74,13 @@ def main() -> int:
         print("  → fix: start the backend first (e.g. bash scripts/dev.sh) or pass --backend <url>, then re-run this gate", file=sys.stderr)
         return 1
 
-    providers = {p["id"]: p for p in registry["providers"]}
+    providers = {p["id"]: p for p in registry.get("providers", [])}
     configured = [pid for pid in ("anyrun", "triage", "joe") if providers.get(pid, {}).get("configured")]
     requested = args.provider.strip().lower()
 
-    if requested not in ("auto", "demo", "anyrun", "triage", "joe"):
-        print(f"FAIL — unknown provider '{requested}' (expected anyrun | triage | joe | auto | demo)", file=sys.stderr)
-        print("  → fix: pass --provider anyrun | triage | joe | auto | demo (auto = the configured provider, demo = the labeled pipeline)", file=sys.stderr)
+    if requested not in ("auto", "anyrun", "triage", "joe"):
+        print(f"FAIL — unknown provider '{requested}' (expected anyrun | triage | joe | auto)", file=sys.stderr)
+        print("  → fix: pass --provider anyrun | triage | joe | auto (auto = the configured provider)", file=sys.stderr)
         return 1
 
     if requested in ("anyrun", "triage", "joe") and requested not in configured:
@@ -90,21 +90,17 @@ def main() -> int:
             file=sys.stderr,
         )
         print(
-            f"  → fix: set {requested.upper()}_API_KEY and restart the backend, "
-            "or pass --provider demo to validate the labeled pipeline instead",
+            f"  → fix: set {requested.upper()}_API_KEY and restart the backend",
             file=sys.stderr,
         )
         return 1
 
     if not configured:
-        if requested != "demo":
-            print("SKIP — no live sandbox provider key configured (mode: demo).")
-            print("  Configure ANYRUN_API_KEY / TRIAGE_API_KEY / JOE_API_KEY to enable this gate.")
-            return 0
-        print("NOTE — provider=demo requested; validating the labeled demo pipeline instead.")
-        provider = "demo"
-    else:
-        provider = requested if requested in ("anyrun", "triage", "joe") else registry["active"] or configured[0]
+        print("SKIP — no live sandbox provider key configured (ANYRUN_API_KEY / TRIAGE_API_KEY / JOE_API_KEY unset).")
+        print("  Configure a sandbox API key to enable live external detonation gating.")
+        return 0
+
+    provider = requested if requested in ("anyrun", "triage", "joe") else registry["active"] or configured[0]
 
     # -- 1. Upload a real sample through the vault ---------------------------------
     name = f"validate-{uuid.uuid4().hex[:8]}.exe"

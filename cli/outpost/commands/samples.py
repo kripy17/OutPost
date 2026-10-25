@@ -79,7 +79,11 @@ def _show_static(sample_id: str) -> None:
     if data.get("static_risk_score") is not None:
         r_score = data["static_risk_score"]
         r_color = "bold red" if r_score >= 70 else "bold yellow" if r_score >= 35 else "green"
-        console.print(f"  [dim]Static Risk Score:[/dim] [{r_color}]{r_score}/100 ({data.get('static_severity', 'clean')})[/{r_color}]")
+        stat_sev = data.get("static_severity") or "no_indicators_found_limited"
+        if stat_sev == "clean":
+            stat_sev = "no_indicators_found_limited"
+        score_text = f"{r_score}/100" if stat_sev not in ("insufficient_evidence", "no_indicators_found_limited") else f"N/A ({stat_sev})"
+        console.print(f"  [dim]Static Risk Score:[/dim] [{r_color}]{score_text}[/{r_color}]")
 
     factors = data.get("risk_factors") or []
     if factors:
@@ -157,13 +161,20 @@ def _show_forecast(sample_id: str) -> dict:
             console.print(f"[bold yellow]Notice: Pre-execution forecast unavailable ({exc2})[/bold yellow]")
             return {}
 
-    t_level = data.get("predicted_threat_level", "clean").upper()
+    t_level = data.get("predicted_threat_level", "no_indicators_found_limited").upper()
+    if t_level == "CLEAN":
+        t_level = "NO_INDICATORS_FOUND_LIMITED"
     t_color = "bold red" if t_level == "MALICIOUS" else "bold yellow" if t_level == "SUSPICIOUS" else "bold green"
     conf = data.get("confidence_score", 0)
+    score_display = (
+        f"{data.get('static_risk_score', 0)}/100"
+        if t_level not in ("NO_INDICATORS_FOUND_LIMITED", "INSUFFICIENT_EVIDENCE")
+        else f"N/A ({t_level.lower()})"
+    )
 
     console.print(Panel(
         f"[bold white]Target Sample:[/bold white] [cyan]{sample_id}[/cyan] ({data.get('sample_name', 'binary')}) · [dim]{data.get('platform', 'linux')}[/dim]\n"
-        f"[bold white]Estimated Threat Posture:[/bold white] [{t_color}]{t_level}[/{t_color}] [dim](Confidence: {conf}% · Static Score: {data.get('static_risk_score', 0)}/100)[/dim]\n\n"
+        f"[bold white]Estimated Threat Posture:[/bold white] [{t_color}]{t_level}[/{t_color}] [dim](Confidence: {conf}% · Static Score: {score_display})[/dim]\n\n"
         f"[italic white]{data.get('summary', '')}[/italic white]",
         title="[bold yellow]Layer 1: Pre-Execution Behavioral Threat Forecast (Zero-Execution)[/bold yellow]",
         border_style="yellow",

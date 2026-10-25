@@ -12,13 +12,15 @@ placeholders, LIKE/ILIKE, INSERT OR IGNORE, GROUP_CONCAT and lastrowid
 semantics, and `db_session()` yields the same commit/rollback lifecycle.
 """
 
+import logging
+import os
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config, db_pg
+from . import config
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
@@ -33,6 +35,8 @@ CREATE TABLE IF NOT EXISTS runs (
     kind TEXT NOT NULL DEFAULT 'monitoring_session'
         CHECK(kind IN ('monitoring_session', 'analysis_job')),
     source TEXT NOT NULL DEFAULT 'monitor',
+    origin TEXT NOT NULL DEFAULT 'observed'
+        CHECK(origin IN ('observed', 'replayed', 'imported', 'simulated', 'test')),
     started_at TEXT NOT NULL,
     completed_at TEXT,
     suppressed_alerts TEXT
@@ -47,67 +51,6 @@ CREATE TABLE IF NOT EXISTS runs (
 --
 -- Declared BEFORE `alerts` (not at the schema tail like the other P0 tables):
 -- alerts carries an `investigation_id REFERENCES investigations(id)`, and the
--- Postgres runtime executes the translated DDL in declaration order — PG
--- requires a FK target to exist when the referencing table is created,
--- while SQLite resolves FKs lazily. Definition order here must therefore
--- satisfy both engines.
-CREATE TABLE IF NOT EXISTS investigations (
-    id TEXT PRIMARY KEY,
-    title TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'created'
-        CHECK(status IN ('created', 'triage', 'active', 'contained', 'resolved', 'closed')),
-    severity TEXT,
-    conclusion TEXT,
-    created_by TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT,
-    closed_at TEXT
-);
-
-CREATE TABLE IF NOT EXISTS investigation_notes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    investigation_id TEXT NOT NULL REFERENCES investigations(id),
-    note TEXT NOT NULL,
-    actor TEXT NOT NULL,
-    created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS investigation_tags (
-    investigation_id TEXT NOT NULL REFERENCES investigations(id),
-    tag TEXT NOT NULL,
-    PRIMARY KEY (investigation_id, tag)
-);
-
--- Evidence references are pointers, not copies: an investigation links to
--- artifacts/runs/hosts/iocs/campaigns by id, never duplicates their data.
--- UNIQUE(investigation_id, ref_type, ref_id) keeps attach/detach idempotent.
-CREATE TABLE IF NOT EXISTS investigation_refs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    investigation_id TEXT NOT NULL REFERENCES investigations(id),
-    ref_type TEXT NOT NULL
-        CHECK(ref_type IN ('artifact', 'run', 'host', 'ioc', 'campaign')),
-    ref_id TEXT NOT NULL,
-    added_at TEXT NOT NULL,
-    UNIQUE (investigation_id, ref_type, ref_id)
-);
-
-CREATE TABLE IF NOT EXISTS investigation_tasks (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    investigation_id TEXT NOT NULL REFERENCES investigations(id),
-    title TEXT NOT NULL,
-    category TEXT NOT NULL DEFAULT 'triage'
-        CHECK(category IN ('containment', 'eradication', 'evidence_collection', 'remediation', 'triage')),
-    status TEXT NOT NULL DEFAULT 'todo'
-        CHECK(status IN ('todo', 'in_progress', 'completed', 'cancelled')),
-    priority TEXT NOT NULL DEFAULT 'medium'
-        CHECK(priority IN ('low', 'medium', 'high', 'critical')),
-    assignee TEXT,
-    due_at TEXT,
-    completed_at TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT
-);
-
 CREATE TABLE IF NOT EXISTS technique_validations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     test_id TEXT NOT NULL,
@@ -140,6 +83,8 @@ CREATE TABLE IF NOT EXISTS alerts (
     status_comment TEXT,
     status_at TEXT,
     assignee TEXT,
+    origin TEXT NOT NULL DEFAULT 'observed'
+        CHECK(origin IN ('observed', 'replayed', 'imported', 'simulated', 'test')),
     -- Finding-layer columns (P0, additive): who/what produced the alert
     -- ('detection' = rule engine, 'analyst' = hand-created, 'correlation' =
     -- derived), the analyst's confidence and disposition verdicts, when the
@@ -155,13 +100,14 @@ CREATE TABLE IF NOT EXISTS alerts (
         CHECK(disposition IS NULL OR disposition IN
             ('false-positive', 'confirmed-malicious', 'benign', 'watchlisted', 'escalated')),
     seen_at TEXT,
-    investigation_id TEXT REFERENCES investigations(id),
+    investigation_id TEXT,
     evidence_event_ids TEXT DEFAULT '[]',
     rule_condition TEXT,
     occurrence_count INTEGER DEFAULT 1,
     last_seen_at TEXT,
     entity_key TEXT,
-    pid_fallback INTEGER DEFAULT 0
+    pid_fallback INTEGER DEFAULT 0,
+    host_id TEXT DEFAULT 'local'
 );
 
 CREATE TABLE IF NOT EXISTS events (
@@ -170,6 +116,8 @@ CREATE TABLE IF NOT EXISTS events (
     platform TEXT NOT NULL,
     event_type TEXT NOT NULL,
     timestamp TEXT NOT NULL,
+    origin TEXT NOT NULL DEFAULT 'observed'
+        CHECK(origin IN ('observed', 'replayed', 'imported', 'simulated', 'test')),
     pid INTEGER,
     ppid INTEGER,
     process_name TEXT,
@@ -296,7 +244,8 @@ CREATE TABLE IF NOT EXISTS audit_log (
     source_ip TEXT,
     before_state TEXT,
     after_state TEXT,
-    reason TEXT
+    reason TEXT,
+    format_version INTEGER DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS audit_checkpoints (
@@ -316,15 +265,6 @@ CREATE TABLE IF NOT EXISTS rule_fp (
     rule_id TEXT PRIMARY KEY,
     count INTEGER NOT NULL DEFAULT 1,
     last_fp_at TEXT NOT NULL
-);
-
--- Latest live-system snapshot per host (processes + listening ports), shipped
--- by the collectors on an interval while an agent is running. Payload is the
--- JSON snapshot; the webapp renders it as the "running now" view.
-CREATE TABLE IF NOT EXISTS host_snapshots (
-    host_id TEXT PRIMARY KEY,
-    payload TEXT NOT NULL,
-    collected_at TEXT NOT NULL
 );
 
 -- Agent liveness: the collector pings every ~60s (HEARTBEAT_INTERVAL) so the
@@ -360,48 +300,12 @@ CREATE TABLE IF NOT EXISTS enrolled_agents (
 );
 CREATE INDEX IF NOT EXISTS idx_enrolled_agents_host_id ON enrolled_agents(host_id);
 
--- Active host containment & remediation: stores isolation lifecycle and queued actions.
-CREATE TABLE IF NOT EXISTS host_containment (
-    host_id TEXT PRIMARY KEY,
-    isolated INTEGER NOT NULL DEFAULT 0,
-    isolated_at TEXT,
-    isolated_by TEXT,
-    reason TEXT,
-    pending_actions TEXT NOT NULL DEFAULT '[]',
-    containment_state TEXT NOT NULL DEFAULT 'released',
-    enforcement_mode TEXT NOT NULL DEFAULT 'none',
-    probe_details TEXT,
-    deadman_expires_at TEXT,
-    updated_at TEXT NOT NULL
+-- Single-use agent nonces for replay attack prevention across server instances and restarts.
+CREATE TABLE IF NOT EXISTS agent_nonces (
+    nonce_key TEXT PRIMARY KEY,
+    seen_at REAL NOT NULL
 );
-
--- Proper per-action queue for endpoint containment and remediation actions
-CREATE TABLE IF NOT EXISTS host_actions (
-    action_id TEXT PRIMARY KEY,
-    host_id TEXT NOT NULL,
-    action_type TEXT NOT NULL,
-    target TEXT,
-    payload TEXT NOT NULL DEFAULT '{}',
-    status TEXT NOT NULL DEFAULT 'pending',
-    timeout_seconds INTEGER NOT NULL DEFAULT 300,
-    result TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_host_actions_host_status ON host_actions(host_id, status);
-
--- Per-host behavioral baseline (roadmap 4.x): what binaries execute and which
--- IPs a host talks to, learned from its own telemetry. The learner upserts
--- counts on every ingested batch; the deviation check flags first-time
--- process/IPs once the baseline is established.
-CREATE TABLE IF NOT EXISTS host_baselines (
-    host_id TEXT NOT NULL,
-    kind TEXT NOT NULL CHECK(kind IN ('process', 'net')),
-    value TEXT NOT NULL,
-    count INTEGER NOT NULL DEFAULT 1,
-    last_seen TEXT NOT NULL,
-    PRIMARY KEY (host_id, kind, value)
-);
+CREATE INDEX IF NOT EXISTS idx_agent_nonces_seen_at ON agent_nonces(seen_at);
 
 -- Watchlist live-alerting: first-seen-per-run dedup. A (run, ioc) row is
 -- written the first time the IOC appears; ingestion only fires the webhook /
@@ -427,6 +331,8 @@ CREATE TABLE IF NOT EXISTS samples (
     detected_platform TEXT NOT NULL CHECK(detected_platform IN ('windows', 'linux', 'macos', 'unknown')),
     size INTEGER NOT NULL,
     created_at TEXT NOT NULL,
+    origin TEXT NOT NULL DEFAULT 'imported'
+        CHECK(origin IN ('observed', 'replayed', 'imported', 'simulated', 'test')),
     family TEXT,
     vt_detections INTEGER,
     malware_family TEXT,
@@ -770,6 +676,15 @@ def _migrate_enrolled_agents(conn: sqlite3.Connection) -> None:
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS agent_nonces (
+            nonce_key TEXT PRIMARY KEY,
+            seen_at REAL NOT NULL
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_nonces_seen_at ON agent_nonces(seen_at)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_enrolled_agents_host_id ON enrolled_agents(host_id)")
     conn.commit()
 
@@ -934,6 +849,7 @@ def _migrate_alerts_evidence_and_dedup(conn: sqlite3.Connection) -> None:
         ("last_seen_at", "TEXT"),
         ("entity_key", "TEXT"),
         ("pid_fallback", "INTEGER DEFAULT 0"),
+        ("host_id", "TEXT DEFAULT 'local'"),
     ):
         if name not in cols:
             conn.execute(f"ALTER TABLE alerts ADD COLUMN {name} {decl}")
@@ -1066,6 +982,8 @@ def _migrate_audit_log_hash_chain(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE audit_log ADD COLUMN after_state TEXT")
     if "reason" not in cols:
         conn.execute("ALTER TABLE audit_log ADD COLUMN reason TEXT")
+    if "format_version" not in cols:
+        conn.execute("ALTER TABLE audit_log ADD COLUMN format_version INTEGER DEFAULT 1")
     conn.commit()
 
     conn.execute(
@@ -1126,6 +1044,9 @@ def _migrate_audit_log_hash_chain(conn: sqlite3.Connection) -> None:
 
 def _migrate_host_containment_lifecycle(conn: sqlite3.Connection) -> None:
     """Idempotent: add lifecycle state and verification columns to host_containment."""
+    existing_tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    if "host_containment" not in existing_tables:
+        return
     cols = _column_names(conn, "host_containment")
     if "containment_state" not in cols:
         conn.execute("ALTER TABLE host_containment ADD COLUMN containment_state TEXT NOT NULL DEFAULT 'released'")
@@ -1160,6 +1081,113 @@ def _migrate_host_actions(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _migrate_scope_reset_remove_soc_tables(conn: sqlite3.Connection) -> None:
+    """Step 1 Scope Reset: Drop parked SOC and fleet tables from active database.
+
+    Drops orphaned tables: investigations, investigation_notes,
+    investigation_tags, investigation_refs, investigation_tasks,
+    technique_validations, host_containment, host_actions,
+    host_snapshots, host_baselines.
+    """
+    tables_to_drop = [
+        "investigation_tasks",
+        "investigation_refs",
+        "investigation_tags",
+        "investigation_notes",
+        "investigations",
+        "host_containment",
+        "host_actions",
+        "host_snapshots",
+        "host_baselines",
+    ]
+    for tbl in tables_to_drop:
+        conn.execute(f"DROP TABLE IF EXISTS {tbl}")
+    conn.commit()
+
+
+def _migrate_runs_origin(conn: sqlite3.Connection) -> None:
+    """Add origin column to runs table with domain validation CHECK constraint."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(runs)").fetchall()}
+    if "origin" not in cols:
+        conn.execute(
+            "ALTER TABLE runs ADD COLUMN origin TEXT NOT NULL DEFAULT 'observed' "
+            "CHECK(origin IN ('observed', 'replayed', 'imported', 'simulated', 'test'))"
+        )
+    conn.execute(
+        """
+        UPDATE runs SET origin = 'simulated'
+        WHERE source IN ('seed', 'webapp-demo', 'simulation', 'sandbox:demo', 'monitor')
+           OR sample_name LIKE 'demo%'
+           OR sample_name LIKE 'syn_%'
+           OR sample_name LIKE 'ben_%'
+           OR sample_name LIKE '%demo%'
+        """
+    )
+    conn.commit()
+
+
+def _migrate_tables_origin(conn: sqlite3.Connection) -> None:
+    """Add origin column and domain validation CHECK constraint to samples, events, alerts."""
+    # 1. runs backfill (ensure seed/demo/simulation rows are marked simulated)
+    conn.execute(
+        """
+        UPDATE runs SET origin = 'simulated'
+        WHERE source IN ('seed', 'webapp-demo', 'simulation', 'sandbox:demo', 'monitor')
+           OR sample_name LIKE 'demo%'
+           OR sample_name LIKE 'syn_%'
+           OR sample_name LIKE 'ben_%'
+           OR sample_name LIKE '%demo%'
+        """
+    )
+
+    # 2. samples
+    cols_samples = {r["name"] for r in conn.execute("PRAGMA table_info(samples)").fetchall()}
+    if "origin" not in cols_samples:
+        conn.execute(
+            "ALTER TABLE samples ADD COLUMN origin TEXT NOT NULL DEFAULT 'imported' "
+            "CHECK(origin IN ('observed', 'replayed', 'imported', 'simulated', 'test'))"
+        )
+    name_col = "original_name" if "original_name" in cols_samples else "name"
+    conn.execute(
+        f"""
+        UPDATE samples SET origin = 'simulated'
+        WHERE {name_col} LIKE 'demo%'
+           OR {name_col} LIKE 'syn_%'
+           OR {name_col} LIKE 'ben_%'
+           OR {name_col} LIKE '%demo%'
+        """
+    )
+
+    # 3. events
+    cols_events = {r["name"] for r in conn.execute("PRAGMA table_info(events)").fetchall()}
+    if "origin" not in cols_events:
+        conn.execute(
+            "ALTER TABLE events ADD COLUMN origin TEXT NOT NULL DEFAULT 'observed' "
+            "CHECK(origin IN ('observed', 'replayed', 'imported', 'simulated', 'test'))"
+        )
+    conn.execute(
+        """
+        UPDATE events SET origin = 'simulated'
+        WHERE run_id IN (SELECT run_id FROM runs WHERE origin = 'simulated')
+        """
+    )
+
+    # 4. alerts
+    cols_alerts = {r["name"] for r in conn.execute("PRAGMA table_info(alerts)").fetchall()}
+    if "origin" not in cols_alerts:
+        conn.execute(
+            "ALTER TABLE alerts ADD COLUMN origin TEXT NOT NULL DEFAULT 'observed' "
+            "CHECK(origin IN ('observed', 'replayed', 'imported', 'simulated', 'test'))"
+        )
+    conn.execute(
+        """
+        UPDATE alerts SET origin = 'simulated'
+        WHERE run_id IN (SELECT run_id FROM runs WHERE origin = 'simulated')
+        """
+    )
+    conn.commit()
+
+
 def get_connection():
     """Open a connection with a Row factory and foreign keys on.
 
@@ -1169,7 +1197,7 @@ def get_connection():
     config.DATABASE_PATH.
     """
     if config.DATABASE_URL:
-        return db_pg.pg_connection()
+        raise RuntimeError("Postgres runtime is parked. OutPost operates on SQLite.")
     Path(config.DATABASE_PATH).parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(config.DATABASE_PATH)
     conn.row_factory = sqlite3.Row
@@ -1221,7 +1249,39 @@ ORDERED_MIGRATIONS = [
     (29, "audit_log_hash_chain", _migrate_audit_log_hash_chain, "Drop audit_log triggers and chain columns."),
     (30, "host_containment_lifecycle", _migrate_host_containment_lifecycle, "Rebuild host_containment table."),
     (31, "host_actions", _migrate_host_actions, "Drop host_actions table."),
+    (32, "scope_reset_remove_soc_tables", _migrate_scope_reset_remove_soc_tables, "Recreate dropped SOC and fleet tables."),
+    (33, "runs_origin", _migrate_runs_origin, "Rebuild runs table to drop origin column."),
+    (34, "tables_origin", _migrate_tables_origin, "Rebuild samples, events, alerts to drop origin column."),
 ]
+
+DESTRUCTIVE_MIGRATIONS = {32}
+
+
+def _backup_database_before_migration(conn: sqlite3.Connection) -> str | None:
+    """Create an automated timestamped backup of the database file before applying destructive migrations using SQLite online backup API."""
+    try:
+        rows = conn.execute("PRAGMA database_list").fetchall()
+        db_path = None
+        for row in rows:
+            name = row[1] if isinstance(row, tuple) else row["name"]
+            path = row[2] if isinstance(row, tuple) else row["file"]
+            if name == "main" and path:
+                db_path = path
+                break
+        if db_path and os.path.exists(db_path):
+            timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+            backup_path = f"{db_path}.backup-{timestamp}"
+            backup_conn = sqlite3.connect(backup_path)
+            try:
+                conn.backup(backup_conn)
+            finally:
+                backup_conn.close()
+            logging.getLogger("outpost.db").info("Created atomic online backup before destructive migration: %s", backup_path)
+            print(f"Created timestamped backup before destructive migration: {backup_path}")
+            return backup_path
+    except Exception as exc:
+        logging.getLogger("outpost.db").warning("Failed to create pre-migration database backup: %s", exc)
+    return None
 
 
 def apply_migrations(conn: sqlite3.Connection, dry_run: bool = False) -> list[dict]:
@@ -1232,6 +1292,11 @@ def apply_migrations(conn: sqlite3.Connection, dry_run: bool = False) -> list[di
     conn.executescript(SCHEMA_MIGRATIONS_TABLE)
     applied_rows = conn.execute("SELECT version, name, applied_at, downgrade_note FROM schema_migrations ORDER BY version ASC").fetchall()
     applied_versions = {r["version"] for r in applied_rows}
+
+    # If any pending migration is destructive, create automated timestamped backup prior to execution
+    pending = [ver for ver, _, _, _ in ORDERED_MIGRATIONS if ver not in applied_versions]
+    if not dry_run and any(ver in DESTRUCTIVE_MIGRATIONS for ver in pending):
+        _backup_database_before_migration(conn)
 
     results = []
     for ver, name, fn, downgrade_note in ORDERED_MIGRATIONS:
@@ -1329,8 +1394,7 @@ def init_db() -> None:
     ALTER migrations entirely.
     """
     if config.DATABASE_URL:
-        db_pg.pg_init_db()
-        return
+        raise RuntimeError("Postgres runtime is parked. OutPost operates on SQLite.")
     with get_connection() as conn:
         conn.executescript(SCHEMA)
         apply_migrations(conn)

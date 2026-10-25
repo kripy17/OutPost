@@ -186,7 +186,7 @@ def get_diagnostics() -> dict[str, Any]:
             "audit_chain_length": audit_count,
             "latest_entry_id": last_audit["id"] if last_audit else None,
             "latest_entry_hash": last_audit["entry_hash"] if last_audit else None,
-            "status": "tamper-evident SHA-256 chain verified",
+            "status": "standard audit log (cryptographic chain parked)",
         },
         "collectors": {
             "total": len(collectors),

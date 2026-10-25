@@ -29,20 +29,25 @@ from ..models import audit
 from ..models import event as event_store
 from ..models import run as run_store
 from ..models import run_notes as notes_store
-from ..services import enrichment, killchain, memory_forensics, network_protocol_analyzer, process_tree
+from ..services import enrichment, killchain, process_tree
 from ..services.detection import allowlist_matches, load_run_sample_sha256
 
 router = APIRouter(tags=["runs"])
 
 
+@router.get("/runs/{run_id}/alerts", response_model=list[Alert])
+def get_run_alerts(run_id: str) -> list[Alert]:
+    with db_session() as conn:
+        if not run_store.get_run(conn, run_id):
+            raise HTTPException(status_code=404, detail=f"Unknown run_id: {run_id}")
+        rows = event_store.list_alerts_for_run(conn, run_id)
+    return [Alert(**row) for row in rows]
+
+
 @router.get("/runs/{run_id}/network-analysis", response_model=None)
 def get_run_network_analysis_endpoint(run_id: str) -> dict:
-    """Extract and reconstruct protocol conversations (DNS, HTTP, TLS) and C2 beaconing metrics."""
-    with db_session() as conn:
-        run = conn.execute("SELECT run_id FROM runs WHERE run_id = ?", (run_id,)).fetchone()
-        if not run:
-            raise HTTPException(status_code=404, detail=f"Unknown run: {run_id}")
-        return network_protocol_analyzer.analyze_run(conn, run_id)
+    """Network protocol analyzer is parked for future forensics platform."""
+    return {"status": "parked", "detail": "Network protocol analyzer is parked for future forensics platform."}
 
 
 class MemoryScanIn(BaseModel):
@@ -51,19 +56,8 @@ class MemoryScanIn(BaseModel):
 
 @router.post("/runs/{run_id}/memory-scan", response_model=None)
 def run_memory_scan_endpoint(run_id: str, body: MemoryScanIn) -> dict:
-    with db_session() as conn:
-        run = conn.execute("SELECT run_id FROM runs WHERE run_id = ?", (run_id,)).fetchone()
-        if not run:
-            raise HTTPException(status_code=404, detail=f"Unknown run: {run_id}")
-        sample = conn.execute("SELECT sample_id FROM samples WHERE sample_id = ?", (body.dump_sample_id,)).fetchone()
-        if not sample:
-            raise HTTPException(status_code=404, detail=f"Unknown sample: {body.dump_sample_id}")
-
-        status = memory_forensics.vol_status()
-        if not status["available"]:
-            raise HTTPException(status_code=501, detail=status.get("error", "volatility3 not installed"))
-
-        return memory_forensics.scan_run(conn, run_id, body.dump_sample_id)
+    """Memory forensics is parked for future forensics platform."""
+    raise HTTPException(status_code=501, detail="Memory forensics is parked for future forensics platform.")
 
 
 @router.post("/runs/{run_id}/re-enrich", response_model=None)
@@ -156,16 +150,23 @@ def list_runs(
     host: str = Query("", max_length=200),
     include_synthetic: bool = Query(False, description="Show seeds / webapp-synthetic detonations / the sandbox demo in the archive"),
     include_soak: bool = Query(False, description="Show soak-named collector baselines (soak-… modeled runs) in the archive"),
+    include_simulated: bool = Query(False, description="Show simulated and test runs in the archive"),
 ) -> list[RunSummary]:
     """Run history, newest first. `?q=<sample>` filters by sample-name
     substring; `?host=<host_id>` filters to runs whose events came from that
     fleet host (the Agents page links here). Both combine when given.
-    Synthetic provenance (seed / webapp-demo / legacy monitor / sandbox:demo)
-    AND soak-named collector baselines (soak-…) are hidden by default so the
-    archive reads as real telemetry first; the CLI opts back in with
-    `include_synthetic=true` / `include_soak=true` for terminal parity."""
+    Synthetic provenance (seed / webapp-demo / legacy monitor / sandbox:demo),
+    soak-named collector baselines (soak-…), and simulated/test runs are hidden
+    by default so the archive reads as real telemetry first."""
     with db_session() as conn:
-        rows = run_store.list_runs(conn, q=q.strip(), host=host.strip(), include_synthetic=include_synthetic, include_soak=include_soak)
+        rows = run_store.list_runs(
+            conn,
+            q=q.strip(),
+            host=host.strip(),
+            include_synthetic=include_synthetic,
+            include_soak=include_soak,
+            include_simulated=include_simulated,
+        )
         return [run_store.to_summary(conn, r) for r in rows]
 
 

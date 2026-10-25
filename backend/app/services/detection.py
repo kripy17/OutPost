@@ -38,7 +38,79 @@ _PROCESS_MAP_CACHE: OrderedDict[tuple[str, str], tuple[int, dict[int, dict]]] = 
 _PROCESS_MAP_CACHE_MAX = 64
 
 
-def _load_process_map(conn: sqlite3.Connection, run_id: str) -> tuple[dict[int, dict], int]:
+def _register_proc_in_map(process_map: dict, r: Any) -> None:
+    pid = r["pid"]
+    if pid is None:
+        return
+    r_dict = dict(r)
+    host_id = r_dict.get("host_id") or "local"
+    boot_id = r_dict.get("boot_id") or "default"
+    pst = r_dict.get("process_start_time") or ""
+    entry = {
+        "pid": pid,
+        "ppid": r["ppid"],
+        "process_name": _proc_name(r_dict) or "unknown",
+        "host_id": host_id,
+        "boot_id": boot_id,
+        "process_start_time": pst,
+    }
+    # Compound key with authoritative start time
+    if pst:
+        process_map[f"{host_id}:{boot_id}:{pid}:{pst}"] = entry
+
+    # Timeline of process instances per (host_id, boot_id, pid) for same-host PID-reuse disambiguation
+    timeline_key = f"timeline:{host_id}:{boot_id}:{pid}"
+    if timeline_key not in process_map:
+        process_map[timeline_key] = []
+    timeline = process_map[timeline_key]
+    if not any(p.get("process_start_time") == pst and p.get("process_name") == entry["process_name"] for p in timeline):
+        timeline.append(entry)
+        timeline.sort(key=lambda x: str(x.get("process_start_time") or ""))
+
+    # Latest instance fallback
+    process_map[f"{host_id}:{boot_id}:{pid}"] = entry
+    # Legacy integer key (fallback if not already set)
+    if pid not in process_map:
+        process_map[pid] = entry
+
+
+def lookup_parent_process(process_map: dict, event: dict) -> dict | None:
+    """Look up parent process using compound process identity (host_id + boot_id + ppid + start_time)."""
+    ppid = event.get("ppid")
+    if ppid is None:
+        return None
+    host_id = event.get("host_id") or "local"
+    boot_id = event.get("boot_id") or "default"
+    parent_pst = event.get("parent_process_start_time")
+
+    # 1. Exact match with explicit parent_process_start_time if supplied
+    if parent_pst:
+        parent = process_map.get(f"{host_id}:{boot_id}:{ppid}:{parent_pst}")
+        if parent:
+            return parent
+
+    # 2. Timeline lookup: resolve the parent instance that started BEFORE or AT child event
+    timeline_key = f"timeline:{host_id}:{boot_id}:{ppid}"
+    timeline = process_map.get(timeline_key)
+    child_time = event.get("process_start_time") or event.get("timestamp")
+
+    if timeline:
+        if child_time:
+            # Candidates that started at or before the child event
+            candidates = [p for p in timeline if not p.get("process_start_time") or p.get("process_start_time") <= child_time]
+            if candidates:
+                return max(candidates, key=lambda p: str(p.get("process_start_time") or ""))
+        return timeline[-1]
+
+    # 3. Fallback to latest compound key (host_id + boot_id + ppid)
+    parent = process_map.get(f"{host_id}:{boot_id}:{ppid}")
+    if parent:
+        return parent
+    # 4. Fallback to integer PID
+    return process_map.get(ppid)
+
+
+def _load_process_map(conn: sqlite3.Connection, run_id: str) -> tuple[dict[Any, dict], int]:
     """The run's process map, incremental — returns (map, last_event_id)."""
     key = (_db_path(conn), run_id)
     cached = _PROCESS_MAP_CACHE.get(key)
@@ -46,15 +118,13 @@ def _load_process_map(conn: sqlite3.Connection, run_id: str) -> tuple[dict[int, 
         _PROCESS_MAP_CACHE.move_to_end(key)
         last_id, process_map = cached
         new_rows = conn.execute(
-            "SELECT id, pid, ppid, process_name, exe_path FROM events "
+            "SELECT id, pid, ppid, process_name, exe_path, host_id, boot_id, process_start_time FROM events "
             "WHERE run_id = ? AND event_type = 'process_create' AND id > ?",
             (run_id, last_id),
         ).fetchall()
         max_id = last_id
         for r in new_rows:
-            pid = r["pid"]
-            if pid is not None and pid not in process_map:
-                process_map[pid] = {"pid": pid, "ppid": r["ppid"], "process_name": _proc_name(dict(r)) or "unknown"}
+            _register_proc_in_map(process_map, r)
             max_id = max(max_id, r["id"])
         _PROCESS_MAP_CACHE[key] = (max_id, process_map)
         return process_map, max_id
@@ -66,40 +136,39 @@ def _load_process_map(conn: sqlite3.Connection, run_id: str) -> tuple[dict[int, 
         "SELECT last_event_id, pids_json FROM run_process_maps WHERE run_id = ?", (run_id,)
     ).fetchone()
     if saved is not None:
-        process_map: dict[int, dict] = {}
+        process_map: dict[Any, dict] = {}
         max_id = 0
         try:
             saved_map = json.loads(saved["pids_json"])
-            for pid_str, row in saved_map.items():
-                process_map[int(pid_str)] = row
+            for k_str, row in saved_map.items():
+                if k_str.isdigit():
+                    process_map[int(k_str)] = row
+                else:
+                    process_map[k_str] = row
             max_id = int(saved["last_event_id"])
         except (ValueError, TypeError, KeyError):
             process_map = {}
             max_id = 0
         new_rows = conn.execute(
-            "SELECT id, pid, ppid, process_name, exe_path FROM events "
+            "SELECT id, pid, ppid, process_name, exe_path, host_id, boot_id, process_start_time FROM events "
             "WHERE run_id = ? AND event_type = 'process_create' AND id > ?",
             (run_id, max_id),
         ).fetchall()
         for r in new_rows:
-            pid = r["pid"]
-            if pid is not None and pid not in process_map:
-                process_map[pid] = {"pid": pid, "ppid": r["ppid"], "process_name": _proc_name(dict(r)) or "unknown"}
+            _register_proc_in_map(process_map, r)
             max_id = max(max_id, r["id"])
         _PROCESS_MAP_CACHE[key] = (max_id, process_map)
         return process_map, max_id
 
     process_rows = conn.execute(
-        "SELECT id, pid, ppid, process_name, exe_path FROM events "
+        "SELECT id, pid, ppid, process_name, exe_path, host_id, boot_id, process_start_time FROM events "
         "WHERE run_id = ? AND event_type = 'process_create'",
         (run_id,),
     ).fetchall()
-    process_map: dict[int, dict] = {}
+    process_map: dict[Any, dict] = {}
     max_id = 0
     for r in process_rows:
-        pid = r["pid"]
-        if pid is not None and pid not in process_map:
-            process_map[pid] = {"pid": pid, "ppid": r["ppid"], "process_name": _proc_name(dict(r)) or "unknown"}
+        _register_proc_in_map(process_map, r)
         max_id = max(max_id, r["id"])
     _PROCESS_MAP_CACHE[key] = (max_id, process_map)
     while len(_PROCESS_MAP_CACHE) > _PROCESS_MAP_CACHE_MAX:
@@ -552,6 +621,7 @@ def _make_alert(
         last_seen_at=ev_ts,
         entity_key=entity_key,
         pid_fallback=pid_fallback,
+        host_id=event.get("host_id") or "local",
     )
 
 
@@ -709,7 +779,7 @@ def check_masquerading(event: dict) -> Alert | None:
 def check_parent_child(event: dict, process_map: dict) -> Alert | None:
     if event.get("event_type") != "process_create":
         return None
-    parent = process_map.get(event.get("ppid"))
+    parent = lookup_parent_process(process_map, event)
     if not parent:
         return None
     pair = (_proc_name(parent), _proc_name(event))
@@ -1003,7 +1073,7 @@ def check_first_seen(conn: sqlite3.Connection, run_id: str, event: dict, seen_na
     if not name:
         return None
     # Novelty alone is too noisy on a live host — require a script-host parent.
-    parent = process_map.get(event.get("ppid"))
+    parent = lookup_parent_process(process_map, event)
     if not parent or _proc_name(parent) not in FIRST_SEEN_SCRIPT_HOSTS:
         return None
     if name in seen_names:
@@ -1910,7 +1980,7 @@ def check_document_dropper(event: dict, process_map: dict) -> Alert | None:
     real stage of the intrusion."""
     if event.get("event_type") != "process_create":
         return None
-    parent = process_map.get(event.get("ppid"))
+    parent = lookup_parent_process(process_map, event)
     if not parent:
         return None
     parent_name = _proc_name(parent)
@@ -3623,19 +3693,18 @@ def evaluate_batch(conn: sqlite3.Connection, run_id: str, events: list[dict]) ->
         fire(chain_alert)
 
     # Baseline anomalies (roadmap 4.x) — the anomaly layer under the rule
-    # engine: learn what this host normally executes/talks to from its own
-    # telemetry, then flag first-time observations once the baseline is
-    # established (BASELINE_MIN_EVENTS). Check-then-learn ordering means each
-    # novel item fires exactly once — it's not in the baseline when the batch
-    # arrives, we alert, we learn it, and the next batch sees it as known.
-    from ..services import baseline as baseline_svc
+    # engine (parked with fleet & agents).
+    try:
+        from ..services import baseline as baseline_svc
 
-    for host, kind, value, ev in baseline_svc.check_deviations(
-        conn, events, min_events=int(t["BASELINE_MIN_EVENTS"])
-    ):
-        if not _alert_exists(conn, run_id, "baseline-anomaly", value):
-            fire(baseline_svc.build_alert(run_id, host, kind, value, ev), ev)
-    baseline_svc.learn(conn, events)
+        for host, kind, value, ev in baseline_svc.check_deviations(
+            conn, events, min_events=int(t["BASELINE_MIN_EVENTS"])
+        ):
+            if not _alert_exists(conn, run_id, "baseline-anomaly", value):
+                fire(baseline_svc.build_alert(run_id, host, kind, value, ev), ev)
+        baseline_svc.learn(conn, events)
+    except ImportError:
+        pass
 
     return new_alerts
 

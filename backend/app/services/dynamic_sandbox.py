@@ -173,6 +173,50 @@ def get_available_isolation_drivers() -> list[dict[str, Any]]:
     return drivers
 
 
+def _build_sandbox_rlimits(timeout_seconds: int = 10, memory_limit_mb: int = 1024, max_procs: int = 128, is_wine: bool = False):
+    """Build preexec_fn for POSIX subprocess execution enforcing CPU, memory, and file size limits.
+
+    Memory constraint design:
+    - Standard native ELF/scripts: RLIMIT_AS enforces virtual memory ceiling (1024MB default).
+    - Wine (Windows PE detonation): Wine pre-allocates large virtual address maps (>= 3GB) on init.
+      Enforcing RLIMIT_AS at 1GB aborts Wine immediately with mmap ENOMEM. For Wine, RLIMIT_AS is
+      left unconstrained and physical heap memory is bounded via RLIMIT_DATA.
+
+    Process limit design:
+    - RLIMIT_NPROC is scoped per-real-UID across the entire operating system, not per child tree.
+      Setting RLIMIT_NPROC inside preexec_fn risks starving user-session background tasks or failing
+      fork() globally. In production, process-tree quotas belong in cgroup v2 (pids.max / TasksMax=)
+      or bubblewrap private PID namespaces (--unshare-pid).
+    """
+    def _apply_rlimits():
+        if os.name != "posix":
+            return
+        # 1. CPU / execution time limits
+        resource.setrlimit(resource.RLIMIT_CPU, (timeout_seconds + 5, timeout_seconds + 10))
+        # 2. Maximum file size (50MB)
+        resource.setrlimit(resource.RLIMIT_FSIZE, (50 * 1024 * 1024, 50 * 1024 * 1024))
+        # 3. Disable core dumps
+        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+        # 4. Memory limit: handle Wine vs native binaries
+        mem_bytes = memory_limit_mb * 1024 * 1024
+        if is_wine:
+            # Bound heap/data memory; leave virtual address map unconstrained for Wine mmap layout
+            if hasattr(resource, "RLIMIT_DATA"):
+                resource.setrlimit(resource.RLIMIT_DATA, (mem_bytes, mem_bytes))
+        else:
+            if hasattr(resource, "RLIMIT_AS"):
+                resource.setrlimit(resource.RLIMIT_AS, (mem_bytes, mem_bytes))
+            elif hasattr(resource, "RLIMIT_DATA"):
+                resource.setrlimit(resource.RLIMIT_DATA, (mem_bytes, mem_bytes))
+        # 5. Process count limit (RLIMIT_NPROC): applied as safety bound when cgroup v2 pids controller is unconfigured
+        if hasattr(resource, "RLIMIT_NPROC"):
+            cur_soft, cur_hard = resource.getrlimit(resource.RLIMIT_NPROC)
+            target_nproc = min(cur_soft, max(1024, max_procs))
+            resource.setrlimit(resource.RLIMIT_NPROC, (target_nproc, cur_hard))
+
+    return _apply_rlimits
+
+
 async def execute_bytes_sandbox(
     run_id: str,
     sample_name: str,
@@ -359,20 +403,8 @@ async def execute_bytes_sandbox(
                 detail="Safe isolation provider unavailable. Execution blocked to prevent host contamination.",
             )
 
-        def _apply_rlimits():
-            if os.name == "posix":
-                try:
-                    resource.setrlimit(resource.RLIMIT_CPU, (timeout_seconds + 5, timeout_seconds + 10))
-                except Exception:
-                    pass
-                try:
-                    resource.setrlimit(resource.RLIMIT_FSIZE, (50 * 1024 * 1024, 50 * 1024 * 1024))
-                except Exception:
-                    pass
-                try:
-                    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
-                except Exception:
-                    pass
+        is_wine_runner = any("wine" in str(x).lower() for x in (runner or [])) or any("wine" in str(x).lower() for x in (cmd or []))
+        sandbox_rlimits = _build_sandbox_rlimits(timeout_seconds=timeout_seconds, is_wine=is_wine_runner)
 
         stop_poller = asyncio.Event()
         try:
@@ -383,7 +415,7 @@ async def execute_bytes_sandbox(
                 stderr=asyncio.subprocess.PIPE,
                 env=child_env,
                 close_fds=True,
-                preexec_fn=_apply_rlimits if os.name == "posix" else None,
+                preexec_fn=sandbox_rlimits if os.name == "posix" else None,
             )
             main_pid = getattr(proc, "pid", os.getpid())
 
@@ -499,15 +531,9 @@ async def execute_bytes_sandbox(
 
         # Extract persistent dropped artifacts before cleaning up
         dropped_artifacts = sandbox_forensics.extract_dropped_artifacts(sandbox_dir, target_file, run_id)
-        pcap_art = sandbox_forensics.generate_pcap_capture(events_batch, None, run_id)
-        if pcap_art:
-            dropped_artifacts.append(pcap_art)
-            await _emit({"type": "artifact", "data": pcap_art})
-            await _emit({"type": "log", "line": f"[OutPost Traffic Recorder] Captured {pcap_art['packet_count']} network packet(s) -> traffic.pcap ({pcap_art['size_bytes']} B)"})
         for art in dropped_artifacts:
-            if art.get("filename") != "traffic.pcap":
-                await _emit({"type": "artifact", "data": art})
-                await _emit({"type": "log", "line": f"[OutPost Artifact Extractor] Captured dropped file: {art['name']} ({art['size_bytes']} B)"})
+            await _emit({"type": "artifact", "data": art})
+            await _emit({"type": "log", "line": f"[OutPost Artifact Extractor] Captured dropped file: {art['name']} ({art['size_bytes']} B)"})
             timeline_events.append({
                 "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 "elapsed_ms": int((time.monotonic() - start_mono) * 1000),
@@ -611,7 +637,7 @@ async def execute_and_trace(
     chain = killchain.correlate_chain(alerts)
 
     # Compute verdict
-    verdict = "clean"
+    verdict = "no_indicators_found_limited"
     if any(a.get("severity") == "malicious" for a in alerts):
         verdict = "malicious"
     elif alerts:
@@ -916,8 +942,8 @@ async def execute_simulation_scenario_live(scenario_id: str) -> dict[str, Any]:
         )
 
     # Capture pre-detonation baseline snapshot
-    from .host_forensics import capture_baseline_snapshot, compute_snapshot_diff
     try:
+        from .host_forensics import capture_baseline_snapshot
         capture_baseline_snapshot()
     except Exception:
         pass
@@ -1065,6 +1091,7 @@ async def execute_simulation_scenario_live(scenario_id: str) -> dict[str, Any]:
     # Compute post-detonation differential delta
     detonation_delta = None
     try:
+        from .host_forensics import compute_snapshot_diff
         detonation_delta = compute_snapshot_diff()
     except Exception:
         pass
@@ -1173,7 +1200,7 @@ async def execute_simulation_scenario_live(scenario_id: str) -> dict[str, Any]:
                 })
 
     # Verdict & Threat Family determination
-    verdict = "clean"
+    verdict = "no_indicators_found_limited"
     if any(a.get("severity") == "malicious" for a in alerts):
         verdict = "malicious"
     elif alerts:
@@ -1534,8 +1561,8 @@ async def execute_sample_detonation(
         )
 
     # Capture baseline before detonation
-    from .host_forensics import capture_baseline_snapshot, compute_snapshot_diff
     try:
+        from .host_forensics import capture_baseline_snapshot
         capture_baseline_snapshot()
     except Exception:
         pass
@@ -1555,6 +1582,7 @@ async def execute_sample_detonation(
     # Compute post-detonation differential delta
     detonation_delta = None
     try:
+        from .host_forensics import compute_snapshot_diff
         detonation_delta = compute_snapshot_diff()
     except Exception:
         pass
@@ -1609,9 +1637,7 @@ async def execute_sample_detonation(
                     "action": "sinkholed",
                 })
 
-    pcap_artifact = sandbox_forensics.generate_pcap_capture(events, sinkhole_traffic, run_id)
-    if pcap_artifact and not any(a.get("filename") == "traffic.pcap" for a in dropped_artifacts):
-        dropped_artifacts.append(pcap_artifact)
+    pcap_artifact = None
 
     terminal_logs: list[str] = [
         f"[OutPost Dynamic Sandbox] Detonating sample '{sample_name}' (ID: {sample_id})",
@@ -1630,8 +1656,6 @@ async def execute_sample_detonation(
         terminal_logs.append(f"[OutPost Artifact Extractor] Captured {len(dropped_artifacts)} dropped file(s).")
     if sinkhole_traffic:
         terminal_logs.append(f"[OutPost C2 Sinkhole] Intercepted {len(sinkhole_traffic)} network beacon/DNS requests.")
-    if pcap_artifact:
-        terminal_logs.append(f"[OutPost Traffic Recorder] Captured {pcap_artifact['packet_count']} network packet(s) -> traffic.pcap ({pcap_artifact['size_bytes']} B)")
 
     with db_session() as conn:
         for ev in events:
@@ -1651,7 +1675,7 @@ async def execute_sample_detonation(
     tree = [n.model_dump(mode="json") for n in tree_nodes]
     risk_score = risk.compute_risk_score([a["rule_id"] for a in alerts]) if alerts else 0
 
-    verdict = "clean"
+    verdict = "no_indicators_found_limited"
     if any(a.get("severity") == "malicious" for a in alerts):
         verdict = "malicious"
     elif alerts:

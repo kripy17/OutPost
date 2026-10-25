@@ -14,7 +14,8 @@ by this field, so a drift would miscolor a rule (e.g. lolbin-abuse is
 malicious at weight 14; suid-set is suspicious at weight 18).
 """
 
-from typing import TypedDict
+import json
+from typing import Any, TypedDict
 
 
 class RuleMeta(TypedDict, total=False):
@@ -23,6 +24,7 @@ class RuleMeta(TypedDict, total=False):
     weight: int
     severity: str  # the alert severity the rule actually fires with
     confidence: str  # default analytical confidence: high | medium | low
+    required_telemetry: list[str]
 
 
 RULE_META: dict[str, RuleMeta] = {
@@ -315,6 +317,175 @@ RULE_META: dict[str, RuleMeta] = {
         "severity": "malicious",
     },
 }
+
+_RULE_REQUIRED_TELEMETRY: dict[str, list[str]] = {
+    "network-scan": ["network"],
+    "toolchain-build": ["process"],
+    "document-dropper": ["process"],
+    "lateral-rdp-smb": ["network"],
+    "screen-capture": ["process"],
+    "masquerading": ["process"],
+    "suspicious-parent-child": ["process"],
+    "lolbin-abuse": ["process"],
+    "beaconing": ["network"],
+    "registry-persistence": ["registry"],
+    "autostart-persistence": ["file", "registry"],
+    "ssh-authorized-keys": ["file"],
+    "scheduled-task": ["process"],
+    "suid-set": ["file"],
+    "credential-dump": ["process"],
+    "suspicious-extension": ["file"],
+    "shell-history-wipe": ["file", "process"],
+    "enumeration-burst": ["process"],
+    "data-staging": ["file", "process"],
+    "rename-burst": ["file"],
+    "first-seen-process": ["process"],
+    "unusual-port": ["network"],
+    "attack-chain": ["process"],
+    "baseline-anomaly": ["network"],
+    "lateral-psexec-smb": ["file", "network"],
+    "lateral-winrm-wmi": ["process", "network"],
+    "lateral-smb-share": ["network"],
+    "rdp-brute-force": ["network"],
+    "log-service-stop": ["process"],
+    "log-clearing": ["process", "file"],
+    "dns-tunneling": ["dns", "network"],
+    "dns-long-label": ["dns", "network"],
+    "dns-unusual-port": ["dns", "network"],
+    "tls-sni-suspicious": ["tls", "network"],
+    "tls-ja3-c2": ["tls", "network"],
+    "doh-resolver-use": ["dns", "network"],
+    "fanout-contact": ["network"],
+    "fanout-recurring": ["network"],
+    "shadow-copy-deletion": ["process"],
+    "remote-thread-injection": ["process"],
+    "ifeo-persistence": ["registry"],
+    "macos-tcc-bypass": ["process", "file"],
+    "macos-launchagent-persistence": ["file"],
+    "macos-dylib-hijack": ["file", "process"],
+    "macos-gatekeeper-bypass": ["process", "file"],
+    "anonymous-rwx-memory": ["process"],
+    "fileless-unlinked-binary": ["process", "file"],
+    "gtfobins-suid-execution": ["process"],
+}
+
+for _rid, _meta in RULE_META.items():
+    _meta["required_telemetry"] = _RULE_REQUIRED_TELEMETRY.get(_rid, ["process"])
+
+
+def evaluate_rule_coverage_for_run(conn, run_id: str) -> dict[str, Any]:
+    """Inspect collector capabilities and event telemetry to determine rule coverage status.
+
+    Derived primarily from collector capability / sensor health reports on enrolled hosts:
+    If a sensor is active and healthy on the host (e.g. auditd/Sysmon file auditing is active),
+    rules requiring that telemetry are 'evaluable', even if no events occurred during a quiet window.
+    Rules are marked 'not_evaluable' when the sensor capability is missing, unconfigured, or disabled.
+    """
+    # 1. Identify associated host(s) for this run
+    host_row = conn.execute(
+        "SELECT DISTINCT host_id FROM events WHERE run_id = ? AND host_id IS NOT NULL LIMIT 1",
+        (run_id,),
+    ).fetchone()
+    host_id = host_row["host_id"] if host_row else None
+
+    collector_capabilities = set()
+    sensor_health = {}
+
+    if host_id:
+        # Check collector heartbeat source health
+        hb_row = conn.execute(
+            "SELECT source_health_json FROM agent_heartbeats WHERE host_id = ?",
+            (host_id,),
+        ).fetchone()
+        if hb_row and hb_row["source_health_json"]:
+            try:
+                sh = json.loads(hb_row["source_health_json"])
+                if isinstance(sh, dict):
+                    sensor_health = sh
+                    if sh.get("execution") in ("healthy", "ok", "degraded"):
+                        collector_capabilities.add("process")
+                    if sh.get("network") in ("healthy", "ok", "degraded"):
+                        collector_capabilities.add("network")
+                    if sh.get("file") in ("healthy", "ok", "degraded"):
+                        collector_capabilities.add("file")
+                    if sh.get("dns") in ("healthy", "ok", "degraded"):
+                        collector_capabilities.add("dns")
+            except Exception:
+                pass
+
+        # Check enrolled agent enforcement / telemetry capabilities
+        agent_row = conn.execute(
+            "SELECT enforcement_capabilities FROM enrolled_agents WHERE host_id = ?",
+            (host_id,),
+        ).fetchone()
+        if agent_row and agent_row["enforcement_capabilities"]:
+            try:
+                caps = json.loads(agent_row["enforcement_capabilities"])
+                if isinstance(caps, list):
+                    for c in caps:
+                        collector_capabilities.add(str(c).lower())
+            except Exception:
+                pass
+
+    # 2. Check event types present in the run (for offline / synthetic runs without agent health)
+    rows = conn.execute("SELECT DISTINCT event_type FROM events WHERE run_id = ?", (run_id,)).fetchall()
+    present_types = {r["event_type"] for r in rows if r["event_type"]}
+
+    has_dns = False
+    has_tls = False
+    if "network_connection" in present_types or "dns_query" in present_types:
+        try:
+            sample_net = conn.execute(
+                "SELECT query, tls_sni, ja3 FROM events WHERE run_id = ? AND (query IS NOT NULL OR tls_sni IS NOT NULL OR ja3 IS NOT NULL) LIMIT 1",
+                (run_id,),
+            ).fetchone()
+            if sample_net:
+                if sample_net["query"]:
+                    has_dns = True
+                if sample_net["tls_sni"] or sample_net["ja3"]:
+                    has_tls = True
+        except Exception:
+            pass
+
+    observed_categories = set()
+    if "process_create" in present_types:
+        observed_categories.add("process")
+    if "network_connection" in present_types:
+        observed_categories.add("network")
+    if any(t in present_types for t in ("file_write", "file_delete", "file_permission")):
+        observed_categories.add("file")
+    if any(t in present_types for t in ("registry_set", "registry_key")):
+        observed_categories.add("registry")
+    if has_dns or "dns_query" in present_types:
+        observed_categories.add("dns")
+    if has_tls:
+        observed_categories.add("tls")
+
+    # Authoritative evaluable telemetry: collector capability (if reported) union observed events
+    effective_evaluable_categories = collector_capabilities | observed_categories
+
+    rule_statuses = {}
+    for rule_id, meta in RULE_META.items():
+        reqs = meta.get("required_telemetry", ["process"])
+        evaluable = any(req in effective_evaluable_categories for req in reqs)
+        missing = [req for req in reqs if req not in effective_evaluable_categories]
+        rule_statuses[rule_id] = {
+            "rule_id": rule_id,
+            "status": "evaluable" if evaluable else "not_evaluable",
+            "evaluable": evaluable,
+            "required_telemetry": reqs,
+            "missing_telemetry": missing,
+        }
+
+    return {
+        "run_id": run_id,
+        "host_id": host_id,
+        "present_telemetry": sorted(effective_evaluable_categories),
+        "observed_telemetry": sorted(observed_categories),
+        "collector_capabilities": sorted(collector_capabilities),
+        "sensor_health": sensor_health,
+        "rule_statuses": rule_statuses,
+    }
 
 
 import math

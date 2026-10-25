@@ -29,8 +29,12 @@ NPM="${NPM:-npm}"
 
 cd "$ROOT/backend"
 BE=$("$PY" -m pytest --collect-only -q 2>/dev/null | grep -oE '[0-9]+ tests collected' | grep -oE '^[0-9]+')
-cd "$ROOT/collectors"
-COL=$("$PY" -m pytest --collect-only -q 2>/dev/null | grep -oE '[0-9]+ tests collected' | grep -oE '^[0-9]+')
+if [ -d "$ROOT/collectors" ]; then
+  cd "$ROOT/collectors"
+  COL=$("$PY" -m pytest --collect-only -q 2>/dev/null | grep -oE '[0-9]+ tests collected' | grep -oE '^[0-9]+' || echo "0")
+else
+  COL=0
+fi
 cd "$ROOT/cli"
 CLI=$("$PY" -m pytest --collect-only -q 2>/dev/null | grep -oE '[0-9]+ tests collected' | grep -oE '^[0-9]+')
 cd "$ROOT/frontend"

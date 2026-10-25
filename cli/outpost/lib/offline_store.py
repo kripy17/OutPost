@@ -53,15 +53,19 @@ def get_offline_runs(limit: int = 50) -> list[dict[str, Any]] | None:
         conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
+        cols = {c[1] for c in cur.execute("PRAGMA table_info(runs)").fetchall()}
+        where_clause = "WHERE (r.origin IS NULL OR r.origin NOT IN ('simulated', 'test'))" if "origin" in cols else ""
+        origin_select = "r.origin," if "origin" in cols else "'observed' as origin,"
         rows = cur.execute(
-            """
-            SELECT r.run_id, r.sample_name, r.platform, r.session_type, r.started_at, r.completed_at,
+            f"""
+            SELECT r.run_id, r.sample_name, r.platform, r.session_type, {origin_select} r.started_at, r.completed_at,
                    COUNT(a.id) as alert_count,
                    MAX(CASE WHEN a.severity = 'malicious' THEN 'malicious'
                             WHEN a.severity = 'suspicious' THEN 'suspicious'
-                            ELSE 'clean' END) as highest_severity
+                            ELSE 'no_indicators_found_limited' END) as highest_severity
             FROM runs r
             LEFT JOIN alerts a ON r.run_id = a.run_id
+            {where_clause}
             GROUP BY r.run_id
             ORDER BY r.started_at DESC
             LIMIT ?
@@ -96,7 +100,7 @@ def get_offline_run_detail(run_id: str) -> dict[str, Any] | None:
         alerts_rows = cur.execute("SELECT * FROM alerts WHERE run_id = ? ORDER BY id ASC", (run_id,)).fetchall()
         alerts = [dict(a) for a in alerts_rows]
 
-        highest_sev = "clean"
+        highest_sev = "no_indicators_found_limited"
         for a in alerts:
             s = (a.get("severity") or "").lower()
             if s == "malicious":

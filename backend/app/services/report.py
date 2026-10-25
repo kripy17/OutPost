@@ -13,7 +13,6 @@ from datetime import datetime, timezone
 from ..core.db import db_session
 from ..models import event as event_store
 from ..models import run as run_store
-from ..services import campaigns as campaigns_service
 
 
 def build_json_report(run_id: str) -> dict:
@@ -46,7 +45,7 @@ def build_json_report(run_id: str) -> dict:
             except (ValueError, TypeError):
                 suppressed_alerts = {}
         # Campaign references — links this analysis back to its cluster(s).
-        campaigns = campaigns_service.campaigns_for_run(conn, run_id)
+        campaigns: list[dict] = []
         # Network connections — cache-first reputation reads (no new external
         # calls in the export; `checked_at` shows how old each verdict is, so
         # exported analyses carry the same staleness the UI surfaces).
@@ -158,7 +157,9 @@ def build_pdf_report(run_id: str) -> bytes | None:
 
     story = []
     run = data["run"]
-    sev = (run.get("highest_severity") or "clean").lower()
+    sev = (run.get("highest_severity") or "no_indicators_found_limited").lower()
+    if sev == "clean":
+        sev = "no_indicators_found_limited"
     sev_color = "#DC2626" if sev == "malicious" else ("#F59E0B" if sev == "suspicious" else "#10B981")
     risk_score = run.get("risk_score", 0)
 
@@ -371,7 +372,7 @@ def synthesize_investigation_narrative(conn, investigation_id: str) -> dict:
             tactics_seen.add(meta["tactic"])
 
     severities = [a["severity"] for a in alerts]
-    max_severity = "critical" if "malicious" in severities and len(alerts) >= 3 else "malicious" if "malicious" in severities else "suspicious" if "suspicious" in severities else "clean"
+    max_severity = "critical" if "malicious" in severities and len(alerts) >= 3 else "malicious" if "malicious" in severities else "suspicious" if "suspicious" in severities else "no_indicators_found_limited"
 
     exec_summary = (
         f"Security incident '{title}' (ID: {investigation_id}) currently in '{status.upper()}' state with {len(alerts)} "

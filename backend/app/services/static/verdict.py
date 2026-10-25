@@ -148,30 +148,60 @@ def assess_static_evidence(
     else:
         evidence_quality = "none"
 
-    # Outcome derivation: Absence of evidence is 'no_indicators_found_limited'
-    has_high_malice = any(f["weight"] >= 30 for f in assessment_factors)
-    if (malicious_weight >= 60 or has_high_malice) and net_score >= 35:
+    # Check for authoritative malicious signals
+    has_authoritative_signal = (
+        any(f.get("provenance", {}).get("confidence") == "confirmed" and f.get("category") in ("ioc", "malicious") for f in findings)
+        or any(i.get("classification") == "malicious" for i in embedded_indicators)
+        or any(f.get("factor", "").startswith(("Decoded", "High-confidence threat indicator", "YARA rule match", "Known malicious")) for f in assessment_factors)
+    )
+
+    # Outcome derivation:
+    # 1. 'malicious' strictly requires at least one authoritative signal
+    if has_authoritative_signal and net_score >= 30:
         verdict = "malicious"
-        verdict_reason = "Substantiated high-confidence malicious capabilities and structural threat patterns identified."
-        confidence = "high" if evidence_quality == "high" else "medium"
+        verdict_reason = "Authoritative malicious threat indicators, matched signatures, or decoded configuration confirmed."
+        confidence = "high"
         legacy_severity = "malicious"
+    # 2. Benign signals mitigate heuristic false alarms
+    elif benign_weight >= 30 and not has_authoritative_signal:
+        if any("unrecognized" in c.lower() for c in could_not_analyze):
+            verdict = "insufficient_evidence"
+            verdict_reason = "Known benign metadata observed, but file format is unparseable."
+            confidence = "low"
+        else:
+            verdict = "no_indicators_found_limited"
+            verdict_reason = "Verified benign attributes (trusted signature, package hash, clean infrastructure) present."
+            confidence = "medium"
+        legacy_severity = "no_indicators_found_limited"
+    # 3. Anomaly threshold without authoritative signals caps at 'suspicious'
     elif net_score >= 25 or len(assessment_factors) >= 2:
         verdict = "suspicious"
-        verdict_reason = "Elevated indicators or anomalous structural behaviors present requiring dynamic verification."
+        verdict_reason = "Elevated indicators or anomalous structural behaviors present; dynamic analysis required."
         confidence = "medium"
         legacy_severity = "suspicious"
+    # 4. Zero indicators found
     elif not assessment_factors:
-        verdict = "no_indicators_found_limited"
-        verdict_reason = "No threat indicators detected within static analysis boundaries; runtime execution required."
-        confidence = "medium" if could_not_analyze else "high"
-        legacy_severity = "clean"
+        if any("unrecognized" in c.lower() for c in could_not_analyze):
+            verdict = "insufficient_evidence"
+            verdict_reason = "File format unrecognized or unparseable; static evidence is insufficient."
+            confidence = "low"
+            legacy_severity = "insufficient_evidence"
+        else:
+            verdict = "no_indicators_found_limited"
+            verdict_reason = "No threat indicators detected within static analysis boundaries; runtime execution required."
+            confidence = "medium"
+            legacy_severity = "no_indicators_found_limited"
+    # 5. Low-confidence or inconclusive signals
     else:
         verdict = "insufficient_evidence"
         verdict_reason = "Minor non-conclusive signals observed but insufficient to substantiate a threat verdict."
         confidence = "low"
-        legacy_severity = "clean"
+        legacy_severity = "insufficient_evidence"
 
     total_indicators = len(findings) + len(capabilities) + len(embedded_indicators)
+
+    # When verdict is insufficient_evidence or no_indicators_found_limited, risk score must not contradict it
+    reported_score = 0 if verdict in ("insufficient_evidence", "no_indicators_found_limited") else min(100, net_score)
 
     return {
         "verdict": verdict,
@@ -183,7 +213,7 @@ def assess_static_evidence(
         "benign_factors": benign_factors,
         "confidence": confidence,
         # Backward compatibility for existing schemas and tests
-        "static_risk_score": min(100, net_score),
+        "static_risk_score": reported_score,
         "static_severity": legacy_severity,
         "risk_factors": [f["factor"] for f in assessment_factors],
     }

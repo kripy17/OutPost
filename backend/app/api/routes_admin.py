@@ -119,9 +119,9 @@ def _get_data_classes(conn: sqlite3.Connection) -> dict:
             "prunable": False,
         },
         "audit": {
-            "name": "Tamper-Evident Audit Trail",
+            "name": "System Audit Trail",
             "count": audit_cnt,
-            "policy": "Immutable cryptographic SHA-256 chain; never deleted",
+            "policy": "Logged to audit_log table; cryptographic chain parked",
             "prunable": False,
         },
     }

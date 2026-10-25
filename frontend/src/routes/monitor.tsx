@@ -1032,6 +1032,17 @@ export default function MonitorPage() {
 
   return (
     <div className="mx-auto max-w-[1440px] px-6 py-8 lg:px-8 space-y-8 font-sans">
+      {/* ── Developer / QA Test Harness Banner ─────────────────────────────── */}
+      <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 text-xs text-amber-300 space-y-1">
+        <div className="flex items-center gap-2 font-bold uppercase tracking-wider text-amber-400">
+          <Icon name="alert" size={14} />
+          <span>Developer / QA Test Harness (Scripted Emulation Scenarios)</span>
+        </div>
+        <p className="text-amber-200/80">
+          This workbench executes scripted attack emulation scenarios and adversary technique validations for detection rule verification. It is not a live host process monitor. Step 8 will transition run behavior telemetry into the unified Sample analysis report.
+        </p>
+      </div>
+
       {/* ── Page Header & Architecture Status Strip ───────────────────────── */}
       <PageHeader
         kicker="Simulation Lab · Dynamic Behavior & Canary Execution Console"

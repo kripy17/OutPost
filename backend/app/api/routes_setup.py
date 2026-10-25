@@ -28,16 +28,8 @@ class OnboardIn(BaseModel):
 @router.post("/setup/onboard", response_model=None)
 def onboard(body: OnboardIn) -> dict:
     """Record the first-run choice; `demo` also seeds the labeled campaign."""
-    from contextlib import redirect_stdout
-    from io import StringIO
 
     if body.choice == "demo":
-        # Same seed the CLI runs — in-process, stdout suppressed so the
-        # server log doesn't fill with the seed's banner lines.
-        from ..seed_demo import main as seed_demo_main
-
-        with redirect_stdout(StringIO()):
-            seed_demo_main()
         demo_mode = "1"
     else:
         demo_mode = "0"
@@ -106,10 +98,13 @@ def reset_store(body: ResetIn | None = None) -> dict:
             # IOC linkage first — ioc_findings has an FK into alerts, and
             # provenance must not outlive the evidence it points at (P3.1).
             counts.update(iocs_store.purge_for_runs(conn, doomed))
+            existing_tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
             for table in ("investigation_refs",):
-                conn.execute(f"DELETE FROM {table} WHERE ref_type = 'run' AND ref_id IN ({marks})", doomed)
+                if table in existing_tables:
+                    conn.execute(f"DELETE FROM {table} WHERE ref_type = 'run' AND ref_id IN ({marks})", doomed)
             for table in ("analysis_jobs", "rule_suppressions", "alerts", "run_notes", "run_allowlist", "watchlist_hits"):
-                counts[f"deleted_{table}"] = conn.execute(f"DELETE FROM {table} WHERE run_id IN ({marks})", doomed).rowcount
+                if table in existing_tables:
+                    counts[f"deleted_{table}"] = conn.execute(f"DELETE FROM {table} WHERE run_id IN ({marks})", doomed).rowcount
             counts["deleted_events"] = conn.execute(f"DELETE FROM events WHERE run_id IN ({marks})", doomed).rowcount
             counts["deleted_runs"] = conn.execute(f"DELETE FROM runs WHERE run_id IN ({marks})", doomed).rowcount
 

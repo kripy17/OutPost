@@ -163,12 +163,10 @@ def complete_run(run_id: str) -> dict:
     return _post(f"/runs/{run_id}/complete")
 
 
-def list_runs() -> list[dict]:
-    # Opt back in to synthetic provenance (seeds / webapp detonations / the
-    # sandbox demo) AND soak-named collector baselines — the API hides both
-    # by default now, but the CLI is the parity mirror and should keep
-    # showing everything.
-    return _get("/runs?include_synthetic=true&include_soak=true")
+def list_runs(include_simulated: bool = False) -> list[dict]:
+    # Query run history, excluding simulated/test runs by default for clean analysis list
+    params = "?include_simulated=true" if include_simulated else ""
+    return _get(f"/runs{params}")
 
 
 def get_alert_queue(

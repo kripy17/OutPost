@@ -366,23 +366,27 @@ def hunt_ioc_across_fleet(conn: sqlite3.Connection, ioc_id: str) -> dict:
             "severity": sev,
         })
 
-    # 3. Cross-Investigation Linkages
-    inv_rows = conn.execute(
-        """
-        SELECT DISTINCT inv.id, inv.title, inv.status, inv.created_at
-        FROM investigations inv
-        JOIN investigation_refs r ON inv.id = r.investigation_id
-        WHERE r.ref_type = 'ioc' AND r.ref_id = ?
-        UNION
-        SELECT DISTINCT inv.id, inv.title, inv.status, inv.created_at
-        FROM investigations inv
-        JOIN alerts a ON inv.id = a.investigation_id
-        WHERE a.related_ip = ? OR a.details LIKE ?
-        ORDER BY created_at DESC
-        """,
-        (ioc_id, val, like_val),
-    ).fetchall()
-    associated_investigations = [dict(r) for r in inv_rows]
+    # 3. Cross-Investigation Linkages (parked with investigations platform)
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    if "investigations" in tables and "investigation_refs" in tables:
+        inv_rows = conn.execute(
+            """
+            SELECT DISTINCT inv.id, inv.title, inv.status, inv.created_at
+            FROM investigations inv
+            JOIN investigation_refs r ON inv.id = r.investigation_id
+            WHERE r.ref_type = 'ioc' AND r.ref_id = ?
+            UNION
+            SELECT DISTINCT inv.id, inv.title, inv.status, inv.created_at
+            FROM investigations inv
+            JOIN alerts a ON inv.id = a.investigation_id
+            WHERE a.related_ip = ? OR a.details LIKE ?
+            ORDER BY created_at DESC
+            """,
+            (ioc_id, val, like_val),
+        ).fetchall()
+        associated_investigations = [dict(r) for r in inv_rows]
+    else:
+        associated_investigations = []
 
     # Sort sightings chronologically desc
     sightings.sort(key=lambda s: s.get("timestamp") or "", reverse=True)

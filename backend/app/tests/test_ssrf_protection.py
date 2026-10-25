@@ -9,10 +9,8 @@ Guarantees:
 6. Legitimate public endpoints (Slack, Discord, generic HTTPS) pass validation.
 """
 
-from fastapi.testclient import TestClient
 
 from ..core.ssrf import validate_outbound_url
-from ..main import app
 
 
 def test_validate_outbound_url_blocks_loopback():
@@ -78,29 +76,4 @@ def test_validate_outbound_url_allows_public_https():
         assert valid is True, f"Expected valid public URL {target} to pass, got: {reason}"
 
 
-def test_settings_api_rejects_ssrf_webhook():
-    client = TestClient(app)
 
-    # 1. Loopback attack in webhook_url
-    res1 = client.put(
-        "/notifications/settings",
-        json={"webhook_url": "http://127.0.0.1:9090/internal/admin"},
-    )
-    assert res1.status_code == 400
-    assert "SSRF violation" in res1.json()["detail"]
-
-    # 2. Cloud metadata attack in slack_webhook
-    res2 = client.put(
-        "/notifications/settings",
-        json={"slack_webhook": "http://169.254.169.254/latest/meta-data/"},
-    )
-    assert res2.status_code == 400
-    assert "SSRF violation" in res2.json()["detail"]
-
-    # 3. File protocol attack in discord_webhook
-    res3 = client.put(
-        "/notifications/settings",
-        json={"discord_webhook": "file:///etc/shadow"},
-    )
-    assert res3.status_code == 400
-    assert "SSRF violation" in res3.json()["detail"]

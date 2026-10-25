@@ -27,14 +27,11 @@ import {
 import { lockedIpsText, rateLimitBadge, runResetFlow } from "./settingsHelpers";
 import { anyClientState, clientStateSummary, readClientState, resetClientState, type ClientStateReport } from "./resetClientState";
 import { provenanceLabel, readSavedProvenance, STATUS_TABS } from "./findingsHelpers";
-import AuditPage from "./audit";
 import type { NotificationSettings, NotificationSettingsIn } from "../types";
 
 const inputCls =
   "w-full rounded border border-border-subtle bg-bg-base px-3 py-2 font-mono text-sm text-text-primary placeholder:text-text-faint focus:border-accent/60 focus:outline-none";
 
-/* Numbered section divider — keeps the growing settings page scannable:
-   each cluster gets a numbered heading so the eye can land anywhere. */
 function SectionHeader({ n, title, desc }: { n: string; title: string; desc: string }) {
   return (
     <div className="mb-4 mt-2 flex items-baseline gap-3 border-b border-border-subtle pb-2">
@@ -74,10 +71,11 @@ function Field({
   );
 }
 
-/** Theme & palette — the former /themes Theme Lab folded into Settings.
- *  The rail footer toggles dark/light; this picks the dark accent/base
- *  palette. Applied instantly to <html data-palette> and persisted. */
-import { THEME_PRESETS, THEME_PALETTES } from "../components/ThemePalettePopover";
+const THEME_PRESETS = [
+  { id: "dark", name: "Dark", desc: "Default dark console", bgDot: "bg-[#0c0d0e]", accentDot: "bg-[#2f81f7]", badge: "Default", preview: { bg: "#0c0d0e", border: "#26292e", text: "#e6edf3" } },
+  { id: "light", name: "Light", desc: "Clean light console", bgDot: "bg-[#ffffff]", accentDot: "bg-[#2f81f7]", badge: "Light", preview: { bg: "#ffffff", border: "#e1e4e8", text: "#24292e" } },
+];
+const THEME_PALETTES: { id: string; name: string; desc: string; dot: string; preview: { accent: string } }[] = [];
 
 const MONO_FONTS = [
   { id: "default", name: "IBM Plex Mono", desc: "Default SOC typography" },
@@ -1163,7 +1161,7 @@ export default function SettingsPage() {
             Settings &amp; Audit <span className="font-normal text-text-muted">— preferences, integrations &amp; governance</span>
           </>
         }
-        lede="Tune theme styling and telemetry settings, manage threat-intel API credentials, configure alert webhooks, and inspect the tamper-evident audit log."
+        lede="Tune theme styling and telemetry settings, manage threat-intel API credentials, configure alert webhooks, and inspect the system audit log."
       />
 
       {/* Main Tab Switcher */}
@@ -1193,7 +1191,10 @@ export default function SettingsPage() {
       </div>
 
       {activeTab === "audit" ? (
-        <AuditPage />
+        <div className="rounded-xl border border-border-subtle bg-bg-surface p-8 text-center text-text-muted">
+          <p className="font-medium text-text-primary">System Audit Log</p>
+          <p className="mt-1 text-xs">The cryptographic audit chain is parked for the future forensics platform.</p>
+        </div>
       ) : (
         <>
       <SectionHeader n="01" title="Look & feel" desc="Theme, palette, and client-side triage preferences — the instrument-panel look." />

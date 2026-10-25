@@ -34,8 +34,8 @@ export function StaticOverviewTab({ sample, st, onNavigateTab }: StaticOverviewT
   const capabilities = st?.capabilities || [];
 
   // Determine heuristic assessment verdict
-  let verdictTitle = "Clean / Legitimate Binary";
-  let verdictBadge = "Clean";
+  let verdictTitle = "No Indicators Found (Limited Static Scope)";
+  let verdictBadge = "No Indicators";
   let verdictTone = "border-emerald-500/40 bg-emerald-500/10 text-emerald-400";
   if (yaraRules.length > 0 || riskScore >= 70) {
     verdictTitle = yaraRules.length > 0 ? "Signature Matched: Malicious Payload" : "Heuristic Assessment: High-Risk Malicious";

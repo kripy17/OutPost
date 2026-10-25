@@ -20,7 +20,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 PY = ROOT / ".venv/bin/python"
 RUFF_TOML = ROOT / "ruff.toml"
-DEFAULT_PATHS = ["backend/app", "cli/outpost", "collectors"]
+DEFAULT_PATHS = ["backend/app", "cli/outpost"]
 
 
 def main() -> int:
@@ -44,7 +44,7 @@ def main() -> int:
     print("  FAIL — ruff found lint findings under the curated rule set (see above)")
     print(
         "  → fix: run `.venv/bin/python -m ruff check backend/app cli/outpost "
-        "collectors/ --config ruff.toml --fix` to auto-fix the safe subset "
+        "--config ruff.toml --fix` to auto-fix the safe subset "
         "(import sorting, unused imports), fix the rest by hand, then re-run "
         "this gate"
     )

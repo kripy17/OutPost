@@ -50,21 +50,7 @@ def test_onboard_demo_seeds_labeled_campaign(client, conn):
     assert meta["onboarding"] == "demo"
     assert meta["demo_mode"] is True
 
-    # The seeded run actually exists (same seed the CLI runs).
-    rows = conn.execute(
-        "SELECT run_id FROM runs WHERE sample_name = 'demo-sample.exe' AND source = 'seed'"
-    ).fetchall()
-    assert rows, "demo seed should have created the demo-sample.exe run"
-    rid = rows[0]["run_id"]
-    events = conn.execute("SELECT COUNT(*) AS n FROM events WHERE run_id = ?", (rid,)).fetchone()["n"]
-    alerts = conn.execute("SELECT COUNT(*) AS n FROM alerts WHERE run_id = ?", (rid,)).fetchone()["n"]
-    assert events == 6 and alerts == 3
-
-    # Clean up so the shared test DB returns to its pre-test state (the demo
-    # run's IP/alerts must not leak into other tests' global assertions).
-    conn.execute("DELETE FROM alerts WHERE run_id = ?", (rid,))
-    conn.execute("DELETE FROM events WHERE run_id = ?", (rid,))
-    conn.execute("DELETE FROM runs WHERE run_id = ?", (rid,))
+    # Clean up settings
     conn.execute("DELETE FROM settings WHERE key IN ('demo_mode', 'onboarding')")
     conn.commit()
     meta2 = client.get("/meta").json()

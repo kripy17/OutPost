@@ -275,6 +275,7 @@ export default function TopCommandBar() {
           </Link>
         )}
 
+
         {/* Global Shortcuts Trigger */}
         <button
           onClick={openShortcuts}

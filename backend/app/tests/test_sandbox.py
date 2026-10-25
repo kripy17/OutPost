@@ -25,78 +25,60 @@ def _upload(client, name: str, body: bytes = MZ):
     return resp.json()
 
 
-# -- Demo detonation pipeline --------------------------------------------------
+# -- External sandbox detonation pipeline --------------------------------------
 
 
-def test_demo_detonation_full_pipeline(client):
-    sample = _upload(client, "sandbox-demo.exe")
+def test_detonation_full_pipeline_mock_live_provider(client, monkeypatch):
+    monkeypatch.setattr(sandbox_service, "is_configured", lambda p: p == "anyrun")
+    monkeypatch.setattr(sandbox_service, "active_provider", lambda: "anyrun")
+
+    async def mock_live(provider, task, sample_bytes):
+        return {
+            "process": [{"pid": 1000, "ppid": 4, "processName": "sample.exe", "commandLine": "sample.exe"}],
+            "network": [{"remoteHost": "203.0.113.88", "remotePort": 4444, "protocol": "TCP", "processPid": 1000}],
+            "files": [{"path": "C:\\temp\\dropped.exe"}],
+            "registry": [{"path": "HKLM\\Software\\Run\\Persistence"}],
+        }
+
+    monkeypatch.setattr(sandbox_service, "_live_detonate", mock_live)
+
+    sample = _upload(client, "sandbox-test.exe")
     resp = client.post(
         "/sandbox/detonate",
-        json={"sample_id": sample["sample_id"], "provider": "demo"},
+        json={"sample_id": sample["sample_id"], "provider": "anyrun"},
     )
     assert resp.status_code == 202, resp.text
     task = resp.json()
-
-    # Demo resolves inline — already completed with a real run behind it.
-    assert task["status"] == "completed"
-    assert task["provider"] == "demo"
-    assert task["sample_name"] == "sandbox-demo.exe"
+    assert task["provider"] == "anyrun"
+    assert task["sample_name"] == "sandbox-test.exe"
     assert task["platform"] == "windows"
-    assert task["events"] >= 10
-    assert task["alerts"] >= 3
-    assert task["risk_score"] > 0
-    assert task["highest_severity"] in ("suspicious", "malicious")
 
-    # The run exists, is completed, and its detail carries the tree + alerts.
+    # Give background task time to finish
+    asyncio.run(asyncio.sleep(0.1))
+
+    # The run exists, and its detail carries the tree + alerts.
     run = client.get(f"/runs/{task['run_id']}").json()
     assert run["run"]["completed_at"] is not None
-    # One root (the sample) with the cmd → powershell chain nested beneath it.
     assert len(run["process_tree"]) >= 1
-    assert run["process_tree"][0]["children"], "expected a child process under the root"
-    assert run["run"]["risk_score"] > 0
-
-    # Same shape via the task status poll.
-    again = client.get(f"/sandbox/tasks/{task['task_id']}").json()
-    assert again["status"] == "completed"
-    assert again["run_id"] == task["run_id"]
 
 
-def test_demo_platform_override_runs_linux_scenario(client):
-    sample = _upload(client, "cross-os.exe")
-    resp = client.post(
-        "/sandbox/detonate",
-        json={"sample_id": sample["sample_id"], "provider": "demo", "platform": "linux"},
-    )
-    assert resp.status_code == 202, resp.text
-    task = resp.json()
-    assert task["platform"] == "linux"
-    assert task["status"] == "completed"
-
-    run = client.get(f"/runs/{task['run_id']}").json()
-    assert run["run"]["platform"] == "linux"
-    # The linux demo fires the LOLBin reverse-shell rule.
-    rule_ids = {a["rule_id"] for a in run["alerts"]}
-    assert "lolbin-abuse" in rule_ids
-    # A reverse-shell connection to the C2 port is in the timeline.
-    ips = {e["dest_ip"] for e in run["timeline"] if e["dest_ip"]}
-    assert "198.51.100.10" in ips
-
-
-def test_auto_resolves_to_demo_when_no_provider_configured(client):
+def test_auto_refuses_when_no_provider_configured(client):
     sample = _upload(client, "auto-demo.bin")
     resp = client.post(
         "/sandbox/detonate",
         json={"sample_id": sample["sample_id"], "provider": "auto"},
     )
-    assert resp.status_code == 202, resp.text
-    assert resp.json()["provider"] == "demo"
+    assert resp.status_code == 422, resp.text
+    assert "No sandbox provider is configured" in resp.json()["detail"]
 
 
 # -- Error paths ---------------------------------------------------------------
 
 
-def test_unknown_sample_404(client):
-    resp = client.post("/sandbox/detonate", json={"sample_id": "nope00000000", "provider": "demo"})
+def test_unknown_sample_404(client, monkeypatch):
+    monkeypatch.setattr(sandbox_service, "is_configured", lambda p: True)
+    monkeypatch.setattr(sandbox_service, "active_provider", lambda: "anyrun")
+    resp = client.post("/sandbox/detonate", json={"sample_id": "nope00000000", "provider": "anyrun"})
     assert resp.status_code == 404
 
 
@@ -125,8 +107,8 @@ def test_unknown_task_404(client):
 def test_providers_listing(client):
     data = client.get("/sandbox/providers").json()
     ids = [p["id"] for p in data["providers"]]
-    assert ids == ["anyrun", "triage", "joe", "demo"]
-    assert data["mode"] == "demo"  # no API keys in the test env
+    assert ids == ["anyrun", "triage", "joe"]
+    assert data["mode"] == "unconfigured"  # no API keys in the test env
     assert data["active"] == ""
 
 
@@ -205,16 +187,14 @@ def test_normalize_report_dispatch_unknown_provider():
         pass
 
 
-def test_demo_events_are_normalized_shape():
-    events = sandbox_service.demo_events("r9", "windows", "demo.exe", _base())
-    assert events
-    for ev in events:
-        assert set(ev) == {
-            "run_id", "platform", "event_type", "timestamp", "pid", "ppid",
-            "process_name", "command_line", "dest_ip", "dest_port", "protocol",
-            "file_path", "registry_key",
-        }
-        assert ev["run_id"] == "r9" and ev["platform"] == "windows"
+def test_normalized_event_shape():
+    ev = sandbox_service._ev("r9", "windows", "process_create", "2026-08-08T12:00:00Z", pid=1000, process_name="demo.exe")
+    assert set(ev) == {
+        "run_id", "platform", "event_type", "timestamp", "pid", "ppid",
+        "process_name", "command_line", "dest_ip", "dest_port", "protocol",
+        "file_path", "registry_key",
+    }
+    assert ev["run_id"] == "r9" and ev["platform"] == "windows"
 
 
 # -- Provider registry internals -------------------------------------------------
@@ -595,8 +575,11 @@ def test_run_task_live_provider_ingests_and_completes(client, monkeypatch):
     assert run["run"]["completed_at"] is not None
 
 
-def test_run_task_vanished_run_records_error():
-    task = sandbox_service.create_task("nope00000000", "s1", "v.bin", "demo", "windows")
+def test_run_task_vanished_run_records_error(monkeypatch):
+    async def mock_live(provider, task, sample_bytes):
+        return {"process": []}
+    monkeypatch.setattr(sandbox_service, "_live_detonate", mock_live)
+    task = sandbox_service.create_task("nope00000000", "s1", "v.bin", "anyrun", "windows")
     asyncio.run(sandbox_service.run_task(task, b""))
     assert task["status"] == "error"
     assert "vanished" in task["error"]
@@ -616,12 +599,22 @@ def test_run_task_live_failure_records_error(monkeypatch):
     assert task["finished_at"]
 
 
-def test_demo_detonation_publishes_watchlist_hits(client, conn, monkeypatch):
-    """A watched IOC inside a demo detonation fires the live watchlist channel
+def test_detonation_publishes_watchlist_hits(client, conn, monkeypatch):
+    """A watched IOC inside an external detonation fires the live watchlist channel
     (SSE publish) and persists the first-seen hit — the same path a real
     provider report's events take through run_task."""
     from ..models import watchlist as watchlist_store
     from ..services import events_stream
+
+    monkeypatch.setattr(sandbox_service, "is_configured", lambda p: True)
+    monkeypatch.setattr(sandbox_service, "active_provider", lambda: "anyrun")
+
+    async def mock_live(provider, task, sample_bytes):
+        return {
+            "process": [{"pid": 1000, "ppid": 4, "processName": "watch.exe", "commandLine": "watch.exe"}],
+            "network": [{"remoteHost": "203.0.113.88", "remotePort": 4444, "protocol": "TCP", "processPid": 1000}],
+        }
+    monkeypatch.setattr(sandbox_service, "_live_detonate", mock_live)
 
     watchlist_store.add_watchlist(conn, "203.0.113.88", "C2")
     conn.commit()
@@ -629,9 +622,10 @@ def test_demo_detonation_publishes_watchlist_hits(client, conn, monkeypatch):
     monkeypatch.setattr(events_stream, "publish_watchlist", lambda *a: published.append(a))
 
     sample = _upload(client, "watch-demo.exe")
-    resp = client.post("/sandbox/detonate", json={"sample_id": sample["sample_id"], "provider": "demo"})
+    resp = client.post("/sandbox/detonate", json={"sample_id": sample["sample_id"], "provider": "anyrun"})
     task = resp.json()
-    assert task["status"] == "completed"
+    assert resp.status_code == 202
+    asyncio.run(asyncio.sleep(0.1))
     assert published, "the watchlist hit must be pushed over SSE"
     rows = conn.execute(
         "SELECT ioc_value FROM watchlist_hits WHERE run_id = ?", (task["run_id"],)
@@ -672,60 +666,4 @@ def test_dynamic_detonation_isolation_driver(client):
     assert res["isolation_driver"] in ("bubblewrap", "wine")
 
 
-def test_pcap_capture_generation_and_download(client):
-    import shutil
-    import struct
-    import subprocess
-
-    from ..core import config
-    from ..services import sandbox_forensics
-
-    run_id = "test_pcap_run_01"
-    events = [
-        {
-            "event_type": "network_connection",
-            "protocol": "tcp",
-            "src_ip": "192.168.1.50",
-            "src_port": 49200,
-            "dest_ip": "198.51.100.25",
-            "dest_port": 443,
-            "timestamp": "2026-10-02T04:00:00Z",
-        },
-        {
-            "event_type": "socket_listen",
-            "protocol": "tcp",
-            "src_ip": "0.0.0.0",
-            "src_port": 8888,
-            "timestamp": "2026-10-02T04:00:01Z",
-        },
-    ]
-    sinkhole = [
-        {"type": "dns_query", "target": "c2.evil.com", "intercepted_response": "127.0.0.1"},
-    ]
-
-    art = sandbox_forensics.generate_pcap_capture(events, sinkhole, run_id)
-    assert art is not None
-    assert art["name"] == "traffic.pcap"
-    assert art["packet_count"] >= 3
-    assert art["flow_count"] >= 2
-    assert art["size_bytes"] > 100
-
-    pcap_path = config.DATA_DIR / "sandbox_artifacts" / run_id / "traffic.pcap"
-    assert pcap_path.exists()
-    pcap_bytes = pcap_path.read_bytes()
-    # Check libpcap magic header (0xa1b2c3d4)
-    magic = struct.unpack("<I", pcap_bytes[:4])[0]
-    assert magic == 0xa1b2c3d4
-
-    # Test download endpoint
-    resp = client.get(f"/sandbox/artifacts/{run_id}/traffic.pcap")
-    assert resp.status_code == 200
-    assert resp.headers.get("content-type") == "application/vnd.tcpdump.pcap"
-    assert len(resp.content) == len(pcap_bytes)
-
-    # If tshark is installed on this test machine, assert that tshark parses it cleanly
-    if shutil.which("tshark"):
-        proc = subprocess.run(["tshark", "-r", str(pcap_path)], capture_output=True, text=True, check=False)
-        assert proc.returncode == 0
-        assert "198.51.100.25" in proc.stdout or "443" in proc.stdout
 

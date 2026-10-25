@@ -227,11 +227,13 @@ def main() -> int:
     if not backend.is_dir():
         print(f"ERROR: backend dir not found at {backend}", file=sys.stderr)
         return 2
-    if not collectors.is_dir():
-        print(f"ERROR: collectors dir not found at {collectors}", file=sys.stderr)
-        return 2
 
-    hits = scan_backend(backend) + scan_collectors(collectors)
+    hits = scan_backend(backend)
+    n_co = 0
+    if collectors.is_dir():
+        hits += scan_collectors(collectors)
+        n_co = len(iter_py_files(collectors))
+
     if hits:
         print(f"✗ BACKEND/COLLECTOR EGRESS VIOLATION ({len(hits)}):")
         for h in hits:
@@ -239,11 +241,10 @@ def main() -> int:
         return 1
 
     n_be = len(iter_py_files(backend))
-    n_co = len(iter_py_files(collectors))
     print(
-        f"✓ Backend/collector egress gate: clean "
+        f"✓ Backend egress gate: clean "
         f"({n_be} backend files, {n_co} collector files — httpx only in "
-        f"{len(BACKEND_HTTPX_SANCTIONED)} sanctioned modules, requests only in shipper.py)"
+        f"{len(BACKEND_HTTPX_SANCTIONED)} sanctioned modules)"
     )
     return 0
 

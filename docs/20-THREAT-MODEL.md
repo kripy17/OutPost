@@ -53,7 +53,7 @@ OutPost is an enterprise endpoint detection, threat response, and binary detonat
       │
  (TB-5) Engine-level SQLite Triggers (Abort UPDATE & DELETE)
       ▼
-[ SQLite Database & Audit Log ] (Tamper-Evident Hash Chain)
+[ SQLite Database & Audit Log ] (Standard Audit Log; Cryptographic Chain Parked)
 ```
 
 - **TB-1 (Network Ingress & Egress)**: Boundaries between external networks and OutPost. Enforces SSRF prevention, scheme restriction, private range blocking, and HTTP security headers.
@@ -76,7 +76,7 @@ Every identified threat is linked to an implemented control and an automated tes
 | **T-04** | Adversary captures and replays legitimate agent telemetry to spoof fleet status. | TB-2 | Per-agent HMAC-SHA256 signature verification over canonical request components, with anti-replay signature cache and mandatory single-use nonces. | `test_agents.py::test_agent_telemetry_signature_replay_rejected` |
 | **T-05** | Read-only user or analyst commands destructive network containment or process kill. | TB-3 | Role-Based Access Control: containment authority is restricted to `responder` and `admin`. Mandatory justification reason required for destructive operations. | `test_agents.py::test_containment_role_enforcement`, `test_audit_chain_integrity.py::test_mutating_endpoints_record_audit` |
 | **T-06** | Compromised agent issues fake containment orders to isolate peer endpoints. | TB-2 | Agent credentials explicitly rejected from accessing management and containment endpoints (`/agents/{id}/isolate`). | `test_agents.py::test_agent_token_forbidden_from_isolation` |
-| **T-07** | Attacker executes brute-force password guessing against operator authentication. | TB-3 | Sliding-window `LoginRateLimiter` enforces lockout after 5 failed attempts; all failed and successful attempts recorded in tamper-evident audit log. | `test_ops.py::test_failed_login_lands_in_audit`, `test_auth.py::test_login_rate_limiter` |
+| **T-07** | Attacker executes brute-force password guessing against operator authentication. | TB-3 | Sliding-window `LoginRateLimiter` enforces lockout after 5 failed attempts; all failed and successful attempts recorded in audit log. | `test_ops.py::test_failed_login_lands_in_audit`, `test_auth.py::test_login_rate_limiter` |
 | **T-08** | Untrusted binary crashes parser and takes down primary backend API process. | TB-4 | Static analysis runs in resource-limited isolated worker processes with CPU/memory ceilings, returning structured errors rather than crashing the API. | `test_static_worker_isolation.py::test_parser_crash_does_not_affect_api` |
 | **T-09** | XSS injection via attacker-controlled process names or command lines in browser. | TB-3 | Strict Content-Security-Policy headers; zero inline script execution; React DOM text-node escaping for all telemetry strings. | `test_meta.py::test_security_headers_present` |
 | **T-10** | Database admin rewrites entire SQLite file to produce a forged valid hash chain. | TB-5 | Periodic cryptographically signed checkpoints signed with separate private key; public key fingerprint and bundle exportable out-of-band. | `test_audit_chain_integrity.py::test_cryptographic_checkpoint_signing_and_verification` |

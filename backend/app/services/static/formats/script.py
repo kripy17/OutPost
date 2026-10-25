@@ -16,9 +16,9 @@ from ..provenance import create_finding, create_provenance
 
 _SCRIPT_PATTERNS = {
     "powershell": (
-        rb"(\$env:|\$[a-zA-Z0-9_]+|invoke-expression|invoke-webrequest|downloadstring|"
+        rb"(\$env:[a-zA-Z0-9_]+|\$[a-zA-Z0-9_]+\s*=|invoke-expression|invoke-webrequest|downloadstring|"
         rb"new-object\s+net\.webclient|set-mppreference|\[system\.convert\]|\bget-process\b|\bpwsh\b|"
-        rb"\bpowershell\b|\[ref\]|-enc|-encodedcommand|\bamsiutils\b|frombase64)"
+        rb"\bpowershell\b|\[ref\]|-enc\b|-encodedcommand\b|\bamsiutils\b|frombase64)"
     ),
     "vbscript": (
         rb"(\bdim\s+[a-z0-9_]+|\bset\s+[a-z0-9_]+\s*=\s*createobject|\bwscript\.shell\b|"
@@ -39,11 +39,30 @@ _SCRIPT_PATTERNS = {
 
 def is_script(data: bytes) -> bool:
     """Check if binary payload matches known script signatures or high text ratio."""
+    if not data:
+        return False
     # Check shebang
     if data.startswith(b"#!"):
         return True
+
+    # Verify payload is text-based (not random high-entropy binary bytes or NUL-filled binary)
+    sample = data[:4096]
+    if b"\x00" in sample:
+        if sample.startswith(b"\xff\xfe"):
+            try:
+                sample = sample.decode("utf-16le", errors="ignore").encode("utf-8")
+            except Exception:
+                return False
+        else:
+            return False
+
+    # Printable text check: non-whitespace control characters must be < 15%
+    non_printable = sum(1 for b in sample if (b < 0x20 and b not in (0x09, 0x0A, 0x0D)) or b > 0x7E)
+    if len(sample) > 0 and (non_printable / len(sample)) > 0.15:
+        return False
+
     # Check text patterns (stripping backticks to defeat PowerShell quote obfuscation)
-    sample_chunk = data[:4096].lower().replace(b"`", b"")
+    sample_chunk = sample.lower().replace(b"`", b"")
     for pattern in _SCRIPT_PATTERNS.values():
         if re.search(pattern, sample_chunk, re.IGNORECASE):
             return True

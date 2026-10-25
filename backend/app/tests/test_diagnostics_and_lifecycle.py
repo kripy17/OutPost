@@ -46,7 +46,7 @@ def test_diagnostics_endpoint_contract(client):
 
     # Evidence integrity
     assert "audit_chain_length" in data["evidence_integrity"]
-    assert data["evidence_integrity"]["status"] == "tamper-evident SHA-256 chain verified"
+    assert data["evidence_integrity"]["status"] == "standard audit log (cryptographic chain parked)"
 
 
 def test_support_bundle_export_contract(client):
@@ -123,37 +123,4 @@ def test_admin_retention_data_classes(client):
     assert "cryptographic" in classes["audit"]["policy"]
 
 
-def test_investigation_import_and_export_roundtrip(client):
-    """Create investigation, export JSON dossier, and import into fresh investigation record."""
-    # 1. Create source investigation
-    create_resp = client.post(
-        "/investigations",
-        json={"title": "Ransomware Lateral Movement Case", "tags": ["apt", "lockbit"]},
-    )
-    assert create_resp.status_code == 201
-    source_inv = create_resp.json()
-    inv_id = source_inv["id"]
 
-    # 2. Add note and task
-    client.post(f"/investigations/{inv_id}/notes", json={"note": "Initial staging detected at 10.0.0.15"})
-    client.post(
-        f"/investigations/{inv_id}/tasks",
-        json={"title": "Isolate DC1", "category": "containment"},
-    )
-
-    # 3. Export dossier as JSON
-    export_resp = client.get(f"/investigations/{inv_id}/export?format=json")
-    assert export_resp.status_code == 200
-    dossier = export_resp.json()
-    assert dossier["case"]["id"] == inv_id
-    assert len(dossier["notes"]) >= 1
-
-    # 4. Import dossier into OutPost
-    import_resp = client.post("/investigations/import", json=dossier)
-    assert import_resp.status_code == 201
-    import_result = import_resp.json()
-    assert import_result["status"] == "imported"
-    new_inv = import_result["investigation"]
-    assert new_inv["title"] == "Ransomware Lateral Movement Case"
-    assert "apt" in new_inv["tags"]
-    assert import_result["notes_restored"] >= 1

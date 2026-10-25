@@ -34,7 +34,13 @@ def export(
                 console.print(f"[bold #C4453B]Export failed: {exc}[/bold #C4453B]")
                 raise typer.Exit(1)
         dest = output or Path(f"outpost-report-{run_id[:12]}.json")
-        dest.write_text(json.dumps(report, indent=2))
+        dest.write_text(
+            json.dumps(
+                report,
+                indent=2,
+                default=lambda o: o.model_dump() if hasattr(o, "model_dump") else str(o),
+            )
+        )
         console.print(f"[#3FA796]Exported JSON report → {dest}[/#3FA796]")
     elif format == "pdf":
         _export_pdf(run_id, output)

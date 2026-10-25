@@ -18,6 +18,24 @@ from ..core import config
 from ..services import dynamic_sandbox
 
 
+def _can_create_user_namespaces() -> bool:
+    bwrap = shutil.which("bwrap")
+    if not bwrap:
+        return False
+    import subprocess
+    try:
+        res = subprocess.run([bwrap, "--ro-bind", "/", "/", "true"], capture_output=True, timeout=1, check=False)
+        return res.returncode == 0
+    except Exception:
+        return False
+
+
+pytestmark = pytest.mark.skipif(
+    not _can_create_user_namespaces(),
+    reason="Dynamic sandbox real execution requires kernel unprivileged user namespace support",
+)
+
+
 @pytest.fixture()
 def client():
     from ..main import app
@@ -54,7 +72,7 @@ async def test_real_benign_execution_clean_verdict(client):
     assert res["sample_id"] == sample_id
     assert res["exit_code"] == 0
     assert "Task finished successfully" in res["terminal_output"]
-    assert res["verdict"] == "clean"
+    assert res["verdict"] == "no_indicators_found_limited"
     assert res["alerts_count"] == 0
     assert len(res["dropped_artifacts"]) == 0
     assert res["pcap_available"] is False
@@ -167,4 +185,4 @@ async def test_airgap_containment_mode(client):
 
     assert res["exit_code"] == 0
     assert "Running in airgap" in res["terminal_output"]
-    assert res["verdict"] == "clean"
+    assert res["verdict"] == "no_indicators_found_limited"

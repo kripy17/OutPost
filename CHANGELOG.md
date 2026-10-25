@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.2] - 2026-10-20
+
+### Security & Architecture Hardening (Comprehensive Review Defect Rework)
+- **Defect 1: Static Verdict Engine**: Neutralized stripped symbol scoring on standard system binaries, sanitized URL extraction against embedded NUL bytes, restricted malicious verdicts to authoritative threat indicators or explicit suspicious heuristics, and expanded validation corpus with 75 clean OS binaries (0.0% false-positive rate verified).
+- **Defect 2: Static Worker Subprocess**: Enforced `NO_PROXY="*"` and stripped operator secrets in minimal worker environment, made worker path resolution robust across working directories, and added structured error reporting when process rlimits fail.
+- **Defect 3: Agent Authentication**: Hardened HMAC validation with server-side SHA-256 payload digest verification in `auth_gate`, cryptographically bound authenticated agents to `host_id`, and added persistent `agent_nonces` database table preventing replay attacks.
+- **Defect 4: Audit Chain Verification**: Stored entry hashes explicitly in the database, flagged missing hashes as tampering, added tail truncation detection and checkpoint keypair signature verification, and enforced canonical compact RFC 8785 JSON serialization.
+- **Defect 5: Compound Process Identity**: Propagated `process_start_time` across all non-process telemetry events, flagged PID-bearing events lacking start time, keyed process maps by compound key `host_id:boot_id:pid` preventing PID reuse collisions across reboots and fleet hosts, and added `host_id` to `alerts` table.
+- **Defect 6: Linux Collection & Auditd Rules**: Extended `audit.rules` to capture successful file creation, write opens, renames, permission modifications, and connect syscalls with documented noise controls. Updated collector to correlate multi-record syscall and path events and track connection statuses.
+- **Defect 7: Sandbox Limits & Network Rewording**: Enforced `RLIMIT_CPU`, `RLIMIT_FSIZE`, `RLIMIT_CORE`, `RLIMIT_AS` (1GB ceiling), and `RLIMIT_NPROC` (bounded safely for unshare/clone). Reworded synthetic network capture log output to honestly state packet reconstruction.
+- **Defect 8: Detection Coverage Honesty**: Declared `required_telemetry` across all 48 rules in `RULE_META`, added `/runs/{run_id}/coverage` endpoint surfacing evaluable vs not_evaluable states for missing data sources, and verified alert cap preserves first alert for distinct entities.
+- **Defect 9: Packaging & Test Verification**: Added missing `pyyaml>=6.0` dependency, declared all `app.services.static` subpackages in `pyproject.toml`, and verified 1,706 passing automated tests across all suites.
+
+---
+
 ## [0.3.1] - 2026-10-18
 
 ### Corrected README & Documentation Claims

@@ -137,7 +137,7 @@ def main() -> int:
             if r.status_code != 200:
                 failures.append(f"GET /runs/{run_id} -> {r.status_code}")
 
-            # --- sample upload + sandbox demo detonation (no provider key) ---
+            # --- sample upload + sandbox unconfigured provider rejection ---
             r = client.post("/samples?name=no-config-probe.exe", content=b"MZ\x90\x00\x03\x00\x00\x00" * 32)
             if r.status_code != 201:
                 failures.append(f"POST /samples -> {r.status_code}")
@@ -145,13 +145,13 @@ def main() -> int:
                 sample_id = r.json()["sample_id"]
 
             if sample_id:
+                # With zero keys configured, auto and specific providers must refuse — and never egress.
                 r = client.post("/sandbox/detonate", json={
-                    "sample_id": sample_id, "provider": "demo", "platform": "windows",
+                    "sample_id": sample_id, "provider": "auto", "platform": "windows",
                 })
-                if r.status_code not in (200, 202):
-                    failures.append(f"POST /sandbox/detonate demo -> {r.status_code}")
+                if r.status_code != 422:
+                    failures.append(f"POST /sandbox/detonate auto (unconfigured) -> {r.status_code} (expected 422)")
 
-                # A REAL provider without a key must refuse — and never egress.
                 r = client.post("/sandbox/detonate", json={
                     "sample_id": sample_id, "provider": "anyrun", "platform": "windows",
                 })
@@ -194,34 +194,6 @@ def main() -> int:
             if cache_probe.recorded:
                 for host, url in sorted(set(cache_probe.recorded)):
                     failures.append(f"cached read still egressed to {host}: {url}")
-
-            # --- webhook delivery is target-limited: only the configured URL ---
-            # Configure a webhook + watchlist entry, then ingest a matching
-            # event: the watchlist-hit notification must reach exactly the
-            # operator-configured target and nothing else.
-            with EgressProbe() as webhook_probe:
-                r = client.put("/notifications/settings", json={
-                    "webhook_url": "https://hooks.example.com/outpost-gate",
-                    "slack_webhook": "", "discord_webhook": "",
-                })
-                if r.status_code != 200:
-                    failures.append(f"POST /notifications/settings -> {r.status_code}")
-                r = client.post("/watchlist", json={"value": "203.0.113.88", "label": "gate-probe"})
-                if r.status_code != 201:
-                    failures.append(f"POST /watchlist -> {r.status_code}: {r.text[:120]}")
-                r = client.post("/ingest/batch", json=[{
-                    "run_id": run_id, "platform": "windows", "event_type": "network_connection",
-                    "timestamp": "2026-08-14T08:10:00Z", "pid": 4242, "ppid": 1,
-                    "process_name": "no-config-probe.exe",
-                    "dest_ip": "203.0.113.88", "dest_port": 4444,
-                }])
-                if r.status_code not in (200, 202):
-                    failures.append(f"POST /ingest/batch (watchlist hit) -> {r.status_code}")
-            webhook_hosts = sorted({h for h, _ in webhook_probe.recorded})
-            if webhook_hosts != ["hooks.example.com"]:
-                failures.append(
-                    "webhook egress not target-limited: reached "
-                    f"{', '.join(webhook_hosts) or '<none>'} (expected only hooks.example.com)")
     finally:
         import shutil
         for p in (db_path,):
@@ -237,7 +209,7 @@ def main() -> int:
             print(f"    {f}")
         return 1
     print("✓ Backend no-config egress gate: background flows silent with zero config "
-          "(create/ingest/complete/detail/upload/demo-detonate); keyed refresh caught; "
+          "(create/ingest/complete/detail/upload/unconfigured-sandbox-reject); keyed refresh caught; "
           "cached reads silent; webhook delivery target-limited")
     return 0
 

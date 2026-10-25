@@ -292,7 +292,7 @@ def runtime_proof(port: int) -> tuple[int, list[str]]:
         ("IOC search", ["search", "8.8.8.8"]),
         ("rules knobs", ["rules", "knobs"]),
         ("rules log-patterns", ["rules", "log-patterns"]),
-        ("agent status", ["agent", "status"]),
+        ("doctor", ["doctor"]),
         ("watchlist add", ["watchlist", "add", "8.8.8.8", "--label", "gate-probe"]),
         ("watchlist list", ["watchlist", "list"]),
         ("watchlist remove", ["watchlist", "remove", "8.8.8.8"]),

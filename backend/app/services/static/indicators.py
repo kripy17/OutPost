@@ -19,13 +19,22 @@ _BENIGN_INFRASTRUCTURE = {
     "openxmlformats.org", "purl.org", "github.com", "google.com",
     "digicert.com", "verisign.com", "sectigo.com", "identrust.com",
     "letsencrypt.org", "globalsign.com", "adobe.com", "apple.com",
-    "example.com", "example.org", "example.net",
+    "example.com", "example.org", "example.net", "gnu.org",
+    "kernel.org", "debian.org", "ubuntu.com", "python.org",
+    "xiph.org", "translationproject.org", "freedesktop.org",
+    "apache.org", "mozilla.org", "iana.org", "iso.org", "fsf.org",
 }
 
-_RE_URL = re.compile(rb"https?://[^\s\"'<>\\]{4,200}", re.IGNORECASE)
+# Regex matching clean ASCII URLs without control characters or NUL bytes
+_RE_URL = re.compile(rb"https?://[a-zA-Z0-9][-a-zA-Z0-9@:%._+~#=]{1,256}\.[a-zA-Z0-9()]{2,24}\b(?:[-a-zA-Z0-9()@:%_+.~#?&/=]*)", re.IGNORECASE)
 _RE_IPV4_CANDIDATE = re.compile(rb"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 _RE_DOMAIN_CANDIDATE = re.compile(rb"\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}\b", re.IGNORECASE)
 _RE_EMAIL_CANDIDATE = re.compile(rb"\b[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+\b")
+
+_SUSPICIOUS_DOMAIN_PATTERNS = (
+    "duckdns.org", "no-ip.", "ddns.net", "ngrok.io", ".onion",
+    "pastebin.com/raw", "hastebin.com", "temp.sh",
+)
 
 _COMMON_TLDS = {
     "com", "net", "org", "edu", "gov", "mil", "io", "co", "ru", "cn", "uk",
@@ -139,26 +148,43 @@ def extract_embedded_indicators(
         except Exception:
             pass
 
+    seen_domains_in_urls: set[str] = set()
+
     # 2. URLs extraction
     for match in _RE_URL.finditer(data):
         url_bytes = match.group(0)
         try:
-            url_str = url_bytes.decode("latin1")
-            # Strip trailing punctuation
-            url_str = url_str.rstrip(".,;)\"'<>\\")
+            # Strip NUL bytes and control characters immediately
+            clean_bytes = re.split(rb"[\x00-\x1f\s\"'<>\\]", url_bytes)[0]
+            url_str = clean_bytes.decode("latin1", errors="replace").rstrip(".,;)\"'<>\\")
             if url_str not in seen and len(url_str) >= 10:
-                # Check domain inside URL
                 domain_match = re.search(r"https?://([^/:\s]+)", url_str)
                 if domain_match:
                     host = domain_match.group(1).lower()
                     if is_valid_public_ipv4(host) or is_valid_domain(host):
                         seen.add(url_str)
+                        seen_domains_in_urls.add(host)
+                        # Also track base domain to avoid duplicate subdomains
+                        parts = host.split(".")
+                        if len(parts) >= 2:
+                            seen_domains_in_urls.add(".".join(parts[-2:]))
+
                         loc_name, rank = _determine_location(match.start())
+                        # Classify: generic documentation/licensing URLs are informational, not suspicious
+                        is_ip_host = is_valid_public_ipv4(host)
+                        has_suspicious_pattern = any(p in host for p in _SUSPICIOUS_DOMAIN_PATTERNS)
+                        has_nonstandard_port = bool(re.search(r":(?!80\b|443\b)\d{2,5}", url_str))
+
+                        if is_ip_host or has_suspicious_pattern or has_nonstandard_port:
+                            classification = "suspicious"
+                        else:
+                            classification = "informational"
+
                         prov = create_provenance(
                             "string_offset",
                             f"Offset 0x{match.start():08X} ({loc_name})",
                             "matched",
-                            "high",
+                            "high" if classification == "suspicious" else "low",
                             evidence_excerpt=url_str,
                         )
                         indicators.append({
@@ -167,25 +193,35 @@ def extract_embedded_indicators(
                             "location": loc_name,
                             "location_rank": rank,
                             "offset": f"0x{match.start():08X}",
-                            "classification": "suspicious",
+                            "classification": classification,
                             "provenance": prov,
                         })
         except Exception:
             pass
 
-    # 3. Domains extraction
+    # 3. Domains extraction (only extract standalone domains not already captured in URLs)
     for match in _RE_DOMAIN_CANDIDATE.finditer(data):
         dom_bytes = match.group(0)
         try:
-            dom_str = dom_bytes.decode("ascii").lower()
-            if is_valid_domain(dom_str) and dom_str not in seen:
+            clean_dom = re.split(rb"[\x00-\x1f\s\"'<>\\]", dom_bytes)[0]
+            dom_str = clean_dom.decode("ascii", errors="replace").lower()
+            if is_valid_domain(dom_str) and dom_str not in seen and dom_str not in seen_domains_in_urls:
+                # Also verify base domain is not already seen in a URL
+                parts = dom_str.split(".")
+                base_dom = ".".join(parts[-2:]) if len(parts) >= 2 else dom_str
+                if base_dom in seen_domains_in_urls:
+                    continue
+
                 seen.add(dom_str)
                 loc_name, rank = _determine_location(match.start())
+                has_suspicious_pattern = any(p in dom_str for p in _SUSPICIOUS_DOMAIN_PATTERNS)
+                classification = "suspicious" if has_suspicious_pattern else "informational"
+
                 prov = create_provenance(
                     "string_offset",
                     f"Offset 0x{match.start():08X} ({loc_name})",
                     "matched",
-                    "high",
+                    "high" if classification == "suspicious" else "low",
                     evidence_excerpt=dom_str,
                 )
                 indicators.append({
@@ -194,7 +230,7 @@ def extract_embedded_indicators(
                     "location": loc_name,
                     "location_rank": rank,
                     "offset": f"0x{match.start():08X}",
-                    "classification": "suspicious",
+                    "classification": classification,
                     "provenance": prov,
                 })
         except Exception:
@@ -212,7 +248,7 @@ def extract_embedded_indicators(
                     "string_offset",
                     f"Offset 0x{match.start():08X} ({loc_name})",
                     "matched",
-                    "high",
+                    "low",
                     evidence_excerpt=email_str,
                 )
                 indicators.append({
@@ -221,7 +257,7 @@ def extract_embedded_indicators(
                     "location": loc_name,
                     "location_rank": rank,
                     "offset": f"0x{match.start():08X}",
-                    "classification": "suspicious",
+                    "classification": "informational",
                     "provenance": prov,
                 })
         except Exception:

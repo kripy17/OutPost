@@ -7,8 +7,11 @@ corpus of known-benign system binaries, admin scripts, and handled threat sample
 3. Fails regression gates if false-positive rate increases or detection rate decreases.
 """
 
+import glob
+import hashlib
 import io
 import json
+import os
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -212,6 +215,10 @@ def evaluate_validation_corpus() -> dict[str, Any]:
     # Regression gate: Zero tolerance for FP on benign set; detection rate must be >= 0.95
     passed_gate = (false_positive_rate == 0.0) and (detection_rate >= 0.95) and (crashes == 0)
 
+    stock_os = evaluate_stock_os_files()
+    if stock_os["malicious_count"] > 0:
+        passed_gate = False
+
     return {
         "corpus_name": catalog.get("corpus_name"),
         "version": catalog.get("version"),
@@ -225,6 +232,13 @@ def evaluate_validation_corpus() -> dict[str, Any]:
             "detection_rate": detection_rate,
             "false_positive_rate": false_positive_rate,
         },
+        "stock_os_metrics": {
+            "total_files": stock_os["total_files"],
+            "clean_count": stock_os["clean_count"],
+            "suspicious_count": stock_os["suspicious_count"],
+            "malicious_count": stock_os["malicious_count"],
+            "false_positive_rate": stock_os["false_positive_rate"],
+        },
         "regression_gate": {
             "passed": passed_gate,
             "fp_tolerance": 0.0,
@@ -232,4 +246,127 @@ def evaluate_validation_corpus() -> dict[str, Any]:
             "max_crashes": 0,
         },
         "sample_results": results,
+        "stock_os_results": stock_os["files"],
     }
+
+
+def evaluate_stock_os_files(min_files: int = 50) -> dict[str, Any]:
+    """Evaluate OutPost static pipeline against stock host OS binaries, scripts, and utilities.
+
+    Verifies that distribution-provided binaries and system scripts yield zero false-positive
+    'malicious' verdicts, capturing SHA-256 provenance for each analyzed artifact.
+    """
+    candidate_paths = [
+        # Linux core utilities (ELF)
+        "/usr/bin/ls", "/usr/bin/cp", "/usr/bin/mv", "/usr/bin/rm", "/usr/bin/cat",
+        "/usr/bin/grep", "/usr/bin/tar", "/usr/bin/sed", "/usr/bin/date", "/usr/bin/echo",
+        "/usr/bin/uname", "/usr/bin/df", "/usr/bin/kill", "/usr/bin/sleep", "/usr/bin/chmod",
+        "/usr/bin/mkdir", "/usr/bin/touch", "/usr/bin/ln", "/usr/bin/gzip", "/usr/bin/find",
+        "/usr/bin/wc", "/usr/bin/head", "/usr/bin/tail", "/usr/bin/cut", "/usr/bin/sort",
+        "/usr/bin/uniq", "/usr/bin/tr", "/usr/bin/diff", "/usr/bin/stat", "/usr/bin/strings",
+        "/usr/bin/basename", "/usr/bin/dirname", "/usr/bin/env", "/usr/bin/xargs", "/usr/bin/tee",
+        "/usr/bin/readelf", "/usr/bin/objdump", "/usr/bin/nm", "/usr/bin/strip", "/usr/bin/file",
+        "/usr/bin/which", "/usr/bin/id", "/usr/bin/groups", "/usr/bin/whoami", "/usr/bin/du",
+    ]
+
+    # System administration shell scripts
+    system_scripts = glob.glob("/etc/profile.d/*.sh") + ["/etc/bash.bashrc", "/etc/profile"]
+    candidate_paths.extend(system_scripts)
+
+    # Standard Python library scripts
+    for p in glob.glob("/usr/lib/python3*"):
+        if os.path.isdir(p):
+            for py_name in (
+                "os.py", "argparse.py", "subprocess.py", "hashlib.py", "shutil.py",
+                "tarfile.py", "zipfile/__init__.py", "json/__init__.py", "logging/__init__.py",
+                "pathlib/__init__.py", "urllib/parse.py", "email/__init__.py", "http/__init__.py",
+            ):
+                full_py = os.path.join(p, py_name)
+                if os.path.exists(full_py):
+                    candidate_paths.append(full_py)
+
+    # Resolve unique real files
+    collected_files: list[str] = []
+    seen_real_paths: set[str] = set()
+
+    for c in candidate_paths:
+        try:
+            real = os.path.realpath(c)
+            if os.path.exists(real) and os.path.isfile(real) and real not in seen_real_paths:
+                seen_real_paths.add(real)
+                collected_files.append(real)
+        except Exception:
+            continue
+
+    # If still below target min_files, discover additional binaries from /usr/bin
+    if len(collected_files) < min_files:
+        for extra in glob.glob("/usr/bin/*"):
+            try:
+                real = os.path.realpath(extra)
+                if os.path.isfile(real) and real not in seen_real_paths:
+                    seen_real_paths.add(real)
+                    collected_files.append(real)
+                    if len(collected_files) >= min_files:
+                        break
+            except Exception:
+                continue
+
+    file_results: list[dict[str, Any]] = []
+    malicious_files: list[str] = []
+    suspicious_files: list[str] = []
+    clean_count = 0
+
+    for file_path in collected_files:
+        try:
+            with open(file_path, "rb") as f:
+                data = f.read()
+            sha256 = hashlib.sha256(data).hexdigest()
+            analysis = static_analysis.analyze_sample(data)
+            verdict = analysis.get("verdict", "unknown")
+
+            if verdict == "malicious":
+                malicious_files.append(file_path)
+            elif verdict == "suspicious":
+                suspicious_files.append(file_path)
+            else:
+                clean_count += 1
+
+            file_results.append({
+                "provenance": {
+                    "path": file_path,
+                    "sha256": sha256,
+                    "size_bytes": len(data),
+                },
+                "format": analysis.get("format", "unknown"),
+                "verdict": verdict,
+                "risk_score": analysis.get("static_risk_score", 0),
+                "could_not_analyze": analysis.get("could_not_analyze", []),
+            })
+        except Exception as exc:
+            file_results.append({
+                "provenance": {
+                    "path": file_path,
+                    "sha256": "",
+                    "size_bytes": 0,
+                },
+                "format": "error",
+                "verdict": "parser_failed",
+                "error": str(exc),
+            })
+
+    total = len(file_results)
+    malicious_count = len(malicious_files)
+    suspicious_count = len(suspicious_files)
+    fp_rate = round(malicious_count / total, 4) if total > 0 else 0.0
+
+    return {
+        "total_files": total,
+        "clean_count": clean_count,
+        "suspicious_count": suspicious_count,
+        "malicious_count": malicious_count,
+        "false_positive_rate": fp_rate,
+        "malicious_files": malicious_files,
+        "suspicious_files": suspicious_files,
+        "files": file_results,
+    }
+

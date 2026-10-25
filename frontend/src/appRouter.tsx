@@ -27,31 +27,19 @@ import { shouldShowLogin } from "./routes/authGate";
 // warning). The Monitor page pulls in the SSE/process-tree machinery, so it
 // stays on its own chunk like everything else.
 const LoginPage = lazy(() => import("./routes/login"));
-const AgentsPage = lazy(() => import("./routes/agents"));
-const AuditPage = lazy(() => import("./routes/audit"));
-const CampaignsPage = lazy(() => import("./routes/campaigns"));
 const CoveragePage = lazy(() => import("./routes/coverage"));
 const EventsPage = lazy(() => import("./routes/events"));
-const HostDetailPage = lazy(() => import("./routes/hostDetail"));
-const FindingsPage = lazy(() => import("./routes/findings"));
-const InvestigationsPage = lazy(() => import("./routes/investigations"));
-const InvestigationDetailPage = lazy(() => import("./routes/investigationDetail"));
-const FootprintPage = lazy(() => import("./routes/footprint"));
 const MonitorPage = lazy(() => import("./routes/monitor"));
 const NotFoundPage = lazy(() => import("./routes/notFound"));
 const RunDetailPage = lazy(() => import("./routes/runDetail"));
 const AnalysisPage = lazy(() => import("./routes/analysis"));
 const AnalysisDetailPage = lazy(() => import("./routes/analysisDetail"));
-const RunHistoryPage = lazy(() => import("./routes/index"));
-const OverviewPage = lazy(() => import("./routes/overview"));
 const RulesPage = lazy(() => import("./routes/rules"));
 const SampleDetailPage = lazy(() => import("./routes/sampleDetail"));
 const SamplesPage = lazy(() => import("./routes/samples"));
 const SearchPage = lazy(() => import("./routes/search"));
 const SettingsPage = lazy(() => import("./routes/settings"));
-const TasksPage = lazy(() => import("./routes/tasks"));
 const WatchlistPage = lazy(() => import("./routes/watchlist"));
-const WelcomePage = lazy(() => import("./routes/welcome"));
 
 function RouteFallback() {
   return (
@@ -273,38 +261,20 @@ export const router = createBrowserRouter([
   {
     element: <Layout />,
     children: [
-      { path: "/", element: <OverviewPage /> },
-      { path: "/welcome", element: <WelcomePage /> },
-      { path: "/history", element: <RunHistoryPage /> },
-      { path: "/monitor", element: <MonitorPage /> },
-      { path: "/search", element: <SearchPage /> },
-      { path: "/watchlist", element: <WatchlistPage /> },
-      { path: "/agents", element: <AgentsPage /> },
-      { path: "/tasks", element: <TasksPage /> },
-      { path: "/hosts/:hostId", element: <HostDetailPage /> },
-      { path: "/audit", element: <AuditPage /> },
-      { path: "/findings", element: <FindingsPage /> },
-      { path: "/alerts", element: <Navigate to="/findings" replace /> }, // alias redirect to findings
-      { path: "/forensics", element: <Navigate to="/tasks" replace /> }, // alias redirect to host tasks & forensics
-      { path: "/investigations", element: <InvestigationsPage /> },
-      { path: "/investigations/:investigationId", element: <InvestigationDetailPage /> },
-      { path: "/triage", element: <Navigate to="/findings" replace /> }, // the queue moved to its own page
-      { path: "/campaigns", element: <CampaignsPage /> },
-      { path: "/coverage", element: <CoveragePage /> },
-      { path: "/rules", element: <RulesPage /> },
-      { path: "/settings", element: <SettingsPage /> },
-      { path: "/events", element: <EventsPage /> },
-      { path: "/footprint", element: <FootprintPage /> },
+      { path: "/", element: <Navigate to="/samples" replace /> },
       { path: "/samples", element: <SamplesPage /> },
       { path: "/samples/:sampleId", element: <SampleDetailPage /> },
+      { path: "/monitor", element: <MonitorPage /> },
+      { path: "/processes", element: <Navigate to="/monitor" replace /> },
+      { path: "/rules", element: <RulesPage /> },
+      { path: "/settings", element: <SettingsPage /> },
       { path: "/runs/:runId", element: <RunDetailPage /> },
       { path: "/analysis", element: <AnalysisPage /> },
       { path: "/analysis/:runId", element: <AnalysisDetailPage /> },
-      // The sign-in screen is a real route: while unauthenticated the boot
-      // gate above short-circuits to it from every path, and once
-      // authenticated (or with auth disabled) a direct /login visit renders
-      // it in the layout. A dead path here is what made /login 404 — keep it
-      // registered.
+      { path: "/events", element: <EventsPage /> },
+      { path: "/coverage", element: <CoveragePage /> },
+      { path: "/search", element: <SearchPage /> },
+      { path: "/watchlist", element: <WatchlistPage /> },
       { path: "/login", element: <LoginPage /> },
       { path: "*", element: <NotFoundPage /> },
     ],

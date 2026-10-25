@@ -6,6 +6,7 @@ clean teal / suspicious amber / malicious brick.
 
 import os
 from datetime import datetime, timezone
+from typing import Any
 
 from rich.console import Console
 from rich.panel import Panel
@@ -17,12 +18,16 @@ from .banners import show_banner
 console = Console()
 
 
-def proc_label(ev: dict) -> str:
+def proc_label(ev: Any) -> str:
     """A process's display identity, mirroring the backend's fallback:
     `process_name`, else the resolved `exe_path` basename, else '?'.
 
     The API ships exe_path on every event (auditd exe= / Sysmon Image), so a
     nameless row renders its real binary instead of the anonymous '?'."""
+    if hasattr(ev, "model_dump"):
+        ev = ev.model_dump()
+    elif not isinstance(ev, dict):
+        ev = getattr(ev, "__dict__", {})
     name = ev.get("process_name")
     if not name:
         exe = (ev.get("exe_path") or "").strip()
@@ -54,6 +59,8 @@ def intel_age(checked_at: str | None) -> str:
 
 SEVERITY_STYLE = {
     "clean": "bold #3FA796",
+    "no_indicators_found_limited": "bold #3FA796",
+    "insufficient_evidence": "dim #3FA796",
     "suspicious": "bold #D9A441",
     "malicious": "bold #C4453B",
 }
@@ -123,7 +130,9 @@ def render_run_table(runs: list[dict]) -> Table:
     table.add_column("Started", style="dim", no_wrap=True)
 
     for r in runs:
-        sev = r.get("highest_severity") or "clean"
+        sev = r.get("highest_severity") or "no_indicators_found_limited"
+        if sev == "clean":
+            sev = "no_indicators_found_limited"
         risk = risk_style(r.get("risk_score"))
         table.add_row(
             r["run_id"][:12],
@@ -138,7 +147,11 @@ def render_run_table(runs: list[dict]) -> Table:
     return table
 
 
-def _add_tree_children(tree: Tree, node: dict, recon_pids: set[int]) -> None:
+def _add_tree_children(tree: Tree, node: Any, recon_pids: set[int]) -> None:
+    if hasattr(node, "model_dump"):
+        node = node.model_dump()
+    elif not isinstance(node, dict):
+        node = getattr(node, "__dict__", {})
     label = f"[bold]{proc_label(node)}[/bold]"
     pid = node.get("pid")
     if pid is not None:
@@ -284,7 +297,9 @@ def render_report(report: dict, run_id: str | None = None, rules_meta: list[dict
     rid = run_id or run.get("run_id", "?")
     show_banner(primary=False)
 
-    sev = run.get("highest_severity") or "clean"
+    sev = run.get("highest_severity") or "no_indicators_found_limited"
+    if sev == "clean":
+        sev = "no_indicators_found_limited"
     console.print(
         f"\n[b]Run {rid[:12]}[/b] — {run.get('sample_name', '?')} "
         f"[{SEVERITY_STYLE.get(sev, 'white')}]● {sev}[/{SEVERITY_STYLE.get(sev, 'white')}]  "
@@ -329,7 +344,7 @@ def render_report(report: dict, run_id: str | None = None, rules_meta: list[dict
         for a in alerts:
             console.print(render_alert(a, meta_by_rule.get(a.get("rule_id"))))
     else:
-        console.print("\n[#3FA796]No alerts — session looks clean.[/#3FA796]")
+        console.print("\n[#3FA796]No alerts triggered — no suspicious behavior observed in captured telemetry.[/#3FA796]")
 
     recon_pids, recon_line, enum_kinds = _recon_summary(report.get("alerts", []))
     if report.get("process_tree"):
