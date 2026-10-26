@@ -54,6 +54,7 @@ FORBIDDEN_CLIENTS = ("requests", "aiohttp", "urllib.request", "http.client")
 #   screenshots.py       — runs scrot/gnome-screenshot/wkhtmltoimage (local capture)
 #   host_forensics.py    — reads package ownership via pacman/dpkg-query (read-only, no network)
 #   static_analysis.py   — runs YARA / strings / binwalk for local binary analysis
+#   dynamic_sandbox.py   — runs systemd-detect-virt for hypervisor safety verification
 BACKEND_SHELL_SANCTIONED = {
     "services/memory_forensics.py",
     "services/screenshots.py",
@@ -61,6 +62,7 @@ BACKEND_SHELL_SANCTIONED = {
     "services/static_analysis.py",
     "services/static/worker.py",
     "api/routes_samples.py",
+    "services/dynamic_sandbox.py",
 }
 #
 # Collector sanctioned subprocess modules:

@@ -17,6 +17,8 @@ def _isolated_db():
     it, so tests never touch the real data/ directory."""
     old_db = config.DATABASE_PATH
     old_samples = config.SAMPLES_DIR
+    old_override = os.environ.get("OUTPOST_DANGEROUS_ALLOW_HOST_DETONATION")
+    os.environ["OUTPOST_DANGEROUS_ALLOW_HOST_DETONATION"] = "1"
     config.DATABASE_PATH = _TEST_DB
     config.SAMPLES_DIR = __import__("pathlib").Path(_TEST_SAMPLES)
     from ..core.db import init_db
@@ -25,6 +27,10 @@ def _isolated_db():
     yield
     config.DATABASE_PATH = old_db
     config.SAMPLES_DIR = old_samples
+    if old_override is not None:
+        os.environ["OUTPOST_DANGEROUS_ALLOW_HOST_DETONATION"] = old_override
+    else:
+        os.environ.pop("OUTPOST_DANGEROUS_ALLOW_HOST_DETONATION", None)
     if os.path.exists(_TEST_DB):
         os.remove(_TEST_DB)
     import shutil

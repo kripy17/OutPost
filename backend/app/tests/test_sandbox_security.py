@@ -326,3 +326,89 @@ async def test_simulation_scenario_provenance_labels(client, dynamic_sandbox):
     _cleanup(res["run_id"], None)
 
 
+@pytest.mark.asyncio
+async def test_lab_vm_guard_blocks_bare_metal_host_detonation(client, monkeypatch, dynamic_sandbox):
+    """Refuse dynamic detonation on a bare-metal host workstation without OUTPOST_LAB_VM or override."""
+    resp = client.post("/samples?name=host_safety_probe.sh", content=b"#!/bin/sh\necho host_escape\n")
+    assert resp.status_code == 201
+    sample_id = resp.json()["sample_id"]
+
+    monkeypatch.delenv("OUTPOST_LAB_VM", raising=False)
+    monkeypatch.delenv("OUTPOST_DANGEROUS_ALLOW_HOST_DETONATION", raising=False)
+    monkeypatch.setattr(dynamic_sandbox, "detect_hypervisor", lambda: (False, "none"))
+
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException) as exc_info:
+        await dynamic_sandbox.execute_and_trace(sample_id)
+
+    assert exc_info.value.status_code == 422
+    assert "bare-metal workstation host is forbidden" in exc_info.value.detail
+    assert "OUTPOST_LAB_VM" in exc_info.value.detail
+
+    _cleanup(None, sample_id)
+
+
+@pytest.mark.asyncio
+async def test_lab_vm_guard_allows_verified_hypervisor(client, monkeypatch, dynamic_sandbox):
+    """Allow detonation when verified inside a hypervisor VM with OUTPOST_LAB_VM=1."""
+    resp = client.post("/samples?name=vm_clean_probe.sh", content=b"#!/bin/sh\necho in_vm\n")
+    assert resp.status_code == 201
+    sample_id = resp.json()["sample_id"]
+
+    monkeypatch.setenv("OUTPOST_LAB_VM", "1")
+    monkeypatch.delenv("OUTPOST_DANGEROUS_ALLOW_HOST_DETONATION", raising=False)
+    monkeypatch.setattr(dynamic_sandbox, "detect_hypervisor", lambda: (True, "kvm"))
+
+    spawn_called = False
+    async def fake_exec(*cmd, **kwargs):
+        nonlocal spawn_called
+        spawn_called = True
+        return _FakeProc(0)
+
+    monkeypatch.setattr(dynamic_sandbox.asyncio, "create_subprocess_exec", fake_exec)
+
+    res = await dynamic_sandbox.execute_and_trace(sample_id)
+    assert spawn_called
+    assert res["host_detonation_warning"] is False
+    assert res["bwrap_argv"] is not None
+    assert "--clearenv" in res["bwrap_argv"]
+    assert "--cap-drop" in res["bwrap_argv"]
+
+    _cleanup(res["run_id"], sample_id)
+
+
+@pytest.mark.asyncio
+async def test_lab_vm_guard_override_audited_and_disclosed(client, monkeypatch, dynamic_sandbox):
+    """When OUTPOST_DANGEROUS_ALLOW_HOST_DETONATION=1 is set, detonation is permitted, audited, and flagged."""
+    resp = client.post("/samples?name=override_probe.sh", content=b"#!/bin/sh\necho override_active\n")
+    assert resp.status_code == 201
+    sample_id = resp.json()["sample_id"]
+
+    monkeypatch.delenv("OUTPOST_LAB_VM", raising=False)
+    monkeypatch.setenv("OUTPOST_DANGEROUS_ALLOW_HOST_DETONATION", "1")
+    monkeypatch.setattr(dynamic_sandbox, "detect_hypervisor", lambda: (False, "none"))
+
+    async def fake_exec(*cmd, **kwargs):
+        return _FakeProc(0)
+
+    monkeypatch.setattr(dynamic_sandbox.asyncio, "create_subprocess_exec", fake_exec)
+
+    res = await dynamic_sandbox.execute_and_trace(sample_id)
+    assert res["host_detonation_warning"] is True
+
+    from app.core.db import db_session
+    with db_session() as conn:
+        rows = conn.execute(
+            "SELECT * FROM audit_log WHERE action = 'sandbox.host_detonation_override' AND target_id = ?",
+            (res["run_id"],),
+        ).fetchall()
+        assert len(rows) > 0
+        assert rows[-1]["outcome"] == "allowed_override"
+
+    # Confirm warning event in timeline
+    assert any(t.get("category") == "security_warning" for t in res["timeline"])
+
+    _cleanup(res["run_id"], sample_id)
+
+
+

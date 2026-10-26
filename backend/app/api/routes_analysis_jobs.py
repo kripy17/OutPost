@@ -98,6 +98,8 @@ async def _finish_isolated_job(run_id: str, sample_id: str, sample_name: str, sa
                 "events": res.get("events_count", 0),
                 "alerts": res.get("alerts_count", 0),
                 "isolation_driver": res.get("isolation_driver", "tempdir"),
+                "bwrap_argv": res.get("bwrap_argv", []),
+                "host_detonation_warning": res.get("host_detonation_warning", False),
                 "exit_code": res.get("exit_code", 0),
                 "actionable_iocs": res.get("actionable_iocs", {}),
             },
