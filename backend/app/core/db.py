@@ -1133,7 +1133,7 @@ def _migrate_tables_origin(conn: sqlite3.Connection) -> None:
         """
     )
 
-    # 2. samples (default to imported; never heuristic match by file name)
+    # 2. samples (default to imported; backfill strictly by explicit sample_id or sha256, never by original_name)
     cols_samples = {r["name"] for r in conn.execute("PRAGMA table_info(samples)").fetchall()}
     if "origin" not in cols_samples:
         conn.execute(

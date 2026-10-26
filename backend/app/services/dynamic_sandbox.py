@@ -16,6 +16,7 @@ import re
 import resource
 import shutil
 import signal
+import subprocess
 import sys
 import tempfile
 import time
@@ -112,6 +113,90 @@ def is_bwrap_usable() -> bool:
         except Exception:
             pass
     return True
+
+
+def detect_hypervisor() -> tuple[bool, str]:
+    """Detect if the host environment is running inside a virtual machine or container.
+
+    Uses systemd-detect-virt as primary authority, falling back to DMI sysfs inspection
+    and /proc/cpuinfo hypervisor flags.
+    Returns (is_vm: bool, hypervisor_identifier: str).
+    """
+    # 1. systemd-detect-virt
+    virt_bin = shutil.which("systemd-detect-virt")
+    if virt_bin:
+        try:
+            res = subprocess.run([virt_bin], capture_output=True, text=True, timeout=2, check=False)
+            out = res.stdout.strip().lower()
+            if res.returncode == 0 and out and out != "none":
+                return True, out
+        except Exception:
+            pass
+
+    # 2. Linux DMI sysfs product/vendor strings
+    for path in (
+        "/sys/class/dmi/id/product_name",
+        "/sys/class/dmi/id/sys_vendor",
+        "/sys/devices/virtual/dmi/id/product_name",
+    ):
+        try:
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read().lower()
+                    for hint in ("kvm", "qemu", "virtualbox", "vmware", "xen", "hyper-v", "bhyve", "bochs", "amazon ec2"):
+                        if hint in content:
+                            return True, hint
+        except Exception:
+            pass
+
+    # 3. CPU flags in /proc/cpuinfo
+    try:
+        if os.path.exists("/proc/cpuinfo"):
+            with open("/proc/cpuinfo", "r", encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    if line.startswith("flags") or line.startswith("Features"):
+                        if "hypervisor" in line.split():
+                            return True, "hypervisor"
+    except Exception:
+        pass
+
+    return False, "none"
+
+
+def verify_lab_vm_safety(allow_host_override: bool = False) -> tuple[bool, str, bool]:
+    """Ensure dynamic malware detonation only executes in an isolated Lab VM environment.
+
+    Safety policy:
+    1. Safe Lab VM: Host is verified virtualized (systemd-detect-virt / DMI) AND OUTPOST_LAB_VM=1 is set.
+    2. Bare-metal refusal: Refuse execution with 422 if attempting to detonate on a bare-metal workstation.
+    3. Explicit override: If OUTPOST_DANGEROUS_ALLOW_HOST_DETONATION=1 is set (or allow_host_override=True),
+       detonation proceeds with an audited warning and UI disclosure.
+
+    Returns (is_allowed: bool, detail_message: str, is_dangerous_override: bool).
+    """
+    is_vm, hypervisor = detect_hypervisor()
+    lab_vm_env = os.environ.get("OUTPOST_LAB_VM", "").strip() == "1"
+
+    if is_vm and lab_vm_env:
+        return True, f"Verified Lab VM environment (hypervisor: {hypervisor}, OUTPOST_LAB_VM=1)", False
+
+    host_override = (
+        os.environ.get("OUTPOST_DANGEROUS_ALLOW_HOST_DETONATION", "").strip() == "1"
+        or allow_host_override
+    )
+    if host_override:
+        return (
+            True,
+            f"Bare-metal workstation detonation override active (detected hypervisor: '{hypervisor}', OUTPOST_LAB_VM={'1' if lab_vm_env else '0'})",
+            True,
+        )
+
+    reason = (
+        "Detonation blocked: Dynamic execution on bare-metal workstation host is forbidden. "
+        f"OutPost requires a verified lab VM (systemd-detect-virt: '{hypervisor}', OUTPOST_LAB_VM={1 if lab_vm_env else 0}). "
+        "Run inside a hypervisor with OUTPOST_LAB_VM=1, or pass OUTPOST_DANGEROUS_ALLOW_HOST_DETONATION=1 to override."
+    )
+    return False, reason, False
 
 
 def get_available_isolation_drivers() -> list[dict[str, Any]]:
@@ -228,8 +313,16 @@ async def execute_bytes_sandbox(
     on_telemetry_event: Any = None,
     network_mode: str = "isolated",
     allow_unconfined_override: bool = False,
-) -> tuple[list[dict[str, Any]], str, str, int, str, list[dict[str, Any]], list[dict[str, Any]]]:
+) -> tuple[list[dict[str, Any]], str, str, int, str, list[dict[str, Any]], list[dict[str, Any]], list[str]]:
     """Execute raw sample bytes in an isolated sandbox workspace and collect genuine execution events."""
+    # 0. Lab VM Safety Guard: Refuse bare-metal workstation detonation
+    allowed, safety_msg, is_dangerous_override = verify_lab_vm_safety(allow_host_override=allow_unconfined_override)
+    if not allowed:
+        raise HTTPException(
+            status_code=422,
+            detail=safety_msg,
+        )
+
     sample_plat = platform_hint or platform.system().lower()
     runner = detect_runner(raw_bytes, sample_name)
     if runner is None:
@@ -296,6 +389,19 @@ async def execute_bytes_sandbox(
                 detail="Safe isolation provider unavailable. Execution blocked to prevent host contamination.",
             )
 
+        if is_dangerous_override:
+            from ..models import audit
+            with db_session() as conn:
+                audit.log(
+                    conn,
+                    actor="operator",
+                    action="sandbox.host_detonation_override",
+                    target_type="run",
+                    target_id=run_id,
+                    outcome="allowed_override",
+                    detail=f"DANGEROUS_OVERRIDE: {safety_msg}",
+                )
+
         if active_driver == "wine_unconfined_override":
             from ..models import audit
             with db_session() as conn:
@@ -310,7 +416,7 @@ async def execute_bytes_sandbox(
                 )
             exec_cmd = list(cmd)
         else:
-            # Apply bubblewrap wrapping (strictly enforced for all dynamic sandbox execution)
+            # Apply hardened bubblewrap sandbox wrapping (strictly enforced for dynamic sandbox execution)
             bwrap_prefix = [
                 "bwrap",
                 "--ro-bind", "/usr", "/usr",
@@ -318,15 +424,40 @@ async def execute_bytes_sandbox(
                 "--ro-bind-try", "/lib64", "/lib64",
                 "--ro-bind-try", "/bin", "/bin",
                 "--ro-bind-try", "/sbin", "/sbin",
-                "--ro-bind-try", "/etc/resolv.conf", "/etc/resolv.conf",
-                "--ro-bind-try", "/etc/ssl", "/etc/ssl",
-                "--ro-bind-try", "/etc/ca-certificates", "/etc/ca-certificates",
             ]
+            # Minimal /etc: only bind DNS/certificates if network is explicitly permitted
+            if network_mode in ("bridge", "host", "allow_net"):
+                bwrap_prefix.extend([
+                    "--ro-bind-try", "/etc/resolv.conf", "/etc/resolv.conf",
+                    "--ro-bind-try", "/etc/ssl", "/etc/ssl",
+                    "--ro-bind-try", "/etc/ca-certificates", "/etc/ca-certificates",
+                ])
+
             if sys.prefix and not sys.prefix.startswith(("/usr", "/lib", "/bin", "/sbin")):
                 bwrap_prefix.extend(["--ro-bind-try", sys.prefix, sys.prefix])
+
+            # Clean all host environment variables, drop capabilities, and unshare namespaces
+            bwrap_prefix.extend([
+                "--clearenv",
+                "--setenv", "PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                "--setenv", "HOME", "/tmp",
+                "--setenv", "TMPDIR", "/tmp",
+                "--setenv", "LANG", "C.UTF-8",
+                "--setenv", "LC_ALL", "C.UTF-8",
+                "--setenv", "OUTPOST_SANDBOX", "1",
+                "--setenv", "OUTPOST_RUN_ID", run_id,
+            ])
+            if "wine" in active_driver or any("wine" in str(c) for c in cmd):
+                bwrap_prefix.extend([
+                    "--setenv", "WINEDEBUG", "-all",
+                    "--setenv", "WINEDLLOVERRIDES", "mscoree,mshtml=",
+                    "--setenv", "WINE_NO_AUTO_CABINET", "1",
+                    "--setenv", "WINEPREFIX", str(sandbox_dir / ".wine"),
+                ])
             bwrap_prefix.extend([
                 "--dir", "/tmp",
                 "--bind", str(sandbox_dir), str(sandbox_dir),
+                "--ro-bind", str(target_file), str(target_file),
                 "--proc", "/proc",
                 "--dev", "/dev",
                 "--chdir", str(sandbox_dir),
@@ -373,6 +504,15 @@ async def execute_bytes_sandbox(
                 "severity": "info",
             }
         ]
+        if is_dangerous_override:
+            timeline_events.append({
+                "timestamp": start_dt,
+                "elapsed_ms": 0,
+                "category": "security_warning",
+                "title": "Bare-Metal Host Detonation Override Active",
+                "details": safety_msg,
+                "severity": "malicious",
+            })
         dropped_artifacts: list[dict[str, Any]] = []
 
         async def _emit(ev: dict[str, Any]):
@@ -566,7 +706,7 @@ async def execute_bytes_sandbox(
         except Exception:
             pass
 
-    return events_batch, stdout_data, stderr_data, exit_code, active_driver, timeline_events, dropped_artifacts
+    return events_batch, stdout_data, stderr_data, exit_code, active_driver, timeline_events, dropped_artifacts, exec_cmd
 
 
 async def execute_and_trace(
@@ -610,7 +750,7 @@ async def execute_and_trace(
             source="sandbox_dynamic",
         )
 
-    events_batch, stdout_data, stderr_data, exit_code, active_driver, timeline_events, dropped_artifacts = await execute_bytes_sandbox(
+    events_batch, stdout_data, stderr_data, exit_code, active_driver, timeline_events, dropped_artifacts, exec_cmd = await execute_bytes_sandbox(
         run_id=run_id,
         sample_name=sample_name,
         platform_hint=sample_plat,
@@ -652,6 +792,8 @@ async def execute_and_trace(
         "sample_name": sample_name,
         "platform": sample_plat,
         "isolation_driver": active_driver,
+        "bwrap_argv": exec_cmd,
+        "host_detonation_warning": any(e.get("category") == "security_warning" for e in timeline_events),
         "verdict": verdict,
         "exit_code": exit_code,
         "stdout": stdout_data,
@@ -1567,7 +1709,7 @@ async def execute_sample_detonation(
     except Exception:
         pass
 
-    events, stdout_s, stderr_s, exit_code, active_driver, timeline_events, dropped_artifacts = await execute_bytes_sandbox(
+    events, stdout_s, stderr_s, exit_code, active_driver, timeline_events, dropped_artifacts, exec_cmd = await execute_bytes_sandbox(
         run_id=run_id,
         sample_name=sample_name,
         platform_hint=plat,
@@ -1710,6 +1852,8 @@ async def execute_sample_detonation(
         "sample_name": sample_name,
         "platform": plat,
         "isolation_driver": active_driver,
+        "bwrap_argv": exec_cmd,
+        "host_detonation_warning": any(e.get("category") == "security_warning" for e in timeline_events),
         "verdict": verdict,
         "threat_verdict": verdict.upper(),
         "threat_score": risk_score,
