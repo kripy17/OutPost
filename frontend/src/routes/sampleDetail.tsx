@@ -2312,10 +2312,10 @@ function LiveDynamicSandboxCockpit({ sample }: { sample: { sample_id: string; or
                 <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
                   {displayAlerts.length === 0 ? (
                     <div className="rounded-xl border border-dashed border-border-subtle p-6 text-center text-text-muted">
-                      <Icon name="shield" size={20} className="mx-auto text-text-faint mb-2" />
-                      <p className="font-semibold text-text-primary">No Detection Rules Triggered</p>
+                      <Icon name="shield" size={20} className="mx-auto text-accent mb-2" />
+                      <p className="font-semibold text-accent">Behavior rules not evaluated yet (Step 5)</p>
                       <p className="text-[11px] text-text-muted mt-1">
-                        When behavior matches OutPost heuristic detection rules or Sigma signatures, alerts fire here.
+                        Dynamic telemetry was captured and traced via strace. Behavioral rules evaluation is deferred to Step 5.
                       </p>
                     </div>
                   ) : (

@@ -385,6 +385,7 @@ class ProcessNode(BaseModel):
     host_id: str | None = None
     boot_id: str | None = None
     process_start_time: str | None = None
+    source: str | None = None
     # Network risk annotation (docs/07 signature visual): the worst reputation
     # of any destination this pid connected to, and the distinct IPs behind it.
     # Null / empty for processes with no outbound connections.
@@ -408,6 +409,10 @@ class NetworkConnection(BaseModel):
     # When the reputation verdict was last fetched from an external feed
     # (cache age) — None when the IP was never checked.
     checked_at: str | None = None
+    source: str | None = None
+    status: str | None = None
+    failure_reason: str | None = None
+    domain: str | None = None
 
 
 class NoteIn(BaseModel):
@@ -441,6 +446,10 @@ class RunDetail(BaseModel):
     # run was evaluated (captured once, immutable) — "scored under" context.
     effective_tuning: dict[str, object] = {}
     suppressed_alerts: dict[str, int] = {}
+    file_events: list[dict] = []
+    network_attempts: list[dict] = []
+    run_notes: list[str] = []
+    sandbox_stats: dict | None = None
 
 
 class RunCreate(BaseModel):

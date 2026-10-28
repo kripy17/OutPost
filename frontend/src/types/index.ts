@@ -119,6 +119,7 @@ export interface ProcessNode {
   // any destination this pid connected to, plus the distinct IPs behind it.
   flagged_reputation?: Reputation | null;
   network_ips?: string[];
+  source?: string | null;
   children: ProcessNode[];
 }
 
@@ -135,6 +136,10 @@ export interface NetworkConnection {
   watchlist_label: string | null;
   /** When the reputation verdict was last fetched (cache age); null = never. */
   checked_at: string | null;
+  source?: string | null;
+  status?: string | null;
+  failure_reason?: string | null;
+  domain?: string | null;
 }
 
 export interface EventOut {
@@ -191,6 +196,10 @@ export interface RunDetail {
   // Storm guard: per-rule alert-cap suppressed counts (first-seen /
   // enumeration-burst / network-scan) held back on a long live session.
   suppressed_alerts?: Record<string, number>;
+  file_events?: Array<Record<string, any>>;
+  network_attempts?: Array<Record<string, any>>;
+  run_notes?: string[];
+  sandbox_stats?: Record<string, any> | null;
 }
 
 export interface KillChainLink {

@@ -6,6 +6,7 @@
 - GET /runs/{id}/export — JSON report or PDF (Task 21)
 """
 
+import json
 from datetime import datetime, timezone
 
 import httpx
@@ -198,15 +199,110 @@ async def get_run_detail(run_id: str) -> RunDetail:
 
         summary = run_store.to_summary(conn, run_row)
 
-        # Process tree from process_create events.
-        process_events = [
-            dict(r)
-            for r in conn.execute(
-                "SELECT * FROM events WHERE run_id = ? AND event_type = 'process_create' ORDER BY timestamp ASC",
-                (run_id,),
-            ).fetchall()
-        ]
+        # Process tree: check analysis_processes first (dynamic sandbox runs), fallback to events
+        analysis_procs = conn.execute(
+            "SELECT * FROM analysis_processes WHERE run_id = ? ORDER BY start_time_us ASC",
+            (run_id,),
+        ).fetchall()
+        if analysis_procs:
+            from datetime import datetime, timezone
+            process_events = [
+                {
+                    "pid": r["host_pid"],
+                    "ppid": r["initial_ppid"],
+                    "process_name": r["process_name"],
+                    "command_line": r["command_line"],
+                    "exe_path": r["exe_path"],
+                    "timestamp": datetime.fromtimestamp(r["start_time_us"] / 1_000_000, tz=timezone.utc).isoformat(),
+                    "event_type": "process_create",
+                    "host_id": r["host_id"] or "local",
+                    "source": "traced",
+                }
+                for r in analysis_procs
+            ]
+        else:
+            process_events = [
+                dict(r)
+                for r in conn.execute(
+                    "SELECT * FROM events WHERE run_id = ? AND event_type = 'process_create' ORDER BY timestamp ASC",
+                    (run_id,),
+                ).fetchall()
+            ]
         tree = process_tree.build_process_tree(process_events)
+
+        # Dynamic execution metrics, run-level notes, and noise counters
+        stats_row = conn.execute("SELECT * FROM run_analysis_stats WHERE run_id = ?", (run_id,)).fetchone()
+        sandbox_stats = dict(stats_row) if stats_row else None
+        run_notes: list[str] = []
+        if sandbox_stats:
+            suppressed = sandbox_stats.get("suppressed_system_reads", 0)
+            is_trunc = "yes" if sandbox_stats.get("is_truncated") else "no"
+            run_notes.append(
+                f"traced from strace; sandbox mode isolated (no network); {suppressed} system reads suppressed; truncated: {is_trunc}"
+            )
+
+        # File changes: create, write, rename, delete, chmod
+        file_ev_rows = conn.execute(
+            """
+            SELECT event_pk, seq, timestamp, category, event_type, action, target_path, details, source
+            FROM analysis_events
+            WHERE run_id = ? AND category = 'file'
+            ORDER BY seq ASC
+            """,
+            (run_id,),
+        ).fetchall()
+        file_events: list[dict] = []
+        for fr in file_ev_rows:
+            details_obj = {}
+            if fr["details"]:
+                try:
+                    details_obj = json.loads(fr["details"])
+                except Exception:
+                    details_obj = {"raw": fr["details"]}
+            file_events.append({
+                "seq": fr["seq"],
+                "timestamp": fr["timestamp"],
+                "action": fr["action"] or fr["event_type"],
+                "target_path": fr["target_path"],
+                "details": details_obj,
+                "source": fr["source"] or "traced",
+            })
+
+        # Network & DNS attempts from analysis_events
+        net_ev_rows = conn.execute(
+            """
+            SELECT event_pk, seq, timestamp, category, event_type, action, target_path, details, source
+            FROM analysis_events
+            WHERE run_id = ? AND category IN ('network', 'dns')
+            ORDER BY seq ASC
+            """,
+            (run_id,),
+        ).fetchall()
+        network_attempts: list[dict] = []
+        for nr in net_ev_rows:
+            details_obj = {}
+            if nr["details"]:
+                try:
+                    details_obj = json.loads(nr["details"])
+                except Exception:
+                    details_obj = {"raw": nr["details"]}
+            is_net = nr["category"] == "network"
+            status = details_obj.get("status", "attempted")
+            err = details_obj.get("error_code") or details_obj.get("error")
+            res_str = f"Failed ({err})" if err else status.capitalize()
+            qtype = details_obj.get("qtype") or ("A" if not is_net else "-")
+            network_attempts.append({
+                "seq": nr["seq"],
+                "timestamp": nr["timestamp"],
+                "type": "TCP" if is_net else "DNS",
+                "qtype": qtype,
+                "destination": nr["target_path"] or details_obj.get("domain") or details_obj.get("dest_ip") or "-",
+                "result": res_str,
+                "status": status,
+                "error": err,
+                "details": details_obj,
+                "source": nr["source"] or "traced",
+            })
 
         # Timeline: all events chronologically.
         timeline_rows = event_store.list_events_for_run(conn, run_id)
@@ -222,6 +318,30 @@ async def get_run_detail(run_id: str) -> RunDetail:
             """,
             (run_id,),
         ).fetchall()
+        if not conn_rows:
+            an_net_rows = conn.execute(
+                """
+                SELECT target_path, details, timestamp
+                FROM analysis_events
+                WHERE run_id = ? AND category = 'network'
+                ORDER BY start_time_us ASC
+                """,
+                (run_id,),
+            ).fetchall()
+            if an_net_rows:
+                synth_conn_rows = []
+                for an_r in an_net_rows:
+                    dtl = json.loads(an_r["details"]) if an_r["details"] else {}
+                    ip = dtl.get("dest_ip")
+                    port = dtl.get("dest_port")
+                    if ip:
+                        synth_conn_rows.append({
+                            "dest_ip": ip,
+                            "dest_port": port,
+                            "protocol": "TCP",
+                            "first_seen": an_r["timestamp"],
+                        })
+                conn_rows = synth_conn_rows
 
         alerts_rows = event_store.list_alerts_for_run(conn, run_id)
 
@@ -248,19 +368,24 @@ async def get_run_detail(run_id: str) -> RunDetail:
 
         connections: list[NetworkConnection] = []
         for row in conn_rows:
-            data = enriched.get(row["dest_ip"], {})
+            r_dict = dict(row) if not isinstance(row, dict) else row
+            data = enriched.get(r_dict["dest_ip"], {})
             connections.append(
                 NetworkConnection(
-                    dest_ip=row["dest_ip"],
-                    dest_port=row["dest_port"],
-                    protocol=row["protocol"],
-                    first_seen=row["first_seen"],
+                    dest_ip=r_dict["dest_ip"],
+                    dest_port=r_dict["dest_port"],
+                    protocol=r_dict["protocol"],
+                    first_seen=r_dict["first_seen"],
                     reputation=data.get("reputation"),
                     abuse_score=data.get("abuse_score"),
                     vt_malicious_count=data.get("vt_malicious_count"),
                     watchlist=data.get("watchlist"),
                     watchlist_label=data.get("watchlist_label"),
                     checked_at=data.get("checked_at"),
+                    source=r_dict.get("source", "traced" if sandbox_stats else "polled"),
+                    status=r_dict.get("status"),
+                    failure_reason=r_dict.get("failure_reason"),
+                    domain=r_dict.get("domain"),
                 )
             )
 
@@ -332,6 +457,10 @@ async def get_run_detail(run_id: str) -> RunDetail:
             sample_reputation=sample_reputation,
             effective_tuning=effective_tuning,
             suppressed_alerts=suppressed_alerts,
+            file_events=file_events,
+            network_attempts=network_attempts,
+            run_notes=run_notes,
+            sandbox_stats=sandbox_stats,
         )
     finally:
         conn.close()
@@ -697,3 +826,38 @@ def delete_run_allowlist(run_id: str, entry_id: int, request: Request) -> None:
             target_type="allowlist", target_id=str(entry_id),
             detail=f"run {run_id}",
         )
+
+
+@router.get("/runs/{run_id}/analysis-events")
+def get_run_analysis_events(run_id: str) -> list[dict]:
+    """Retrieve normalized timeline events with contiguous seq numbers and attributions."""
+    with db_session() as conn:
+        rows = conn.execute(
+            "SELECT * FROM analysis_events WHERE run_id = ? ORDER BY seq ASC",
+            (run_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+@router.get("/runs/{run_id}/analysis-processes")
+def get_run_analysis_processes(run_id: str) -> list[dict]:
+    """Retrieve normalized process entities with compound identity and namespace PIDs."""
+    with db_session() as conn:
+        rows = conn.execute(
+            "SELECT * FROM analysis_processes WHERE run_id = ? ORDER BY start_time_us ASC",
+            (run_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+@router.get("/runs/{run_id}/analysis-stats")
+def get_run_analysis_stats(run_id: str) -> dict:
+    """Retrieve dynamic execution metrics, quota tracking, and suppressed read counters."""
+    with db_session() as conn:
+        row = conn.execute(
+            "SELECT * FROM run_analysis_stats WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()
+    if not row:
+        return {"run_id": run_id, "total_events": 0, "process_count": 0}
+    return dict(row)

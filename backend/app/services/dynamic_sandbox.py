@@ -8,6 +8,7 @@ and evaluates OutPost behavioral detection rules against real activity.
 
 import asyncio
 import datetime
+import hashlib
 import json
 import logging
 import os
@@ -115,21 +116,91 @@ def is_bwrap_usable() -> bool:
     return True
 
 
-def detect_hypervisor() -> tuple[bool, str]:
-    """Detect if the host environment is running inside a virtual machine or container.
+SANCTIONED_HYPERVISORS = {
+    "kvm",
+    "qemu",
+    "vmware",
+    "oracle",
+    "virtualbox",
+    "microsoft",
+    "hyper-v",
+    "xen",
+    "parallels",
+    "bhyve",
+    "bochs",
+    "amazon",
+}
 
-    Uses systemd-detect-virt as primary authority, falling back to DMI sysfs inspection
-    and /proc/cpuinfo hypervisor flags.
-    Returns (is_vm: bool, hypervisor_identifier: str).
+REJECTED_CONTAINER_TYPES = {
+    "docker",
+    "podman",
+    "lxc",
+    "lxc-libvirt",
+    "systemd-nspawn",
+    "wsl",
+    "openvz",
+    "container",
+    "rkt",
+    "crun",
+    "runc",
+}
+
+
+def detect_hypervisor() -> tuple[bool, str]:
+    """Detect if the host environment is running inside a virtual machine vs container.
+
+    Distinguishes hardware hypervisors from shared-kernel containers:
+    - Sanctioned hypervisors: kvm, qemu, vmware, oracle/virtualbox, microsoft/hyper-v, xen, parallels, bhyve.
+    - Strictly rejected containers: docker, podman, lxc, systemd-nspawn, wsl, etc.
+    Returns (is_vm: bool, hypervisor_or_container_id: str).
     """
-    # 1. systemd-detect-virt
+    # 0. Container filesystem & cgroup markers (shared-kernel containers are NEVER safe VMs)
+    if os.path.exists("/.dockerenv"):
+        return False, "container:docker"
+    if os.path.exists("/run/.containerenv"):
+        return False, "container:podman"
+    if os.path.exists("/proc/1/cgroup"):
+        try:
+            with open("/proc/1/cgroup", "r", encoding="utf-8", errors="ignore") as f:
+                cgroup_data = f.read()
+                if any(x in cgroup_data for x in ("/docker/", "/lxc/", "/kubepods/", "containerd")):
+                    return False, "container:cgroup"
+        except Exception:
+            pass
+
+    # 1. systemd-detect-virt with container & vm distinction
     virt_bin = shutil.which("systemd-detect-virt")
     if virt_bin:
+        # Check container first
         try:
-            res = subprocess.run([virt_bin], capture_output=True, text=True, timeout=2, check=False)
-            out = res.stdout.strip().lower()
-            if res.returncode == 0 and out and out != "none":
-                return True, out
+            res_c = subprocess.run([virt_bin, "--container"], capture_output=True, text=True, timeout=2, check=False)
+            out_c = res_c.stdout.strip().lower()
+            if res_c.returncode == 0 and out_c and out_c != "none":
+                return False, f"container:{out_c}"
+        except Exception:
+            pass
+
+        # Check full VM hypervisor
+        try:
+            res_vm = subprocess.run([virt_bin, "--vm"], capture_output=True, text=True, timeout=2, check=False)
+            out_vm = res_vm.stdout.strip().lower()
+            if res_vm.returncode == 0 and out_vm and out_vm != "none":
+                if any(h in out_vm for h in SANCTIONED_HYPERVISORS):
+                    return True, out_vm
+                if any(c in out_vm for c in REJECTED_CONTAINER_TYPES):
+                    return False, f"container:{out_vm}"
+        except Exception:
+            pass
+
+        # Generic probe fallback
+        try:
+            res_g = subprocess.run([virt_bin], capture_output=True, text=True, timeout=2, check=False)
+            out_g = res_g.stdout.strip().lower()
+            if res_g.returncode == 0 and out_g and out_g != "none":
+                if any(c in out_g for c in REJECTED_CONTAINER_TYPES):
+                    return False, f"container:{out_g}"
+                if any(h in out_g for h in SANCTIONED_HYPERVISORS):
+                    return True, out_g
         except Exception:
             pass
 
@@ -137,13 +208,14 @@ def detect_hypervisor() -> tuple[bool, str]:
     for path in (
         "/sys/class/dmi/id/product_name",
         "/sys/class/dmi/id/sys_vendor",
+        "/sys/class/dmi/id/bios_vendor",
         "/sys/devices/virtual/dmi/id/product_name",
     ):
         try:
             if os.path.exists(path):
                 with open(path, "r", encoding="utf-8", errors="ignore") as f:
                     content = f.read().lower()
-                    for hint in ("kvm", "qemu", "virtualbox", "vmware", "xen", "hyper-v", "bhyve", "bochs", "amazon ec2"):
+                    for hint in ("kvm", "qemu", "virtualbox", "innotek", "vmware", "xen", "hyper-v", "bhyve", "parallels", "bochs", "amazon ec2"):
                         if hint in content:
                             return True, hint
         except Exception:
@@ -163,40 +235,106 @@ def detect_hypervisor() -> tuple[bool, str]:
     return False, "none"
 
 
-def verify_lab_vm_safety(allow_host_override: bool = False) -> tuple[bool, str, bool]:
+def verify_lab_vm_safety() -> tuple[bool, str, bool]:
     """Ensure dynamic malware detonation only executes in an isolated Lab VM environment.
 
     Safety policy:
-    1. Safe Lab VM: Host is verified virtualized (systemd-detect-virt / DMI) AND OUTPOST_LAB_VM=1 is set.
-    2. Bare-metal refusal: Refuse execution with 422 if attempting to detonate on a bare-metal workstation.
-    3. Explicit override: If OUTPOST_DANGEROUS_ALLOW_HOST_DETONATION=1 is set (or allow_host_override=True),
-       detonation proceeds with an audited warning and UI disclosure.
+    1. Full Hypervisor Required: Host MUST be a verified hardware hypervisor
+       (kvm, qemu, vmware, oracle/virtualbox, microsoft, xen, parallels, bhyve).
+       Containers (docker, podman, lxc, wsl) are strictly rejected as unsafe
+       because they share the host kernel.
+    2. Explicit Confirmation: OUTPOST_LAB_VM=1 must also be set as operator confirmation.
+    3. Host Workstation Refusal: Bare-metal workstation detonation is rejected with HTTP 422.
+    4. Emergency Server Override: OUTPOST_DANGEROUS_ALLOW_HOST_DETONATION=1 is the ONLY override,
+       set strictly on the server host environment (never accepted from API/UI requests).
 
     Returns (is_allowed: bool, detail_message: str, is_dangerous_override: bool).
     """
-    is_vm, hypervisor = detect_hypervisor()
+    is_vm, virt_type = detect_hypervisor()
     lab_vm_env = os.environ.get("OUTPOST_LAB_VM", "").strip() == "1"
 
-    if is_vm and lab_vm_env:
-        return True, f"Verified Lab VM environment (hypervisor: {hypervisor}, OUTPOST_LAB_VM=1)", False
+    # Container rejection check (containers share host kernel, not safe for malware detonation)
+    if virt_type.startswith("container:") or any(c in virt_type for c in REJECTED_CONTAINER_TYPES):
+        host_override = os.environ.get("OUTPOST_DANGEROUS_ALLOW_HOST_DETONATION", "").strip() == "1"
+        if host_override:
+            return (
+                True,
+                f"Container detonation override active (environment: '{virt_type}', OUTPOST_LAB_VM={'1' if lab_vm_env else '0'})",
+                True,
+            )
+        reason = (
+            f"Detonation blocked: Running inside a shared-kernel container ('{virt_type}') is forbidden. "
+            "Containers share the host kernel and provide insufficient isolation for live malware analysis. "
+            "Detonation requires a dedicated hardware hypervisor (kvm, qemu, vmware, oracle, microsoft, xen, parallels, bhyve) "
+            "with OUTPOST_LAB_VM=1, or server override OUTPOST_DANGEROUS_ALLOW_HOST_DETONATION=1."
+        )
+        return False, reason, False
 
-    host_override = (
-        os.environ.get("OUTPOST_DANGEROUS_ALLOW_HOST_DETONATION", "").strip() == "1"
-        or allow_host_override
-    )
+    # Genuine hypervisor check
+    if is_vm and lab_vm_env:
+        return True, f"Verified Lab VM environment (hypervisor: {virt_type}, OUTPOST_LAB_VM=1)", False
+
+    # Server-only environment variable override
+    host_override = os.environ.get("OUTPOST_DANGEROUS_ALLOW_HOST_DETONATION", "").strip() == "1"
     if host_override:
         return (
             True,
-            f"Bare-metal workstation detonation override active (detected hypervisor: '{hypervisor}', OUTPOST_LAB_VM={'1' if lab_vm_env else '0'})",
+            f"Bare-metal workstation detonation override active (detected hypervisor: '{virt_type}', OUTPOST_LAB_VM={'1' if lab_vm_env else '0'})",
             True,
         )
 
-    reason = (
-        "Detonation blocked: Dynamic execution on bare-metal workstation host is forbidden. "
-        f"OutPost requires a verified lab VM (systemd-detect-virt: '{hypervisor}', OUTPOST_LAB_VM={1 if lab_vm_env else 0}). "
-        "Run inside a hypervisor with OUTPOST_LAB_VM=1, or pass OUTPOST_DANGEROUS_ALLOW_HOST_DETONATION=1 to override."
-    )
+    if is_vm and not lab_vm_env:
+        reason = (
+            f"Detonation blocked: Hypervisor detected ('{virt_type}') but operator confirmation flag OUTPOST_LAB_VM=1 is missing. "
+            "Confirm this is a dedicated analysis lab by exporting OUTPOST_LAB_VM=1."
+        )
+    else:
+        reason = (
+            "Detonation blocked: Dynamic execution on bare-metal workstation host is forbidden. "
+            f"OutPost requires a verified lab VM (systemd-detect-virt: '{virt_type}', OUTPOST_LAB_VM={1 if lab_vm_env else 0}). "
+            "Run inside a hypervisor with OUTPOST_LAB_VM=1, or pass OUTPOST_DANGEROUS_ALLOW_HOST_DETONATION=1 to override."
+        )
     return False, reason, False
+
+
+# Dev-Probe Mode Allowed Hashes
+# On a non-VM host, execute_bytes_sandbox may run ONLY probe programs located under
+# tests/probes/ whose SHA-256 hashes are listed in this constant in code.
+# The check is strictly by content hash at execution time, not by path or name.
+# Everything else is refused with the existing message. No environment variable,
+# API parameter, or UI control can widen this list.
+DEV_PROBE_ALLOWED_HASHES: dict[str, str] = {
+    "13fa7a774b13d4eb118eb8f0555676603e8deae1e130123dc23f842dd53825f6": "tests/probes/c_probe/probe_elf",
+    "d68f3dd20583315f4c893504c2876b6cf21edf0a1c2cd53517f0c6afccb7852f": "tests/probes/shell_probe/probe.sh",
+    "3d3b947196339910dc004bab2ef6a6cdb74eb3fda4d6ed3d9bdd0d2c266223ff": "tests/probes/python_probe/probe.py",
+}
+
+
+def get_sandbox_environment_status() -> dict[str, Any]:
+    """Inspect hypervisor status, VM safety guard, and dev-probe mode status."""
+    is_vm, virt_type = detect_hypervisor()
+    lab_vm_env = os.environ.get("OUTPOST_LAB_VM", "").strip() == "1"
+    host_override = os.environ.get("OUTPOST_DANGEROUS_ALLOW_HOST_DETONATION", "").strip() == "1"
+
+    is_safe_vm = (is_vm and lab_vm_env) or host_override
+    dev_probe_only = not is_safe_vm
+
+    if is_safe_vm:
+        status_msg = f"Verified Lab VM ({virt_type}): dynamic sample detonation enabled"
+    elif is_vm and not lab_vm_env:
+        status_msg = f"Hypervisor detected ('{virt_type}') but OUTPOST_LAB_VM=1 missing: sample analysis disabled; only built-in probes can run"
+    else:
+        status_msg = "Not running inside a VM: sample analysis disabled; only built-in probes can run"
+
+    return {
+        "is_vm": is_vm,
+        "virt_type": virt_type,
+        "lab_vm_env": lab_vm_env,
+        "is_safe_vm": is_safe_vm,
+        "dev_probe_only": dev_probe_only,
+        "status_message": status_msg,
+        "allowed_probe_hashes": list(DEV_PROBE_ALLOWED_HASHES.keys()),
+    }
 
 
 def get_available_isolation_drivers() -> list[dict[str, Any]]:
@@ -315,13 +453,23 @@ async def execute_bytes_sandbox(
     allow_unconfined_override: bool = False,
 ) -> tuple[list[dict[str, Any]], str, str, int, str, list[dict[str, Any]], list[dict[str, Any]], list[str]]:
     """Execute raw sample bytes in an isolated sandbox workspace and collect genuine execution events."""
-    # 0. Lab VM Safety Guard: Refuse bare-metal workstation detonation
-    allowed, safety_msg, is_dangerous_override = verify_lab_vm_safety(allow_host_override=allow_unconfined_override)
+    # 0. Lab VM Safety Guard: Refuse bare-metal workstation or container detonation
+    # Policy: Full hardware hypervisor + OUTPOST_LAB_VM=1 confirmation, or server-level override.
+    allowed, safety_msg, is_dangerous_override = verify_lab_vm_safety()
     if not allowed:
-        raise HTTPException(
-            status_code=422,
-            detail=safety_msg,
-        )
+        # Dev-probe mode: On a non-VM host, execute_bytes_sandbox may run ONLY probe
+        # programs located under tests/probes/ whose SHA-256 hashes are fixed in code.
+        # The check is strictly by content hash at execution time, not by path or name.
+        # Everything else is refused with the existing message. No environment variable,
+        # API parameter, or UI control can widen this list.
+        payload_sha256 = hashlib.sha256(raw_bytes).hexdigest()
+        if payload_sha256 in DEV_PROBE_ALLOWED_HASHES:
+            safety_msg = f"Dev-probe execution permitted on non-VM host (probe: {DEV_PROBE_ALLOWED_HASHES[payload_sha256]})"
+        else:
+            raise HTTPException(
+                status_code=422,
+                detail=safety_msg,
+            )
 
     sample_plat = platform_hint or platform.system().lower()
     runner = detect_runner(raw_bytes, sample_name)
@@ -433,7 +581,9 @@ async def execute_bytes_sandbox(
                     "--ro-bind-try", "/etc/ca-certificates", "/etc/ca-certificates",
                 ])
 
-            if sys.prefix and not sys.prefix.startswith(("/usr", "/lib", "/bin", "/sbin")):
+            # Bind sys.prefix strictly for Python samples requiring the virtualenv interpreter
+            is_python_sample = any("python" in str(x).lower() for x in (runner or [])) or any("python" in str(x).lower() for x in (cmd or []))
+            if is_python_sample and sys.prefix and not sys.prefix.startswith(("/usr", "/lib", "/bin", "/sbin")):
                 bwrap_prefix.extend(["--ro-bind-try", sys.prefix, sys.prefix])
 
             # Clean all host environment variables, drop capabilities, and unshare namespaces
@@ -472,6 +622,24 @@ async def execute_bytes_sandbox(
                 bwrap_prefix.append("--unshare-net")
             bwrap_prefix.append("--die-with-parent")
             exec_cmd = bwrap_prefix + list(cmd)
+
+        supervisor_dir: Path | None = None
+        strace_log_file: Path | None = None
+        has_strace = bool(shutil.which("strace"))
+        if has_strace and active_driver == "bubblewrap":
+            supervisor_dir = Path(tempfile.mkdtemp(prefix=f"outpost_supervisor_{run_id}_"))
+            strace_log_file = supervisor_dir / "strace.log"
+            exec_cmd = [
+                "strace",
+                "-f",
+                "-ttt",
+                "-yy",
+                "--decode-pids=pidns",
+                "-s",
+                "256",
+                "-o",
+                str(strace_log_file),
+            ] + exec_cmd
 
         ALLOWED_ENV_VARS = {
             "PATH", "TERM", "LANG", "LC_ALL", "USER", "LOGNAME", "HOME", "TMPDIR", "TZ", "SHELL",
@@ -537,7 +705,7 @@ async def execute_bytes_sandbox(
 
         main_pid = os.getpid()
         poller_task = None
-        if not exec_cmd or (exec_cmd[0] != "bwrap" and active_driver != "wine_unconfined_override"):
+        if not exec_cmd or (exec_cmd[0] not in ("bwrap", "strace") and active_driver != "wine_unconfined_override"):
             raise HTTPException(
                 status_code=422,
                 detail="Safe isolation provider unavailable. Execution blocked to prevent host contamination.",
@@ -669,6 +837,15 @@ async def execute_bytes_sandbox(
             with db_session() as conn:
                 proc_ev["id"] = event_store.insert_event(conn, proc_ev)
 
+        # Parse and persist real strace telemetry if strace ran
+        if strace_log_file and strace_log_file.exists() and strace_log_file.stat().st_size > 0:
+            from . import strace_parser
+            try:
+                with db_session() as conn:
+                    strace_parser.parse_and_persist_strace_log(run_id, strace_log_file, conn, origin="observed")
+            except Exception as exc:
+                logging.getLogger("outpost.sandbox").warning("Failed to parse strace log for run %s: %s", run_id, exc)
+
         # Extract persistent dropped artifacts before cleaning up
         dropped_artifacts = sandbox_forensics.extract_dropped_artifacts(sandbox_dir, target_file, run_id)
         for art in dropped_artifacts:
@@ -703,6 +880,8 @@ async def execute_bytes_sandbox(
     finally:
         try:
             shutil.rmtree(sandbox_dir, ignore_errors=True)
+            if supervisor_dir:
+                shutil.rmtree(supervisor_dir, ignore_errors=True)
         except Exception:
             pass
 
@@ -1059,6 +1238,13 @@ SIMULATION_SCENARIOS["persistence_service"] = SIMULATION_SCENARIOS["persistence-
 
 async def execute_simulation_scenario_live(scenario_id: str) -> dict[str, Any]:
     """Execute a simulation scenario live, collecting genuine subprocess execution events."""
+    allowed, safety_msg, is_dangerous_override = verify_lab_vm_safety()
+    if not allowed:
+        raise HTTPException(
+            status_code=422,
+            detail=safety_msg,
+        )
+
     scenario = SIMULATION_SCENARIOS.get(scenario_id) or SIMULATION_SCENARIOS["recon_sweep"]
 
     run_id = f"sim_{uuid.uuid4().hex[:10]}"
@@ -1441,6 +1627,13 @@ async def execute_simulation_scenario_stage(
     facts: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Execute a single stage of an adversary simulation playbook in an isolated workspace."""
+    allowed, safety_msg, is_dangerous_override = verify_lab_vm_safety()
+    if not allowed:
+        raise HTTPException(
+            status_code=422,
+            detail=safety_msg,
+        )
+
     scenario = SIMULATION_SCENARIOS.get(scenario_id) or SIMULATION_SCENARIOS["recon_sweep"]
     stages = scenario.get("stages", [])
     if stage_number < 1 or stage_number > len(stages):
@@ -1887,6 +2080,13 @@ async def execute_technique_test(
 ) -> dict[str, Any]:
     """Execute a single adversary technique unit test with prerequisite verification,
     telemetry capture, detection evaluation, and automated cleanup."""
+    allowed, safety_msg, is_dangerous_override = verify_lab_vm_safety()
+    if not allowed:
+        raise HTTPException(
+            status_code=422,
+            detail=safety_msg,
+        )
+
     from . import technique_catalog
     tech = technique_catalog.get_technique_test(test_id)
     if not tech:

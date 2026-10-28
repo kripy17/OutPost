@@ -411,4 +411,303 @@ async def test_lab_vm_guard_override_audited_and_disclosed(client, monkeypatch, 
     _cleanup(res["run_id"], sample_id)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("container_type", ["docker", "podman", "lxc", "wsl", "systemd-nspawn"])
+async def test_lab_vm_guard_strictly_rejects_containers_even_with_flag(container_type, client, monkeypatch, dynamic_sandbox):
+    """Containers share the host kernel and must be rejected even if OUTPOST_LAB_VM=1 is set."""
+    resp = client.post(f"/samples?name=container_probe_{container_type}.sh", content=b"#!/bin/sh\necho in_container\n")
+    assert resp.status_code == 201
+    sample_id = resp.json()["sample_id"]
+
+    monkeypatch.setenv("OUTPOST_LAB_VM", "1")
+    monkeypatch.delenv("OUTPOST_DANGEROUS_ALLOW_HOST_DETONATION", raising=False)
+    monkeypatch.setattr(dynamic_sandbox, "detect_hypervisor", lambda: (False, f"container:{container_type}"))
+
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException) as exc_info:
+        await dynamic_sandbox.execute_bytes_sandbox("r1", "p.sh", "linux", b"#!/bin/sh\n")
+
+    assert exc_info.value.status_code == 422
+    assert "shared-kernel container" in exc_info.value.detail
+    assert container_type in exc_info.value.detail
+
+    _cleanup(None, sample_id)
+
+
+@pytest.mark.asyncio
+async def test_api_cannot_bypass_lab_vm_guard(client, monkeypatch, dynamic_sandbox):
+    """API query parameters (?allow_unconfined_override=true) must NOT bypass the Lab VM guard."""
+    resp = client.post("/samples?name=api_bypass_probe.sh", content=b"#!/bin/sh\necho api_bypass\n")
+    assert resp.status_code == 201
+    sample_id = resp.json()["sample_id"]
+
+    monkeypatch.delenv("OUTPOST_LAB_VM", raising=False)
+    monkeypatch.delenv("OUTPOST_DANGEROUS_ALLOW_HOST_DETONATION", raising=False)
+    monkeypatch.setattr(dynamic_sandbox, "detect_hypervisor", lambda: (False, "none"))
+
+    # Attempt detonation via API endpoint passing query parameter
+    detonate_resp = client.post(f"/samples/{sample_id}/detonate?allow_unconfined_override=true")
+    assert detonate_resp.status_code == 422
+    assert "bare-metal workstation host is forbidden" in detonate_resp.json()["detail"]
+
+    _cleanup(None, sample_id)
+
+
+@pytest.mark.asyncio
+async def test_sys_prefix_not_bound_for_non_python_samples(client, monkeypatch, dynamic_sandbox):
+    """sys.prefix (repo venv) must NOT be bound into the sandbox for non-python binaries."""
+    resp = client.post("/samples?name=bash_script.sh", content=b"#!/bin/bash\necho hello\n")
+    assert resp.status_code == 201
+    sample_id = resp.json()["sample_id"]
+
+    monkeypatch.setenv("OUTPOST_LAB_VM", "1")
+    monkeypatch.delenv("OUTPOST_DANGEROUS_ALLOW_HOST_DETONATION", raising=False)
+    monkeypatch.setattr(dynamic_sandbox, "detect_hypervisor", lambda: (True, "kvm"))
+
+    async def fake_exec(*cmd, **kwargs):
+        return _FakeProc(0)
+
+    monkeypatch.setattr(dynamic_sandbox.asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr(dynamic_sandbox.sys, "prefix", "/home/kripy/repo/.venv")
+
+    res = await dynamic_sandbox.execute_and_trace(sample_id)
+    assert res["bwrap_argv"] is not None
+    # For bash script, /home/kripy/repo/.venv must NOT appear in bwrap_argv
+    assert "/home/kripy/repo/.venv" not in res["bwrap_argv"]
+
+    _cleanup(res["run_id"], sample_id)
+
+
+@pytest.mark.asyncio
+async def test_simulation_and_technique_runners_blocked_on_bare_metal(monkeypatch, dynamic_sandbox):
+    """Playbook scenarios and adversary technique executions must also fail-closed on bare metal."""
+    from fastapi import HTTPException
+
+    monkeypatch.delenv("OUTPOST_LAB_VM", raising=False)
+    monkeypatch.delenv("OUTPOST_DANGEROUS_ALLOW_HOST_DETONATION", raising=False)
+    monkeypatch.setattr(dynamic_sandbox, "detect_hypervisor", lambda: (False, "none"))
+
+    with pytest.raises(HTTPException) as exc1:
+        await dynamic_sandbox.execute_simulation_scenario_live("recon_sweep")
+    assert exc1.value.status_code == 422
+    assert "bare-metal workstation host is forbidden" in exc1.value.detail
+
+    with pytest.raises(HTTPException) as exc2:
+        await dynamic_sandbox.execute_simulation_scenario_stage("recon_sweep", 1)
+    assert exc2.value.status_code == 422
+    assert "bare-metal workstation host is forbidden" in exc2.value.detail
+
+    with pytest.raises(HTTPException) as exc3:
+        await dynamic_sandbox.execute_technique_test("T1082-sysinfo-discovery")
+    assert exc3.value.status_code == 422
+    assert "bare-metal workstation host is forbidden" in exc3.value.detail
+
+
+@pytest.mark.asyncio
+async def test_dev_probe_mode_arbitrary_file_refused(monkeypatch, dynamic_sandbox):
+    """On bare-metal non-VM host, an arbitrary non-probe file is refused with HTTP 422."""
+    from fastapi import HTTPException
+
+    monkeypatch.delenv("OUTPOST_LAB_VM", raising=False)
+    monkeypatch.delenv("OUTPOST_DANGEROUS_ALLOW_HOST_DETONATION", raising=False)
+    monkeypatch.setattr(dynamic_sandbox, "detect_hypervisor", lambda: (False, "none"))
+
+    arbitrary_bytes = b"echo 'malicious or user payload'"
+    with pytest.raises(HTTPException) as exc:
+        await dynamic_sandbox.execute_bytes_sandbox("run-arb-1", "test.sh", "linux", arbitrary_bytes)
+    assert exc.value.status_code == 422
+    assert "bare-metal workstation host is forbidden" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_dev_probe_mode_modified_probe_refused(monkeypatch, dynamic_sandbox):
+    """If a probe program's bytes are modified, the hash mismatch causes refusal with HTTP 422."""
+    from pathlib import Path
+
+    from fastapi import HTTPException
+
+    monkeypatch.delenv("OUTPOST_LAB_VM", raising=False)
+    monkeypatch.delenv("OUTPOST_DANGEROUS_ALLOW_HOST_DETONATION", raising=False)
+    monkeypatch.setattr(dynamic_sandbox, "detect_hypervisor", lambda: (False, "none"))
+
+    repo_root = Path(__file__).resolve().parents[3]
+    probe_path = repo_root / "tests/probes/shell_probe/probe.sh"
+    if not probe_path.exists():
+        probe_path = Path("tests/probes/shell_probe/probe.sh")
+    if not probe_path.exists():
+        pytest.skip(f"probe.sh fixture missing at {probe_path}")
+    genuine_bytes = probe_path.read_bytes()
+    tampered_bytes = genuine_bytes + b"\n# tampered byte"
+
+    with pytest.raises(HTTPException) as exc:
+        await dynamic_sandbox.execute_bytes_sandbox("run-tamp-1", "probe.sh", "linux", tampered_bytes)
+    assert exc.value.status_code == 422
+    assert "bare-metal workstation host is forbidden" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_dev_probe_mode_correct_hash_runs(monkeypatch, dynamic_sandbox, client):
+    """A probe with the exact fixed SHA-256 hash is permitted to run on a non-VM host."""
+    from pathlib import Path
+
+    monkeypatch.delenv("OUTPOST_LAB_VM", raising=False)
+    monkeypatch.delenv("OUTPOST_DANGEROUS_ALLOW_HOST_DETONATION", raising=False)
+    monkeypatch.setattr(dynamic_sandbox, "detect_hypervisor", lambda: (False, "none"))
+
+    async def fake_exec(*cmd, **kwargs):
+        return _FakeProc(0)
+
+    monkeypatch.setattr(dynamic_sandbox.asyncio, "create_subprocess_exec", fake_exec)
+
+    repo_root = Path(__file__).resolve().parents[3]
+    probe_path = repo_root / "tests/probes/shell_probe/probe.sh"
+    if not probe_path.exists():
+        probe_path = Path("tests/probes/shell_probe/probe.sh")
+    if not probe_path.exists():
+        pytest.skip(f"probe.sh fixture missing at {probe_path}")
+    genuine_bytes = probe_path.read_bytes()
+
+    resp = client.post("/samples?name=probe.sh", content=genuine_bytes)
+    assert resp.status_code == 201
+    sample_id = resp.json()["sample_id"]
+
+    res = await dynamic_sandbox.execute_and_trace(sample_id)
+    assert res["exit_code"] == 0
+    _cleanup(res["run_id"], sample_id)
+
+
+@pytest.mark.asyncio
+async def test_dev_probe_mode_uploads_cannot_widen_or_match(monkeypatch, dynamic_sandbox, client):
+    """Uploaded user samples cannot bypass the hash guard on bare metal."""
+    monkeypatch.delenv("OUTPOST_LAB_VM", raising=False)
+    monkeypatch.delenv("OUTPOST_DANGEROUS_ALLOW_HOST_DETONATION", raising=False)
+    monkeypatch.setattr(dynamic_sandbox, "detect_hypervisor", lambda: (False, "none"))
+
+    resp = client.post(
+        "/samples?name=untrusted_sample.bin",
+        content=b"\x7fELF\x02\x01\x01\x00user_payload_data",
+    )
+    assert resp.status_code == 201
+    sample_id = resp.json()["sample_id"]
+
+    det_resp = client.post(f"/samples/{sample_id}/detonate")
+    assert det_resp.status_code == 422
+    assert "bare-metal workstation host is forbidden" in det_resp.json()["detail"]
+
+
+def test_sandbox_environment_endpoint(monkeypatch, client, dynamic_sandbox):
+    """GET /sandbox/environment accurately reflects VM vs Dev-Probe state."""
+    # 1. Bare metal non-VM host
+    monkeypatch.delenv("OUTPOST_LAB_VM", raising=False)
+    monkeypatch.delenv("OUTPOST_DANGEROUS_ALLOW_HOST_DETONATION", raising=False)
+    monkeypatch.setattr(dynamic_sandbox, "detect_hypervisor", lambda: (False, "none"))
+
+    r1 = client.get("/sandbox/environment")
+    assert r1.status_code == 200
+    data1 = r1.json()
+    assert data1["is_safe_vm"] is False
+    assert data1["dev_probe_only"] is True
+    assert "Not running inside a VM: sample analysis disabled; only built-in probes can run" in data1["status_message"]
+    assert len(data1["allowed_probe_hashes"]) >= 3
+
+    # 2. Verified Lab VM
+    monkeypatch.setenv("OUTPOST_LAB_VM", "1")
+    monkeypatch.setattr(dynamic_sandbox, "detect_hypervisor", lambda: (True, "kvm"))
+
+    r2 = client.get("/sandbox/environment")
+    assert r2.status_code == 200
+    data2 = r2.json()
+    assert data2["is_safe_vm"] is True
+    assert data2["dev_probe_only"] is False
+    assert "dynamic sample detonation enabled" in data2["status_message"]
+
+
+def test_dev_probe_allowed_hashes_integrity(dynamic_sandbox):
+    """DEV_PROBE_ALLOWED_HASHES must only contain files under tests/probes/ with matching hashes."""
+    import hashlib
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[3]
+    assert len(dynamic_sandbox.DEV_PROBE_ALLOWED_HASHES) >= 3
+
+    for expected_hash, rel_path in dynamic_sandbox.DEV_PROBE_ALLOWED_HASHES.items():
+        assert rel_path.startswith("tests/probes/"), f"Path {rel_path} not under tests/probes/"
+        assert ".." not in rel_path, f"Path {rel_path} contains traversal '..'"
+
+        full_path = repo_root / rel_path
+        assert full_path.exists(), f"Probe file does not exist: {full_path}"
+        assert full_path.is_file(), f"Probe path is not a file: {full_path}"
+
+        content = full_path.read_bytes()
+        actual_hash = hashlib.sha256(content).hexdigest()
+        assert actual_hash == expected_hash, (
+            f"Hash mismatch for {rel_path}: constant has {expected_hash}, file has {actual_hash}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_dev_probe_toctou_prevented_exact_buffer_executed(monkeypatch, dynamic_sandbox, client):
+    """TOCTOU defense: execute_bytes_sandbox executes from verified buffer and ignores disk tampering."""
+    import hashlib
+    from pathlib import Path
+
+    from fastapi import HTTPException
+
+    repo_root = Path(__file__).resolve().parents[3]
+    probe_path = repo_root / "tests/probes/shell_probe/probe.sh"
+    original_bytes = probe_path.read_bytes()
+
+    monkeypatch.delenv("OUTPOST_LAB_VM", raising=False)
+    monkeypatch.delenv("OUTPOST_DANGEROUS_ALLOW_HOST_DETONATION", raising=False)
+    monkeypatch.setattr(dynamic_sandbox, "detect_hypervisor", lambda: (False, "none"))
+
+    captured_payload = None
+
+    async def fake_exec(*cmd, **kwargs):
+        nonlocal captured_payload
+        target_path = None
+        for arg in cmd:
+            if str(arg).endswith(".sh"):
+                target_path = Path(arg)
+                break
+        if target_path and target_path.exists():
+            captured_payload = target_path.read_bytes()
+        return _FakeProc(0)
+
+    monkeypatch.setattr(dynamic_sandbox.asyncio, "create_subprocess_exec", fake_exec)
+
+    verified_buffer = bytes(original_bytes)
+    tampered_bytes = original_bytes + b"\n# MALICIOUS SWAPPED CONTENT AFTER HASH CHECK\n"
+
+    try:
+        probe_path.write_bytes(tampered_bytes)
+
+        resp = client.post("/samples?name=probe.sh", content=verified_buffer)
+        assert resp.status_code == 201
+        sample_id = resp.json()["sample_id"]
+
+        res = await dynamic_sandbox.execute_and_trace(sample_id)
+        assert res["exit_code"] == 0
+
+        assert captured_payload is not None
+        assert captured_payload == verified_buffer
+        assert hashlib.sha256(captured_payload).hexdigest() == hashlib.sha256(verified_buffer).hexdigest()
+        assert b"MALICIOUS SWAPPED CONTENT" not in captured_payload
+
+        resp2 = client.post("/samples?name=probe.sh", content=tampered_bytes)
+        assert resp2.status_code == 201
+        tampered_sample_id = resp2.json()["sample_id"]
+
+        with pytest.raises(HTTPException) as exc:
+            await dynamic_sandbox.execute_and_trace(tampered_sample_id)
+        assert exc.value.status_code == 422
+        assert "bare-metal workstation host is forbidden" in exc.value.detail
+
+        _cleanup(res["run_id"], sample_id)
+        _cleanup(None, tampered_sample_id)
+    finally:
+        probe_path.write_bytes(original_bytes)
+
+
+
 

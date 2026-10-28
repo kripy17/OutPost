@@ -1239,6 +1239,19 @@ export async function getSandboxDrivers(): Promise<Array<{ id: string; name: str
   return get<any[]>("/sandbox/drivers");
 }
 
+/** Get sandbox environment status & VM safety mode (GET /sandbox/environment). */
+export async function getSandboxEnvironment(): Promise<{
+  is_vm: boolean;
+  virt_type: string;
+  lab_vm_env: boolean;
+  is_safe_vm: boolean;
+  dev_probe_only: boolean;
+  status_message: string;
+  allowed_probe_hashes: string[];
+}> {
+  return get("/sandbox/environment");
+}
+
 /** Get structured Sigma, Suricata, and YARA detection suite for a run (GET /runs/{id}/rules/suite). */
 export async function getRunDetectionSuite(runId: string): Promise<any> {
   return get<any>(`/runs/${encodeURIComponent(runId)}/rules/suite`);

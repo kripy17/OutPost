@@ -5,6 +5,7 @@ clean teal / suspicious amber / malicious brick.
 """
 
 import os
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -156,12 +157,15 @@ def _add_tree_children(tree: Tree, node: Any, recon_pids: set[int]) -> None:
     pid = node.get("pid")
     if pid is not None:
         label += f" [dim][{pid}][/dim]"
+    source = node.get("source")
+    if source:
+        label += f" [dim cyan]({source})[/dim cyan]"
     # Recon affordance — webapp parity: a pid behind the enumeration-burst
     # alert gets a RECON tag, matching the process tree's amber recon ring.
     if pid in recon_pids:
         label += " [bold #D9A441]● RECON[/bold #D9A441]"
     if node.get("command_line"):
-        label += f"  [dim]{node['command_line'][:60]}[/dim]"
+        label += f"  [dim]{node['command_line']}[/dim]"
     branch = tree.add(label)
     for child in node.get("children", []):
         _add_tree_children(branch, child, recon_pids)
@@ -172,6 +176,93 @@ def render_process_tree(roots: list[dict], recon_pids: set[int] | None = None) -
     for root in roots:
         _add_tree_children(tree, root, recon_pids or set())
     return tree
+
+
+def render_file_changes_table(file_events: list[dict]) -> Table:
+    table = Table(title="Observed File Changes", border_style="dim")
+    table.add_column("seq", justify="right", style="dim", no_wrap=True)
+    table.add_column("Time", style="dim", no_wrap=True)
+    table.add_column("Action", style="bold")
+    table.add_column("Path / Target", style="cyan")
+    table.add_column("Details", style="dim")
+    table.add_column("Source", style="dim magenta", no_wrap=True)
+
+    for i, ev in enumerate(file_events, 1):
+        dtl = ev.get("details") or {}
+        act = ev.get("action") or ev.get("operation") or "mutation"
+        if isinstance(dtl, dict):
+            dtl_parts = []
+            if "flags" in dtl:
+                flags_val = dtl["flags"]
+                fd_part = f", fd={dtl['fd']}" if "fd" in dtl else ""
+                dtl_parts.append(f"flags={flags_val}{fd_part}")
+            elif "mode" in dtl:
+                dtl_parts.append(f"mode={dtl['mode']}")
+            if "bytes_written" in dtl:
+                fd_part = f" (fd {dtl['fd']})" if "fd" in dtl else ""
+                dtl_parts.append(f"{dtl['bytes_written']} bytes{fd_part}")
+            if "old_path" in dtl and "new_path" in dtl:
+                old_p = re.sub(r"^/tmp/outpost_sandbox_[^/]+/", "", str(dtl["old_path"]))
+                new_p = re.sub(r"^/tmp/outpost_sandbox_[^/]+/", "", str(dtl["new_path"]))
+                dtl_parts.append(f"{old_p} -> {new_p}")
+            dtl_str = ", ".join(dtl_parts)
+        else:
+            dtl_str = str(dtl)
+
+        target_disp = ev.get("target_path") or "-"
+        target_disp = re.sub(r"^/tmp/outpost_sandbox_[^/]+/", "", target_disp)
+
+        table.add_row(
+            str(ev.get("seq") or i),
+            (ev.get("timestamp") or "")[11:19],
+            act,
+            target_disp,
+            dtl_str or "-",
+            ev.get("source") or "traced",
+        )
+    return table
+
+
+def render_network_attempts_table(attempts: list[dict]) -> Table:
+    table = Table(title="Network & DNS Interception (Sandbox Mode Isolated)", border_style="dim")
+    table.add_column("seq", justify="right", style="dim", no_wrap=True)
+    table.add_column("Time", style="dim", no_wrap=True)
+    table.add_column("Type", style="bold", no_wrap=True)
+    table.add_column("QType", style="bold yellow", no_wrap=True)
+    table.add_column("Destination / Query", style="cyan")
+    table.add_column("Result / Status", style="bold")
+    table.add_column("Details", style="dim")
+    table.add_column("Source", style="dim magenta", no_wrap=True)
+
+    for i, ev in enumerate(attempts, 1):
+        typ = ev.get("type") or "NET"
+        dtl = ev.get("details") or {}
+        qtype = ev.get("qtype") or dtl.get("qtype") or ("A" if typ == "DNS" else "-")
+        status = ev.get("status") or dtl.get("status") or ""
+        res = ev.get("result") or status
+        res_style = "#C4453B" if "fail" in res.lower() or "err" in res.lower() else "#3FA796"
+
+        dtl_desc = ""
+        if dtl.get("error"):
+            dtl_desc = str(dtl["error"])
+        elif dtl.get("error_code"):
+            dtl_desc = f"error={dtl['error_code']}"
+        elif dtl.get("nameserver"):
+            dtl_desc = f"resolver: {dtl['nameserver']}"
+        elif typ == "TCP":
+            dtl_desc = "TCP connect (isolated netns)"
+
+        table.add_row(
+            str(ev.get("seq") or i),
+            (ev.get("timestamp") or "")[11:19],
+            typ,
+            qtype,
+            ev.get("destination") or ev.get("target_path") or "-",
+            f"[{res_style}]{res}[/{res_style}]",
+            dtl_desc or "-",
+            ev.get("source") or "traced",
+        )
+    return table
 
 
 def render_network_table(connections: list[dict]) -> Table:
@@ -297,14 +388,26 @@ def render_report(report: dict, run_id: str | None = None, rules_meta: list[dict
     rid = run_id or run.get("run_id", "?")
     show_banner(primary=False)
 
-    sev = run.get("highest_severity") or "no_indicators_found_limited"
-    if sev == "clean":
-        sev = "no_indicators_found_limited"
-    console.print(
-        f"\n[b]Run {rid[:12]}[/b] — {run.get('sample_name', '?')} "
-        f"[{SEVERITY_STYLE.get(sev, 'white')}]● {sev}[/{SEVERITY_STYLE.get(sev, 'white')}]  "
-        f"{risk_gauge(run.get('risk_score'))}"
-    )
+    # For dynamic sandbox runs where behavioral rules are not evaluated yet (Step 5),
+    # suppress the verdict and risk score gauge and display "● not evaluated".
+    is_dynamic_unevaluated = bool(report.get("sandbox_stats")) and not report.get("alerts")
+    if is_dynamic_unevaluated:
+        console.print(
+            f"\n[b]Run {rid}[/b] — {run.get('sample_name', '?')} [dim]● not evaluated[/dim]"
+        )
+    else:
+        sev = run.get("highest_severity") or "no_indicators_found_limited"
+        if sev == "clean":
+            sev = "no_indicators_found_limited"
+        console.print(
+            f"\n[b]Run {rid}[/b] — {run.get('sample_name', '?')} "
+            f"[{SEVERITY_STYLE.get(sev, 'white')}]● {sev}[/{SEVERITY_STYLE.get(sev, 'white')}]  "
+            f"{risk_gauge(run.get('risk_score'))}"
+        )
+
+    # Dynamic Sandbox Telemetry Run-Level Notes (Step 2e)
+    for note in (report.get("run_notes") or []):
+        console.print(f"[bold #3FA796]●[/bold #3FA796] [dim italic]{note}[/dim italic]")
 
     # ATT&CK map keyed by rule_id — chips on every alert (webapp parity).
     meta_by_rule = {m.get("rule_id"): m for m in (rules_meta or []) if m.get("rule_id")}
@@ -321,14 +424,15 @@ def render_report(report: dict, run_id: str | None = None, rules_meta: list[dict
 
     # Explainability — tuned thresholds this run was scored under (webapp
     # parity): "scored under DNS_TUNNEL_MIN_DISTINCT=3" so a tuned finding
-    # explains itself; stock runs print a single quiet line.
-    tuning = report.get("effective_tuning") or {}
-    console.print()
-    if tuning:
-        parts = ", ".join(f"{k}={v}" for k, v in sorted(tuning.items()))
-        console.print(f"[bold #D9A441]scored under[/bold #D9A441] [dim]{parts}[/dim]")
-    else:
-        console.print("[dim]scored under stock thresholds (no tuning overrides in effect)[/dim]")
+    # explains itself; stock runs print a single quiet line. Omit for unevaluated runs.
+    if not is_dynamic_unevaluated:
+        tuning = report.get("effective_tuning") or {}
+        console.print()
+        if tuning:
+            parts = ", ".join(f"{k}={v}" for k, v in sorted(tuning.items()))
+            console.print(f"[bold #D9A441]scored under[/bold #D9A441] [dim]{parts}[/dim]")
+        else:
+            console.print("[dim]scored under stock thresholds (no tuning overrides in effect)[/dim]")
 
     # Storm guard — per-rule alert-cap suppressed counts (webapp parity): a
     # long live session caps first-seen / enumeration / network-scan and
@@ -344,7 +448,10 @@ def render_report(report: dict, run_id: str | None = None, rules_meta: list[dict
         for a in alerts:
             console.print(render_alert(a, meta_by_rule.get(a.get("rule_id"))))
     else:
-        console.print("\n[#3FA796]No alerts triggered — no suspicious behavior observed in captured telemetry.[/#3FA796]")
+        if report.get("sandbox_stats") or report.get("run_notes") or report.get("run", {}).get("source") in ("sandbox_dynamic", "isolated-outpost"):
+            console.print("\n[bold #D9A441]Behavior rules not evaluated yet (Step 5)[/bold #D9A441]")
+        else:
+            console.print("\n[#3FA796]No alerts triggered — no suspicious behavior observed in captured telemetry.[/#3FA796]")
 
     recon_pids, recon_line, enum_kinds = _recon_summary(report.get("alerts", []))
     if report.get("process_tree"):
@@ -355,7 +462,16 @@ def render_report(report: dict, run_id: str | None = None, rules_meta: list[dict
                 console.print(render_enum_kinds(enum_kinds))
         console.print(render_process_tree(report["process_tree"], recon_pids))
 
-    if report.get("network_connections"):
+    file_events = report.get("file_events") or report.get("file_changes")
+    if file_events:
+        console.print()
+        console.print(render_file_changes_table(file_events))
+
+    net_attempts = report.get("network_attempts")
+    if net_attempts:
+        console.print()
+        console.print(render_network_attempts_table(net_attempts))
+    elif report.get("network_connections"):
         console.print()
         console.print(render_network_table(report["network_connections"]))
 

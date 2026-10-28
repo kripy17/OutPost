@@ -81,12 +81,21 @@ def status(
     # Check Database
     db_stats = _get_db_stats()
 
+    # Dynamic Sandbox Environment
+    sandbox_env: dict[str, Any] = {}
+    if api_online:
+        try:
+            sandbox_env = api_client.get_sandbox_environment()
+        except Exception:
+            pass
+
     is_json = bool(as_json) and not isinstance(as_json, typer.models.OptionInfo)
     if is_json:
         payload = {
             "backend_api": {"url": api_url, "online": api_online, "meta": api_meta},
             "web_console": {"url": f"http://localhost:{web_port}", "online": web_online},
             "database": db_stats,
+            "sandbox_environment": sandbox_env,
         }
         typer.echo(json.dumps(payload, indent=2))
         return
@@ -123,6 +132,16 @@ def status(
     # Connected Agents
     agent_badge = "[bold green]REGISTERED ✓[/bold green]" if db_stats.get("agents", 0) > 0 else "[dim]NONE CONNECTED[/dim]"
     table.add_row("Host Agents", "Fleet Telemetry", agent_badge, f"{db_stats.get('agents', 0)} active host(s) recorded")
+
+    # Dynamic Sandbox row
+    if sandbox_env:
+        if sandbox_env.get("is_safe_vm"):
+            sb_badge = "[bold green]LAB VM ACTIVE ✓[/bold green]"
+            sb_det = f"Hypervisor: {sandbox_env.get('virt_type')} (full sample detonation enabled)"
+        else:
+            sb_badge = "[bold yellow]DEV-PROBE ONLY[/bold yellow]"
+            sb_det = sandbox_env.get("status_message", "Sample analysis disabled; only built-in probes can run")
+        table.add_row("Dynamic Sandbox", "Local Boundary", sb_badge, sb_det)
 
     console.print(table)
 

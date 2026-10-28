@@ -13,6 +13,7 @@ import {
   cancelAnalysisJob,
   createAnalysisJob,
   getSandboxDrivers,
+  getSandboxEnvironment,
   getSamples,
   listAnalysisJobs,
 } from "../lib/api";
@@ -58,6 +59,11 @@ export default function AnalysisPage() {
   const drivers = useQuery({
     queryKey: ["sandbox", "drivers"],
     queryFn: () => getSandboxDrivers(),
+  });
+
+  const sandboxEnv = useQuery({
+    queryKey: ["sandbox", "environment"],
+    queryFn: () => getSandboxEnvironment(),
   });
 
   const launch = useMutation({
@@ -140,6 +146,11 @@ export default function AnalysisPage() {
             <span className="rounded border border-border-subtle bg-bg-base px-2 py-0.5 text-text-muted">
               Network Isolation: <strong className="text-text-primary">Airgap (--unshare-net)</strong>
             </span>
+            {sandboxEnv.data?.dev_probe_only && (
+              <span className="rounded border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-amber-300">
+                Not running inside a VM: sample analysis disabled; only built-in probes can run
+              </span>
+            )}
           </div>
         </div>
 
@@ -227,6 +238,7 @@ export default function AnalysisPage() {
         isLaunching={launch.isPending}
         samples={samples.data?.samples ?? []}
         drivers={availableDrivers}
+        devProbeOnly={sandboxEnv.data?.dev_probe_only}
         error={error}
       />
     </div>
