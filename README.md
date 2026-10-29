@@ -4,7 +4,7 @@
 [![Python](https://img.shields.io/badge/python-3.12%20%7C%203.14-blue.svg)](backend/README.md)
 [![Frontend](https://img.shields.io/badge/frontend-React%2018%20%7C%20Vite%20%7C%20Tailwind-61dafb.svg)](frontend/README.md)
 [![Air-Gap](https://img.shields.io/badge/air--gap-zero%20cloud%20egress-success.svg)](docs/18-AIR-GAP.md)
-[![License](https://img.shields.io/badge/license-Apache%202.0-lightgrey.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 **OutPost** is an offline-first, dual-layer **Static and Dynamic Malware Analysis Workbench & Behavioral Threat Forecaster** engineered for malware analysts, reverse engineers, incident responders, and detection teams.
 
@@ -263,6 +263,12 @@ python scripts/gate_backend_egress.py
 
 ---
 
+## Author & Contributors
+
+- **Krish Patel** ([@kripy17](https://github.com/kripy17)) — Sole Author, Architect & Maintainer
+
+---
+
 ## License
 
-OutPost is licensed under the Apache License, Version 2.0. See [`LICENSE`](LICENSE) for details.
+OutPost is licensed under the MIT License. See [`LICENSE`](LICENSE) for details.
