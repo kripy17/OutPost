@@ -1,8 +1,8 @@
 # Contributing to OutPost
 
-Thank you for your interest in contributing to OutPost. OutPost is an offline, local-first security analysis workbench built with Python (FastAPI backend, Typer CLI, auditd/Sysmon collectors) and TypeScript (React 19 frontend).
+OutPost is an offline, local-first malware analysis workbench and behavioral security monitor designed and maintained by **Krish Patel** ([@kripy17](https://github.com/kripy17)).
 
-To maintain the architectural integrity, offline guarantees, and forensic reliability of the platform, all contributions must adhere to the engineering standards outlined below.
+To maintain architectural integrity, offline air-gap guarantees, and forensic reliability, all contributions and issue reports must adhere to the engineering standards outlined below.
 
 ---
 
