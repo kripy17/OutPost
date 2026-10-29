@@ -15,6 +15,7 @@ interface ExecutionRunsTableProps {
   backendFilter: string;
   searchFilter: string;
   severityFilter: string;
+  onRetry?: () => void;
 }
 
 const STATUS_TONE: Record<AnalysisStatus, "muted" | "accent" | "clean" | "malicious"> = {
@@ -35,6 +36,7 @@ export function ExecutionRunsTable({
   backendFilter,
   searchFilter,
   severityFilter,
+  onRetry,
 }: ExecutionRunsTableProps) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [sortField, setSortField] = useState<"started_at" | "risk_score" | "events" | "sample_name">("started_at");
@@ -109,9 +111,25 @@ export function ExecutionRunsTable({
 
   if (isError) {
     return (
-      <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-8 text-center font-mono text-xs text-rose-400">
-        <Icon name="alert" size={16} className="mx-auto mb-2 text-rose-400" />
-        <p>Failed to query execution runs API. Ensure backend service is reachable.</p>
+      <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-8 text-center font-mono text-xs text-rose-400 space-y-3">
+        <Icon name="alert" size={20} className="mx-auto text-rose-400" />
+        <div>
+          <p className="font-bold text-sm text-text-primary">Execution Runs API Unreachable</p>
+          <p className="mt-1 text-text-muted">
+            Failed to query execution runs API. Ensure the OutPost backend service is running on port 8001.
+          </p>
+        </div>
+        {onRetry && (
+          <div className="pt-2">
+            <button
+              onClick={onRetry}
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-accent/40 bg-accent/15 px-3 py-1.5 font-bold text-accent hover:bg-accent/25 transition"
+            >
+              <Icon name="refresh" size={13} />
+              <span>Retry Query</span>
+            </button>
+          </div>
+        )}
       </div>
     );
   }

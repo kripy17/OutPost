@@ -99,7 +99,7 @@ import type {
   HostXRaySnapshotData,
 } from "../types";
 
-export const BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+export const BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8001";
 
 // -- Optional auth (backend env-gated) --------------------------------------
 // Token lives in localStorage; every request carries it when present. The

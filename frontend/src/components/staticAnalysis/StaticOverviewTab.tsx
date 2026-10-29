@@ -570,10 +570,12 @@ export function StaticOverviewTab({ sample, st, onNavigateTab }: StaticOverviewT
           <div className="rounded-xl border border-border-subtle bg-bg-base/60 p-3 space-y-1">
             <span className="text-[10px] uppercase text-text-faint block">Entry Point &amp; Base</span>
             <div className="font-bold text-text-primary">
-              {st?.pe?.entry_point_rva !== null && st?.pe?.entry_point_rva !== undefined
-                ? `RVA 0x${st.pe.entry_point_rva.toString(16)}`
-                : st?.elf?.entry_point
-                  ? `0x${st.elf.entry_point.toString(16)}`
+              {st?.pe?.entry_point_rva != null
+                ? `RVA 0x${Number(st.pe.entry_point_rva).toString(16)}`
+                : st?.elf?.entry_point != null
+                  ? String(st.elf.entry_point).startsWith("0x")
+                    ? String(st.elf.entry_point)
+                    : `0x${Number(st.elf.entry_point).toString(16)}`
                   : "0x00000000"}
             </div>
             <div className="text-[10px] text-text-muted">
@@ -584,10 +586,14 @@ export function StaticOverviewTab({ sample, st, onNavigateTab }: StaticOverviewT
           <div className="rounded-xl border border-border-subtle bg-bg-base/60 p-3 space-y-1">
             <span className="text-[10px] uppercase text-text-faint block">Structural Counts</span>
             <div className="font-bold text-text-primary">
-              {st?.pe ? `${st.pe.sections.length} Sections · ${st.pe.imports.length} Imports` : st?.elf ? `${st.elf.sections.length} Sections` : "N/A"}
+              {st?.pe
+                ? `${(st.pe.sections || []).length} Sections · ${(st.pe.imports || []).length} Imports`
+                : st?.elf
+                  ? `${(st.elf.sections || []).length} Sections`
+                  : "N/A"}
             </div>
             <div className="text-[10px] text-text-muted">
-              {st?.strings.length || 0} extracted strings
+              {(st?.strings || []).length} extracted strings
             </div>
           </div>
 

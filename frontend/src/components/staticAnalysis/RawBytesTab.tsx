@@ -92,22 +92,25 @@ export function RawBytesTab({ st, sampleName }: RawBytesTabProps) {
             >
               0x0000 (File Header)
             </button>
-            {entryPointRva !== null && entryPointRva !== undefined && (
+            {entryPointRva != null && (
               <button
-                onClick={() => jumpToOffset(entryPointRva.toString(16).padStart(8, "0"))}
+                onClick={() => jumpToOffset(Number(entryPointRva).toString(16).padStart(8, "0"))}
                 className="press rounded border border-accent/40 bg-accent/10 px-2 py-0.5 text-[10px] text-accent hover:bg-accent/20"
-                title={`Jump to PE Entry Point RVA 0x${entryPointRva.toString(16)}`}
+                title={`Jump to PE Entry Point RVA 0x${Number(entryPointRva).toString(16)}`}
               >
-                Entry Point (0x{entryPointRva.toString(16)})
+                Entry Point (0x{Number(entryPointRva).toString(16)})
               </button>
             )}
-            {elfEntryPoint !== undefined && (
+            {elfEntryPoint != null && (
               <button
-                onClick={() => jumpToOffset(elfEntryPoint.toString(16).padStart(8, "0"))}
+                onClick={() => {
+                  const hex = String(elfEntryPoint).replace(/^0x/i, "");
+                  jumpToOffset(hex.padStart(8, "0"));
+                }}
                 className="press rounded border border-accent/40 bg-accent/10 px-2 py-0.5 text-[10px] text-accent hover:bg-accent/20"
-                title={`Jump to ELF Entry Point 0x${elfEntryPoint.toString(16)}`}
+                title={`Jump to ELF Entry Point ${String(elfEntryPoint)}`}
               >
-                Entry Point (0x{elfEntryPoint.toString(16)})
+                Entry Point ({String(elfEntryPoint).startsWith("0x") ? String(elfEntryPoint) : `0x${Number(elfEntryPoint).toString(16)}`})
               </button>
             )}
           </div>

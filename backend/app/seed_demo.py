@@ -301,8 +301,8 @@ def seed_demo() -> None:
             ),
         )
 
-        # Mark onboarding as demo
-        conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('onboarding', 'demo'), ('demo_mode', '1')")
+        # Mark onboarding as completed
+        conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('onboarding', 'completed'), ('demo_mode', '0')")
         conn.commit()
 
     print(f"[✓] Successfully seeded {len(samples)} threat samples into vault with full static analysis!")

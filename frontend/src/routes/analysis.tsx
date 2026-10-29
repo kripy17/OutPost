@@ -46,7 +46,7 @@ export default function AnalysisPage() {
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const { data, isLoading, isError } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["analysis", status, backend],
     queryFn: () => listAnalysisJobs({ status: status || undefined, backend: backend || undefined, limit: 100 }),
   });
@@ -225,6 +225,7 @@ export default function AnalysisPage() {
         backendFilter={backend}
         searchFilter={searchFilter}
         severityFilter={severityFilter}
+        onRetry={() => void refetch()}
       />
 
       {/* Launch Run Modal Drawer */}

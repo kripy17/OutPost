@@ -240,8 +240,11 @@ def test_synthetic_injection_capability_corroboration():
         from tests.fixtures.synthetic_pe import make_injection_pe
     except ImportError:
         import sys
-        sys.path.insert(0, "/tmp")
-        from gen_synthetic_pe import make_injection_pe
+        from pathlib import Path
+        repo_root = Path(__file__).resolve().parents[3]
+        if str(repo_root) not in sys.path:
+            sys.path.insert(0, str(repo_root))
+        from tests.fixtures.synthetic_pe import make_injection_pe
 
     # Case A: Injection APIs + RWX section (.evil)
     pe_rwx = make_injection_pe(is_rwx=True)
@@ -449,8 +452,11 @@ def test_pe_injection_imports_appear_in_imports_and_capabilities_list():
         from tests.fixtures.synthetic_pe import make_injection_pe
     except ImportError:
         import sys
-        sys.path.insert(0, "/tmp")
-        from gen_synthetic_pe import make_injection_pe
+        from pathlib import Path
+        repo_root = Path(__file__).resolve().parents[3]
+        if str(repo_root) not in sys.path:
+            sys.path.insert(0, str(repo_root))
+        from tests.fixtures.synthetic_pe import make_injection_pe
 
     pe_bytes = make_injection_pe(is_rwx=False)
     parsed = parse_deep_pe(pe_bytes)
