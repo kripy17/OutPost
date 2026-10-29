@@ -288,21 +288,23 @@ def run_complete_static_pipeline(
     # 3. Family Malware Configuration Decoders
     decoded_configs = run_family_decoders(data, {"format": format_type})
     for cfg in decoded_configs:
-        prov = create_provenance("parser_field", f"Config Decoder: {cfg.get('family')}", "parsed", "confirmed")
+        fam_name = cfg.get("family", "Unknown")
+        c2_val = cfg.get("c2_endpoint") or cfg.get("c2_server") or (cfg.get("c2_servers", [None])[0] if cfg.get("c2_servers") else None)
+        prov = create_provenance("parser_field", f"Config Decoder: {fam_name}", "parsed", "confirmed")
         findings.append(create_finding(
-            f"malware-config-{cfg.get('family', 'unknown').lower()}",
+            f"malware-config-{fam_name.lower()}",
             "ioc",
-            f"Decoded {cfg.get('family')} Malware Configuration",
-            f"Extracted verified C2 endpoint ({cfg.get('c2_endpoint')}) via {cfg.get('family')} config decoder.",
+            f"Decoded {fam_name} Malware Configuration",
+            f"Extracted verified C2 endpoint ({c2_val}) via {fam_name} config decoder.",
             prov,
             ["T1071", "T1027"],
         ))
-        if cfg.get("c2_endpoint"):
+        if c2_val:
             embedded_indicators.append({
                 "type": "c2_endpoint",
-                "value": str(cfg.get("c2_endpoint")),
+                "value": str(c2_val),
                 "classification": "malicious",
-                "location": f"Decoded {cfg.get('family')} Configuration",
+                "location": f"Decoded {fam_name} Configuration",
                 "location_rank": 1,
                 "provenance": prov,
             })

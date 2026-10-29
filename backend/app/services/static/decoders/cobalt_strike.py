@@ -42,8 +42,12 @@ class CobaltStrikeDecoder(FamilyConfigDecoder):
 
     def _find_config_block(self, data: bytes, xor_key: int) -> int | None:
         """Scan for beacon setting index 1 (beacon_type) and index 2 (port) sequence."""
-        target_seq = bytes([1 ^ xor_key, 0 ^ xor_key, 1 ^ xor_key, 0 ^ xor_key])
-        pos = data.find(target_seq)
+        target_seq1 = bytes([0 ^ xor_key, 1 ^ xor_key, 0 ^ xor_key, 1 ^ xor_key])
+        target_seq2 = bytes([0 ^ xor_key, 1 ^ xor_key, 0 ^ xor_key, 2 ^ xor_key])
+        pos = data.find(target_seq1)
+        if pos != -1:
+            return pos
+        pos = data.find(target_seq2)
         if pos != -1:
             return pos
         return None
@@ -56,10 +60,14 @@ class CobaltStrikeDecoder(FamilyConfigDecoder):
                 block = bytes([b ^ xor_key for b in data[pos : pos + 4096]])
                 config = self._parse_block(block)
                 if config and "c2_server" in config:
+                    c2_host = config.get("c2_server")
+                    port = config.get("port")
+                    c2_endpoint = f"{c2_host}:{port}" if c2_host and port else c2_host
                     return {
                         "family": self.family_name,
                         "version": self.target_version,
                         "xor_key": f"0x{xor_key:02X}",
+                        "c2_endpoint": c2_endpoint,
                         **config,
                         "confidence": "high",
                     }
