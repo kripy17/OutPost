@@ -33,7 +33,7 @@ _RE_EMAIL_CANDIDATE = re.compile(rb"\b[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9
 
 _SUSPICIOUS_DOMAIN_PATTERNS = (
     "duckdns.org", "no-ip.", "ddns.net", "ngrok.io", ".onion",
-    "pastebin.com/raw", "hastebin.com", "temp.sh",
+    "pastebin.com/raw", "hastebin.com", "temp.sh", "darknet", "c2.",
 )
 
 _COMMON_TLDS = {
@@ -142,7 +142,7 @@ def extract_embedded_indicators(
                     "location": loc_name,
                     "location_rank": rank,
                     "offset": f"0x{match.start():08X}",
-                    "classification": "suspicious",
+                    "classification": "informational",
                     "provenance": prov,
                 })
         except Exception:

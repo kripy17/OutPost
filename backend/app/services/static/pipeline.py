@@ -20,6 +20,12 @@ from .formats.pe import is_pe, parse_deep_pe
 from .formats.script import analyze_script, is_script
 from .indicators import extract_embedded_indicators
 from .provenance import create_finding, create_provenance
+from .strings import (
+    categorize_string,
+    categorize_strings,
+    extract_strings,
+    extract_strings_detailed,
+)
 from .verdict import assess_static_evidence
 
 _SUSPICIOUS_CAPABILITY_PATTERNS = [
@@ -92,6 +98,27 @@ def calculate_entropy(data: bytes) -> float:
     return round(ent, 3)
 
 
+def compute_tlsh(data: bytes) -> str:
+    """Compute TLSH fuzzy hash string.
+
+    Returns TLSH hex digest string, or descriptive status if unavailable / insufficient length.
+    """
+    try:
+        import tlsh
+        if not hasattr(tlsh, "hash") or not callable(tlsh.hash):
+            return "TLSH unavailable (py-tlsh not installed)"
+        if len(data) < 50:
+            return "TNULL (insufficient length < 50 bytes)"
+        res = tlsh.hash(data)
+        if not res or res == "TNULL":
+            return "TNULL (insufficient variance/entropy)"
+        return res
+    except ImportError:
+        return "TLSH unavailable (py-tlsh not installed)"
+    except Exception as exc:
+        return f"TLSH computation error: {exc}"
+
+
 def calculate_entropy_histogram(data: bytes, bins: int = 32) -> list[dict[str, Any]]:
     """Compute local Shannon entropy chunks across the sample."""
     if not data or bins <= 0:
@@ -109,79 +136,6 @@ def calculate_entropy_histogram(data: bytes, bins: int = 32) -> list[dict[str, A
             "size": len(chunk),
         })
     return hist
-
-
-def extract_strings(data: bytes, max_strings: int = 300) -> list[str]:
-    """Extract printable ASCII and UTF-16LE strings (deduped, capped)."""
-    out: list[str] = []
-    seen: set[str] = set()
-
-    # ASCII runs
-    cur = bytearray()
-    for b in data:
-        if 0x20 <= b <= 0x7E:
-            cur.append(b)
-        else:
-            if len(cur) >= 5:
-                s = bytes(cur[:256]).decode("ascii", errors="replace").replace("\x00", "").strip()
-                if s and s not in seen:
-                    seen.add(s)
-                    out.append(s)
-            cur.clear()
-    if len(cur) >= 5:
-        s = bytes(cur[:256]).decode("ascii", errors="replace").replace("\x00", "").strip()
-        if s and s not in seen:
-            seen.add(s)
-            out.append(s)
-
-    # UTF-16LE runs
-    i = 0
-    n = len(data)
-    cur.clear()
-    while i + 1 < n and len(out) < max_strings:
-        lo, hi = data[i], data[i + 1]
-        if hi == 0x00 and 0x20 <= lo <= 0x7E:
-            cur.append(lo)
-            i += 2
-        else:
-            if len(cur) >= 5:
-                s = bytes(cur[:256]).decode("ascii", errors="replace").replace("\x00", "").strip()
-                if s and s not in seen:
-                    seen.add(s)
-                    out.append(s)
-            cur.clear()
-            i += 1
-    if len(cur) >= 5:
-        s = bytes(cur[:256]).decode("ascii", errors="replace").replace("\x00", "").strip()
-        if s and s not in seen:
-            seen.add(s)
-            out.append(s)
-
-    return out[:max_strings]
-
-
-def categorize_strings(strings: list[str]) -> dict[str, list[str]]:
-    """Categorize printable strings into analyst intelligence buckets."""
-    buckets: dict[str, list[str]] = {
-        "network": [],
-        "file_paths": [],
-        "commands": [],
-        "registry": [],
-        "security_apis": [],
-    }
-    for s in strings:
-        lower = s.lower()
-        if any(ext in lower for ext in (".com", ".net", ".org", "http://", "https://", "tcp://")):
-            buckets["network"].append(s)
-        elif any(p in lower for p in ("/etc/", "/tmp/", "/var/", "c:\\", "%temp%", "%appdata%")):
-            buckets["file_paths"].append(s)
-        elif any(c in lower for c in ("powershell", "cmd.exe", "whoami", "curl", "wget", "chmod", "iptables", "netstat")):
-            buckets["commands"].append(s)
-        elif any(r in s for r in ("HKLM\\", "HKCU\\", "CurrentVersion\\Run")):
-            buckets["registry"].append(s)
-        elif any(a in s for a in ("VirtualAlloc", "CreateThread", "WriteProcessMemory", "ptrace", "memfd_create")):
-            buckets["security_apis"].append(s)
-    return buckets
 
 
 def generate_hex_preview(data: bytes, max_bytes: int = 512) -> list[dict[str, str]]:
@@ -229,7 +183,8 @@ def run_complete_static_pipeline(
     benign_evidence: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Execute complete static analysis pipeline over binary/document/script payload."""
-    strings = extract_strings(data)
+    strings_detailed, strings_truncation = extract_strings_detailed(data)
+    strings = [d["string"] for d in strings_detailed]
     categorized = categorize_strings(strings)
     entropy = calculate_entropy(data)
     entropy_hist = calculate_entropy_histogram(data, bins=32)
@@ -240,6 +195,11 @@ def run_complete_static_pipeline(
     structural_anomalies: list[dict[str, Any]] = []
     benign_signals: list[dict[str, Any]] = []
     could_not_analyze: list[str] = []
+
+    if strings_truncation.get("total_file_bytes", 0) > strings_truncation.get("scan_bytes_processed", 0):
+        proc_mb = strings_truncation["scan_bytes_processed"] // (1024 * 1024)
+        tot_mb = strings_truncation["total_file_bytes"] // (1024 * 1024)
+        could_not_analyze.append(f"strings: scanned first {proc_mb} MB of {tot_mb} MB")
 
     if benign_evidence:
         benign_signals.extend(benign_evidence)
@@ -342,15 +302,23 @@ def run_complete_static_pipeline(
 
     # 4. Capability detection from imports vs strings
     # Check imports if available (PE or ELF)
-    resolved_imports = pe_info.get("imports", []) if pe_info else []
+    resolved_imports: list[str] = []
+    if pe_info:
+        resolved_imports.extend(pe_info.get("imports", []))
+    if elf_info:
+        resolved_imports.extend(elf_info.get("imported_symbols", []))
     all_symbols_text = " ".join(resolved_imports) if resolved_imports else ""
 
     _GENERIC_STRING_TOKENS = {"connect", "socket", "cron", "systemd", "/etc/init.d", "getaddrinfo", "chmod"}
     combined_text = " ".join(strings)
 
     for category, symbols in _SUSPICIOUS_CAPABILITY_PATTERNS:
-        # Check if symbol appears in authoritative import table (high reliability)
-        parsed_matches = [s for s in symbols if s.lower() in all_symbols_text.lower()]
+        # Check if symbol appears in authoritative import table (high reliability, excluding generic OS libc tokens)
+        parsed_matches = [
+            s for s in symbols
+            if s not in _GENERIC_STRING_TOKENS
+            and s.lower() in all_symbols_text.lower()
+        ]
         # Check if symbol appears in raw strings with whole-word boundary (excluding generic glibc tokens)
         heuristic_matches = [
             s for s in symbols
@@ -389,6 +357,7 @@ def run_complete_static_pipeline(
         structural_anomalies=structural_anomalies,
         benign_signals=benign_signals,
         could_not_analyze=could_not_analyze,
+        signature_info=pe_info.get("signature") if pe_info else None,
     )
 
     # Legacy IOCs mapping for backward compatibility with existing tests
@@ -400,9 +369,13 @@ def run_complete_static_pipeline(
         "emails": [i["value"] for i in embedded_indicators if i["type"] == "email"],
     }
 
+    tlsh_hash = compute_tlsh(data)
+
     return {
         "format": format_type,
         "strings": strings,
+        "strings_detailed": strings_detailed,
+        "strings_truncation": strings_truncation,
         "categorized_strings": categorized,
         "iocs": legacy_iocs,
         "embedded_indicators": embedded_indicators,
@@ -420,7 +393,8 @@ def run_complete_static_pipeline(
         "is_packed": is_packed,
         "capabilities": capabilities,
         "imphash": pe_info.get("imphash_canonical") if pe_info else None,
-        "fuzzy_hash": f"3:{hashlib.md5(data[:64]).hexdigest()}:{hashlib.md5(data[64:128]).hexdigest()}",
+        "tlsh": tlsh_hash,
+        "fuzzy_hash": tlsh_hash,
         "md5": hashlib.md5(data).hexdigest(),
         "sha1": hashlib.sha1(data).hexdigest(),
         "sha256": hashlib.sha256(data).hexdigest(),

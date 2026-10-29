@@ -125,3 +125,23 @@ def test_benign_evidence_inputs_lower_threat_posture():
     )
     assert assessment["verdict"] in ("no_indicators_found_limited", "insufficient_evidence")
     assert assessment["static_risk_score"] == 0
+
+
+def test_repo_ground_truth_probes_not_suspicious_or_malicious():
+    """Repo ground-truth probe binaries (probe_elf, probe.py, probe.sh) must not be flagged suspicious or malicious."""
+    probes = [
+        "tests/probes/c_probe/probe_elf",
+        "tests/probes/python_probe/probe.py",
+        "tests/probes/shell_probe/probe.sh",
+    ]
+    for p in probes:
+        if not os.path.exists(p):
+            continue
+        with open(p, "rb") as f:
+            data = f.read()
+        res = run_complete_static_pipeline(data, file_path=p)
+        assert res["verdict"] in ("no_indicators_found_limited", "insufficient_evidence"), (
+            f"Probe {p} incorrectly flagged with verdict '{res['verdict']}', score {res.get('static_risk_score')}. "
+            f"Factors: {res.get('assessment_factors')}"
+        )
+        assert res["static_risk_score"] == 0

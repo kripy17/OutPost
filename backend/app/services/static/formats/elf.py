@@ -1,34 +1,39 @@
-"""Deep ELF (Executable and Linkable Format) static structure analyzer.
+"""Deep ELF (Executable and Linkable Format) static structure analyzer via pyelftools.
 
-Analyzes Linux/Unix ELF binaries with bounds-checked defensive parsing:
-1. Architecture, endianness, and ABI identification.
+Analyzes Linux/Unix ELF binaries with pyelftools:
+1. Architecture, endianness, ELF class (32/64-bit), OS/ABI, and binary type (EXEC/DYN/REL).
 2. Program header analysis and RWX memory segments (PT_LOAD with PF_W | PF_X).
-3. Section table parsing, per-section entropy, and section hashing.
-4. Dynamic tags (DT_RPATH, DT_RUNPATH) for library injection / hijacking.
-5. Symbol table analysis: stripped vs unstripped binaries, imported dynamic symbols.
+3. Section table parsing, per-section entropy, and section SHA-256 hashing.
+4. Stripped vs unstripped status detection (.symtab analysis).
+5. Dynamic tags (DT_NEEDED shared libraries, DT_RPATH, DT_RUNPATH for library hijacking).
+6. Dynamic symbol table (.dynsym) imported APIs extraction for authoritative capability detection.
 """
 
 import hashlib
+import io
 import math
 from typing import Any
+
+from elftools.common.exceptions import ELFError
+from elftools.elf.dynamic import DynamicSection
+from elftools.elf.elffile import ELFFile
 
 from ..provenance import create_finding, create_provenance
 
 _ELF_MACHINES = {
-    0x03: "x86",
-    0x3E: "x86-64",
-    0x28: "ARM",
-    0xB7: "AArch64",
-    0x08: "MIPS",
-    0x14: "PowerPC",
-    0x15: "PowerPC64",
-    0xF3: "RISC-V",
+    "EM_386": "x86",
+    "EM_X86_64": "x86-64",
+    "EM_ARM": "ARM",
+    "EM_AARCH64": "AArch64",
+    "EM_MIPS": "MIPS",
+    "EM_PPC": "PowerPC",
+    "EM_PPC64": "PowerPC64",
+    "EM_RISCV": "RISC-V",
 }
-
-_ELF_TYPES = {0: "NONE", 1: "REL", 2: "EXEC", 3: "DYN", 4: "CORE"}
 
 
 def _calc_entropy(data: bytes) -> float:
+    """Calculate Shannon entropy over raw byte buffer (0.0 - 8.0)."""
     if not data:
         return 0.0
     freq = [0] * 256
@@ -49,7 +54,7 @@ def is_elf(data: bytes) -> bool:
 
 
 def parse_deep_elf(data: bytes) -> dict[str, Any]:
-    """Bounds-checked deep ELF parser."""
+    """Parse ELF binary using pyelftools with defensive exception isolation."""
     findings: list[dict[str, Any]] = []
     indicators: list[dict[str, Any]] = []
     capabilities: list[dict[str, Any]] = []
@@ -60,166 +65,217 @@ def parse_deep_elf(data: bytes) -> dict[str, Any]:
     if not is_elf(data):
         return {"is_elf": False, "could_not_analyze": ["Not a valid ELF binary"]}
 
-    ei_class = data[4]
-    bits = 64 if ei_class == 2 else (32 if ei_class == 1 else None)
-    endian = "little" if data[5] == 1 else "big"
-
-    if not bits or endian != "little":
+    try:
+        elf = ELFFile(io.BytesIO(data))
+    except ELFError as exc:
         return {
             "is_elf": True,
-            "bits": bits,
-            "endian": endian,
-            "could_not_analyze": ["Big-endian or non-standard ELF architecture"],
+            "could_not_analyze": [f"pyelftools: ELFError: {exc}"],
+            "findings": findings,
+            "indicators": indicators,
+            "capabilities": capabilities,
+            "structural_anomalies": structural_anomalies,
+            "benign_signals": benign_signals,
+        }
+    except Exception as exc:
+        return {
+            "is_elf": True,
+            "could_not_analyze": [f"pyelftools: {type(exc).__name__}: {exc}"],
+            "findings": findings,
+            "indicators": indicators,
+            "capabilities": capabilities,
+            "structural_anomalies": structural_anomalies,
+            "benign_signals": benign_signals,
         }
 
-    e_type = int.from_bytes(data[16:18], "little")
-    e_machine = int.from_bytes(data[18:20], "little")
-    machine_str = _ELF_MACHINES.get(e_machine, f"0x{e_machine:04X}")
+    # 1. Header & Architecture Identification
+    bits = elf.elfclass
+    class_val = elf.elfclass
+    endian = "little" if elf.little_endian else "big"
 
-    if bits == 64:
-        if len(data) < 64:
-            return {"is_elf": True, "could_not_analyze": ["Truncated 64-bit ELF header"]}
-        e_entry = int.from_bytes(data[24:32], "little")
-        e_phoff = int.from_bytes(data[32:40], "little")
-        e_shoff = int.from_bytes(data[40:48], "little")
-        e_phentsize = int.from_bytes(data[54:56], "little")
-        e_phnum = int.from_bytes(data[56:58], "little")
-        e_shentsize = int.from_bytes(data[58:60], "little")
-        e_shnum = int.from_bytes(data[60:62], "little")
-        e_shstrndx = int.from_bytes(data[62:64], "little")
-    else:
-        e_entry = int.from_bytes(data[24:28], "little")
-        e_phoff = int.from_bytes(data[28:32], "little")
-        e_shoff = int.from_bytes(data[32:36], "little")
-        e_phentsize = int.from_bytes(data[42:44], "little")
-        e_phnum = int.from_bytes(data[44:46], "little")
-        e_shentsize = int.from_bytes(data[46:48], "little")
-        e_shnum = int.from_bytes(data[48:50], "little")
-        e_shstrndx = int.from_bytes(data[50:52], "little")
+    # Type normalization (e.g. 'ET_DYN' -> 'DYN')
+    raw_type = elf["e_type"]
+    type_str = raw_type[3:] if isinstance(raw_type, str) and raw_type.startswith("ET_") else str(raw_type)
 
-    # 1. Program Headers & RWX Segment Detection
+    # Machine normalization (e.g. 'EM_X86_64' -> 'x86-64')
+    raw_machine = elf["e_machine"]
+    machine_str = _ELF_MACHINES.get(raw_machine, raw_machine[3:].lower() if isinstance(raw_machine, str) and raw_machine.startswith("EM_") else str(raw_machine))
+
+    entry_val = elf["e_entry"]
+    entry_point = f"0x{entry_val:08X}"
+
+    # 2. Program Headers & RWX Segment Detection
     segments: list[dict[str, Any]] = []
     has_rwx_segment = False
 
-    if e_phoff > 0 and e_phnum > 0 and e_phentsize >= 32:
-        for i in range(min(e_phnum, 64)):
-            off = e_phoff + i * e_phentsize
-            if off + e_phentsize > len(data):
-                break
-            p_type = int.from_bytes(data[off : off + 4], "little")
-            if bits == 64:
-                p_flags = int.from_bytes(data[off + 4 : off + 8], "little")
-                p_filesz = int.from_bytes(data[off + 32 : off + 40], "little")
-                p_memsz = int.from_bytes(data[off + 40 : off + 48], "little")
-            else:
-                p_flags = int.from_bytes(data[off + 24 : off + 28], "little")
-                p_filesz = int.from_bytes(data[off + 16 : off + 20], "little")
-                p_memsz = int.from_bytes(data[off + 20 : off + 24], "little")
+    for i, seg in enumerate(elf.iter_segments()):
+        p_type = seg["p_type"]
+        p_flags = seg["p_flags"]
+        is_x = bool(p_flags & 1)
+        is_w = bool(p_flags & 2)
+        is_r = bool(p_flags & 4)
 
-            is_x = bool(p_flags & 1)
-            is_w = bool(p_flags & 2)
-            is_r = bool(p_flags & 4)
-
-            # PT_LOAD segment with both write and execute permissions
-            if p_type == 1 and is_w and is_x:
-                has_rwx_segment = True
-                prov = create_provenance("parser_field", f"ELF Program Header #{i} (PT_LOAD)", "parsed", "confirmed")
-                findings.append(create_finding(
-                    f"elf-rwx-segment-{i}",
-                    "anomaly",
-                    "Writable and Executable (RWX) Segment in ELF",
-                    f"PT_LOAD segment #{i} is marked with both PF_W (write) and PF_X (execute) flags.",
-                    prov,
-                    ["T1055"],
-                ))
-                structural_anomalies.append({
-                    "title": f"RWX memory permissions on ELF PT_LOAD segment #{i}",
-                    "weight": 25,
-                    "reliability": "parsed",
-                    "evidence": f"PF_X | PF_W flags enabled (p_flags={p_flags})",
-                })
-
-            segments.append({
-                "type": p_type,
-                "flags": ("R" if is_r else "-") + ("W" if is_w else "-") + ("X" if is_x else "-"),
-                "filesz": p_filesz,
-                "memsz": p_memsz,
+        # PT_LOAD segment with both write and execute permissions
+        if (p_type == "PT_LOAD" or p_type == 1) and is_w and is_x:
+            has_rwx_segment = True
+            prov = create_provenance("parser_field", f"ELF Program Header #{i} (PT_LOAD)", "parsed", "confirmed")
+            findings.append(create_finding(
+                f"elf-rwx-segment-{i}",
+                "anomaly",
+                "Writable and Executable (RWX) Segment in ELF",
+                f"PT_LOAD segment #{i} is marked with both PF_W (write) and PF_X (execute) flags.",
+                prov,
+                ["T1055"],
+            ))
+            structural_anomalies.append({
+                "title": f"RWX memory permissions on ELF PT_LOAD segment #{i}",
+                "weight": 25,
+                "reliability": "parsed",
+                "evidence": f"PF_X | PF_W flags enabled (p_flags={p_flags})",
             })
 
-    # 2. Section Table Parsing
+        segments.append({
+            "type": p_type,
+            "flags": ("R" if is_r else "-") + ("W" if is_w else "-") + ("X" if is_x else "-"),
+            "filesz": seg["p_filesz"],
+            "memsz": seg["p_memsz"],
+        })
+
+    # 3. Section Table Parsing & Stripped Status
     sections: list[dict[str, Any]] = []
     section_names: list[str] = []
     section_hashes: dict[str, str] = {}
     is_stripped = True
 
-    # Read section string table if valid
-    shstr_data = b""
-    if e_shstrndx < e_shnum and e_shoff + e_shstrndx * e_shentsize + e_shentsize <= len(data):
-        stroff = e_shoff + e_shstrndx * e_shentsize
-        if bits == 64:
-            s_offset = int.from_bytes(data[stroff + 24 : stroff + 32], "little")
-            s_size = int.from_bytes(data[stroff + 32 : stroff + 40], "little")
-        else:
-            s_offset = int.from_bytes(data[stroff + 16 : stroff + 20], "little")
-            s_size = int.from_bytes(data[stroff + 20 : stroff + 24], "little")
-        if s_offset + s_size <= len(data):
-            shstr_data = data[s_offset : s_offset + s_size]
+    dynamic_libraries: list[str] = []
+    rpath: list[str] = []
+    runpath: list[str] = []
 
-    if e_shoff > 0 and e_shnum > 0 and e_shentsize >= 40:
-        for i in range(min(e_shnum, 64)):
-            off = e_shoff + i * e_shentsize
-            if off + e_shentsize > len(data):
-                break
-            sh_name_idx = int.from_bytes(data[off : off + 4], "little")
-            if bits == 64:
-                sh_type = int.from_bytes(data[off + 4 : off + 8], "little")
-                sh_offset = int.from_bytes(data[off + 24 : off + 32], "little")
-                sh_size = int.from_bytes(data[off + 32 : off + 40], "little")
-            else:
-                sh_type = int.from_bytes(data[off + 4 : off + 8], "little")
-                sh_offset = int.from_bytes(data[off + 16 : off + 20], "little")
-                sh_size = int.from_bytes(data[off + 20 : off + 24], "little")
+    for sec in elf.iter_sections():
+        name = sec.name
+        section_names.append(name)
+        if name in (".symtab", ".strtab"):
+            is_stripped = False
 
-            sec_name = ""
-            if shstr_data and sh_name_idx < len(shstr_data):
-                null_pos = shstr_data.find(b"\x00", sh_name_idx)
-                if null_pos != -1:
-                    sec_name = shstr_data[sh_name_idx:null_pos].decode("latin1", "replace")
+        try:
+            sec_data = sec.data()
+        except Exception:
+            sec_data = b""
 
-            if sec_name in (".symtab", ".strtab"):
-                is_stripped = False
+        ent = _calc_entropy(sec_data)
+        sec_hash = hashlib.sha256(sec_data).hexdigest() if sec_data else None
 
-            raw_sec = data[sh_offset : sh_offset + sh_size] if (sh_offset + sh_size <= len(data)) else b""
-            ent = _calc_entropy(raw_sec) if raw_sec else 0.0
-            sec_hash = hashlib.sha256(raw_sec).hexdigest() if raw_sec else None
+        if name:
+            if sec_hash:
+                section_hashes[name] = sec_hash
 
-            if sec_name:
-                section_names.append(sec_name)
-                if sec_hash:
-                    section_hashes[sec_name] = sec_hash
+        sections.append({
+            "name": name or "unnamed",
+            "type": sec["sh_type"],
+            "size": sec["sh_size"],
+            "entropy": ent,
+            "sha256": sec_hash,
+        })
 
-            sections.append({
-                "name": sec_name or f"sec_{i}",
-                "type": sh_type,
-                "size": sh_size,
-                "entropy": ent,
-                "sha256": sec_hash,
+        # Dynamic Section tags: DT_NEEDED, DT_RPATH, DT_RUNPATH
+        if isinstance(sec, DynamicSection):
+            try:
+                for tag in sec.iter_tags():
+                    if tag.entry.d_tag == "DT_NEEDED":
+                        dynamic_libraries.append(tag.needed)
+                    elif tag.entry.d_tag == "DT_RPATH":
+                        rpath.append(tag.rpath)
+                    elif tag.entry.d_tag == "DT_RUNPATH":
+                        runpath.append(tag.runpath)
+            except Exception:
+                pass
+
+    # Anomaly: Insecure RPATH or RUNPATH (e.g. /tmp, relative path, or $ORIGIN)
+    for p in rpath + runpath:
+        if any(bad in p for bad in ("/tmp", "/var/tmp", "..", "./")):
+            prov = create_provenance("parser_field", "ELF Dynamic Section (DT_RPATH/DT_RUNPATH)", "parsed", "confirmed")
+            findings.append(create_finding(
+                "elf-insecure-rpath",
+                "anomaly",
+                "Insecure RPATH/RUNPATH Library Search Path",
+                f"Binary contains writable or relative library search path: {p}",
+                prov,
+                ["T1574.002"],
+            ))
+            structural_anomalies.append({
+                "title": f"Insecure dynamic linker search path ({p})",
+                "weight": 20,
+                "reliability": "parsed",
+                "evidence": p,
             })
+
+    # 4. Dynamic Symbol Table (.dynsym) Resolution
+    imported_symbols: list[str] = []
+    try:
+        dynsym = elf.get_section_by_name(".dynsym")
+        if dynsym is not None:
+            for sym in dynsym.iter_symbols():
+                if sym.name:
+                    imported_symbols.append(sym.name)
+    except Exception:
+        pass
+
+    # 5. Packer / Compression Detection (UPX or high-entropy packing)
+    packer_identified = None
+    upx_offset = None
+    if b"UPX!" in data:
+        packer_identified = "UPX Packer"
+        upx_offset = data.find(b"UPX!")
+    elif _calc_entropy(data) > 7.2 and len(sections) <= 6 and len(imported_symbols) == 0:
+        packer_identified = "Compressed/Packed Executable"
+
+    if packer_identified:
+        ent = _calc_entropy(data)
+        if upx_offset is not None:
+            evidence_str = f"UPX! magic at offset 0x{upx_offset:X}, {len(sections)} section headers, file entropy {ent:.2f}"
+        else:
+            evidence_str = f"{len(sections)} sections, 0 dynamic imports, file entropy {ent:.2f}"
+
+        factor_title = "UPX-packed" if "UPX" in packer_identified else f"{packer_identified}"
+
+        prov = create_provenance("parser_field", "ELF Header / Compression Heuristics", "parsed", "confirmed")
+        findings.append(create_finding(
+            "elf-packed-binary",
+            "structure",
+            f"Packed or Compressed Executable ({factor_title})",
+            f"Binary structure exhibits packing signatures or high-entropy compression ({factor_title}).",
+            prov,
+            ["T1027.002"],
+        ))
+        structural_anomalies.append({
+            "title": factor_title,
+            "weight": 25,
+            "reliability": "parsed",
+            "evidence": evidence_str,
+        })
+        could_not_analyze.append("packed_executable_code")
+        could_not_analyze.append("obfuscated_imports")
 
     return {
         "is_elf": True,
         "is_stripped": is_stripped,
         "bits": bits,
-        "class": bits,
+        "class": class_val,
         "endian": endian,
-        "type": _ELF_TYPES.get(e_type, str(e_type)),
+        "type": type_str,
         "machine": machine_str,
-        "entry_point": f"0x{e_entry:08X}",
+        "entry_point": entry_point,
         "has_rwx_segment": has_rwx_segment,
+        "packer": packer_identified,
+        "is_packed": bool(packer_identified),
         "segments": segments,
         "sections": sections,
         "section_names": section_names,
         "section_hashes": section_hashes,
+        "dynamic_libraries": dynamic_libraries,
+        "rpath": rpath,
+        "runpath": runpath,
+        "imported_symbols": imported_symbols,
         "findings": findings,
         "indicators": indicators,
         "capabilities": capabilities,

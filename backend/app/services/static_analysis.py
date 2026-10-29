@@ -25,6 +25,7 @@ from .static.formats.elf import is_elf, parse_deep_elf
 from .static.formats.pe import is_pe, parse_deep_pe
 from .static.indicators import extract_embedded_indicators, is_valid_domain
 from .static.pipeline import (
+    compute_tlsh,
     run_complete_static_pipeline,
 )
 from .static.provenance import create_provenance
@@ -170,7 +171,12 @@ def compute_imphash(imports: list[str]) -> str | None:
 
 
 def compute_fuzzy_hash(data: bytes) -> str:
-    """Compute Context-Triggered Piecewise Hash (CTPH / fuzzy hash) fallback."""
+    """Compute fuzzy locality-sensitive hash (TLSH) with fallback to CTPH piecewise hash."""
+    tlsh_res = compute_tlsh(data)
+    if tlsh_res and not tlsh_res.startswith("TLSH unavailable"):
+        return tlsh_res
+
+    # CTPH fallback
     if not data:
         return "3::"
     bs = 3
@@ -204,6 +210,24 @@ def _levenshtein(s1: str, s2: str) -> int:
 
 def compare_fuzzy_hashes(hash1: str, hash2: str) -> int:
     """Compare two fuzzy hashes and return similarity percentage (0-100)."""
+    if not hash1 or not hash2:
+        return 0
+
+    # 1. TLSH comparison if both are valid TLSH hex strings (starting with T1)
+    if hash1.startswith("T1") and hash2.startswith("T1"):
+        try:
+            import tlsh
+            if hasattr(tlsh, "diff"):
+                dist = tlsh.diff(hash1, hash2)
+                # TLSH distance: 0 is identical, <30 is very similar, <100 is somewhat similar, >100 is dissimilar.
+                # Convert distance into 0-100 similarity score:
+                if dist >= 100:
+                    return 0
+                return max(0, min(100, int((1.0 - (dist / 100.0)) * 100)))
+        except Exception:
+            pass
+
+    # 2. CTPH / ssdeep fallback comparison (colon-separated block hashes)
     try:
         b1_str, d1_1, d1_2 = hash1.split(":", 2)
         b2_str, d2_1, d2_2 = hash2.split(":", 2)

@@ -63,11 +63,24 @@ def test_held_out_multi_format_clean_corpus():
 
     # 1. Benign Windows PE32+ (x64) binary
     pe = bytearray(b"MZ" + b"\x00" * 58 + b"\x80\x00\x00\x00" + b"\x00" * 64)
-    pe.extend(b"PE\x00\x00\x64\x86\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\xf0\x00\x02\x00")
-    pe.extend(b"\x0b\x02\x00\x00\x00\x00\x00\x00\x00\x10\x00\x00" + b"\x00" * 228)
-    pe.extend(b".text\x00\x00\x00\x10\x00\x00\x00\x10\x00\x00\x00\x02\x00\x00\x00\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x20\x00\x00\x60")
+    pe.extend(b"PE\x00\x00")
+    pe.extend(b"\x64\x86\x01\x00\x00\x00\x10\x67\x00\x00\x00\x00\x00\x00\x00\x00\xf0\x00\x02\x00")
+    opt = bytearray(b"\x0b\x02" + b"\x00" * 14 + (0x1000).to_bytes(4, "little") + b"\x00" * (108 - 20))
+    opt.extend((16).to_bytes(4, "little") + b"\x00" * (240 - 112))
+    pe.extend(opt)
+    sec = (
+        b".text\x00\x00\x00" +
+        b"\x00\x10\x00\x00" +
+        b"\x00\x10\x00\x00" +
+        b"\x00\x02\x00\x00" +
+        b"\x00\x02\x00\x00" +
+        b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" +
+        b"\x20\x00\x00\x60"
+    )
+    pe.extend(sec)
     pe.extend(b"\x00" * (0x200 - len(pe)))
-    pe.extend(b"\x31\xc0\xc3" + b"Held-out clean utility\x00" + b"\x90" * 450)
+    pe.extend(b"\x31\xc0\xc3" + b"Held-out clean utility\x00")
+    pe.extend(b"\x00" * (0x400 - len(pe)))
     held_out_samples["clean_heldout_x64.exe"] = bytes(pe)
 
     # 2. Benign PDF 1.7 document

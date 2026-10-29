@@ -336,12 +336,13 @@ def test_samples_hide_synthetic_by_default(client):
 def _build_pe() -> bytes:
     dos = b"MZ" + b"\x00" * 0x3A + (0x40).to_bytes(4, "little")
     coff = b"PE\x00\x00" + (0x8664).to_bytes(2, "little") + (1).to_bytes(2, "little")  # machine, nsects
-    coff += (0).to_bytes(4, "little") * 2  # timestamp, ptr_symtab
+    coff += (0x67100000).to_bytes(4, "little") + (0).to_bytes(4, "little")  # timestamp (Oct 2024), ptr_symtab
     coff += (0).to_bytes(4, "little") + (0xF0).to_bytes(2, "little") + (0x206).to_bytes(2, "little")  # nsyms, opthdr sz, chars
     # PE32+ optional header (0xF0 bytes): magic, entry RVA, import dir at index 1.
     opt = (0x20B).to_bytes(2, "little") + b"\x00" * 14  # magic + linker/etc
     opt += (0x1000).to_bytes(4, "little")  # AddressOfEntryPoint
-    opt += b"\x00" * (112 - 20)  # pad to data directories (0x70 offset)
+    opt += b"\x00" * (108 - 20)  # pad to NumberOfRvaAndSizes
+    opt += (16).to_bytes(4, "little")  # NumberOfRvaAndSizes = 16
     # Data directory 1 (imports): RVA 0x2000, size 40 (one descriptor + null terminator)
     opt += b"\x00" * 8  # dir 0 (exports)
     opt += (0x2000).to_bytes(4, "little") + (40).to_bytes(4, "little")
@@ -351,13 +352,18 @@ def _build_pe() -> bytes:
     sec = b".text\x00\x00\x00" + (0x1200).to_bytes(4, "little")  # VirtualSize
     sec += (0x1000).to_bytes(4, "little") + (0x1200).to_bytes(4, "little")  # VA, SizeOfRawData
     sec += (0x400).to_bytes(4, "little") + b"\x00" * 16 + (0x60000020).to_bytes(4, "little")  # ptr, reloc/lnums/pad, chars
-    import_desc = (0).to_bytes(4, "little") * 3 + (0x2100).to_bytes(4, "little") + (0).to_bytes(4, "little")  # Name RVA
+    import_desc = (0x2050).to_bytes(4, "little") + (0).to_bytes(4, "little") * 2 + (0x2100).to_bytes(4, "little") + (0x2050).to_bytes(4, "little")
     import_desc += b"\x00" * 20  # null terminator
     blob = dos + coff + opt + sec
     blob += b"\x00" * (0x400 - len(blob))  # pad to raw data
     blob += b"\x00" * 0x1000 + import_desc  # descriptor at raw 0x1400 (= RVA 0x2000)
-    blob += b"\x00" * (0x1500 - len(blob))  # pad so the name lands at raw 0x1500
+    blob += b"\x00" * (0x1450 - len(blob))
+    blob += (0x2070).to_bytes(8, "little") + (0).to_bytes(8, "little")  # thunk entry pointing to hint/name
+    blob += b"\x00" * (0x1470 - len(blob))
+    blob += b"\x00\x00ExitProcess\x00"  # hint + function name
+    blob += b"\x00" * (0x1500 - len(blob))  # pad so the DLL name lands at raw 0x1500
     blob += b"KERNEL32.dll\x00"  # name at raw 0x1500 (= RVA 0x2100)
+    blob += b"\x00" * (0x400 + 0x1200 - len(blob))  # pad raw section to SizeOfRawData
     return blob
 
 
