@@ -1,10 +1,10 @@
 # OutPost — Malware Analysis Workbench & Behavioral Security Monitor
 
-[![Tests](https://img.shields.io/badge/tests-813%20passed-brightgreen.svg)](file:///home/kripy/.gemini/antigravity/worktrees/OutPost/inspect_project_state/backend/README.md)
-[![Python](https://img.shields.io/badge/python-3.12%20%7C%203.14-blue.svg)](file:///home/kripy/.gemini/antigravity/worktrees/OutPost/inspect_project_state/backend/README.md)
-[![Frontend](https://img.shields.io/badge/frontend-React%2018%20%7C%20Vite%20%7C%20Tailwind-61dafb.svg)](file:///home/kripy/.gemini/antigravity/worktrees/OutPost/inspect_project_state/frontend/README.md)
-[![Air-Gap](https://img.shields.io/badge/air--gap-zero%20cloud%20egress-success.svg)](file:///home/kripy/.gemini/antigravity/worktrees/OutPost/inspect_project_state/docs/18-AIR-GAP.md)
-[![License](https://img.shields.io/badge/license-Apache%202.0-lightgrey.svg)](file:///home/kripy/.gemini/antigravity/worktrees/OutPost/inspect_project_state/LICENSE)
+[![Tests](https://img.shields.io/badge/tests-813%20passed-brightgreen.svg)](backend/README.md)
+[![Python](https://img.shields.io/badge/python-3.12%20%7C%203.14-blue.svg)](backend/README.md)
+[![Frontend](https://img.shields.io/badge/frontend-React%2018%20%7C%20Vite%20%7C%20Tailwind-61dafb.svg)](frontend/README.md)
+[![Air-Gap](https://img.shields.io/badge/air--gap-zero%20cloud%20egress-success.svg)](docs/18-AIR-GAP.md)
+[![License](https://img.shields.io/badge/license-Apache%202.0-lightgrey.svg)](LICENSE)
 
 **OutPost** is an offline-first, dual-layer **Static and Dynamic Malware Analysis Workbench & Behavioral Threat Forecaster** engineered for malware analysts, reverse engineers, incident responders, and detection teams.
 
@@ -230,7 +230,7 @@ The `outpost` CLI provides analysts with full terminal control over static analy
 - **Disposable Lab VM Boundary**: OutPost is designed to operate inside a dedicated forensic Linux virtual machine (QEMU/KVM, VMware, or VirtualBox). The VM boundary is the primary containment layer.
 - **Bubblewrap (`bwrap`) Containment**: Dynamic execution drops all host capabilities, binds `/` as read-only, restricts `/proc`, creates a clean private `/tmp`, and disconnects host networking namespaces.
 - **Host Safety Guard (Dev-Probe Mode)**: When executed outside a virtual machine, dynamic detonation enforces safety controls to prevent accidental host compromise.
-- **Air-Gap Verification**: OutPost contains automated egress gates ([`scripts/gate_backend_egress.py`](file:///home/kripy/.gemini/antigravity/worktrees/OutPost/inspect_project_state/scripts/gate_backend_egress.py)) ensuring no telemetry, analytics, or licensing pings ever leak across network boundaries.
+- **Air-Gap Verification**: OutPost contains automated egress gates ([`scripts/gate_backend_egress.py`](scripts/gate_backend_egress.py)) ensuring no telemetry, analytics, or licensing pings ever leak across network boundaries.
 
 ---
 
@@ -238,11 +238,11 @@ The `outpost` CLI provides analysts with full terminal control over static analy
 
 Detailed documentation is available in each dedicated directory:
 
-- [Backend Documentation (`backend/README.md`)](file:///home/kripy/.gemini/antigravity/worktrees/OutPost/inspect_project_state/backend/README.md) — FastAPI routing, static parsers, RAT decoders, bubblewrap sandbox, and pytest guides.
-- [Frontend Documentation (`frontend/README.md`)](file:///home/kripy/.gemini/antigravity/worktrees/OutPost/inspect_project_state/frontend/README.md) — React 18 architecture, workspace routing, Tailwind tokens, and Vitest suite.
-- [CLI Reference (`cli/README.md`)](file:///home/kripy/.gemini/antigravity/worktrees/OutPost/inspect_project_state/cli/README.md) — Command-line syntax, arguments, decoding commands, and interactive TUI guide.
-- [Specifications & Specs (`docs/README.md`)](file:///home/kripy/.gemini/antigravity/worktrees/OutPost/inspect_project_state/docs/README.md) — Technical specifications, ADRs, threat models, and lab VM setup instructions.
-- [Scripts & Quality Gates (`scripts/README.md`)](file:///home/kripy/.gemini/antigravity/worktrees/OutPost/inspect_project_state/scripts/README.md) — Screenshot capture tools, CI egress gates, and verification scripts.
+- [Backend Documentation (`backend/README.md`)](backend/README.md) — FastAPI routing, static parsers, RAT decoders, bubblewrap sandbox, and pytest guides.
+- [Frontend Documentation (`frontend/README.md`)](frontend/README.md) — React 18 architecture, workspace routing, Tailwind tokens, and Vitest suite.
+- [CLI Reference (`cli/README.md`)](cli/README.md) — Command-line syntax, arguments, decoding commands, and interactive TUI guide.
+- [Specifications & Specs (`docs/README.md`)](docs/README.md) — Technical specifications, ADRs, threat models, and lab VM setup instructions.
+- [Scripts & Quality Gates (`scripts/README.md`)](scripts/README.md) — Screenshot capture tools, CI egress gates, and verification scripts.
 
 ---
 
@@ -265,4 +265,4 @@ python scripts/gate_backend_egress.py
 
 ## License
 
-OutPost is licensed under the Apache License, Version 2.0. See [`LICENSE`](file:///home/kripy/.gemini/antigravity/worktrees/OutPost/inspect_project_state/LICENSE) for details.
+OutPost is licensed under the Apache License, Version 2.0. See [`LICENSE`](LICENSE) for details.
