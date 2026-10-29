@@ -19,10 +19,14 @@ interface Item {
 }
 
 const NAV_ITEMS: Item[] = [
-  { kind: "nav", label: "Samples", hint: "Malware analysis vault & detonation history", icon: "box", to: "/samples" },
-  { kind: "nav", label: "Detection Rules", hint: "YARA, behavior & capability rules", icon: "shield", to: "/rules" },
-  { kind: "nav", label: "Settings", hint: "Air-gap, webhooks & preferences", icon: "sliders", to: "/settings" },
-  { kind: "nav", label: "Developer Test Harness", hint: "QA attack emulation scenarios (non-product)", icon: "terminal", to: "/monitor" },
+  { kind: "nav", label: "Malware Vault", hint: "Malware analysis vault & static triage", icon: "box", to: "/samples" },
+  { kind: "nav", label: "Simulation Lab", hint: "Dynamic execution sandbox & behavioral cockpit", icon: "play", to: "/monitor" },
+  { kind: "nav", label: "Detonation Runs", hint: "Analysis session history & process trees", icon: "clock", to: "/analysis" },
+  { kind: "nav", label: "Telemetry Stream", hint: "Raw security event lake & network sockets", icon: "activity", to: "/events" },
+  { kind: "nav", label: "Detection Rules", hint: "Sigma, YARA & capability rules engine", icon: "sliders", to: "/rules" },
+  { kind: "nav", label: "ATT&CK Coverage", hint: "MITRE ATT&CK technique coverage matrix", icon: "target", to: "/coverage" },
+  { kind: "nav", label: "Threat Watchlist", hint: "Live extracted C2 endpoints & IOCs", icon: "star", to: "/watchlist" },
+  { kind: "nav", label: "Settings & Air-Gap", hint: "Air-gap verification, keys, retention & audit", icon: "sliders", to: "/settings" },
 ];
 
 export default function CommandPalette({ onClose }: { onClose: () => void }) {

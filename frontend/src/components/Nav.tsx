@@ -18,7 +18,7 @@ import {
 } from "react";
 import { NavLink } from "react-router-dom";
 import CommandPalette from "./CommandPalette";
-import { getAgents, getAlertQueue, getHealth, getMeta, getRecentAlerts, getRuns, listInvestigations } from "../lib/api";
+import { getHealth, getMeta, getRecentAlerts, getRuns, getSamples, watchlistList } from "../lib/api";
 import { useEventStream } from "../lib/useEventStream";
 import { Icon, IconMenu, type IconName } from "./Icon";
 
@@ -115,77 +115,75 @@ export interface NavItem {
 }
 
 function getNavigationGroups(
-  openAlerts = 0,
-  activeCases = 0,
-  onlineAgents = 0,
+  sampleCount = 0,
+  runsCount = 0,
+  watchlistCount = 0,
 ): { label: string; links: NavItem[] }[] {
   return [
     {
-      label: "Live Operations",
+      label: "Malware Workbench",
       links: [
-        { to: "/", label: "Overview", iconName: "grid", end: true },
-        { to: "/events", label: "Security Telemetry", iconName: "activity" },
         {
-          to: "/findings",
-          label: "Incident Findings",
-          iconName: "alert",
-          badge: openAlerts > 0 ? openAlerts : null,
-          badgeTone: "malicious",
-        },
-        {
-          to: "/investigations",
-          label: "Incident Cases",
-          iconName: "shield",
-          badge: activeCases > 0 ? activeCases : null,
+          to: "/samples",
+          label: "Malware Vault",
+          iconName: "box",
+          badge: sampleCount > 0 ? sampleCount : null,
           badgeTone: "accent",
         },
-      ],
-    },
-    {
-      label: "Endpoint Fleet",
-      links: [
         {
-          to: "/agents",
-          label: "EDR Fleet & Hosts",
-          iconName: "shield",
-          badge: onlineAgents > 0 ? `${onlineAgents} on` : null,
+          to: "/monitor",
+          label: "Simulation Lab",
+          iconName: "play",
+        },
+        {
+          to: "/analysis",
+          label: "Detonation Runs",
+          iconName: "clock",
+          badge: runsCount > 0 ? runsCount : null,
           badgeTone: "clean",
         },
+      ],
+    },
+    {
+      label: "Detection & Telemetry",
+      links: [
         {
-          to: "/tasks",
-          label: "Host Process Forensics",
-          iconName: "process",
+          to: "/events",
+          label: "Telemetry Stream",
+          iconName: "activity",
+        },
+        {
+          to: "/rules",
+          label: "Detection Rules",
+          iconName: "sliders",
+        },
+        {
+          to: "/coverage",
+          label: "ATT&CK Coverage",
+          iconName: "target",
+        },
+        {
+          to: "/watchlist",
+          label: "Threat Watchlist",
+          iconName: "star",
+          badge: watchlistCount > 0 ? watchlistCount : null,
+          badgeTone: "malicious",
         },
       ],
     },
     {
-      label: "Threat Intelligence",
+      label: "System",
       links: [
-        { to: "/campaigns", label: "Threat Campaigns", iconName: "flag" },
-        { to: "/watchlist", label: "Threat Watchlist", iconName: "star" },
-        { to: "/footprint", label: "Digital Footprint", iconName: "globe" },
-      ],
-    },
-    {
-      label: "Malware Analysis & Lab",
-      links: [
-        { to: "/samples", label: "Malware Analysis Vault", iconName: "box" },
-        { to: "/monitor", label: "Simulation Lab", iconName: "play" },
-        { to: "/history", label: "Detonation Runs", iconName: "clock" },
-      ],
-    },
-    {
-      label: "Detection Engineering",
-      links: [
-        { to: "/rules", label: "Detection Rules", iconName: "sliders" },
-        { to: "/coverage", label: "ATT&CK Coverage", iconName: "target" },
-      ],
-    },
-    {
-      label: "Administration",
-      links: [
-        { to: "/audit", label: "Security Audit", iconName: "list" },
-        { to: "/settings", label: "Settings & Air-Gap", iconName: "sliders" },
+        {
+          to: "/search",
+          label: "Forensic Search",
+          iconName: "search",
+        },
+        {
+          to: "/settings",
+          label: "Settings & Air-Gap",
+          iconName: "sliders",
+        },
       ],
     },
   ];
@@ -466,32 +464,30 @@ export default function Nav() {
 
   const customTitle = useCustomTitle();
 
-  const alertQueue = useQuery({
-    queryKey: ["alert-queue", "nav"],
-    queryFn: () => getAlertQueue({ status: "open", limit: 1 }),
-    refetchInterval: 15_000,
-  });
-  const openAlerts = alertQueue.data?.open ?? alertQueue.data?.total ?? 0;
-
-  const investigations = useQuery({
-    queryKey: ["investigations", "nav"],
-    queryFn: () => listInvestigations(),
-    refetchInterval: 20_000,
-  });
-  const activeCases = investigations.data?.investigations
-    ? investigations.data.investigations.filter((inv) => inv.status !== "closed").length
-    : (investigations.data?.total ?? 0);
-
-  const fleet = useQuery({
-    queryKey: ["fleet-agents", "nav"],
-    queryFn: () => getAgents(),
+  const samplesQuery = useQuery({
+    queryKey: ["samples-count", "nav"],
+    queryFn: () => getSamples({ limit: 1 }),
     refetchInterval: 30_000,
   });
-  const onlineAgents = fleet.data?.online ?? fleet.data?.agents?.filter((a) => Boolean(a.online)).length ?? 0;
+  const sampleCount = samplesQuery.data?.total ?? samplesQuery.data?.samples?.length ?? 0;
+
+  const runsQuery = useQuery({
+    queryKey: ["runs-count", "nav"],
+    queryFn: () => getRuns(),
+    refetchInterval: 20_000,
+  });
+  const runsCount = runsQuery.data?.length ?? 0;
+
+  const watchlistQuery = useQuery({
+    queryKey: ["watchlist-count", "nav"],
+    queryFn: () => watchlistList(),
+    refetchInterval: 30_000,
+  });
+  const watchlistCount = Array.isArray(watchlistQuery.data) ? watchlistQuery.data.length : 0;
 
   const groups = useMemo(
-    () => getNavigationGroups(openAlerts, activeCases, onlineAgents),
-    [openAlerts, activeCases, onlineAgents],
+    () => getNavigationGroups(sampleCount, runsCount, watchlistCount),
+    [sampleCount, runsCount, watchlistCount],
   );
 
   return (
@@ -508,7 +504,7 @@ export default function Nav() {
             {!railCollapsed && (
               <div className="flex flex-col">
                 <span className="text-[14px] font-bold tracking-tight text-text-primary">{customTitle}</span>
-                <span className="text-[10px] font-medium text-text-muted">SOC Operations</span>
+                <span className="text-[10px] font-medium text-text-muted">Malware Workbench</span>
               </div>
             )}
           </div>

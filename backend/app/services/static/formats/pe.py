@@ -16,7 +16,12 @@ import hashlib
 import math
 from typing import Any
 
-import pefile
+try:
+    import pefile
+    _PEFILE_AVAILABLE = True
+except ImportError:
+    pefile = None
+    _PEFILE_AVAILABLE = False
 
 from ..provenance import create_finding, create_provenance
 
@@ -95,6 +100,17 @@ def parse_deep_pe(data: bytes) -> dict[str, Any]:
 
     if not is_pe(data):
         return {"is_pe": False, "could_not_analyze": ["Not a valid PE binary"]}
+
+    if not _PEFILE_AVAILABLE or pefile is None:
+        return {
+            "is_pe": True,
+            "could_not_analyze": ["pefile is not installed; deep PE parsing disabled"],
+            "findings": findings,
+            "indicators": indicators,
+            "capabilities": capabilities,
+            "structural_anomalies": structural_anomalies,
+            "benign_signals": benign_signals,
+        }
 
     try:
         pe = pefile.PE(data=data, fast_load=False)
