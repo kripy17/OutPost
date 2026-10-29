@@ -61,6 +61,7 @@ BACKEND_SHELL_SANCTIONED = {
     "services/host_forensics.py",
     "services/static_analysis.py",
     "services/static/worker.py",
+    "services/static/formats/archive.py",
     "api/routes_samples.py",
     "services/dynamic_sandbox.py",
 }

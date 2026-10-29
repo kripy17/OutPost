@@ -77,11 +77,21 @@ def build_json_report(run_id: str) -> dict:
                     "checked_at": cached["checked_at"] if cached else None,
                 }
             )
+
+        from ..services import process_tree as pt_service
+        proc_events = [e for e in events if e.get("event_type") == "process_create"]
+        raw_tree = pt_service.build_process_tree(proc_events)
+        tree_dump = [
+            n.model_dump(mode="json") if hasattr(n, "model_dump") else n
+            for n in raw_tree
+        ]
+
     return {
         "run": summary.model_dump(mode="json"),
         "events": events,
         "alerts": alerts,
         "campaigns": campaigns,
+        "process_tree": tree_dump,
         "network_connections": network_connections,
         "effective_tuning": effective_tuning,
         "suppressed_alerts": suppressed_alerts,

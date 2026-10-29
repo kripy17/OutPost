@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, copyFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import puppeteer from "../frontend/node_modules/puppeteer-core/lib/esm/puppeteer/puppeteer-core.js";
+import puppeteer from "puppeteer-core";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -23,12 +23,20 @@ await new Promise((res, rej) => {
   seedProc.on("exit", (code) => (code === 0 ? res() : rej(new Error(`Seed failed with ${code}`))));
 });
 
-console.log(`[*] Launching backend on port ${BACKEND_PORT}...`);
-const backendProc = spawn(
-  resolve(root, ".venv/bin/python"),
-  ["-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", String(BACKEND_PORT), "--log-level", "error"],
-  { cwd: resolve(root, "backend"), stdio: "inherit" }
-);
+let backendProc = null;
+try {
+  const check = await fetch(`http://127.0.0.1:${BACKEND_PORT}/health`);
+  if (check.ok) {
+    console.log(`[*] Backend already active on port ${BACKEND_PORT}. Reusing active service.`);
+  }
+} catch {
+  console.log(`[*] Launching backend on port ${BACKEND_PORT}...`);
+  backendProc = spawn(
+    resolve(root, ".venv/bin/python"),
+    ["-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", String(BACKEND_PORT), "--log-level", "error"],
+    { cwd: resolve(root, "backend"), stdio: "inherit" }
+  );
+}
 
 console.log(`[*] Launching frontend preview on port ${FRONTEND_PORT}...`);
 const frontendProc = spawn(
@@ -38,7 +46,9 @@ const frontendProc = spawn(
 );
 
 const cleanup = () => {
-  try { backendProc.kill(); } catch {}
+  if (backendProc) {
+    try { backendProc.kill(); } catch {}
+  }
   try { frontendProc.kill(); } catch {}
 };
 process.on("exit", cleanup);
@@ -82,7 +92,7 @@ try {
     { name: "07_rules_studio.png", url: `http://127.0.0.1:${FRONTEND_PORT}/rules`, waitSelector: "table, pre, code, .font-mono" },
     { name: "08_mitre_coverage.png", url: `http://127.0.0.1:${FRONTEND_PORT}/coverage`, waitSelector: ".grid, table" },
     { name: "09_threat_watchlist.png", url: `http://127.0.0.1:${FRONTEND_PORT}/watchlist`, waitSelector: "table, [data-testid]" },
-    { name: "10_ioc_search.png", url: `http://127.0.0.1:${FRONTEND_PORT}/search?q=remcos`, waitSelector: "input, table, [data-testid]" },
+    { name: "10_ioc_search.png", url: `http://127.0.0.1:${FRONTEND_PORT}/search?mode=global&q=RAT`, waitSelector: "input, table, [data-testid], a" },
     { name: "11_settings_airgap.png", url: `http://127.0.0.1:${FRONTEND_PORT}/settings`, waitSelector: "form, input, button" },
   ];
 
@@ -99,6 +109,11 @@ try {
 
     const dest = resolve(outDir, t.name);
     await page.screenshot({ path: dest, fullPage: false });
+    const artifactDir = "/home/kripy/.gemini/antigravity/brain/e36d59a0-8b3c-428a-bc79-acbabd56891b/screenshots";
+    try {
+      mkdirSync(artifactDir, { recursive: true });
+      copyFileSync(dest, resolve(artifactDir, t.name));
+    } catch {}
     console.log(`[✓] Done (${dest})`);
   }
 

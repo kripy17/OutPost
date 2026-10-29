@@ -44,7 +44,7 @@ cd OutPost
 ./start.sh --demo
 ```
 
-Once running, navigate to **`http://localhost:5173`** in your browser. The REST API and OpenAPI documentation are available at **`http://localhost:8000/docs`**.
+Once running, navigate to **`http://localhost:5174`** in your browser. The REST API and OpenAPI documentation are available at **`http://localhost:8001/docs`**.
 
 To launch without seeding demo data:
 ```bash
@@ -75,15 +75,14 @@ pip install -r backend/requirements.txt
 python -m app.seed_demo
 
 # Start FastAPI backend
-python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload
 ```
 
 #### 2. Frontend Setup
 ```bash
 cd frontend
 npm install
-npm run build
-npm run preview -- --host 127.0.0.1 --port 5173
+npm run dev -- --port 5174
 ```
 </details>
 
@@ -204,7 +203,7 @@ The `outpost` CLI provides analysts with full terminal control over static analy
  │                                                                                        │
  │  ┌─────────────────────┐       ┌──────────────────────┐       ┌─────────────────────┐  │
  │  │   Analyst Browser   │ <───> │ React 18 / Vite SPA  │ <───> │  FastAPI REST API   │  │
- │  │ (Forensic Dark UI)  │       │ (Port 5173 / dist)   │       │     (Port 8000)     │  │
+ │  │ (Forensic Dark UI)  │       │ (Port 5174 / dist)   │       │     (Port 8001)     │  │
  │  └─────────────────────┘       └──────────────────────┘       └──────────┬──────────┘  │
  │                                                                          │             │
  │                                                  ┌───────────────────────┴──────────┐  │
