@@ -3,12 +3,18 @@
 from typing import Any
 
 from .agent_tesla import AgentTeslaDecoder
+from .asyncrat import AsyncRATDecoder
 from .base import FamilyConfigDecoder
 from .cobalt_strike import CobaltStrikeDecoder
+from .redline import RedLineDecoder
+from .remcos import RemcosDecoder
 
 _REGISTERED_DECODERS: list[FamilyConfigDecoder] = [
     AgentTeslaDecoder(),
     CobaltStrikeDecoder(),
+    RemcosDecoder(),
+    AsyncRATDecoder(),
+    RedLineDecoder(),
 ]
 
 

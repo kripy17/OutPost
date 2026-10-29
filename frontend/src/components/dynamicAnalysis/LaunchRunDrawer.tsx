@@ -17,6 +17,7 @@ interface LaunchRunDrawerProps {
   samples: SampleRow[];
   drivers?: Array<{ id: string; name: string; available: boolean; description: string; type: string }>;
   error: string | null;
+  devProbeOnly?: boolean;
 }
 
 const BACKENDS: Array<{
@@ -49,6 +50,7 @@ export function LaunchRunDrawer({
   samples,
   drivers = [],
   error,
+  devProbeOnly = false,
 }: LaunchRunDrawerProps) {
   const [backend, setBackend] = useState<AnalysisBackend>("static");
   const [sampleId, setSampleId] = useState("");
@@ -295,6 +297,13 @@ export function LaunchRunDrawer({
                   />
                 </div>
               </div>
+            </div>
+          )}
+
+          {devProbeOnly && backend === "isolated-outpost" && (
+            <div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 text-xs text-amber-300">
+              <Icon name="alert" size={14} className="shrink-0" />
+              <span>Not running inside a VM: sample analysis disabled; only built-in probes can run</span>
             </div>
           )}
 

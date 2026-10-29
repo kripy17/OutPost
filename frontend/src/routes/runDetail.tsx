@@ -490,7 +490,20 @@ export default function RunDetailPage() {
     );
   }
 
-  const { run, process_tree, network_connections, alerts, kill_chain, sample_reputation, effective_tuning = {}, suppressed_alerts = {} } = data;
+  const {
+    run,
+    process_tree,
+    network_connections,
+    alerts,
+    kill_chain,
+    sample_reputation,
+    effective_tuning = {},
+    suppressed_alerts = {},
+    file_events = [],
+    network_attempts = [],
+    run_notes = [],
+    sandbox_stats,
+  } = data;
   const inProgress = run.completed_at === null;
   const chain = killChainStats(alerts);
   const campaign = campaigns.find((c) => c.runs.some((r) => r.run_id === runId));
@@ -659,6 +672,18 @@ export default function RunDetailPage() {
         )}
       </div>
 
+      {run_notes && run_notes.length > 0 && (
+        <div className="mb-6 rounded-lg border border-accent/40 bg-accent/5 p-3.5 font-mono text-xs">
+          <div className="flex items-center gap-2 font-bold text-accent mb-1 text-[11px] uppercase tracking-wider">
+            <span className="h-2 w-2 rounded-full bg-accent" />
+            <span>Dynamic Sandbox Isolation Telemetry</span>
+          </div>
+          {run_notes.map((note, idx) => (
+            <p key={idx} className="text-text-muted mt-0.5">{note}</p>
+          ))}
+        </div>
+      )}
+
       <div className="mb-6 space-y-6">
         <AlertRate alerts={alerts} />
         <PlantStrip
@@ -692,6 +717,7 @@ export default function RunDetailPage() {
           onStatus={onAlertStatus}
           onBulkStatus={onBulkAlertStatus}
           onFalsePositive={onMarkFalsePositive}
+          isSandbox={Boolean(sandbox_stats || (run_notes && run_notes.length > 0) || run.source === "sandbox_dynamic" || run.source === "isolated-outpost")}
         />
       </div>
 
@@ -815,6 +841,82 @@ export default function RunDetailPage() {
         <Panel kicker="Protocol Intelligence" title="Network Conversation Flows & C2 Beaconing">
           <NetworkProtocolInspector runId={runId} />
         </Panel>
+
+        {file_events && file_events.length > 0 && (
+          <Panel kicker="File System · Traced" title={`Observed File Changes (${file_events.length})`}>
+            <div className="overflow-x-auto rounded-xl border border-border-subtle bg-bg-surface font-mono text-xs">
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="border-b border-border-subtle bg-bg-elevated/40 text-[10px] uppercase text-text-faint">
+                    <th className="py-2.5 px-3">#</th>
+                    <th className="py-2.5 px-3">Time</th>
+                    <th className="py-2.5 px-3">Action</th>
+                    <th className="py-2.5 px-3">Path / Target</th>
+                    <th className="py-2.5 px-3">Details</th>
+                    <th className="py-2.5 px-3">Source</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border-subtle/40">
+                  {file_events.map((fe, fidx) => (
+                    <tr key={fidx} className="hover:bg-bg-elevated/20">
+                      <td className="py-2 px-3 text-text-faint">{fe.seq ?? fidx + 1}</td>
+                      <td className="py-2 px-3 text-text-faint">{(fe.timestamp || "").slice(11, 19)}</td>
+                      <td className="py-2 px-3 font-semibold text-text-primary uppercase text-[11px]">{fe.action}</td>
+                      <td className="py-2 px-3 text-accent font-semibold">{fe.target_path || "-"}</td>
+                      <td className="py-2 px-3 text-text-muted text-[11px]">
+                        {typeof fe.details === "object" ? JSON.stringify(fe.details) : String(fe.details)}
+                      </td>
+                      <td className="py-2 px-3">
+                        <span className="rounded bg-accent/15 px-2 py-0.5 text-[10px] font-bold text-accent uppercase">
+                          {fe.source || "traced"}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Panel>
+        )}
+
+        {network_attempts && network_attempts.length > 0 && (
+          <Panel kicker="Network Egress &amp; Sockets · Traced" title={`Network & DNS Attempts (${network_attempts.length})`}>
+            <div className="overflow-x-auto rounded-xl border border-border-subtle bg-bg-surface font-mono text-xs">
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="border-b border-border-subtle bg-bg-elevated/40 text-[10px] uppercase text-text-faint">
+                    <th className="py-2.5 px-3">#</th>
+                    <th className="py-2.5 px-3">Time</th>
+                    <th className="py-2.5 px-3">Type</th>
+                    <th className="py-2.5 px-3">Destination / Query</th>
+                    <th className="py-2.5 px-3">Result / Status</th>
+                    <th className="py-2.5 px-3">Source</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border-subtle/40">
+                  {network_attempts.map((na, nidx) => (
+                    <tr key={nidx} className="hover:bg-bg-elevated/20">
+                      <td className="py-2 px-3 text-text-faint">{na.seq ?? nidx + 1}</td>
+                      <td className="py-2 px-3 text-text-faint">{(na.timestamp || "").slice(11, 19)}</td>
+                      <td className="py-2 px-3 font-bold text-text-primary uppercase text-[11px]">{na.type}</td>
+                      <td className="py-2 px-3 text-accent font-semibold">{na.destination || "-"}</td>
+                      <td className="py-2 px-3">
+                        <span className={`font-semibold ${na.result?.toLowerCase().includes("fail") || na.result?.toLowerCase().includes("err") ? "text-rose-400" : "text-emerald-400"}`}>
+                          {na.result || na.status}
+                        </span>
+                      </td>
+                      <td className="py-2 px-3">
+                        <span className="rounded bg-accent/15 px-2 py-0.5 text-[10px] font-bold text-accent uppercase">
+                          {na.source || "traced"}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Panel>
+        )}
 
         {runArtifacts.length > 0 && (
           <Panel kicker="Forensics · Sandbox" title={`Captured Sandbox Artifacts (${runArtifacts.length})`}>

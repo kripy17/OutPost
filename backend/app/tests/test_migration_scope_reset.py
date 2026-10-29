@@ -197,9 +197,9 @@ def test_upgrade_from_pre_scope_reset_database():
         assert "scope_reset_remove_soc_tables" in applied_names
         assert "runs_origin" in applied_names
 
-        # 5. Verify schema version reports migration 34
+        # 5. Verify schema version reports latest migration (literal 35)
         v_info = get_schema_version(conn)
-        assert v_info["current_version"] == 34
+        assert v_info["current_version"] == 35
 
         # 6. Verify automated pre-migration backup was created for destructive migration
         backups = list(Path(db_path).parent.glob(f"{Path(db_path).name}.backup-*"))
@@ -279,3 +279,54 @@ def test_destructive_migrations_drop_table_registered():
             assert ver in DESTRUCTIVE_MIGRATIONS, (
                 f"Migration {ver} ({name}) drops tables destructively but is not in DESTRUCTIVE_MIGRATIONS"
             )
+
+
+def test_migrations_yield_same_tables_as_fresh_schema():
+    """Verify that a database initialized via SCHEMA and upgraded through all migrations (1..35)
+    produces the exact same tables, columns, and types as fresh SCHEMA.
+    """
+    from ..core.db import SCHEMA
+
+    conn_fresh = sqlite3.connect(":memory:")
+    conn_fresh.row_factory = sqlite3.Row
+    conn_fresh.executescript(SCHEMA)
+
+    conn_migrated = sqlite3.connect(":memory:")
+    conn_migrated.row_factory = sqlite3.Row
+    conn_migrated.executescript(SCHEMA)
+    apply_migrations(conn_migrated)
+
+    def extract_table_cols(conn: sqlite3.Connection) -> dict[str, list]:
+        tables = [
+            r[0]
+            for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name != 'schema_migrations'"
+            ).fetchall()
+        ]
+        res = {}
+        for t in tables:
+            cols = conn.execute(f"PRAGMA table_info({t})").fetchall()
+            # Order independent: sort by column name
+            res[t] = sorted(
+                [(c["name"], c["type"], c["notnull"], c["dflt_value"], c["pk"]) for c in cols],
+                key=lambda x: x[0],
+            )
+        return res
+
+    cols_fresh = extract_table_cols(conn_fresh)
+    cols_migrated = extract_table_cols(conn_migrated)
+
+    assert set(cols_fresh.keys()) == set(cols_migrated.keys()), (
+        f"Table mismatch: {set(cols_fresh.keys()) ^ set(cols_migrated.keys())}"
+    )
+
+    for t in cols_fresh:
+        assert cols_fresh[t] == cols_migrated[t], (
+            f"Column definition mismatch on table {t}:\nFresh: {cols_fresh[t]}\nMigrated: {cols_migrated[t]}"
+        )
+
+    # Also assert that migration version is 35
+    v_info = get_schema_version(conn_migrated)
+    assert v_info["current_version"] == 35
+    assert v_info["target_version"] == 35
+    assert v_info["total_applied"] == 35

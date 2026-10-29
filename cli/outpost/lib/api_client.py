@@ -755,6 +755,11 @@ def detonate_sample(sample_id: str, timeout: int = 15) -> dict:
     return _post(f"/samples/{quote(sample_id)}/detonate?timeout={timeout}", {})
 
 
+def get_sandbox_environment() -> dict:
+    """Retrieve sandbox hypervisor status and dev-probe mode configuration."""
+    return _get("/sandbox/environment")
+
+
 def transpile_sigma(sigma_yaml: str) -> dict:
     """Transpile a Sigma YAML detection rule into OutPost rule format."""
     return _post("/rules/sigma/transpile", {"sigma_yaml": sigma_yaml})

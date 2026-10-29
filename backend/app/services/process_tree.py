@@ -87,6 +87,7 @@ def build_process_tree(events: list[dict]) -> list[ProcessNode]:
                 host_id=host_id,
                 boot_id=boot_id,
                 process_start_time=start_time or None,
+                source=ev.get("source"),
             )
             nodes[key] = node
             hbp_key = (host_id, boot_id, pid)

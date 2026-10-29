@@ -20,7 +20,14 @@ from .formats.pe import is_pe, parse_deep_pe
 from .formats.script import analyze_script, is_script
 from .indicators import extract_embedded_indicators
 from .provenance import create_finding, create_provenance
+from .strings import (
+    categorize_string,
+    categorize_strings,
+    extract_strings,
+    extract_strings_detailed,
+)
 from .verdict import assess_static_evidence
+from .yara_scanner import scan_payload_yara
 
 _SUSPICIOUS_CAPABILITY_PATTERNS = [
     (
@@ -92,6 +99,27 @@ def calculate_entropy(data: bytes) -> float:
     return round(ent, 3)
 
 
+def compute_tlsh(data: bytes) -> str:
+    """Compute TLSH fuzzy hash string.
+
+    Returns TLSH hex digest string, or descriptive status if unavailable / insufficient length.
+    """
+    try:
+        import tlsh
+        if not hasattr(tlsh, "hash") or not callable(tlsh.hash):
+            return "TLSH unavailable (py-tlsh not installed)"
+        if len(data) < 50:
+            return "TNULL (insufficient length < 50 bytes)"
+        res = tlsh.hash(data)
+        if not res or res == "TNULL":
+            return "TNULL (insufficient variance/entropy)"
+        return res
+    except ImportError:
+        return "TLSH unavailable (py-tlsh not installed)"
+    except Exception as exc:
+        return f"TLSH computation error: {exc}"
+
+
 def calculate_entropy_histogram(data: bytes, bins: int = 32) -> list[dict[str, Any]]:
     """Compute local Shannon entropy chunks across the sample."""
     if not data or bins <= 0:
@@ -109,79 +137,6 @@ def calculate_entropy_histogram(data: bytes, bins: int = 32) -> list[dict[str, A
             "size": len(chunk),
         })
     return hist
-
-
-def extract_strings(data: bytes, max_strings: int = 300) -> list[str]:
-    """Extract printable ASCII and UTF-16LE strings (deduped, capped)."""
-    out: list[str] = []
-    seen: set[str] = set()
-
-    # ASCII runs
-    cur = bytearray()
-    for b in data:
-        if 0x20 <= b <= 0x7E:
-            cur.append(b)
-        else:
-            if len(cur) >= 5:
-                s = bytes(cur[:256]).decode("ascii", errors="replace").replace("\x00", "").strip()
-                if s and s not in seen:
-                    seen.add(s)
-                    out.append(s)
-            cur.clear()
-    if len(cur) >= 5:
-        s = bytes(cur[:256]).decode("ascii", errors="replace").replace("\x00", "").strip()
-        if s and s not in seen:
-            seen.add(s)
-            out.append(s)
-
-    # UTF-16LE runs
-    i = 0
-    n = len(data)
-    cur.clear()
-    while i + 1 < n and len(out) < max_strings:
-        lo, hi = data[i], data[i + 1]
-        if hi == 0x00 and 0x20 <= lo <= 0x7E:
-            cur.append(lo)
-            i += 2
-        else:
-            if len(cur) >= 5:
-                s = bytes(cur[:256]).decode("ascii", errors="replace").replace("\x00", "").strip()
-                if s and s not in seen:
-                    seen.add(s)
-                    out.append(s)
-            cur.clear()
-            i += 1
-    if len(cur) >= 5:
-        s = bytes(cur[:256]).decode("ascii", errors="replace").replace("\x00", "").strip()
-        if s and s not in seen:
-            seen.add(s)
-            out.append(s)
-
-    return out[:max_strings]
-
-
-def categorize_strings(strings: list[str]) -> dict[str, list[str]]:
-    """Categorize printable strings into analyst intelligence buckets."""
-    buckets: dict[str, list[str]] = {
-        "network": [],
-        "file_paths": [],
-        "commands": [],
-        "registry": [],
-        "security_apis": [],
-    }
-    for s in strings:
-        lower = s.lower()
-        if any(ext in lower for ext in (".com", ".net", ".org", "http://", "https://", "tcp://")):
-            buckets["network"].append(s)
-        elif any(p in lower for p in ("/etc/", "/tmp/", "/var/", "c:\\", "%temp%", "%appdata%")):
-            buckets["file_paths"].append(s)
-        elif any(c in lower for c in ("powershell", "cmd.exe", "whoami", "curl", "wget", "chmod", "iptables", "netstat")):
-            buckets["commands"].append(s)
-        elif any(r in s for r in ("HKLM\\", "HKCU\\", "CurrentVersion\\Run")):
-            buckets["registry"].append(s)
-        elif any(a in s for a in ("VirtualAlloc", "CreateThread", "WriteProcessMemory", "ptrace", "memfd_create")):
-            buckets["security_apis"].append(s)
-    return buckets
 
 
 def generate_hex_preview(data: bytes, max_bytes: int = 512) -> list[dict[str, str]]:
@@ -229,7 +184,8 @@ def run_complete_static_pipeline(
     benign_evidence: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Execute complete static analysis pipeline over binary/document/script payload."""
-    strings = extract_strings(data)
+    strings_detailed, strings_truncation = extract_strings_detailed(data)
+    strings = [d["string"] for d in strings_detailed]
     categorized = categorize_strings(strings)
     entropy = calculate_entropy(data)
     entropy_hist = calculate_entropy_histogram(data, bins=32)
@@ -240,6 +196,12 @@ def run_complete_static_pipeline(
     structural_anomalies: list[dict[str, Any]] = []
     benign_signals: list[dict[str, Any]] = []
     could_not_analyze: list[str] = []
+    embedded_indicators: list[dict[str, Any]] = []
+
+    if strings_truncation.get("total_file_bytes", 0) > strings_truncation.get("scan_bytes_processed", 0):
+        proc_mb = strings_truncation["scan_bytes_processed"] // (1024 * 1024)
+        tot_mb = strings_truncation["total_file_bytes"] // (1024 * 1024)
+        could_not_analyze.append(f"strings: scanned first {proc_mb} MB of {tot_mb} MB")
 
     if benign_evidence:
         benign_signals.extend(benign_evidence)
@@ -266,6 +228,8 @@ def run_complete_static_pipeline(
         structural_anomalies.extend(pe_info.get("structural_anomalies", []))
         benign_signals.extend(pe_info.get("benign_signals", []))
         could_not_analyze.extend(pe_info.get("could_not_analyze", []))
+        if pe_info.get("indicators"):
+            embedded_indicators.extend(pe_info["indicators"])
 
     elif is_elf(data):
         format_type = "elf"
@@ -302,7 +266,10 @@ def run_complete_static_pipeline(
         archive_info = analyze_archive(data)
         findings.extend(archive_info.get("findings", []))
         capabilities.extend(archive_info.get("capabilities", []))
+        structural_anomalies.extend(archive_info.get("structural_anomalies", []))
         could_not_analyze.extend(archive_info.get("could_not_analyze", []))
+        if archive_info.get("indicators"):
+            embedded_indicators.extend(archive_info["indicators"])
 
     elif is_script(data):
         format_type = "script"
@@ -316,41 +283,99 @@ def run_complete_static_pipeline(
         could_not_analyze.append("Unrecognized file format; deep structural parsing unavailable")
 
     # 2. Strict Embedded Indicators
-    embedded_indicators = extract_embedded_indicators(data, sections_for_indicators)
+    embedded_indicators.extend(extract_embedded_indicators(data, sections_for_indicators))
 
     # 3. Family Malware Configuration Decoders
     decoded_configs = run_family_decoders(data, {"format": format_type})
     for cfg in decoded_configs:
-        prov = create_provenance("parser_field", f"Config Decoder: {cfg.get('family')}", "parsed", "confirmed")
+        fam_name = cfg.get("family", "Unknown")
+        c2_val = cfg.get("c2_endpoint") or cfg.get("c2_server") or (cfg.get("c2_servers", [None])[0] if cfg.get("c2_servers") else None)
+        prov = create_provenance("parser_field", f"Config Decoder: {fam_name}", "parsed", "confirmed")
         findings.append(create_finding(
-            f"malware-config-{cfg.get('family', 'unknown').lower()}",
+            f"malware-config-{fam_name.lower()}",
             "ioc",
-            f"Decoded {cfg.get('family')} Malware Configuration",
-            f"Extracted verified C2 endpoint ({cfg.get('c2_endpoint')}) via {cfg.get('family')} config decoder.",
+            f"Decoded {fam_name} Malware Configuration",
+            f"Extracted verified C2 endpoint ({c2_val}) via {fam_name} config decoder.",
             prov,
             ["T1071", "T1027"],
         ))
-        if cfg.get("c2_endpoint"):
+        if c2_val:
             embedded_indicators.append({
                 "type": "c2_endpoint",
-                "value": str(cfg.get("c2_endpoint")),
+                "value": str(c2_val),
                 "classification": "malicious",
-                "location": f"Decoded {cfg.get('family')} Configuration",
+                "location": f"Decoded {fam_name} Configuration",
                 "location_rank": 1,
                 "provenance": prov,
             })
 
-    # 4. Capability detection from imports vs strings
+    # 4. YARA Signature Matching
+    yara_result = scan_payload_yara(data)
+    for ymatch in yara_result.get("matches", []):
+        r_name = ymatch["rule"]
+        r_meta = ymatch.get("meta", {})
+        r_ns = ymatch.get("namespace", "")
+        r_impact = r_meta.get("verdict_impact", "authoritative")
+        r_techs = [r_meta["mitre_technique"]] if "mitre_technique" in r_meta else []
+
+        first_off = ymatch["strings"][0]["offset"] if ymatch.get("strings") else 0
+        prov = create_provenance(
+            "pattern_offset",
+            f"Offset 0x{first_off:08X} (YARA namespace: {r_ns})",
+            "matched",
+            "confirmed",
+            rule_id=r_name,
+        )
+
+        if r_impact == "authoritative":
+            findings.append(create_finding(
+                f"yara-{r_name.lower()}",
+                "ioc",
+                f"YARA Match: {r_name}",
+                r_meta.get("description", f"Authoritative YARA rule '{r_name}' matched payload."),
+                prov,
+                r_techs,
+            ))
+            embedded_indicators.append({
+                "type": "yara_rule",
+                "value": r_name,
+                "classification": "malicious",
+                "location": f"YARA Namespace: {r_ns} (offset 0x{first_off:08X})",
+                "location_rank": 1,
+                "provenance": prov,
+            })
+        elif r_impact == "informational":
+            if "packer" in r_ns or "packer" in ymatch.get("tags", []):
+                has_existing_packer = bool((pe_info and pe_info.get("packer")) or (elf_info and elf_info.get("packer")))
+                if not has_existing_packer and not any("packer" in f.get("title", "").lower() for f in findings):
+                    could_not_analyze.append("packed_executable_code")
+                    could_not_analyze.append("obfuscated_imports")
+                    structural_anomalies.append({
+                        "title": f"Packer identified ({r_name})",
+                        "weight": 25,
+                        "reliability": "matched",
+                        "evidence": f"YARA rule '{r_name}' matched at offset 0x{first_off:08X}",
+                    })
+
+    # 5. Capability detection from imports vs strings
     # Check imports if available (PE or ELF)
-    resolved_imports = pe_info.get("imports", []) if pe_info else []
+    resolved_imports: list[str] = []
+    if pe_info:
+        resolved_imports.extend(pe_info.get("imports", []))
+    if elf_info:
+        resolved_imports.extend(elf_info.get("imported_symbols", []))
     all_symbols_text = " ".join(resolved_imports) if resolved_imports else ""
 
     _GENERIC_STRING_TOKENS = {"connect", "socket", "cron", "systemd", "/etc/init.d", "getaddrinfo", "chmod"}
     combined_text = " ".join(strings)
 
     for category, symbols in _SUSPICIOUS_CAPABILITY_PATTERNS:
-        # Check if symbol appears in authoritative import table (high reliability)
-        parsed_matches = [s for s in symbols if s.lower() in all_symbols_text.lower()]
+        # Check if symbol appears in authoritative import table (high reliability, excluding generic OS libc tokens)
+        parsed_matches = [
+            s for s in symbols
+            if s not in _GENERIC_STRING_TOKENS
+            and s.lower() in all_symbols_text.lower()
+        ]
         # Check if symbol appears in raw strings with whole-word boundary (excluding generic glibc tokens)
         heuristic_matches = [
             s for s in symbols
@@ -389,6 +414,7 @@ def run_complete_static_pipeline(
         structural_anomalies=structural_anomalies,
         benign_signals=benign_signals,
         could_not_analyze=could_not_analyze,
+        signature_info=pe_info.get("signature") if pe_info else None,
     )
 
     # Legacy IOCs mapping for backward compatibility with existing tests
@@ -400,9 +426,13 @@ def run_complete_static_pipeline(
         "emails": [i["value"] for i in embedded_indicators if i["type"] == "email"],
     }
 
+    tlsh_hash = compute_tlsh(data)
+
     return {
         "format": format_type,
         "strings": strings,
+        "strings_detailed": strings_detailed,
+        "strings_truncation": strings_truncation,
         "categorized_strings": categorized,
         "iocs": legacy_iocs,
         "embedded_indicators": embedded_indicators,
@@ -420,10 +450,13 @@ def run_complete_static_pipeline(
         "is_packed": is_packed,
         "capabilities": capabilities,
         "imphash": pe_info.get("imphash_canonical") if pe_info else None,
-        "fuzzy_hash": f"3:{hashlib.md5(data[:64]).hexdigest()}:{hashlib.md5(data[64:128]).hexdigest()}",
+        "tlsh": tlsh_hash,
+        "fuzzy_hash": tlsh_hash,
         "md5": hashlib.md5(data).hexdigest(),
         "sha1": hashlib.sha1(data).hexdigest(),
         "sha256": hashlib.sha256(data).hexdigest(),
         "hex_preview": hex_preview,
+        "yara": yara_result,
+        "yara_rules": yara_result.get("matched_rule_names", []),
         **assessment,
     }

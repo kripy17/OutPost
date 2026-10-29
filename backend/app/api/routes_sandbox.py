@@ -133,6 +133,13 @@ def get_sandbox_drivers() -> list[dict]:
     return dynamic_sandbox.get_available_isolation_drivers()
 
 
+@router.get("/sandbox/environment", response_model=None)
+def get_sandbox_environment() -> dict:
+    """Inspect hypervisor status, VM safety guard, and dev-probe mode status."""
+    from ..services import dynamic_sandbox
+    return dynamic_sandbox.get_sandbox_environment_status()
+
+
 @router.post("/sandbox/detonate/dynamic", response_model=None)
 async def detonate_dynamic(body: SandboxDetonateIn) -> dict:
     """Execute and trace a sample dynamically in an isolated subprocess environment."""

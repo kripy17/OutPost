@@ -32,6 +32,7 @@ def create_static_fidelity_block(
         "run_duration_ms": max(1, duration_ms),
         "evasion_countermeasures_applied": ["rlimit_constrained_execution", "timeout_bounding"],
         "is_emulated_or_best_effort": False,
+        "worker_sandboxed": bool(worker_sandboxed),
         "limitations": limitations,
     }
 

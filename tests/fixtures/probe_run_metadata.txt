@@ -1,0 +1,64 @@
+=== OutPost Ground-Truth Behavioral Probes - Trace Capture Metadata ===
+Date: 2026-10-27T07:44:00Z
+Host Kernel: Linux arcky 7.2.8-9-omarchy #1 SMP PREEMPT_DYNAMIC Sat, 17 Oct 2026 22:09:33 +0000 x86_64 GNU/Linux
+Virtualization: none (exit code 1, bare-metal workstation host)
+Strace Version: strace -- version 7.2
+Tcpdump Version: tcpdump version 4.99.7 (libpcap version 1.11.0)
+Bubblewrap Version: bubblewrap 0.13.1
+GCC Version: gcc (GCC) 16.2.1 20260810
+Kernel Yama Ptrace Scope: 1 (kernel.yama.ptrace_scope = 1)
+
+Path Sanitization Note:
+Host user home directory paths (e.g. /home/kripy/...) were rewritten to standard repository paths
+(/workspace/OutPost and /home/analyst) for repository privacy and cleanliness. All syscall sequences,
+event ordering, arguments, return values, and timestamps are otherwise unmodified.
+
+--- Captured Fixture Files ---
+1. tests/fixtures/c_probe_strace.log (1,094 lines)
+   Target Probe: tests/probes/c_probe/probe_elf
+   Target Probe SHA-256: 13fa7a774b13d4eb118eb8f0555676603e8deae1e130123dc23f842dd53825f6
+   Sanitized Log SHA-256: e787beaf684e5be693b536c0ba431199703b14354ddc3a727e38b4b3a6f12294
+   Command:
+     strace -f -ttt -yy --decode-pids=pidns -s 256 -o /supervisor/strace.log \
+       bwrap --ro-bind /usr /usr --ro-bind-try /lib /lib --ro-bind-try /lib64 /lib64 \
+             --ro-bind-try /bin /bin --ro-bind-try /sbin /sbin --clearenv \
+             --setenv PATH "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+             --setenv HOME "/tmp" --setenv TMPDIR "/tmp" --setenv LANG "C.UTF-8" --setenv LC_ALL "C.UTF-8" \
+             --setenv OUTPOST_SANDBOX "1" --setenv OUTPOST_RUN_ID "run_c_probe" \
+             --dir /tmp --bind /sandbox /sandbox --ro-bind /sandbox/probe_elf /sandbox/probe_elf \
+             --proc /proc --dev /dev --chdir /sandbox --unshare-pid --unshare-ipc --unshare-uts \
+             --unshare-cgroup --new-session --cap-drop ALL --unshare-net --die-with-parent \
+             /sandbox/probe_elf
+
+2. tests/fixtures/shell_probe_strace.log (2,841 lines)
+   Target Probe: tests/probes/shell_probe/probe.sh
+   Target Probe SHA-256: d68f3dd20583315f4c893504c2876b6cf21edf0a1c2cd53517f0c6afccb7852f
+   Sanitized Log SHA-256: 508c3a730d92a5c2296530b984e40fd60a05a4626a8a027de09bfbc5c17784cb
+   Command:
+     strace -f -ttt -yy --decode-pids=pidns -s 256 -o /supervisor/strace.log \
+       bwrap --ro-bind /usr /usr --ro-bind-try /lib /lib --ro-bind-try /lib64 /lib64 \
+             --ro-bind-try /bin /bin --ro-bind-try /sbin /sbin --clearenv \
+             --setenv PATH "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+             --setenv HOME "/tmp" --setenv TMPDIR "/tmp" --setenv LANG "C.UTF-8" --setenv LC_ALL "C.UTF-8" \
+             --setenv OUTPOST_SANDBOX "1" --setenv OUTPOST_RUN_ID "run_sh_probe" \
+             --dir /tmp --bind /sandbox /sandbox --ro-bind /sandbox/probe.sh /sandbox/probe.sh \
+             --proc /proc --dev /dev --chdir /sandbox --unshare-pid --unshare-ipc --unshare-uts \
+             --unshare-cgroup --new-session --cap-drop ALL --unshare-net --die-with-parent \
+             /bin/bash /sandbox/probe.sh
+
+3. tests/fixtures/python_probe_strace.log (3,061 lines)
+   Target Probe: tests/probes/python_probe/probe.py
+   Target Probe SHA-256: 3d3b947196339910dc004bab2ef6a6cdb74eb3fda4d6ed3d9bdd0d2c266223ff
+   Sanitized Log SHA-256: fc96fab78e037ff99280e00f8111921e4a6565c8ad8d0fd63f8b1258f88a91ae
+   Command:
+     strace -f -ttt -yy --decode-pids=pidns -s 256 -o /supervisor/strace.log \
+       bwrap --ro-bind /usr /usr --ro-bind-try /lib /lib --ro-bind-try /lib64 /lib64 \
+             --ro-bind-try /bin /bin --ro-bind-try /sbin /sbin \
+             --ro-bind-try /home/analyst/.../.venv /home/analyst/.../.venv --clearenv \
+             --setenv PATH "/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+             --setenv HOME "/tmp" --setenv TMPDIR "/tmp" --setenv LANG "C.UTF-8" --setenv LC_ALL "C.UTF-8" \
+             --setenv OUTPOST_SANDBOX "1" --setenv OUTPOST_RUN_ID "run_py_probe" \
+             --dir /tmp --bind /sandbox /sandbox --ro-bind /sandbox/probe.py /sandbox/probe.py \
+             --proc /proc --dev /dev --chdir /sandbox --unshare-pid --unshare-ipc --unshare-uts \
+             --unshare-cgroup --new-session --cap-drop ALL --unshare-net --die-with-parent \
+             /venv/bin/python3 /sandbox/probe.py

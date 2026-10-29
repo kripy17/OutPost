@@ -27,19 +27,30 @@ def _generate_synthetic_sample(sample_meta: dict[str, Any]) -> bytes:
     s_id = sample_meta["id"]
 
     if s_id == "benign-system-util-exe":
-        # Clean PE with standard GetModuleHandle, normal sections, benign entropy
+        # Clean PE with normal section, benign entropy
         pe_header = bytearray(b"MZ" + b"\x00" * 58 + b"\x80\x00\x00\x00" + b"\x00" * 64)
         pe_header.extend(b"PE\x00\x00")
-        # Machine=0x8664 (x86-64), num_sections=1, opt_size=240, chars=0x0002
-        pe_header.extend(b"\x64\x86\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\xf0\x00\x02\x00")
-        # Optional header: magic=0x020B (PE32+), entry=0x1000
-        pe_header.extend(b"\x0b\x02\x00\x00\x00\x00\x00\x00\x00\x10\x00\x00")
-        pe_header.extend(b"\x00" * 228)
-        # Section header (.text): virtual_size=0x1000, virtual_addr=0x1000, raw_size=0x200, raw_ptr=0x200, chars=0x60000020 (RX)
-        pe_header.extend(b".text\x00\x00\x00\x00\x10\x00\x00\x00\x10\x00\x00\x00\x02\x00\x00\x00\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x20\x00\x00\x60")
+        # COFF: Machine=0x8664 (x86-64), nsects=1, timestamp=0x67100000 (valid date), ptr_sym=0, nsyms=0, opt_size=240, chars=0x0002
+        pe_header.extend(b"\x64\x86\x01\x00\x00\x00\x10\x67\x00\x00\x00\x00\x00\x00\x00\x00\xf0\x00\x02\x00")
+        # Optional header: magic=0x020B (PE32+), entry at offset 16 = 0x1000, NumberOfRvaAndSizes=16
+        opt = bytearray(b"\x0b\x02" + b"\x00" * 14 + (0x1000).to_bytes(4, "little") + b"\x00" * (108 - 20))
+        opt.extend((16).to_bytes(4, "little") + b"\x00" * (240 - 112))
+        pe_header.extend(opt)
+        # Section header (.text, 40 bytes): virtual_size=0x1000, virtual_addr=0x1000, raw_size=0x200, raw_ptr=0x200, chars=0x60000020 (RX)
+        sec = (
+            b".text\x00\x00\x00" +
+            b"\x00\x10\x00\x00" +
+            b"\x00\x10\x00\x00" +
+            b"\x00\x02\x00\x00" +
+            b"\x00\x02\x00\x00" +
+            b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" +
+            b"\x20\x00\x00\x60"
+        )
+        pe_header.extend(sec)
         pe_header.extend(b"\x00" * (0x200 - len(pe_header)))
         # Text section data: benign string and return
-        pe_header.extend(b"\xc3" + b"OutPost Host Telemetry Core Service v1.0\x00" + b"\x90" * 450)
+        pe_header.extend(b"\xc3" + b"OutPost Host Telemetry Core Service v1.0\x00")
+        pe_header.extend(b"\x00" * (0x400 - len(pe_header)))
         return bytes(pe_header)
 
     elif s_id == "benign-admin-backup-sh":
@@ -82,16 +93,28 @@ def _generate_synthetic_sample(sample_meta: dict[str, Any]) -> bytes:
         # PE with CryptEncrypt, vssadmin delete shadows, VirtualAllocEx, RWX section
         pe = bytearray(b"MZ" + b"\x00" * 58 + b"\x80\x00\x00\x00" + b"\x00" * 64)
         pe.extend(b"PE\x00\x00")
-        pe.extend(b"\x64\x86\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\xf0\x00\x02\x00")
-        pe.extend(b"\x0b\x02\x00\x00\x00\x00\x00\x00\x00\x10\x00\x00")
-        pe.extend(b"\x00" * 228)
-        # Section header (.evil): RWX chars=0xE0000020
-        pe.extend(b".evil\x00\x00\x00\x10\x00\x00\x00\x10\x00\x00\x00\x02\x00\x00\x00\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x20\x00\x00\xe0")
+        # COFF: Machine=0x8664 (x86-64), nsects=1, timestamp=0x67100000, ptr_sym=0, nsyms=0, opt_size=240, chars=0x0002
+        pe.extend(b"\x64\x86\x01\x00\x00\x00\x10\x67\x00\x00\x00\x00\x00\x00\x00\x00\xf0\x00\x02\x00")
+        # Optional header: magic=0x020B (PE32+), entry at offset 16 = 0x1000, NumberOfRvaAndSizes=16
+        opt = bytearray(b"\x0b\x02" + b"\x00" * 14 + (0x1000).to_bytes(4, "little") + b"\x00" * (108 - 20))
+        opt.extend((16).to_bytes(4, "little") + b"\x00" * (240 - 112))
+        pe.extend(opt)
+        # Section header (.evil, 40 bytes): RWX chars=0xE0000020
+        sec_m = (
+            b".evil\x00\x00\x00" +
+            b"\x00\x10\x00\x00" +
+            b"\x00\x10\x00\x00" +
+            b"\x00\x02\x00\x00" +
+            b"\x00\x02\x00\x00" +
+            b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" +
+            b"\x20\x00\x00\xe0"
+        )
+        pe.extend(sec_m)
         pe.extend(b"\x00" * (0x200 - len(pe)))
         pe.extend(b"vssadmin delete shadows /all /quiet\x00")
         pe.extend(b"CryptEncrypt\x00VirtualAllocEx\x00WriteProcessMemory\x00")
         pe.extend(b"YOUR FILES HAVE BEEN ENCRYPTED! Send 5 BTC to 1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa\x00")
-        pe.extend(b"\x90" * 200)
+        pe.extend(b"\x00" * (0x400 - len(pe)))
         return bytes(pe)
 
     elif s_id == "malicious-c2-implant-elf":

@@ -118,13 +118,111 @@ def get_offline_run_detail(run_id: str) -> dict[str, Any] | None:
         tree = []
         try:
             from app.services import process_tree
-            proc_rows = cur.execute(
-                "SELECT * FROM events WHERE run_id = ? AND event_type = 'process_create' ORDER BY timestamp ASC",
+            analysis_procs = cur.execute(
+                "SELECT * FROM analysis_processes WHERE run_id = ? ORDER BY start_time_us ASC",
                 (run_id,),
             ).fetchall()
-            tree = process_tree.build_process_tree([dict(r) for r in proc_rows])
+            if analysis_procs:
+                from datetime import datetime, timezone
+                proc_evs = [
+                    {
+                        "pid": r["host_pid"],
+                        "ppid": r["initial_ppid"],
+                        "process_name": r["process_name"],
+                        "command_line": r["command_line"],
+                        "exe_path": r["exe_path"],
+                        "timestamp": datetime.fromtimestamp(r["start_time_us"] / 1_000_000, tz=timezone.utc).isoformat(),
+                        "event_type": "process_create",
+                        "host_id": r["host_id"] or "local",
+                        "source": "traced",
+                    }
+                    for r in analysis_procs
+                ]
+                tree = process_tree.build_process_tree(proc_evs)
+            else:
+                proc_rows = cur.execute(
+                    "SELECT * FROM events WHERE run_id = ? AND event_type = 'process_create' ORDER BY timestamp ASC",
+                    (run_id,),
+                ).fetchall()
+                tree = process_tree.build_process_tree([dict(r) for r in proc_rows])
         except Exception:
             tree = []
+
+        # Run analysis stats and notes
+        stats_row = cur.execute("SELECT * FROM run_analysis_stats WHERE run_id = ?", (run_id,)).fetchone()
+        sandbox_stats = dict(stats_row) if stats_row else None
+        run_notes = []
+        if sandbox_stats:
+            suppressed = sandbox_stats.get("suppressed_system_reads") or 0
+            is_trunc = "yes" if sandbox_stats.get("is_truncated") else "no"
+            run_notes.append(
+                f"traced from strace; sandbox mode isolated (no network); {suppressed} system reads suppressed; truncated: {is_trunc}"
+            )
+
+        # File changes
+        file_events = []
+        file_rows = cur.execute(
+            """
+            SELECT event_pk, seq, timestamp, category, event_type, action, target_path, details, source
+            FROM analysis_events
+            WHERE run_id = ? AND category = 'file'
+            ORDER BY seq ASC
+            """,
+            (run_id,),
+        ).fetchall()
+        for fr in file_rows:
+            details_obj = {}
+            if fr["details"]:
+                try:
+                    import json as _json
+                    details_obj = _json.loads(fr["details"])
+                except Exception:
+                    details_obj = {"raw": fr["details"]}
+            file_events.append({
+                "seq": fr["seq"],
+                "timestamp": fr["timestamp"],
+                "action": fr["action"] or fr["event_type"],
+                "target_path": fr["target_path"],
+                "details": details_obj,
+                "source": fr["source"] or "traced",
+            })
+
+        # Network attempts & DNS queries
+        network_attempts = []
+        net_ev_rows = cur.execute(
+            """
+            SELECT event_pk, seq, timestamp, category, event_type, action, target_path, details, source
+            FROM analysis_events
+            WHERE run_id = ? AND category IN ('network', 'dns')
+            ORDER BY seq ASC
+            """,
+            (run_id,),
+        ).fetchall()
+        for nr in net_ev_rows:
+            details_obj = {}
+            if nr["details"]:
+                try:
+                    import json as _json
+                    details_obj = _json.loads(nr["details"])
+                except Exception:
+                    details_obj = {"raw": nr["details"]}
+            is_net = nr["category"] == "network"
+            status = details_obj.get("status", "attempted")
+            err = details_obj.get("error_code") or details_obj.get("error")
+            res_str = f"Failed ({err})" if err else status.capitalize()
+            qtype = details_obj.get("qtype") or ("A" if not is_net else "-")
+            network_attempts.append({
+                "seq": nr["seq"],
+                "timestamp": nr["timestamp"],
+                "type": "TCP" if is_net else "DNS",
+                "qtype": qtype,
+                "destination": nr["target_path"] or details_obj.get("domain") or details_obj.get("dest_ip") or "-",
+                "result": res_str,
+                "status": status,
+                "error": err,
+                "details": details_obj,
+                "source": nr["source"] or "traced",
+            })
 
         net_rows = cur.execute(
             """
@@ -144,6 +242,10 @@ def get_offline_run_detail(run_id: str) -> dict[str, Any] | None:
             "alerts": alerts,
             "process_tree": tree,
             "network_connections": network,
+            "file_events": file_events,
+            "network_attempts": network_attempts,
+            "run_notes": run_notes,
+            "sandbox_stats": sandbox_stats,
         }
     except Exception:
         return None

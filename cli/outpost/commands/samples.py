@@ -217,6 +217,14 @@ def _show_forecast(sample_id: str) -> dict:
 
 
 def _detonate_dynamic(sample_id: str, timeout: int = 15, yes: bool = False) -> None:
+    # ── Dev-Probe / Lab VM Environment Notice ──────────────────────────
+    try:
+        env_info = api_client.get_sandbox_environment()
+        if env_info.get("dev_probe_only"):
+            console.print("[yellow]Notice: Not running inside a VM: sample analysis disabled; only built-in probes can run.[/yellow]\n")
+    except Exception:
+        pass
+
     # ── Layer 1: Zero-Execution Pre-Detonation Threat Forecast ──────────
     console.print(f"[bold cyan]Detonating sample {sample_id} in isolated dynamic sandbox (Double-Layer Analysis)...[/bold cyan]\n")
     _show_forecast(sample_id)

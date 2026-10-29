@@ -36,9 +36,11 @@ export default function AlertBanner({
   onStatus,
   onBulkStatus,
   onFalsePositive,
+  isSandbox = false,
 }: {
   alerts: Alert[];
   triage?: boolean;
+  isSandbox?: boolean;
   /** Run-scoped suppression target (run-detail page) — enables the one-click
    *  "suppress this rule" action on each alert row. */
   runId?: string;
@@ -140,6 +142,16 @@ export default function AlertBanner({
   const now = Date.now();
 
   if (alerts.length === 0) {
+    if (isSandbox) {
+      return (
+        <div className="rounded-lg border border-accent/40 bg-accent/10 px-4 py-3">
+          <p className="text-sm">
+            <span className="font-semibold text-accent">● Behavior rules not evaluated yet (Step 5)</span>{" "}
+            <span className="text-text-muted">— sandbox dynamic telemetry captured; behavior rules not evaluated yet until Step 5.</span>
+          </p>
+        </div>
+      );
+    }
     return (
       <div className="rounded-lg border border-risk-clean/30 bg-bg-surface px-4 py-3">
         <p className="text-sm">

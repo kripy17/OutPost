@@ -296,9 +296,23 @@ CREATE TABLE IF NOT EXISTS enrolled_agents (
     last_seen_at TEXT NOT NULL,
     agent_secret TEXT NOT NULL,
     hardware_info TEXT,
-    status TEXT NOT NULL DEFAULT 'active'
+    status TEXT NOT NULL DEFAULT 'active',
+    agent_version TEXT DEFAULT '1.0.0',
+    privilege_level TEXT DEFAULT 'least_privilege',
+    enforcement_capabilities TEXT DEFAULT '["telemetry"]'
 );
 CREATE INDEX IF NOT EXISTS idx_enrolled_agents_host_id ON enrolled_agents(host_id);
+
+CREATE TABLE IF NOT EXISTS enrollment_tokens (
+    token TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    scope TEXT NOT NULL DEFAULT 'fleet',
+    max_uses INTEGER NOT NULL DEFAULT 1,
+    uses_count INTEGER NOT NULL DEFAULT 0,
+    revoked INTEGER NOT NULL DEFAULT 0
+);
 
 -- Single-use agent nonces for replay attack prevention across server instances and restarts.
 CREATE TABLE IF NOT EXISTS agent_nonces (
@@ -467,6 +481,63 @@ CREATE TABLE IF NOT EXISTS analysis_jobs (
     error TEXT,
     progress INTEGER DEFAULT 0,
     result TEXT
+);
+
+CREATE TABLE IF NOT EXISTS analysis_processes (
+    process_pk TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+    host_pid INTEGER NOT NULL,
+    ns_pid INTEGER,
+    host_ppid INTEGER,
+    ns_ppid INTEGER,
+    start_time_us INTEGER NOT NULL,
+    end_time_us INTEGER,
+    initial_ppid INTEGER NOT NULL,
+    current_ppid INTEGER NOT NULL,
+    exe_path TEXT NOT NULL,
+    command_line TEXT NOT NULL,
+    process_name TEXT NOT NULL,
+    host_id TEXT DEFAULT 'local',
+    uid INTEGER,
+    gid INTEGER,
+    exit_code INTEGER,
+    status TEXT DEFAULT 'running'
+);
+CREATE INDEX IF NOT EXISTS idx_analysis_processes_run ON analysis_processes(run_id);
+CREATE INDEX IF NOT EXISTS idx_analysis_processes_host_pid ON analysis_processes(run_id, host_pid);
+
+CREATE TABLE IF NOT EXISTS analysis_events (
+    event_pk TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+    seq INTEGER NOT NULL,
+    timestamp TEXT NOT NULL,
+    start_time_us INTEGER NOT NULL,
+    mono_us INTEGER NOT NULL,
+    process_pk TEXT REFERENCES analysis_processes(process_pk) ON DELETE SET NULL,
+    category TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    action TEXT NOT NULL,
+    source TEXT NOT NULL,
+    origin TEXT NOT NULL,
+    target_path TEXT,
+    details TEXT,
+    UNIQUE(run_id, seq)
+);
+CREATE INDEX IF NOT EXISTS idx_analysis_events_run_seq ON analysis_events(run_id, seq);
+CREATE INDEX IF NOT EXISTS idx_analysis_events_run_cat ON analysis_events(run_id, category);
+CREATE INDEX IF NOT EXISTS idx_analysis_events_process ON analysis_events(process_pk);
+
+CREATE TABLE IF NOT EXISTS run_analysis_stats (
+    run_id TEXT PRIMARY KEY REFERENCES runs(run_id) ON DELETE CASCADE,
+    total_events INTEGER DEFAULT 0,
+    process_count INTEGER DEFAULT 0,
+    file_events_count INTEGER DEFAULT 0,
+    network_events_count INTEGER DEFAULT 0,
+    module_events_count INTEGER DEFAULT 0,
+    dns_events_count INTEGER DEFAULT 0,
+    suppressed_system_reads INTEGER DEFAULT 0,
+    is_truncated INTEGER DEFAULT 0,
+    truncation_reason TEXT
 );
 """
 
@@ -1100,6 +1171,7 @@ def _migrate_scope_reset_remove_soc_tables(conn: sqlite3.Connection) -> None:
         "host_snapshots",
         "host_baselines",
     ]
+    conn.execute("PRAGMA foreign_keys = OFF")
     for tbl in tables_to_drop:
         conn.execute(f"DROP TABLE IF EXISTS {tbl}")
     conn.commit()
@@ -1171,6 +1243,71 @@ def _migrate_tables_origin(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _migrate_analysis_telemetry_schema(conn: sqlite3.Connection) -> None:
+    """Create normalized analysis_processes, analysis_events, and run_analysis_stats tables."""
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS analysis_processes (
+            process_pk TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+            host_pid INTEGER NOT NULL,
+            ns_pid INTEGER,
+            host_ppid INTEGER,
+            ns_ppid INTEGER,
+            start_time_us INTEGER NOT NULL,
+            end_time_us INTEGER,
+            initial_ppid INTEGER NOT NULL,
+            current_ppid INTEGER NOT NULL,
+            exe_path TEXT NOT NULL,
+            command_line TEXT NOT NULL,
+            process_name TEXT NOT NULL,
+            host_id TEXT DEFAULT 'local',
+            uid INTEGER,
+            gid INTEGER,
+            exit_code INTEGER,
+            status TEXT DEFAULT 'running'
+        );
+        CREATE INDEX IF NOT EXISTS idx_analysis_processes_run ON analysis_processes(run_id);
+        CREATE INDEX IF NOT EXISTS idx_analysis_processes_host_pid ON analysis_processes(run_id, host_pid);
+
+        CREATE TABLE IF NOT EXISTS analysis_events (
+            event_pk TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+            seq INTEGER NOT NULL,
+            timestamp TEXT NOT NULL,
+            start_time_us INTEGER NOT NULL,
+            mono_us INTEGER NOT NULL,
+            process_pk TEXT REFERENCES analysis_processes(process_pk) ON DELETE SET NULL,
+            category TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            action TEXT NOT NULL,
+            source TEXT NOT NULL,
+            origin TEXT NOT NULL,
+            target_path TEXT,
+            details TEXT,
+            UNIQUE(run_id, seq)
+        );
+        CREATE INDEX IF NOT EXISTS idx_analysis_events_run_seq ON analysis_events(run_id, seq);
+        CREATE INDEX IF NOT EXISTS idx_analysis_events_run_cat ON analysis_events(run_id, category);
+        CREATE INDEX IF NOT EXISTS idx_analysis_events_process ON analysis_events(process_pk);
+
+        CREATE TABLE IF NOT EXISTS run_analysis_stats (
+            run_id TEXT PRIMARY KEY REFERENCES runs(run_id) ON DELETE CASCADE,
+            total_events INTEGER DEFAULT 0,
+            process_count INTEGER DEFAULT 0,
+            file_events_count INTEGER DEFAULT 0,
+            network_events_count INTEGER DEFAULT 0,
+            module_events_count INTEGER DEFAULT 0,
+            dns_events_count INTEGER DEFAULT 0,
+            suppressed_system_reads INTEGER DEFAULT 0,
+            is_truncated INTEGER DEFAULT 0,
+            truncation_reason TEXT
+        );
+        """
+    )
+    conn.commit()
+
+
 def get_connection():
     """Open a connection with a Row factory and foreign keys on.
 
@@ -1235,9 +1372,10 @@ ORDERED_MIGRATIONS = [
     (32, "scope_reset_remove_soc_tables", _migrate_scope_reset_remove_soc_tables, "Recreate dropped SOC and fleet tables."),
     (33, "runs_origin", _migrate_runs_origin, "Rebuild runs table to drop origin column."),
     (34, "tables_origin", _migrate_tables_origin, "Rebuild samples, events, alerts to drop origin column."),
+    (35, "analysis_telemetry_schema", _migrate_analysis_telemetry_schema, "Drop analysis_processes, analysis_events, and run_analysis_stats tables."),
 ]
 
-DESTRUCTIVE_MIGRATIONS = {32}
+DESTRUCTIVE_MIGRATIONS = {32, 35}
 
 
 def _backup_database_before_migration(conn: sqlite3.Connection) -> str | None:
@@ -1282,38 +1420,44 @@ def apply_migrations(conn: sqlite3.Connection, dry_run: bool = False) -> list[di
         _backup_database_before_migration(conn)
 
     results = []
-    for ver, name, fn, downgrade_note in ORDERED_MIGRATIONS:
-        if ver in applied_versions:
-            results.append({
-                "version": ver,
-                "name": name,
-                "status": "applied",
-                "downgrade_note": downgrade_note,
-            })
-            continue
+    fk_status = conn.execute("PRAGMA foreign_keys").fetchone()[0]
+    conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        for ver, name, fn, downgrade_note in ORDERED_MIGRATIONS:
+            if ver in applied_versions:
+                results.append({
+                    "version": ver,
+                    "name": name,
+                    "status": "applied",
+                    "downgrade_note": downgrade_note,
+                })
+                continue
 
-        if dry_run:
-            results.append({
-                "version": ver,
-                "name": name,
-                "status": "pending",
-                "downgrade_note": downgrade_note,
-            })
-        else:
-            fn(conn)
-            now_iso = datetime.now(timezone.utc).isoformat()
-            conn.execute(
-                "INSERT OR REPLACE INTO schema_migrations (version, name, applied_at, downgrade_note) VALUES (?, ?, ?, ?)",
-                (ver, name, now_iso, downgrade_note),
-            )
-            conn.commit()
-            results.append({
-                "version": ver,
-                "name": name,
-                "status": "applied",
-                "applied_at": now_iso,
-                "downgrade_note": downgrade_note,
-            })
+            if dry_run:
+                results.append({
+                    "version": ver,
+                    "name": name,
+                    "status": "pending",
+                    "downgrade_note": downgrade_note,
+                })
+            else:
+                fn(conn)
+                now_iso = datetime.now(timezone.utc).isoformat()
+                conn.execute(
+                    "INSERT OR REPLACE INTO schema_migrations (version, name, applied_at, downgrade_note) VALUES (?, ?, ?, ?)",
+                    (ver, name, now_iso, downgrade_note),
+                )
+                conn.commit()
+                results.append({
+                    "version": ver,
+                    "name": name,
+                    "status": "applied",
+                    "applied_at": now_iso,
+                    "downgrade_note": downgrade_note,
+                })
+    finally:
+        if fk_status:
+            conn.execute("PRAGMA foreign_keys = ON")
     return results
 
 
