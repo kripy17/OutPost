@@ -183,8 +183,8 @@ def assess_static_evidence(
     # is inconclusive ('insufficient_evidence') because static analysis cannot inspect compressed payloads.
     is_installer_or_overlay = (
         any("compressed overlay payload" in c.lower() for c in could_not_analyze)
-        or any("installer/self-extractor" in a.get("title", "").lower() for a in structural_anomalies)
-        or any("overlay data" in a.get("title", "").lower() for a in structural_anomalies)
+        or any("payload not analyzed" in a.get("title", "").lower() for a in structural_anomalies)
+        or any("appended overlay data" in a.get("title", "").lower() for a in structural_anomalies)
     )
     has_corroborated_injection = any("Process Injection" in f.get("factor", "") for f in assessment_factors)
 
@@ -223,11 +223,17 @@ def assess_static_evidence(
         verdict_reason = "Elevated indicators or anomalous structural behaviors present; dynamic analysis required."
         confidence = "medium"
         legacy_severity = "suspicious"
-    # 5. Zero indicators found
-    elif not assessment_factors:
+    # 5. Zero indicators found or only informational weight-0 metadata
+    elif not assessment_factors or all(f.get("weight", 0) <= 0 for f in assessment_factors):
         is_managed = any("managed" in c.lower() for c in could_not_analyze)
         is_unrecognized = any("unrecognized" in c.lower() for c in could_not_analyze)
-        if is_managed:
+        is_uninspected = any("not inspected" in c.lower() for c in could_not_analyze)
+        if is_uninspected:
+            verdict = "insufficient_evidence"
+            verdict_reason = "Installer or self-extracting archive detected; compressed overlay payload not inspected by static analysis."
+            confidence = "medium"
+            legacy_severity = "insufficient_evidence"
+        elif is_managed:
             verdict = "insufficient_evidence"
             verdict_reason = "Static analysis is inconclusive for managed .NET assembly; runtime execution required."
             confidence = "low"

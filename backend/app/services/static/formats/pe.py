@@ -303,7 +303,9 @@ def parse_deep_pe(data: bytes) -> dict[str, Any]:
     except Exception:
         pass
 
-    has_overlay = overlay_size > 512 and not is_cert_table_overlay and not is_coff_symtab_overlay
+    from .archive import is_archive_or_container
+    has_archive_sig = bool(overlay_data and is_archive_or_container(overlay_data))
+    has_overlay = (overlay_size > 512 or has_archive_sig) and not is_cert_table_overlay and not is_coff_symtab_overlay
     if is_coff_symtab_overlay:
         prov = create_provenance("parser_field", f"COFF Symbol Table at 0x{(overlay_offset or 0):08X}", "parsed", "confirmed")
         findings.append(create_finding(
@@ -332,10 +334,52 @@ def parse_deep_pe(data: bytes) -> dict[str, Any]:
         elif overlay_head.startswith(b"Rar!\x1a\x07"):
             installer_type = "RAR SFX"
 
-        could_not_analyze.append("compressed overlay payload not inspected")
+        payload_inspected_clean = False
+        extracted_archive_summary = None
+
+        if overlay_data and (installer_type or overlay_head.startswith((b"7z\xbc\xaf\x27\x1c", b"PK\x03\x04", b"MSCF", b"Rar!"))):
+            try:
+                from .archive import analyze_archive
+                archive_res = analyze_archive(overlay_data)
+                if archive_res.get("file_count", 0) > 0 and archive_res.get("extracted_count", 0) > 0:
+                    extracted_archive_summary = {
+                        "container_type": archive_res.get("container_type"),
+                        "file_count": archive_res.get("file_count"),
+                        "extracted_count": archive_res.get("extracted_count"),
+                        "dangerous_payloads": archive_res.get("dangerous_payloads", []),
+                    }
+                    has_malicious = any(m.get("verdict") == "malicious" for m in archive_res.get("members", []))
+                    if has_malicious:
+                        findings.extend(archive_res.get("findings", []))
+                        indicators.extend(archive_res.get("indicators", []))
+                    else:
+                        payload_inspected_clean = True
+            except Exception:
+                payload_inspected_clean = False
+
         prov = create_provenance("parser_field", f"PE Overlay at 0x{(overlay_offset or 0):08X}", "parsed", "confirmed")
 
-        if installer_type:
+        if payload_inspected_clean:
+            count = extracted_archive_summary.get("extracted_count", 0) if extracted_archive_summary else 0
+            title = f"installer/self-extractor; payload verified ({installer_type or 'SFX archive'})"
+            evidence = f"{installer_type or 'SFX archive'} format with {overlay_size:,} bytes compressed overlay at 0x{(overlay_offset or 0):08X}; {count} members inspected and verified clean"
+            findings.append(create_finding(
+                "pe-installer-sfx-inspected-clean",
+                "metadata",
+                title,
+                f"Standard {installer_type or 'SFX'} installer stub with compressed payload. All {count} extracted members verified clean.",
+                prov,
+                [],
+            ))
+            structural_anomalies.append({
+                "title": title,
+                "weight": 0,
+                "reliability": "parsed",
+                "evidence": evidence,
+                "is_informational": True,
+            })
+        elif installer_type:
+            could_not_analyze.append("compressed overlay payload not inspected")
             title = f"installer/self-extractor; payload not analyzed ({installer_type})"
             evidence = f"{installer_type} format with {overlay_size:,} bytes compressed overlay at 0x{(overlay_offset or 0):08X} (entropy {overlay_entropy:.2f})"
             findings.append(create_finding(
@@ -354,7 +398,7 @@ def parse_deep_pe(data: bytes) -> dict[str, Any]:
                 "is_informational": True,
             })
         else:
-            # Merged single factor for high-entropy / large unparsed overlay
+            could_not_analyze.append("compressed overlay payload not inspected")
             title = f"High-entropy appended overlay data ({overlay_size} bytes)"
             evidence = f"PE Overlay at 0x{(overlay_offset or 0):08X} (entropy {overlay_entropy:.2f}); typical of installers, self-extractors, and droppers"
             findings.append(create_finding(

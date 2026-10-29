@@ -196,6 +196,7 @@ def run_complete_static_pipeline(
     structural_anomalies: list[dict[str, Any]] = []
     benign_signals: list[dict[str, Any]] = []
     could_not_analyze: list[str] = []
+    embedded_indicators: list[dict[str, Any]] = []
 
     if strings_truncation.get("total_file_bytes", 0) > strings_truncation.get("scan_bytes_processed", 0):
         proc_mb = strings_truncation["scan_bytes_processed"] // (1024 * 1024)
@@ -227,6 +228,8 @@ def run_complete_static_pipeline(
         structural_anomalies.extend(pe_info.get("structural_anomalies", []))
         benign_signals.extend(pe_info.get("benign_signals", []))
         could_not_analyze.extend(pe_info.get("could_not_analyze", []))
+        if pe_info.get("indicators"):
+            embedded_indicators.extend(pe_info["indicators"])
 
     elif is_elf(data):
         format_type = "elf"
@@ -263,7 +266,10 @@ def run_complete_static_pipeline(
         archive_info = analyze_archive(data)
         findings.extend(archive_info.get("findings", []))
         capabilities.extend(archive_info.get("capabilities", []))
+        structural_anomalies.extend(archive_info.get("structural_anomalies", []))
         could_not_analyze.extend(archive_info.get("could_not_analyze", []))
+        if archive_info.get("indicators"):
+            embedded_indicators.extend(archive_info["indicators"])
 
     elif is_script(data):
         format_type = "script"
@@ -277,7 +283,7 @@ def run_complete_static_pipeline(
         could_not_analyze.append("Unrecognized file format; deep structural parsing unavailable")
 
     # 2. Strict Embedded Indicators
-    embedded_indicators = extract_embedded_indicators(data, sections_for_indicators)
+    embedded_indicators.extend(extract_embedded_indicators(data, sections_for_indicators))
 
     # 3. Family Malware Configuration Decoders
     decoded_configs = run_family_decoders(data, {"format": format_type})
