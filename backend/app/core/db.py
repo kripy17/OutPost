@@ -1171,6 +1171,7 @@ def _migrate_scope_reset_remove_soc_tables(conn: sqlite3.Connection) -> None:
         "host_snapshots",
         "host_baselines",
     ]
+    conn.execute("PRAGMA foreign_keys = OFF")
     for tbl in tables_to_drop:
         conn.execute(f"DROP TABLE IF EXISTS {tbl}")
     conn.commit()
@@ -1419,38 +1420,44 @@ def apply_migrations(conn: sqlite3.Connection, dry_run: bool = False) -> list[di
         _backup_database_before_migration(conn)
 
     results = []
-    for ver, name, fn, downgrade_note in ORDERED_MIGRATIONS:
-        if ver in applied_versions:
-            results.append({
-                "version": ver,
-                "name": name,
-                "status": "applied",
-                "downgrade_note": downgrade_note,
-            })
-            continue
+    fk_status = conn.execute("PRAGMA foreign_keys").fetchone()[0]
+    conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        for ver, name, fn, downgrade_note in ORDERED_MIGRATIONS:
+            if ver in applied_versions:
+                results.append({
+                    "version": ver,
+                    "name": name,
+                    "status": "applied",
+                    "downgrade_note": downgrade_note,
+                })
+                continue
 
-        if dry_run:
-            results.append({
-                "version": ver,
-                "name": name,
-                "status": "pending",
-                "downgrade_note": downgrade_note,
-            })
-        else:
-            fn(conn)
-            now_iso = datetime.now(timezone.utc).isoformat()
-            conn.execute(
-                "INSERT OR REPLACE INTO schema_migrations (version, name, applied_at, downgrade_note) VALUES (?, ?, ?, ?)",
-                (ver, name, now_iso, downgrade_note),
-            )
-            conn.commit()
-            results.append({
-                "version": ver,
-                "name": name,
-                "status": "applied",
-                "applied_at": now_iso,
-                "downgrade_note": downgrade_note,
-            })
+            if dry_run:
+                results.append({
+                    "version": ver,
+                    "name": name,
+                    "status": "pending",
+                    "downgrade_note": downgrade_note,
+                })
+            else:
+                fn(conn)
+                now_iso = datetime.now(timezone.utc).isoformat()
+                conn.execute(
+                    "INSERT OR REPLACE INTO schema_migrations (version, name, applied_at, downgrade_note) VALUES (?, ?, ?, ?)",
+                    (ver, name, now_iso, downgrade_note),
+                )
+                conn.commit()
+                results.append({
+                    "version": ver,
+                    "name": name,
+                    "status": "applied",
+                    "applied_at": now_iso,
+                    "downgrade_note": downgrade_note,
+                })
+    finally:
+        if fk_status:
+            conn.execute("PRAGMA foreign_keys = ON")
     return results
 
 

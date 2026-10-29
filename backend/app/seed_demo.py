@@ -308,5 +308,21 @@ def seed_demo() -> None:
     print(f"[✓] Successfully seeded {len(samples)} threat samples into vault with full static analysis!")
 
 
+def ensure_demo_seeded() -> None:
+    """Initialize DB and seed demo samples only if samples table is currently empty."""
+    init_db()
+    with db_session() as conn:
+        row = conn.execute("SELECT COUNT(*) FROM samples").fetchone()
+        count = row[0] if row else 0
+    if count == 0:
+        seed_demo()
+    else:
+        print(f"[✓] Database schema verified ({count} samples present).")
+
+
 if __name__ == "__main__":
-    seed_demo()
+    import sys
+    if "--auto" in sys.argv:
+        ensure_demo_seeded()
+    else:
+        seed_demo()

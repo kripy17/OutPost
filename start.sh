@@ -45,28 +45,32 @@ cleanup() {
   if [ -n "$AGENT_PID" ]; then
     kill "$AGENT_PID" 2>/dev/null || true
   fi
+  if command -v fuser >/dev/null 2>&1; then
+    fuser -k "${BACKEND_PORT}/tcp" 2>/dev/null || true
+    fuser -k "${FRONTEND_PORT}/tcp" 2>/dev/null || true
+  fi
   echo "[✓] All services stopped."
 }
 
 trap cleanup INT TERM EXIT
 
+# Automatically free ports if lingering processes from a previous run exist
+if command -v fuser >/dev/null 2>&1; then
+  fuser -k "${BACKEND_PORT}/tcp" >/dev/null 2>&1 || true
+  fuser -k "${FRONTEND_PORT}/tcp" >/dev/null 2>&1 || true
+fi
+
 if [[ "${1:-}" == "--clean" || "${2:-}" == "--clean" ]]; then
   echo "[*] Initializing clean database schema (zero demo data)..."
   (cd backend && python -c "from app.core.db import init_db, db_session; init_db();
 with db_session() as conn:
-    conn.execute(\"INSERT OR REPLACE INTO settings (key, value) VALUES ('onboarding', 'empty'), ('demo_mode', '0')\")" >/dev/null 2>&1 || true)
+    conn.execute(\"INSERT OR REPLACE INTO settings (key, value) VALUES ('onboarding', 'empty'), ('demo_mode', '0')\")")
 elif [[ "${1:-}" == "--demo" || "${2:-}" == "--demo" ]]; then
   echo "[*] Initializing database with demo telemetry..."
-  (cd backend && python -m app.seed_demo >/dev/null 2>&1 || true)
+  (cd backend && python -m app.seed_demo)
 else
   echo "[*] Initializing database schema..."
-  (cd backend && python -c "from app.core.db import init_db, db_session; init_db();
-with db_session() as conn:
-    count = conn.execute('SELECT COUNT(*) FROM samples').fetchone()[0]
-if count == 0:
-    import app.seed_demo
-    app.seed_demo.seed_demo()
-" >/dev/null 2>&1 || true)
+  (cd backend && python -m app.seed_demo --auto)
 fi
 
 echo "[*] Starting FastAPI Backend on port ${BACKEND_PORT}..."
@@ -74,24 +78,36 @@ echo "[*] Starting FastAPI Backend on port ${BACKEND_PORT}..."
 BACKEND_PID=$!
 
 # Wait for backend health check
+BACKEND_OK=0
 for _ in $(seq 1 30); do
   if curl -sf "http://127.0.0.1:${BACKEND_PORT}/health" >/dev/null 2>&1; then
+    BACKEND_OK=1
     break
   fi
   sleep 0.5
 done
+if [ "$BACKEND_OK" -eq 0 ]; then
+  echo "[-] Error: FastAPI Backend failed to start on port ${BACKEND_PORT}." >&2
+  exit 1
+fi
 
 echo "[*] Starting Frontend Web Console on port ${FRONTEND_PORT}..."
-(cd frontend && npm run dev -- --port "$FRONTEND_PORT") &
+(cd frontend && npm run dev -- --port "$FRONTEND_PORT" --strictPort) &
 FRONTEND_PID=$!
 
 # Wait for frontend server
+FRONTEND_OK=0
 for _ in $(seq 1 30); do
   if curl -sf "http://localhost:${FRONTEND_PORT}" >/dev/null 2>&1; then
+    FRONTEND_OK=1
     break
   fi
   sleep 0.5
 done
+if [ "$FRONTEND_OK" -eq 0 ]; then
+  echo "[-] Error: Frontend Web Console failed to start on port ${FRONTEND_PORT}." >&2
+  exit 1
+fi
 
 if [[ "${1:-}" == "--with-agent" ]]; then
   echo "[*] Starting Live Local Collector Agent..."
