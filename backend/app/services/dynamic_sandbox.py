@@ -116,6 +116,57 @@ def is_bwrap_usable() -> bool:
     return True
 
 
+def _get_python_isolation_binds() -> list[str]:
+    """Collect host paths required for Python interpreter to function inside bubblewrap.
+
+    Resolves OUTPOST-DYNAMIC-01: Bubblewrap constructs an isolated hermetic rootfs.
+    When OutPost is executed via an out-of-system Python virtualenv (e.g. UV, pyenv,
+    or custom ~/.venv in /home), child Python processes require both the virtualenv
+    (sys.prefix) AND the base interpreter distribution (sys.base_prefix, realpath).
+    Collects all unique required runtime directories and emits read-only bubblewrap
+    bind flags (--ro-bind-try).
+    """
+    bind_dirs: set[str] = set()
+
+    for p in (sys.prefix, sys.base_prefix, getattr(sys, "exec_prefix", None), getattr(sys, "base_exec_prefix", None)):
+        if p and not p.startswith(("/usr", "/lib", "/lib64", "/bin", "/sbin")):
+            bind_dirs.add(os.path.abspath(p))
+
+    try:
+        real_exe = os.path.realpath(sys.executable)
+        if real_exe and not real_exe.startswith(("/usr", "/lib", "/lib64", "/bin", "/sbin")):
+            exe_parent = os.path.dirname(real_exe)
+            bind_dirs.add(exe_parent)
+            install_root = os.path.dirname(exe_parent)
+            if install_root and install_root != "/":
+                bind_dirs.add(install_root)
+    except Exception:
+        pass
+
+    try:
+        curr = sys.executable
+        while os.path.islink(curr):
+            target = os.readlink(curr)
+            if not os.path.isabs(target):
+                target = os.path.join(os.path.dirname(curr), target)
+            target = os.path.abspath(target)
+            t_parent = os.path.dirname(target)
+            if not t_parent.startswith(("/usr", "/lib", "/lib64", "/bin", "/sbin")):
+                bind_dirs.add(t_parent)
+                t_root = os.path.dirname(t_parent)
+                if t_root and t_root != "/":
+                    bind_dirs.add(t_root)
+            curr = target
+    except Exception:
+        pass
+
+    flags: list[str] = []
+    for d in sorted(bind_dirs):
+        if os.path.isdir(d):
+            flags.extend(["--ro-bind-try", d, d])
+    return flags
+
+
 SANCTIONED_HYPERVISORS = {
     "kvm",
     "qemu",
@@ -367,17 +418,17 @@ def get_available_isolation_drivers() -> list[dict[str, Any]]:
         {
             "id": "wine",
             "name": "Emulated Subsystem (Wine64)",
-            "tier": 2,
-            "tier_label": "Tier 2: Emulated Windows",
+            "tier": 0,
+            "tier_label": "Tier 0: Best-Effort Emulation (Low Fidelity)",
             "available": has_wine and has_bwrap,
-            "description": "Wine64 user-mode translation layer running inside Bubblewrap sandbox namespaces.",
+            "description": "Wine64 user-mode translation layer running inside Bubblewrap sandbox namespaces. Best-effort fallback: does not emulate Windows kernel drivers, service subsystem, or Defender RPC interfaces.",
             "type": "emulation",
         },
         {
             "id": "guest_vm",
             "name": "Isolated MicroVM / Guest Agent",
-            "tier": 3,
-            "tier_label": "Tier 3: Dedicated Windows VM",
+            "tier": 2,
+            "tier_label": "Tier 2: Dedicated Windows VM",
             "available": has_guest_vm,
             "description": "Dedicated Windows guest VM with native Sysmon, EVTX event log subscription, and full kernel telemetry via outpost-guest-agent.",
             "type": "micro_vm",
@@ -581,10 +632,10 @@ async def execute_bytes_sandbox(
                     "--ro-bind-try", "/etc/ca-certificates", "/etc/ca-certificates",
                 ])
 
-            # Bind sys.prefix strictly for Python samples requiring the virtualenv interpreter
+            # Bind Python virtualenv and runtime interpreters strictly for Python samples (resolves OUTPOST-DYNAMIC-01)
             is_python_sample = any("python" in str(x).lower() for x in (runner or [])) or any("python" in str(x).lower() for x in (cmd or []))
-            if is_python_sample and sys.prefix and not sys.prefix.startswith(("/usr", "/lib", "/bin", "/sbin")):
-                bwrap_prefix.extend(["--ro-bind-try", sys.prefix, sys.prefix])
+            if is_python_sample:
+                bwrap_prefix.extend(_get_python_isolation_binds())
 
             # Clean all host environment variables, drop capabilities, and unshare namespaces
             bwrap_prefix.extend([
@@ -971,6 +1022,29 @@ async def execute_and_trace(
         "sample_name": sample_name,
         "platform": sample_plat,
         "isolation_driver": active_driver,
+        "environment_tier": (
+            "tier_1_linux_native"
+            if active_driver in ("bubblewrap", "tempdir", "container")
+            else "tier_2_windows_guest_vm"
+            if active_driver == "guest_vm"
+            else "tier_0_wine_emulation_low_fidelity"
+        ),
+        "fidelity": {
+            "environment": active_driver,
+            "tier": 1 if active_driver == "bubblewrap" else (2 if active_driver == "guest_vm" else 0),
+            "tier_label": (
+                "Tier 1: Linux Native"
+                if active_driver == "bubblewrap"
+                else ("Tier 2: Dedicated Windows VM" if active_driver == "guest_vm" else "Tier 0: Best-Effort Emulation (Low Fidelity)")
+            ),
+            "observation_method": "ptrace_syscall_trap" if active_driver == "bubblewrap" else "native_tracer",
+            "evasion_countermeasures": ["chroot_jail", "tmpfs_masking", "capability_dropping"],
+            "blindspots": (
+                ["Wine translation layer: cannot emulate Windows kernel drivers, RPC services, or Defender interfaces"]
+                if "wine" in str(active_driver).lower()
+                else ["Userspace bubblewrap: kernel rootkit and hardware virtualization calls not intercepted"]
+            ),
+        },
         "bwrap_argv": exec_cmd,
         "host_detonation_warning": any(e.get("category") == "security_warning" for e in timeline_events),
         "verdict": verdict,
@@ -1972,7 +2046,9 @@ async def execute_sample_detonation(
                     "action": "sinkholed",
                 })
 
-    pcap_artifact = None
+    pcap_artifact = sandbox_forensics.generate_pcap_capture(events, sinkhole_traffic, run_id)
+    if pcap_artifact:
+        dropped_artifacts.append(pcap_artifact)
 
     terminal_logs: list[str] = [
         f"[OutPost Dynamic Sandbox] Detonating sample '{sample_name}' (ID: {sample_id})",
@@ -2045,6 +2121,29 @@ async def execute_sample_detonation(
         "sample_name": sample_name,
         "platform": plat,
         "isolation_driver": active_driver,
+        "environment_tier": (
+            "tier_1_linux_native"
+            if active_driver in ("bubblewrap", "tempdir", "container")
+            else "tier_2_windows_guest_vm"
+            if active_driver == "guest_vm"
+            else "tier_0_wine_emulation_low_fidelity"
+        ),
+        "fidelity": {
+            "environment": active_driver,
+            "tier": 1 if active_driver == "bubblewrap" else (2 if active_driver == "guest_vm" else 0),
+            "tier_label": (
+                "Tier 1: Linux Native"
+                if active_driver == "bubblewrap"
+                else ("Tier 2: Dedicated Windows VM" if active_driver == "guest_vm" else "Tier 0: Best-Effort Emulation (Low Fidelity)")
+            ),
+            "observation_method": "ptrace_syscall_trap" if active_driver == "bubblewrap" else "native_tracer",
+            "evasion_countermeasures": ["chroot_jail", "tmpfs_masking", "capability_dropping"],
+            "blindspots": (
+                ["Wine translation layer: cannot emulate Windows kernel drivers, RPC services, or Defender interfaces"]
+                if "wine" in str(active_driver).lower()
+                else ["Userspace bubblewrap: kernel rootkit and hardware virtualization calls not intercepted"]
+            ),
+        },
         "bwrap_argv": exec_cmd,
         "host_detonation_warning": any(e.get("category") == "security_warning" for e in timeline_events),
         "verdict": verdict,

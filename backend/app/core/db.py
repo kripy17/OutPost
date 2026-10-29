@@ -14,6 +14,7 @@ semantics, and `db_session()` yields the same commit/rollback lifecycle.
 
 import logging
 import os
+import re
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -644,9 +645,7 @@ def _migrate_alerts_findings(conn: sqlite3.Connection) -> None:
     if "seen_at" not in cols:
         conn.execute("ALTER TABLE alerts ADD COLUMN seen_at TEXT")
     if "investigation_id" not in cols:
-        conn.execute(
-            "ALTER TABLE alerts ADD COLUMN investigation_id TEXT REFERENCES investigations(id)"
-        )
+        conn.execute("ALTER TABLE alerts ADD COLUMN investigation_id TEXT")
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_alerts_unread ON alerts(status) WHERE seen_at IS NULL"
     )
@@ -1175,6 +1174,7 @@ def _migrate_scope_reset_remove_soc_tables(conn: sqlite3.Connection) -> None:
     for tbl in tables_to_drop:
         conn.execute(f"DROP TABLE IF EXISTS {tbl}")
     conn.commit()
+    _strip_alerts_dangling_fks_if_needed(conn)
 
 
 def _migrate_runs_origin(conn: sqlite3.Connection) -> None:
@@ -1306,6 +1306,91 @@ def _migrate_analysis_telemetry_schema(conn: sqlite3.Connection) -> None:
         """
     )
     conn.commit()
+
+
+def _strip_alerts_dangling_fks_if_needed(conn: sqlite3.Connection) -> None:
+    """Safely strip dangling foreign key to investigations from alerts table and child references."""
+    tables = {
+        r[0]
+        for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+    if "alerts" not in tables:
+        return
+
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.execute("PRAGMA legacy_alter_table = ON")
+
+    fks = conn.execute("PRAGMA foreign_key_list(alerts)").fetchall()
+    has_inv_fk = any(
+        (fk["table"] if isinstance(fk, sqlite3.Row) else fk[2]) == "investigations"
+        for fk in fks
+    )
+    if has_inv_fk:
+        cols = [
+            r["name"] if isinstance(r, sqlite3.Row) else r[1]
+            for r in conn.execute("PRAGMA table_info(alerts)").fetchall()
+        ]
+        cols_str = ", ".join(cols)
+        create_sql = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='alerts'"
+        ).fetchone()[0]
+        new_create_sql = re.sub(
+            r"REFERENCES\s+investigations\s*\([^\)]*\)", "", create_sql, flags=re.IGNORECASE
+        )
+        conn.execute("ALTER TABLE alerts RENAME TO alerts_old_fks")
+        conn.execute(new_create_sql)
+        conn.execute(f"INSERT INTO alerts ({cols_str}) SELECT {cols_str} FROM alerts_old_fks")
+        conn.execute("DROP TABLE alerts_old_fks")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_alerts_run_id ON alerts(run_id)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_alerts_unread ON alerts(status) WHERE seen_at IS NULL"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_alerts_entity_key ON alerts(run_id, rule_id, entity_key)"
+        )
+
+    # Fix child tables if they accidentally reference alerts_old_fks
+    if "finding_evidence_events" in tables:
+        fee_sql = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='finding_evidence_events'").fetchone()
+        if fee_sql and "alerts_old_fks" in fee_sql[0]:
+            conn.execute("ALTER TABLE finding_evidence_events RENAME TO fee_temp")
+            conn.execute("""
+            CREATE TABLE finding_evidence_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                finding_id INTEGER NOT NULL REFERENCES alerts(id) ON DELETE CASCADE,
+                event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+                rule_condition TEXT,
+                matched_at TEXT NOT NULL,
+                UNIQUE (finding_id, event_id)
+            )
+            """)
+            conn.execute("INSERT INTO finding_evidence_events SELECT * FROM fee_temp")
+            conn.execute("DROP TABLE fee_temp")
+
+    if "ioc_findings" in tables:
+        ioc_sql = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='ioc_findings'").fetchone()
+        if ioc_sql and "alerts_old_fks" in ioc_sql[0]:
+            conn.execute("ALTER TABLE ioc_findings RENAME TO ioc_findings_temp")
+            conn.execute("""
+            CREATE TABLE ioc_findings (
+                ioc_id TEXT NOT NULL REFERENCES iocs(ioc_id),
+                finding_id INTEGER NOT NULL REFERENCES alerts(id),
+                PRIMARY KEY (ioc_id, finding_id)
+            )
+            """)
+            conn.execute("INSERT INTO ioc_findings SELECT * FROM ioc_findings_temp")
+            conn.execute("DROP TABLE ioc_findings_temp")
+
+    if "ioc_findings" in tables:
+        conn.execute("DELETE FROM ioc_findings WHERE finding_id NOT IN (SELECT id FROM alerts)")
+    if "finding_evidence_events" in tables:
+        conn.execute("DELETE FROM finding_evidence_events WHERE finding_id NOT IN (SELECT id FROM alerts)")
+
+    conn.commit()
+    conn.execute("PRAGMA legacy_alter_table = OFF")
+    conn.execute("PRAGMA foreign_keys = ON")
 
 
 def get_connection():
@@ -1525,6 +1610,7 @@ def init_db() -> None:
     with get_connection() as conn:
         conn.executescript(SCHEMA)
         apply_migrations(conn)
+        _strip_alerts_dangling_fks_if_needed(conn)
 
 
 @contextmanager

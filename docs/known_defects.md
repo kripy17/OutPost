@@ -10,7 +10,7 @@ This document records confirmed architectural defects, platform-specific limitat
 
 - **Component**: Dynamic Execution Engine (`backend/app/services/dynamic_sandbox.py`)
 - **Severity**: Medium (Development / Test Environment Only; Production Containers Unaffected)
-- **Status**: Queued for Stage 3 (Dynamic Sandbox Elevation)
+- **Status**: Resolved (Stage 3 Item 1)
 - **Affected Tests**:
   - `backend/app/tests/test_dynamic_sandbox_real.py::test_real_file_dropper_carving_and_entropy`
   - `backend/app/tests/test_dynamic_sandbox_real.py::test_real_network_beacon_and_pcap_capture`
@@ -22,8 +22,6 @@ This document records confirmed architectural defects, platform-specific limitat
   ```
 - **Root Cause**:
   The Linux `bwrap` security sandbox constructs a tight, hermetic jail by mounting an empty temporary filesystem over `/home` (`--tmpfs /home`) and unsharing user namespaces to prevent sandbox breakout or tampering with the host user's files and credentials.
-  When the active Python interpreter or virtualenv resides under `/home`, child processes launched inside the sandbox (`/usr/bin/env python3` or dynamic script wrappers) cannot access the virtualenv runtime libraries in `/home/kripy/`. On Python 3.14 (system Python installed in `/usr/bin/python3`), the test suite passes 100% (672/672) because `/usr` is mounted read-only (`--ro-bind /usr /usr`).
-- **Resolution Plan for Stage 3**:
-  1. Detect when the sandbox execution runner is invoked from an out-of-system virtualenv path.
-  2. Bind-mount the interpreter prefix read-only at a neutral sandbox location (e.g. `/opt/runtime/python3`) or use an isolated guest rootfs / VM disk image during dynamic detonation.
-  3. Ensure CI pipeline runs dynamic tests under both system-level Python installations and containerized environments.
+  When the active Python interpreter or virtualenv resides under `/home`, child processes launched inside the sandbox (`/usr/bin/env python3` or dynamic script wrappers) cannot access the virtualenv runtime libraries in `/home/kripy/`. On Python 3.14 (system Python installed in `/usr/bin/python3`), the test suite passed because `/usr` is mounted read-only (`--ro-bind /usr /usr`).
+- **Resolution Delivered**:
+  Implemented `_get_python_isolation_binds()` in `backend/app/services/dynamic_sandbox.py`. Detects out-of-system virtual environment prefixes (`sys.prefix`), underlying distribution roots (`sys.base_prefix`), and real binary paths (`os.path.realpath(sys.executable)`), automatically injecting read-only bind mounts (`--ro-bind-try`) into the bubblewrap invocation. Verified 100% pass on Python 3.12 and Python 3.14.

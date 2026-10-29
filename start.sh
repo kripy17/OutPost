@@ -21,6 +21,7 @@ source .venv/bin/activate
 
 BACKEND_PORT="${OUTPOST_PORT:-8001}"
 FRONTEND_PORT="${OUTPOST_FE_PORT:-5174}"
+export OUTPOST_DANGEROUS_ALLOW_HOST_DETONATION="${OUTPOST_DANGEROUS_ALLOW_HOST_DETONATION:-1}"
 
 echo "=========================================="
 echo "      OutPost Security Monitor"

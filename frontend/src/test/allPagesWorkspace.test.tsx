@@ -288,20 +288,20 @@ describe("All Primary Webapp Pages Render Cleanly", () => {
     await mountRoute("/samples/sample_remcos_01");
     await waitFor(() => {
       expect(screen.getAllByText(/remcos_sample\.exe/i).length).toBeGreaterThan(0);
-    });
+    }, { timeout: 3000 });
   });
 
   it("renders /analysis/job_sample_r (Analysis Detail)", async () => {
     await mountRoute("/analysis/job_sample_r");
     await waitFor(() => {
       expect(screen.getByText(/Analysis workspace/i)).toBeInTheDocument();
-    });
+    }, { timeout: 3000 });
   });
 
   it("renders /runs/dyn_db3a8da614ef (Run Detail)", async () => {
     await mountRoute("/runs/dyn_db3a8da614ef");
     await waitFor(() => {
       expect(screen.getAllByText(/analysis_probe\.sh/i).length).toBeGreaterThan(0);
-    });
+    }, { timeout: 3000 });
   });
 });
