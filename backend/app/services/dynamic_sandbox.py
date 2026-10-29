@@ -1022,8 +1022,8 @@ SIMULATION_SCENARIOS = {
         "techniques": ["T1083", "T1490", "T1070.001", "T1486", "T1027", "T1070.004"],
         "stages": [
             {"name": "Stage 1: Canary Asset Staging & Traversal", "cmd": "mkdir -p canary_vault && echo 'FINANCIAL_LEDGER_2026_Q3_CONFIDENTIAL' > canary_vault/ledger.xlsx && echo 'CUSTOMER_SSN_RECORDS' > canary_vault/ssn_export.csv"},
-            {"name": "Stage 2: Recovery Inhibition & Backup Scanning", "cmd": "echo 'Simulating: vssadmin delete shadows /all /quiet && bcdedit /set {default} recoveryenabled No'"},
-            {"name": "Stage 3: Defensive Evasion & Event Log Scrubbing", "cmd": "echo 'Simulating: wevtutil cl Security && wevtutil cl System && history -c'"},
+            {"name": "Stage 2: Recovery Inhibition & Backup Scanning", "cmd": "which vssadmin 2>/dev/null || (touch canary_vault/.vss_inhibit && echo 'Recovery inhibition probe executed' > canary_vault/.vss_inhibit)"},
+            {"name": "Stage 3: Defensive Evasion & Event Log Scrubbing", "cmd": "history -c 2>/dev/null; touch canary_vault/.log_scrub_audit"},
             {"name": "Stage 4: Multithreaded High-Entropy Canary Encryption", "cmd": "tar -czf canary_vault/ledger.xlsx.lockbit canary_vault/ledger.xlsx && tar -czf canary_vault/ssn_export.csv.lockbit canary_vault/ssn_export.csv && rm -f canary_vault/*.xlsx canary_vault/*.csv"},
             {"name": "Stage 5: Automated Ransom Note Generation", "cmd": "echo '=== YOUR FILES ARE ENCRYPTED BY LOCKBIT 3.0 ===\nDecryption ID: LKBT-99482-BEEF\nContact Tor: http://lockbit7382xyz.onion' > canary_vault/README_RESTORE_FILES.txt"},
             {"name": "Stage 6: Binary Self-Unlinking & Stealth Suicide", "cmd": "echo 'Payload binary unlinking self from disk...' && ls -la canary_vault/"},
@@ -1041,7 +1041,7 @@ SIMULATION_SCENARIOS = {
             {"name": "Stage 2: Sudoers Configuration & Capability Probe", "cmd": "sudo -l 2>/dev/null || echo 'Checking NOPASSWD entries and CapEff bitmask'"},
             {"name": "Stage 3: GTFOBins Context Escalation Emulation", "cmd": "python3 -c 'import os; print(\"Emulating GTFOBins capability escalation context:\", os.getuid())'"},
             {"name": "Stage 4: Shadow Hash & Sensitive File Extraction", "cmd": "head -n 5 /etc/passwd && (cat /etc/shadow 2>/dev/null || echo 'Shadow access restricted (EACCES)')"},
-            {"name": "Stage 5: Persistent Root Backdoor Staging", "cmd": "echo 'toor:x:0:0:root:/root:/bin/bash' > .fake_passwd_drop && echo 'Root backdoor staging completed'"},
+            {"name": "Stage 5: Persistent Root Backdoor Staging", "cmd": "echo 'toor:x:0:0:root:/root:/bin/bash' > .backdoor_shadow && echo 'Root backdoor staging completed'"},
         ],
     },
     "cryptominer-worm": {

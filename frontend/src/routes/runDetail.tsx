@@ -482,11 +482,21 @@ export default function RunDetailPage() {
   );
 
   if (isLoading) return <p className="p-8 text-sm text-text-muted">Loading run…</p>;
-  if (isError || !data) {
+  if (isError || !data || !data.run) {
     return (
-      <p className="p-8 text-sm text-risk-malicious">
-        Couldn't load run <span className="font-mono">{runId}</span>.
-      </p>
+      <div className="mx-auto max-w-4xl px-6 py-12">
+        <Panel kicker="Detonation Run · 404" title="Run not found">
+          <p className="text-sm text-text-muted">
+            Couldn't load run <span className="font-mono text-text-primary">{runId}</span>. The run may not exist or has been pruned.
+          </p>
+          <div className="mt-4">
+            <Link to="/analysis" className="press inline-flex items-center gap-1.5 font-mono text-xs text-accent underline">
+              <Icon name="chevronLeft" size={12} />
+              Return to Analysis &amp; Detonations
+            </Link>
+          </div>
+        </Panel>
+      </div>
     );
   }
 
@@ -506,7 +516,7 @@ export default function RunDetailPage() {
   } = data;
   const inProgress = run.completed_at === null;
   const chain = killChainStats(alerts);
-  const campaign = Array.isArray(campaigns) ? campaigns.find((c) => c.runs.some((r) => r.run_id === runId)) : undefined;
+  const campaign = Array.isArray(campaigns) ? campaigns.find((c) => c?.runs?.some((r) => r?.run_id === runId)) : undefined;
 
   return (
     <div className="mx-auto max-w-7xl px-5 py-8 lg:px-8">

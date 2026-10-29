@@ -263,7 +263,13 @@ export function StaticThreatTriageCard({
               {formatStr}
             </div>
             <div className="text-[10px] text-text-muted">
-              {st.pe?.entry_point_rva ? `Entry RVA: 0x${st.pe.entry_point_rva.toString(16)}` : st.elf ? `Entry: 0x${st.elf.entry_point.toString(16)}` : "Offset: 0x0000"}
+              {st.pe?.entry_point_rva != null
+                ? `Entry RVA: 0x${Number(st.pe.entry_point_rva).toString(16)}`
+                : st.elf?.entry_point != null
+                  ? String(st.elf.entry_point).startsWith("0x")
+                    ? `Entry: ${st.elf.entry_point}`
+                    : `Entry: 0x${Number(st.elf.entry_point).toString(16)}`
+                  : "Offset: 0x0000"}
             </div>
           </div>
 
@@ -2903,8 +2909,8 @@ export function PeElfTable({ st }: { st: SampleStatic }) {
                 Base: {pe.image_base}
               </span>
             )}
-            {pe.entry_point_rva !== null && (
-              <span className="text-[11px] text-text-muted">entry RVA 0x{pe.entry_point_rva.toString(16)}</span>
+            {pe.entry_point_rva != null && (
+              <span className="text-[11px] text-text-muted">entry RVA 0x{Number(pe.entry_point_rva).toString(16)}</span>
             )}
             {pe.imphash && (
               <span className="rounded border border-accent/40 bg-accent/10 px-2 py-0.5 text-[10px] text-accent">
@@ -2920,16 +2926,16 @@ export function PeElfTable({ st }: { st: SampleStatic }) {
                 }`}
               >
                 {pe.authenticode.signed
-                  ? `Authenticode Signed (${pe.authenticode.cert_size} B)`
+                  ? `Authenticode Signed (${pe.authenticode.cert_size ?? 0} B)`
                   : "Unsigned Binary"}
               </span>
             )}
             {pe.rich_header?.present && (
               <span
                 className="rounded border border-purple-500/40 bg-purple-500/10 px-2 py-0.5 text-[10px] text-purple-300"
-                title={`XOR Key ${pe.rich_header.xor_key} · ${pe.rich_header.records_count} compiler entries`}
+                title={`XOR Key ${pe.rich_header.xor_key ?? "N/A"} · ${pe.rich_header.records_count ?? 0} compiler entries`}
               >
-                Rich Hash: {pe.rich_header.hash.slice(0, 10)}…
+                Rich Hash: {pe.rich_header.hash ? `${pe.rich_header.hash.slice(0, 10)}…` : "N/A"}
               </span>
             )}
             <span className="text-[10px] text-text-faint">
@@ -2964,8 +2970,8 @@ export function PeElfTable({ st }: { st: SampleStatic }) {
                     return (
                       <tr key={s.name} className="transition-colors hover:bg-bg-elevated/40">
                         <td className="px-3 py-2 font-bold text-text-primary">{s.name || "(null)"}</td>
-                        <td className="px-3 py-2 text-right text-text-muted">0x{s.virtual_size.toString(16)}</td>
-                        <td className="px-3 py-2 text-right text-text-muted">0x{s.raw_size.toString(16)}</td>
+                        <td className="px-3 py-2 text-right text-text-muted">0x{(s.virtual_size ?? 0).toString(16)}</td>
+                        <td className="px-3 py-2 text-right text-text-muted">0x{(s.raw_size ?? 0).toString(16)}</td>
                         <td className="px-3 py-2 text-center">
                           {isPackedDelta ? (
                             <span
@@ -3055,13 +3061,15 @@ export function PeElfTable({ st }: { st: SampleStatic }) {
             <Chip tone="clean" dot>
               {elf.machine} · ELF{elf.class} · {elf.type}
             </Chip>
-            <span className="text-[11px] text-text-muted">entry 0x{elf.entry_point.toString(16)}</span>
-            <span className="text-[10px] text-text-faint">{elf.sections.length} sections · {elf.endian}-endian</span>
+            <span className="text-[11px] text-text-muted">
+              entry {elf.entry_point != null ? (String(elf.entry_point).startsWith("0x") ? String(elf.entry_point) : `0x${Number(elf.entry_point).toString(16)}`) : "0x0"}
+            </span>
+            <span className="text-[10px] text-text-faint">{(elf.sections || []).length} sections · {elf.endian || "little"}-endian</span>
           </div>
 
-          {elf.sections.length > 0 && (
+          {(elf.sections || []).length > 0 && (
             <div className="flex flex-wrap gap-1.5">
-              {elf.sections.slice(0, 40).map((s) => (
+              {(elf.sections || []).slice(0, 40).map((s) => (
                 <span
                   key={`${s.name}-${s.type}`}
                   className="rounded border border-border-subtle bg-bg-elevated/40 px-2 py-0.5 text-[10px] text-text-muted"
@@ -3282,11 +3290,11 @@ export default function SampleDetailPage() {
                           to={`/runs/${r.run_id}`}
                           className="press font-mono text-xs text-accent transition-colors hover:underline"
                         >
-                          {r.run_id.slice(0, 12)}
+                          {r.run_id ? r.run_id.slice(0, 12) : "unknown"}
                         </Link>
                       </td>
                       <td className="px-4 py-2.5 font-mono text-[11px] text-text-muted">
-                        {r.started_at.slice(0, 19).replace("T", " ")}
+                        {r.started_at ? r.started_at.slice(0, 19).replace("T", " ") : "—"}
                       </td>
                       <td className="px-4 py-2.5 font-mono text-[11px] text-text-muted">{r.alert_count}</td>
                       <td className="px-4 py-2.5">

@@ -583,7 +583,7 @@ export default function MonitorPage() {
         network_connections: networkConns,
         threat_verdict: res.threat_verdict || (res.alerts?.length ? "MALICIOUS" : "SUSPICIOUS"),
         threat_score: res.threat_score ?? res.risk_score ?? 85,
-        threat_family: res.threat_family || sample.family || "Vault Demonstration Sample",
+        threat_family: res.threat_family || sample.family || "Generic Suspicious Binary",
         detection_efficacy_pct: res.detection_efficacy_pct ?? (res.alerts?.length ? 100 : 60),
         syscalls: res.syscalls || [],
         sinkhole_traffic: res.sinkhole_traffic || [],
@@ -593,7 +593,7 @@ export default function MonitorPage() {
           domains: [],
           firewall_rules: networkConns.map((n) => `iptables -A OUTPUT -d ${n.ip} -j DROP`),
           dropped_count: createdList.length,
-          threat_family: sample.family || "Vault Demonstration Sample",
+          threat_family: sample.family || "Generic Suspicious Binary",
         },
         timeline: res.timeline || [],
       });

@@ -76,36 +76,36 @@ export const NetworkProtocolInspector: React.FC<NetworkProtocolInspectorProps> =
   const filteredDns = dns_conversations.filter(
     (d) =>
       !q ||
-      d.query.toLowerCase().includes(q) ||
-      d.resolved_ips.some((ip) => ip.includes(q)) ||
-      d.category.toLowerCase().includes(q),
+      (d.query || "").toLowerCase().includes(q) ||
+      (d.resolved_ips || []).some((ip) => ip.includes(q)) ||
+      (d.category || "").toLowerCase().includes(q),
   );
 
   const filteredHttp = http_requests.filter(
     (h) =>
       !q ||
-      h.url.toLowerCase().includes(q) ||
-      h.host.toLowerCase().includes(q) ||
-      h.path.toLowerCase().includes(q) ||
-      (h.process_name && h.process_name.toLowerCase().includes(q)),
+      (h.url || "").toLowerCase().includes(q) ||
+      (h.host || "").toLowerCase().includes(q) ||
+      (h.path || "").toLowerCase().includes(q) ||
+      (h.process_name ? h.process_name.toLowerCase().includes(q) : false),
   );
 
   const filteredTls = tls_handshakes.filter(
     (t) =>
       !q ||
-      (t.sni && t.sni.toLowerCase().includes(q)) ||
-      (t.dest_ip && t.dest_ip.includes(q)) ||
-      (t.ja3 && t.ja3.toLowerCase().includes(q)) ||
-      (t.known_tool && t.known_tool.toLowerCase().includes(q)),
+      (t.sni ? t.sni.toLowerCase().includes(q) : false) ||
+      (t.dest_ip ? t.dest_ip.includes(q) : false) ||
+      (t.ja3 ? t.ja3.toLowerCase().includes(q) : false) ||
+      (t.known_tool ? t.known_tool.toLowerCase().includes(q) : false),
   );
 
   const filteredFlows = flows.filter(
     (f) =>
       !q ||
-      f.dest_ip.includes(q) ||
-      String(f.dest_port).includes(q) ||
-      (f.process_name && f.process_name.toLowerCase().includes(q)) ||
-      f.protocol.toLowerCase().includes(q),
+      (f.dest_ip || "").includes(q) ||
+      String(f.dest_port ?? "").includes(q) ||
+      (f.process_name ? f.process_name.toLowerCase().includes(q) : false) ||
+      (f.protocol || "").toLowerCase().includes(q),
   );
 
   return (

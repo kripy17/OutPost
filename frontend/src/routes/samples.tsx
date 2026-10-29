@@ -70,16 +70,16 @@ function SampleTile({ s, onDelete }: { s: SampleRow; onDelete: (id: string, name
       </div>
 
       <div className="mt-2 flex min-h-[22px] flex-wrap items-center gap-1">
-        {s.yara_rules.length > 0 ? (
+        {(s.yara_rules || []).length > 0 ? (
           <>
-            {s.yara_rules.slice(0, 2).map((r) => (
+            {(s.yara_rules || []).slice(0, 2).map((r) => (
               <span key={r} className="rounded border border-accent/40 bg-accent/5 px-1.5 py-0.5 font-mono text-[10px] text-accent">
                 {r}
               </span>
             ))}
-            {s.yara_rules.length > 2 && (
+            {(s.yara_rules || []).length > 2 && (
               <span className="rounded border border-border-subtle px-1.5 py-0.5 font-mono text-[10px] text-text-faint">
-                +{s.yara_rules.length - 2}
+                +{(s.yara_rules || []).length - 2}
               </span>
             )}
           </>
@@ -164,23 +164,7 @@ export default function SamplesPage() {
       setUploading(false);
     }
   };
-  // The vault reads as real artifacts first: binaries whose entire detonation
-  // history is demo/synthetic are hidden unless the analyst asks (archive
-  // parity with History / the Event Log). Persisted like the other toggles.
-  const [showSynthetic, setShowSynthetic] = useState(() => {
-    try {
-      return localStorage.getItem("outpost-samples-synthetic") === "1";
-    } catch {
-      return false;
-    }
-  });
-  useEffect(() => {
-    try {
-      localStorage.setItem("outpost-samples-synthetic", showSynthetic ? "1" : "0");
-    } catch {
-      /* storage unavailable */
-    }
-  }, [showSynthetic]);
+  const showSynthetic = false;
 
   useEffect(() => {
     const t = setTimeout(() => setDebounced(q.trim()), 300);
@@ -225,7 +209,7 @@ export default function SamplesPage() {
   };
 
 
-  const withYara = samples.filter((s) => s.yara_rules.length > 0).length;
+  const withYara = samples.filter((s) => (s.yara_rules || []).length > 0).length;
   const flagged = samples.filter((s) => (s.vt_detections ?? 0) > 0).length;
   const byPlatform = (p: SampleRow["detected_platform"]) => samples.filter((s) => s.detected_platform === p).length;
 
@@ -259,20 +243,6 @@ export default function SamplesPage() {
               </button>
             )}
             <button
-              onClick={() => setShowSynthetic((v) => !v)}
-              aria-pressed={showSynthetic}
-              title={
-                showSynthetic
-                  ? "Hide demo/synthetic binaries again (those whose whole detonation history is demo)"
-                  : "Include binaries whose entire detonation history is demo/synthetic"
-              }
-              className={`press rounded-lg border px-3 py-2 font-mono text-xs transition-colors duration-150 ${
-                showSynthetic ? "border-accent/50 bg-accent/10 text-accent" : "border-border-subtle text-text-faint hover:text-text-primary"
-              }`}
-            >
-              {showSynthetic ? "Show synthetic · on" : "Show synthetic"}
-            </button>
-            <button
               onClick={() => void onExport()}
               className="press inline-flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-2 font-mono text-xs text-text-muted transition-colors duration-150 hover:border-accent/60 hover:text-accent"
               title="Download the vault as CSV"
@@ -286,7 +256,7 @@ export default function SamplesPage() {
               title="Open the Adversary Simulation Lab to test pre-configured campaigns"
             >
               <Icon name="play" size={13} />
-              Simulation Lab (Demo)
+              Simulation Lab
             </Link>
           </div>
         }
@@ -313,7 +283,7 @@ export default function SamplesPage() {
           className="press inline-flex items-center gap-1.5 rounded-xl border border-accent/40 bg-accent/10 px-3.5 py-2 font-semibold text-accent transition hover:bg-accent/20"
         >
           <Icon name="activity" size={12} />
-          <span>Go to Simulation Lab (Demo Playbooks)</span>
+          <span>Go to Simulation Lab (Adversary Scenarios)</span>
         </Link>
       </div>
 

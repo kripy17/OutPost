@@ -6,7 +6,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { Icon, type IconName } from "../components/Icon";
 import { PageHeader, Panel, Stat } from "../components/ui";
 import {
@@ -97,12 +97,18 @@ export default function AnalysisDetailPage() {
 
   if (job.isError || !job.data) {
     return (
-      <div>
-        <PageHeader kicker="Analysis workspace" title="Job not found" />
+      <div className="mx-auto max-w-4xl px-6 py-12">
+        <PageHeader kicker="Analysis workspace · 404" title="Job not found" />
         <Panel>
-          <p className="py-6 text-center text-sm text-risk-malicious">
-            Unknown analysis job{runId ? ` ${runId}` : ""} — it may have been pruned.
+          <p className="py-4 text-center text-sm text-text-muted">
+            Unknown analysis job <span className="font-mono text-text-primary">{runId}</span> — it may have been pruned or not yet queued.
           </p>
+          <div className="mt-2 text-center">
+            <Link to="/analysis" className="press inline-flex items-center gap-1.5 font-mono text-xs text-accent underline">
+              <Icon name="chevronLeft" size={12} />
+              Return to Analysis &amp; Detonations
+            </Link>
+          </div>
         </Panel>
       </div>
     );
@@ -111,9 +117,9 @@ export default function AnalysisDetailPage() {
   const j = job.data;
   const isStatic = j.backend === "static";
   const active = j.status === "queued" || j.status === "running";
-  const observationsList = observations.data?.observations ?? [];
-  const findingsList = findings.data ?? [];
-  const artifactsList = artifacts.data ?? [];
+  const observationsList = Array.isArray(observations.data?.observations) ? observations.data.observations : [];
+  const findingsList = Array.isArray(findings.data) ? findings.data : [];
+  const artifactsList = Array.isArray(artifacts.data) ? artifacts.data : [];
 
   // Compute telemetry metrics for tab badges
   const pidsCount = new Set(observationsList.filter((o) => o.pid).map((o) => o.pid)).size;

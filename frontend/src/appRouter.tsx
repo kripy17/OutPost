@@ -17,6 +17,7 @@ import BrowserCheck from "./components/BrowserCheck/BrowserCheck";
 import BrowserNotifications from "./components/BrowserNotifications/BrowserNotifications";
 import { Icon } from "./components/Icon";
 import Nav from "./components/Nav";
+import { RouteErrorBoundary } from "./components/RouteErrorBoundary";
 import TopCommandBar from "./components/TopCommandBar";
 import WatchlistToaster from "./components/WatchlistToaster/WatchlistToaster";
 import { getMe, getMeta } from "./lib/api";
@@ -142,12 +143,9 @@ function Layout() {
     );
   }
 
-  // First-run gate: a fresh install (no sessions, no onboarding choice)
-  // lands on the welcome screen — seed the labeled demo campaign or start
-  // empty with the guided install-agent flow. Once the choice is recorded,
-  // /meta reports first_run=false and the gate never fires again.
-  if (meta?.first_run && location.pathname !== "/welcome") {
-    return <Navigate to="/welcome" replace />;
+  // First-run gate: OutPost default landing is /samples (Malware Analysis Vault)
+  if (meta?.first_run && location.pathname === "/welcome") {
+    return <Navigate to="/samples" replace />;
   }
 
   return (
@@ -257,9 +255,10 @@ function Layout() {
   );
 }
 
-export const router = createBrowserRouter([
+export const routes = [
   {
     element: <Layout />,
+    errorElement: <RouteErrorBoundary />,
     children: [
       { path: "/", element: <Navigate to="/samples" replace /> },
       { path: "/samples", element: <SamplesPage /> },
@@ -287,4 +286,6 @@ export const router = createBrowserRouter([
       { path: "*", element: <NotFoundPage /> },
     ],
   },
-]);
+];
+
+export const router = createBrowserRouter(routes);

@@ -70,7 +70,7 @@ export function FileStructureTab({ st, sampleName }: FileStructureTabProps) {
               <div className="rounded-lg border border-border-subtle bg-bg-base/60 p-2.5 space-y-1">
                 <span className="text-[9px] uppercase text-text-faint block">Entry Point RVA</span>
                 <span className="font-bold text-accent text-[11px]">
-                  {pe.entry_point_rva !== null ? `0x${pe.entry_point_rva.toString(16).toUpperCase()}` : "0x0"}
+                  {pe.entry_point_rva != null ? `0x${Number(pe.entry_point_rva).toString(16).toUpperCase()}` : "0x0"}
                 </span>
                 <span className="text-[9px] text-text-muted block">Code entry offset</span>
               </div>
@@ -227,10 +227,10 @@ export function FileStructureTab({ st, sampleName }: FileStructureTabProps) {
                         <tr key={s.name} className="hover:bg-bg-elevated/40 transition-colors">
                           <td className="py-2 px-3 font-bold text-text-primary font-mono">{s.name || "(anon)"}</td>
                           <td className="py-2 px-3 text-right text-text-muted font-mono">
-                            0x{s.virtual_size.toString(16).toUpperCase()} ({s.virtual_size.toLocaleString()} B)
+                            0x{(s.virtual_size ?? 0).toString(16).toUpperCase()} ({(s.virtual_size ?? 0).toLocaleString()} B)
                           </td>
                           <td className="py-2 px-3 text-right text-text-muted font-mono">
-                            0x{s.raw_size.toString(16).toUpperCase()} ({s.raw_size.toLocaleString()} B)
+                            0x{(s.raw_size ?? 0).toString(16).toUpperCase()} ({(s.raw_size ?? 0).toLocaleString()} B)
                           </td>
                           <td className="py-2 px-3 text-center">
                             {isPackedDelta ? (
@@ -326,15 +326,21 @@ export function FileStructureTab({ st, sampleName }: FileStructureTabProps) {
 
               <div className="rounded-lg border border-border-subtle bg-bg-base/60 p-2.5 space-y-1">
                 <span className="text-[9px] uppercase text-text-faint block">Entry Point</span>
-                <span className="font-bold text-accent text-[11px]">0x{elf.entry_point.toString(16).toUpperCase()}</span>
+                <span className="font-bold text-accent text-[11px]">
+                  {elf.entry_point != null
+                    ? String(elf.entry_point).startsWith("0x")
+                      ? String(elf.entry_point)
+                      : `0x${Number(elf.entry_point).toString(16).toUpperCase()}`
+                    : "0x0"}
+                </span>
                 <span className="text-[9px] text-text-muted block">Virtual address</span>
               </div>
             </div>
           </Panel>
 
           {/* ELF Sections */}
-          <Panel kicker="Structural Layout" title={`ELF Sections (${elf.sections.length})`}>
-            {elf.sections.length === 0 ? (
+          <Panel kicker="Structural Layout" title={`ELF Sections (${(elf.sections || []).length})`}>
+            {(elf.sections || []).length === 0 ? (
               <p className="text-xs text-text-muted py-4">No ELF section headers mapped.</p>
             ) : (
               <div className="overflow-x-auto rounded-xl border border-border-subtle bg-bg-base/70">
