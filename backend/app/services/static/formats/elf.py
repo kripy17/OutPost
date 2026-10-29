@@ -14,9 +14,16 @@ import io
 import math
 from typing import Any
 
-from elftools.common.exceptions import ELFError
-from elftools.elf.dynamic import DynamicSection
-from elftools.elf.elffile import ELFFile
+try:
+    from elftools.common.exceptions import ELFError
+    from elftools.elf.dynamic import DynamicSection
+    from elftools.elf.elffile import ELFFile
+    _ELFTOOLS_AVAILABLE = True
+except ImportError:
+    ELFError = Exception
+    DynamicSection = object
+    ELFFile = None
+    _ELFTOOLS_AVAILABLE = False
 
 from ..provenance import create_finding, create_provenance
 
@@ -64,6 +71,17 @@ def parse_deep_elf(data: bytes) -> dict[str, Any]:
 
     if not is_elf(data):
         return {"is_elf": False, "could_not_analyze": ["Not a valid ELF binary"]}
+
+    if not _ELFTOOLS_AVAILABLE or ELFFile is None:
+        return {
+            "is_elf": True,
+            "could_not_analyze": ["pyelftools is not installed; deep ELF parsing disabled"],
+            "findings": findings,
+            "indicators": indicators,
+            "capabilities": capabilities,
+            "structural_anomalies": structural_anomalies,
+            "benign_signals": benign_signals,
+        }
 
     try:
         elf = ELFFile(io.BytesIO(data))
