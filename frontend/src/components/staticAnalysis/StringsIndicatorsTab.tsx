@@ -23,22 +23,49 @@ export function StringsIndicatorsTab({ sampleId, st }: StringsIndicatorsTabProps
 
   const allStrings = useMemo(() => st?.strings || [], [st?.strings]);
 
-  // Categorize strings heuristically
-  const categorized = useMemo(() => {
+  // Use GNU-concordant detailed strings and backend categories if present
+  const detailedList = useMemo(() => {
+    if (st?.strings_detailed && st.strings_detailed.length > 0) {
+      const cats = st.categorized_strings || {};
+      const cmdSet = new Set(cats.commands || []);
+      const netSet = new Set(cats.network || []);
+      const pathSet = new Set(cats.file_paths || []);
+      const regSet = new Set(cats.registry || []);
+      const secSet = new Set(cats.security_apis || []);
+      const apiSet = new Set(cats.api_names || []);
+
+      return st.strings_detailed.map((sd, idx) => {
+        let cat = "General";
+        if (cmdSet.has(sd.string)) cat = "Command";
+        else if (netSet.has(sd.string)) cat = "Network";
+        else if (pathSet.has(sd.string)) cat = "Path";
+        else if (regSet.has(sd.string)) cat = "Registry";
+        else if (secSet.has(sd.string)) cat = "Security API";
+        else if (apiSet.has(sd.string)) cat = "API Name";
+        return {
+          id: idx,
+          value: sd.string,
+          length: sd.length,
+          encoding: sd.encoding.toUpperCase(),
+          offsetHex: sd.offset_hex,
+          category: cat,
+        };
+      });
+    }
+
     return allStrings.map((s, idx) => {
       let cat = "General";
-      if (/^https?:\/\//i.test(s)) cat = "URL";
-      else if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/.test(s)) cat = "IP";
+      if (/^https?:\/\//i.test(s)) cat = "Network";
+      else if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/.test(s)) cat = "Network";
       else if (/^(HKEY_|HKLM|HKCU|Software\\|SYSTEM\\)/i.test(s)) cat = "Registry";
       else if (/^(\/bin\/|\/usr\/|\/etc\/|[a-zA-Z]:\\|\/tmp\/|\.exe|\.dll|\.sh)/i.test(s)) cat = "Path";
       else if (/^(sh|bash|powershell|cmd\.exe|curl|wget|chmod|netsh)/i.test(s)) cat = "Command";
-      else if (/^[A-Za-z0-9+/]{24,}={0,2}$/.test(s)) cat = "Base64";
-      return { id: idx, value: s, length: s.length, category: cat };
+      return { id: idx, value: s, length: s.length, encoding: "ASCII", offsetHex: "-", category: cat };
     });
-  }, [allStrings]);
+  }, [st?.strings_detailed, st?.categorized_strings, allStrings]);
 
   const filteredStrings = useMemo(() => {
-    return categorized.filter((item) => {
+    return detailedList.filter((item) => {
       if (categoryFilter !== "ALL" && item.category !== categoryFilter) return false;
       if (searchQuery.trim()) {
         if (exactMatch) {
@@ -48,7 +75,7 @@ export function StringsIndicatorsTab({ sampleId, st }: StringsIndicatorsTabProps
       }
       return true;
     });
-  }, [categorized, categoryFilter, searchQuery, exactMatch]);
+  }, [detailedList, categoryFilter, searchQuery, exactMatch]);
 
   if (!st || !st.available) {
     return (
@@ -126,12 +153,18 @@ export function StringsIndicatorsTab({ sampleId, st }: StringsIndicatorsTabProps
           }
         >
           <div className="space-y-3">
+            {st?.strings_truncation?.is_truncated && (
+              <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 text-[11px] text-amber-300">
+                Displaying first {st.strings_truncation.strings_stored} of {st.strings_truncation.total_found} strings ({st.strings_truncation.uncategorized_omitted} uncategorized omitted; all categorized strings preserved).
+              </div>
+            )}
+
             {/* Filter and Search Bar */}
             <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
               {/* Category Pills */}
               <div className="flex flex-wrap items-center gap-1.5">
                 <span className="text-[10px] uppercase text-text-faint">Category:</span>
-                {["ALL", "URL", "IP", "Path", "Registry", "Command", "Base64", "General"].map((cat) => (
+                {["ALL", "Command", "Network", "Path", "Registry", "Security API", "API Name", "General"].map((cat) => (
                   <button
                     key={cat}
                     onClick={() => setCategoryFilter(cat)}
@@ -175,10 +208,12 @@ export function StringsIndicatorsTab({ sampleId, st }: StringsIndicatorsTabProps
               <table className="w-full text-left text-xs border-collapse">
                 <thead>
                   <tr className="border-b border-border-subtle bg-bg-surface/80 text-[10px] uppercase text-text-faint sticky top-0">
-                    <th className="py-2 px-3 w-16 text-center">#</th>
+                    <th className="py-2 px-3 w-12 text-center">#</th>
+                    <th className="py-2 px-3 w-24">Offset</th>
+                    <th className="py-2 px-3 w-20">Encoding</th>
                     <th className="py-2 px-3">Extracted String</th>
-                    <th className="py-2 px-3 w-20 text-center">Length</th>
-                    <th className="py-2 px-3 w-24">Category</th>
+                    <th className="py-2 px-3 w-16 text-center">Length</th>
+                    <th className="py-2 px-3 w-28">Category</th>
                     <th className="py-2 px-3 text-right w-28">Pivots</th>
                   </tr>
                 </thead>
@@ -186,12 +221,19 @@ export function StringsIndicatorsTab({ sampleId, st }: StringsIndicatorsTabProps
                   {visibleStrings.map((row) => (
                     <tr key={row.id} className="hover:bg-bg-elevated/40 transition-colors">
                       <td className="py-2 px-3 text-center text-text-faint text-[10px]">{row.id + 1}</td>
+                      <td className="py-2 px-3 font-mono text-[10px] text-cyan-400">{row.offsetHex}</td>
+                      <td className="py-2 px-3 text-[10px] text-text-faint uppercase">{row.encoding}</td>
                       <td className="py-2 px-3 font-mono text-[11px] text-text-primary select-all break-all">
                         {row.value}
                       </td>
                       <td className="py-2 px-3 text-center text-text-faint text-[10px]">{row.length} B</td>
                       <td className="py-2 px-3">
-                        <span className="rounded bg-bg-elevated px-1.5 py-0.5 text-[9px] font-bold text-text-muted">
+                        <span className={`rounded px-1.5 py-0.5 text-[9px] font-bold ${
+                          row.category === "Command" ? "bg-rose-500/20 text-rose-300 border border-rose-500/30" :
+                          row.category === "Network" ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/30" :
+                          row.category === "Security API" ? "bg-amber-500/20 text-amber-300 border border-amber-500/30" :
+                          "bg-bg-elevated text-text-muted"
+                        }`}>
                           {row.category}
                         </span>
                       </td>

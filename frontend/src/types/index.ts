@@ -542,12 +542,76 @@ export interface SampleStatic {
   size: number;
   strings: string[];
   categorized_strings?: {
-    network: string[];
-    file_paths: string[];
-    commands: string[];
-    registry: string[];
-    security_apis: string[];
+    network?: string[];
+    file_paths?: string[];
+    commands?: string[];
+    registry?: string[];
+    security_apis?: string[];
+    api_names?: string[];
   };
+  strings_detailed?: Array<{
+    offset: number;
+    offset_hex: string;
+    string: string;
+    length: number;
+    encoding: "ascii" | "utf-16le";
+  }>;
+  strings_truncation?: {
+    is_truncated: boolean;
+    strings_stored: number;
+    total_found: number;
+    categorized_count: number;
+    uncategorized_omitted: number;
+    scan_limit_bytes: number;
+    total_file_bytes: number;
+  };
+  yara?: {
+    available: boolean;
+    rule_count?: number;
+    matches: Array<{
+      rule: string;
+      tags: string[];
+      meta: Record<string, any>;
+      strings: Array<{ identifier: string; offset: number; offset_hex: string; matched_bytes: string }>;
+    }>;
+  };
+  decoded_configs?: Array<{
+    family: string;
+    version?: string;
+    c2_endpoint?: string;
+    c2_servers?: string[];
+    c2_server?: string;
+    port?: number;
+    mutex?: string;
+    campaign_id?: string;
+    encryption?: string;
+    encryption_key?: string;
+    pastebin_fallback?: string;
+    confidence?: string;
+    exfiltration_protocol?: string;
+  }>;
+  archive?: {
+    is_archive: boolean;
+    format?: string;
+    total_members?: number;
+    total_uncompressed_bytes?: number;
+    max_compression_ratio?: number;
+    zip_bomb_suspected?: boolean;
+    members?: Array<{
+      filename: string;
+      size_compressed: number;
+      size_uncompressed: number;
+      format: string;
+      is_encrypted?: boolean;
+    }>;
+  };
+  assessment_factors?: Array<{
+    factor: string;
+    weight: number;
+    signal_type: string;
+    reliability: string;
+    evidence: string;
+  }>;
   iocs: StaticIocs;
   pe: PeMetadata | null;
   elf: ElfMetadata | null;

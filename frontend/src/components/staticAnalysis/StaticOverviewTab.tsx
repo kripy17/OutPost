@@ -261,6 +261,216 @@ export function StaticOverviewTab({ sample, st, onNavigateTab }: StaticOverviewT
         </div>
       </Panel>
 
+      {/* SECTION: Decoded Malware Family Configurations */}
+      {st?.decoded_configs && st.decoded_configs.length > 0 && (
+        <Panel kicker="Extracted C2 Profile" title={`Decoded Malware Family Configuration (${st.decoded_configs.length})`}>
+          <div className="space-y-3 font-mono">
+            {st.decoded_configs.map((cfg, idx) => (
+              <div key={idx} className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-4 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-rose-500/20 pb-2">
+                  <div className="flex items-center gap-2">
+                    <span className="rounded bg-rose-500/30 border border-rose-500/50 px-2 py-0.5 text-xs font-bold text-rose-300">
+                      {cfg.family} {cfg.version || ""}
+                    </span>
+                    <span className="text-[11px] text-text-faint">In-Memory Decrypted RAT/Beacon Profile</span>
+                  </div>
+                  <span className="rounded bg-bg-surface px-2 py-0.5 text-[10px] text-rose-400 font-bold border border-border-subtle uppercase">
+                    Confidence: {cfg.confidence || "High"}
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+                  <div>
+                    <span className="text-[10px] uppercase text-text-faint block">Primary C2 Endpoint</span>
+                    <div className="flex items-center gap-1.5 mt-0.5">
+                      <span className="font-bold text-rose-300 break-all">{cfg.c2_endpoint || cfg.c2_server || "N/A"}</span>
+                      {(cfg.c2_endpoint || cfg.c2_server) && (
+                        <button
+                          onClick={() => handleWatchlist(cfg.c2_endpoint || cfg.c2_server!)}
+                          className={`rounded px-1.5 py-0.5 text-[10px] border transition ${
+                            watchlisted.has(cfg.c2_endpoint || cfg.c2_server!)
+                              ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/40"
+                              : "bg-bg-surface text-accent border-border-subtle hover:bg-bg-elevated"
+                          }`}
+                          title="Add to Watchlist"
+                        >
+                          {watchlisted.has(cfg.c2_endpoint || cfg.c2_server!) ? "Watchlisted" : "+ Watchlist"}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  {cfg.port && (
+                    <div>
+                      <span className="text-[10px] uppercase text-text-faint block">Port</span>
+                      <span className="font-bold text-text-primary">{cfg.port}</span>
+                    </div>
+                  )}
+                  {cfg.mutex && (
+                    <div>
+                      <span className="text-[10px] uppercase text-text-faint block">Bot Mutex</span>
+                      <span className="font-bold text-amber-300">{cfg.mutex}</span>
+                    </div>
+                  )}
+                  {cfg.encryption && (
+                    <div>
+                      <span className="text-[10px] uppercase text-text-faint block">Encryption / Cipher</span>
+                      <span className="font-bold text-cyan-300">{cfg.encryption}</span>
+                    </div>
+                  )}
+                  {cfg.campaign_id && (
+                    <div>
+                      <span className="text-[10px] uppercase text-text-faint block">Campaign / Build</span>
+                      <span className="font-bold text-text-primary">{cfg.campaign_id}</span>
+                    </div>
+                  )}
+                  {cfg.pastebin_fallback && (
+                    <div className="col-span-full">
+                      <span className="text-[10px] uppercase text-text-faint block">Pastebin C2 Fallback</span>
+                      <a href={cfg.pastebin_fallback} target="_blank" rel="noopener noreferrer" className="font-bold text-cyan-400 hover:underline">
+                        {cfg.pastebin_fallback}
+                      </a>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      )}
+
+      {/* SECTION: YARA Signatures & Exact Byte Matches */}
+      {st?.yara?.matches && st.yara.matches.length > 0 && (
+        <Panel kicker="Signature Matching" title={`YARA Rule Detections (${st.yara.matches.length})`}>
+          <div className="space-y-3 font-mono">
+            {st.yara.matches.map((m, idx) => (
+              <div key={idx} className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-3.5 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-xs text-rose-400">{m.rule}</span>
+                    {m.tags && m.tags.map((t, tidx) => (
+                      <span key={tidx} className="rounded bg-bg-surface px-1.5 py-0.5 text-[9px] text-text-faint border border-border-subtle uppercase">
+                        {t}
+                      </span>
+                    ))}
+                  </div>
+                  <span className="text-[10px] text-text-faint">Matched Strings: {m.strings?.length || 0}</span>
+                </div>
+                {m.meta?.description && (
+                  <p className="text-[11px] text-text-muted">{m.meta.description}</p>
+                )}
+                {m.strings && m.strings.length > 0 && (
+                  <div className="overflow-x-auto mt-2">
+                    <table className="w-full text-left text-[11px] border-collapse bg-bg-surface/50 rounded-lg">
+                      <thead>
+                        <tr className="border-b border-border-subtle text-[9px] uppercase text-text-faint">
+                          <th className="py-1 px-2.5">Identifier</th>
+                          <th className="py-1 px-2.5">Offset</th>
+                          <th className="py-1 px-2.5">Matched Preview</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {m.strings.slice(0, 5).map((s, sidx) => (
+                          <tr key={sidx} className="border-b border-border-subtle/40">
+                            <td className="py-1 px-2.5 font-bold text-text-muted">{s.identifier}</td>
+                            <td className="py-1 px-2.5 text-cyan-400">{s.offset_hex}</td>
+                            <td className="py-1 px-2.5 font-mono text-text-primary break-all">{s.matched_bytes}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </Panel>
+      )}
+
+      {/* SECTION: Evidence-Backed Assessment Factors */}
+      {st?.assessment_factors && st.assessment_factors.length > 0 && (
+        <Panel kicker="Factor Weights &amp; Provenance" title={`Evidence Factor Breakdown (${st.assessment_factors.length})`}>
+          <div className="overflow-x-auto rounded-xl border border-border-subtle bg-bg-base/70">
+            <table className="w-full text-left text-xs border-collapse font-mono">
+              <thead>
+                <tr className="border-b border-border-subtle bg-bg-surface/80 text-[10px] uppercase text-text-faint">
+                  <th className="py-2 px-3">Assessment Factor</th>
+                  <th className="py-2 px-3 w-20">Weight</th>
+                  <th className="py-2 px-3 w-24">Signal</th>
+                  <th className="py-2 px-3 w-24">Reliability</th>
+                  <th className="py-2 px-3">Concrete Evidence Snippet</th>
+                </tr>
+              </thead>
+              <tbody>
+                {st.assessment_factors.map((af, afidx) => (
+                  <tr key={afidx} className="border-b border-border-subtle/40 hover:bg-bg-elevated/20">
+                    <td className="py-2 px-3 font-semibold text-text-primary">{af.factor}</td>
+                    <td className="py-2 px-3 font-bold text-amber-400">+{af.weight}</td>
+                    <td className="py-2 px-3 uppercase text-[10px] text-text-muted">{af.signal_type}</td>
+                    <td className="py-2 px-3">
+                      <span className="rounded bg-bg-surface px-1.5 py-0.5 text-[9px] text-cyan-300 border border-border-subtle uppercase">
+                        {af.reliability}
+                      </span>
+                    </td>
+                    <td className="py-2 px-3 text-text-muted break-all text-[11px]">{af.evidence}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Panel>
+      )}
+
+      {/* SECTION: Archive Container Deep-Inspection */}
+      {st?.archive && st.archive.is_archive && (
+        <Panel kicker="Container Forensics" title={`Archive Container Inspection (${st.archive.format?.toUpperCase()})`}>
+          <div className="space-y-3 font-mono">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-[11px]">
+              <div className="rounded-lg border border-border-subtle bg-bg-base/60 p-2.5">
+                <span className="text-[9px] uppercase text-text-faint block">Total Members</span>
+                <span className="font-bold text-text-primary">{st.archive.total_members}</span>
+              </div>
+              <div className="rounded-lg border border-border-subtle bg-bg-base/60 p-2.5">
+                <span className="text-[9px] uppercase text-text-faint block">Uncompressed Size</span>
+                <span className="font-bold text-text-primary">{st.archive.total_uncompressed_bytes?.toLocaleString()} B</span>
+              </div>
+              <div className="rounded-lg border border-border-subtle bg-bg-base/60 p-2.5">
+                <span className="text-[9px] uppercase text-text-faint block">Compression Ratio</span>
+                <span className="font-bold text-text-primary">{st.archive.max_compression_ratio}:1</span>
+              </div>
+              <div className="rounded-lg border border-border-subtle bg-bg-base/60 p-2.5">
+                <span className="text-[9px] uppercase text-text-faint block">Zip Bomb Guard</span>
+                <span className={`font-bold ${st.archive.zip_bomb_suspected ? "text-rose-400" : "text-emerald-400"}`}>
+                  {st.archive.zip_bomb_suspected ? "Suspicious Ratio" : "Safe / Verified"}
+                </span>
+              </div>
+            </div>
+            {st.archive.members && st.archive.members.length > 0 && (
+              <div className="overflow-x-auto rounded-lg border border-border-subtle bg-bg-base/50">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="border-b border-border-subtle bg-bg-surface/80 text-[10px] uppercase text-text-faint">
+                      <th className="py-2 px-3">Filename</th>
+                      <th className="py-2 px-3">Format</th>
+                      <th className="py-2 px-3">Compressed</th>
+                      <th className="py-2 px-3">Uncompressed</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {st.archive.members.slice(0, 10).map((m, midx) => (
+                      <tr key={midx} className="border-b border-border-subtle/50 hover:bg-bg-elevated/30">
+                        <td className="py-1.5 px-3 font-semibold text-text-primary">{m.filename}</td>
+                        <td className="py-1.5 px-3 uppercase text-text-muted">{m.format}</td>
+                        <td className="py-1.5 px-3 text-text-faint">{m.size_compressed} B</td>
+                        <td className="py-1.5 px-3 text-text-faint">{m.size_uncompressed} B</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </Panel>
+      )}
+
       {/* SECTION 2: Findings Requiring Inspection */}
       <Panel
         kicker="Investigation Focus"

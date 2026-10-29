@@ -50,14 +50,23 @@ cleanup() {
 
 trap cleanup INT TERM EXIT
 
-if [[ "${1:-}" == "--demo" || "${2:-}" == "--demo" ]]; then
-  echo "[*] Initializing database with demo telemetry..."
-  (cd backend && python -m app.seed_demo >/dev/null 2>&1 || true)
-else
+if [[ "${1:-}" == "--clean" || "${2:-}" == "--clean" ]]; then
   echo "[*] Initializing clean database schema (zero demo data)..."
   (cd backend && python -c "from app.core.db import init_db, db_session; init_db();
 with db_session() as conn:
     conn.execute(\"INSERT OR REPLACE INTO settings (key, value) VALUES ('onboarding', 'empty'), ('demo_mode', '0')\")" >/dev/null 2>&1 || true)
+elif [[ "${1:-}" == "--demo" || "${2:-}" == "--demo" ]]; then
+  echo "[*] Initializing database with demo telemetry..."
+  (cd backend && python -m app.seed_demo >/dev/null 2>&1 || true)
+else
+  echo "[*] Initializing database schema..."
+  (cd backend && python -c "from app.core.db import init_db, db_session; init_db();
+with db_session() as conn:
+    count = conn.execute('SELECT COUNT(*) FROM samples').fetchone()[0]
+if count == 0:
+    import app.seed_demo
+    app.seed_demo.seed_demo()
+" >/dev/null 2>&1 || true)
 fi
 
 echo "[*] Starting FastAPI Backend on port ${BACKEND_PORT}..."
