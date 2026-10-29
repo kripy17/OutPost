@@ -397,7 +397,8 @@ export default function MonitorPage() {
   }, [activeResult?.terminal_output, stageHistory.length]);
 
   // Filtered Playbooks
-  const filteredPlaybooks = playbooks.filter((pb) => {
+  const safePlaybooks = Array.isArray(playbooks) ? playbooks : [];
+  const filteredPlaybooks = safePlaybooks.filter((pb) => {
     if (platformFilter !== "all" && pb.platform !== platformFilter) return false;
     if (severityFilter !== "all" && pb.severity !== severityFilter) return false;
     if (!searchQuery.trim()) return true;

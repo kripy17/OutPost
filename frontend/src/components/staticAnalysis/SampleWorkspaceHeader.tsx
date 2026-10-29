@@ -105,7 +105,7 @@ export function SampleWorkspaceHeader({
     ? `PE32${st.pe.bits === 64 ? "+" : ""} (${st.pe.machine})`
     : st?.elf
       ? `ELF${st.elf.class} (${st.elf.machine})`
-      : sample.detected_platform.toUpperCase();
+      : (sample.detected_platform || "UNKNOWN").toUpperCase();
 
   return (
     <div className="border-b border-border-subtle bg-bg-surface/50 pb-4 mb-4">

@@ -31,6 +31,8 @@ from .api.routes_ioc import router as ioc_router
 from .api.routes_iocs import router as iocs_router
 from .api.routes_keys import router as keys_router
 from .api.routes_metrics import router as metrics_router
+from .api.routes_notifications import router as notifications_router
+from .api.routes_parked import router as parked_router
 from .api.routes_rules import router as rules_router
 from .api.routes_runs import router as runs_router
 from .api.routes_samples import router as samples_router
@@ -342,5 +344,7 @@ app.include_router(rules_router)
 app.include_router(yara_router)
 app.include_router(sandbox_router)
 app.include_router(admin_router)
+app.include_router(notifications_router)
 app.include_router(diagnostics_router)
 app.include_router(corpus_router)
+app.include_router(parked_router)

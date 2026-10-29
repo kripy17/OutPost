@@ -492,9 +492,9 @@ export default function RunDetailPage() {
 
   const {
     run,
-    process_tree,
-    network_connections,
-    alerts,
+    process_tree = [],
+    network_connections = [],
+    alerts = [],
     kill_chain,
     sample_reputation,
     effective_tuning = {},
@@ -506,7 +506,7 @@ export default function RunDetailPage() {
   } = data;
   const inProgress = run.completed_at === null;
   const chain = killChainStats(alerts);
-  const campaign = campaigns.find((c) => c.runs.some((r) => r.run_id === runId));
+  const campaign = Array.isArray(campaigns) ? campaigns.find((c) => c.runs.some((r) => r.run_id === runId)) : undefined;
 
   return (
     <div className="mx-auto max-w-7xl px-5 py-8 lg:px-8">

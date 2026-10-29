@@ -391,6 +391,12 @@ def search_sessions(
 def search_investigations(
     conn: sqlite3.Connection, text: str, quals: dict[str, str], limit: int
 ) -> tuple[int, list[dict[str, Any]]]:
+    has_table = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='investigations'"
+    ).fetchone()
+    if not has_table:
+        return 0, []
+
     where: list[str] = []
     params: list = []
     if text:
@@ -448,9 +454,12 @@ def search_campaigns(
 ) -> tuple[int, list[dict[str, Any]]]:
     """Campaigns are derived entities (no table): candidate anchor IPs shared
     by >= 2 runs. We reuse the same derivation and match by key/IP."""
-    from ..services import campaigns as campaigns_service
+    try:
+        from ..services import campaigns as campaigns_service
+        all_campaigns = campaigns_service.build_campaigns(conn)
+    except Exception:
+        return 0, []
 
-    all_campaigns = campaigns_service.build_campaigns(conn)
     matched = []
     for c in all_campaigns:
         key = c["key"]
