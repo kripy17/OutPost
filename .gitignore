@@ -13,6 +13,7 @@ dist/
 /samples/
 backend/data/samples/
 *.yar
+!backend/app/services/static/rules/*.yar
 .pytest_cache/
 .vscode/
 .idea/

@@ -27,6 +27,7 @@ from .strings import (
     extract_strings_detailed,
 )
 from .verdict import assess_static_evidence
+from .yara_scanner import scan_payload_yara
 
 _SUSPICIOUS_CAPABILITY_PATTERNS = [
     (
@@ -300,7 +301,55 @@ def run_complete_static_pipeline(
                 "provenance": prov,
             })
 
-    # 4. Capability detection from imports vs strings
+    # 4. YARA Signature Matching
+    yara_result = scan_payload_yara(data)
+    for ymatch in yara_result.get("matches", []):
+        r_name = ymatch["rule"]
+        r_meta = ymatch.get("meta", {})
+        r_ns = ymatch.get("namespace", "")
+        r_impact = r_meta.get("verdict_impact", "authoritative")
+        r_techs = [r_meta["mitre_technique"]] if "mitre_technique" in r_meta else []
+
+        first_off = ymatch["strings"][0]["offset"] if ymatch.get("strings") else 0
+        prov = create_provenance(
+            "pattern_offset",
+            f"Offset 0x{first_off:08X} (YARA namespace: {r_ns})",
+            "matched",
+            "confirmed",
+            rule_id=r_name,
+        )
+
+        if r_impact == "authoritative":
+            findings.append(create_finding(
+                f"yara-{r_name.lower()}",
+                "ioc",
+                f"YARA Match: {r_name}",
+                r_meta.get("description", f"Authoritative YARA rule '{r_name}' matched payload."),
+                prov,
+                r_techs,
+            ))
+            embedded_indicators.append({
+                "type": "yara_rule",
+                "value": r_name,
+                "classification": "malicious",
+                "location": f"YARA Namespace: {r_ns} (offset 0x{first_off:08X})",
+                "location_rank": 1,
+                "provenance": prov,
+            })
+        elif r_impact == "informational":
+            if "packer" in r_ns or "packer" in ymatch.get("tags", []):
+                has_existing_packer = bool((pe_info and pe_info.get("packer")) or (elf_info and elf_info.get("packer")))
+                if not has_existing_packer and not any("packer" in f.get("title", "").lower() for f in findings):
+                    could_not_analyze.append("packed_executable_code")
+                    could_not_analyze.append("obfuscated_imports")
+                    structural_anomalies.append({
+                        "title": f"Packer identified ({r_name})",
+                        "weight": 25,
+                        "reliability": "matched",
+                        "evidence": f"YARA rule '{r_name}' matched at offset 0x{first_off:08X}",
+                    })
+
+    # 5. Capability detection from imports vs strings
     # Check imports if available (PE or ELF)
     resolved_imports: list[str] = []
     if pe_info:
@@ -399,5 +448,7 @@ def run_complete_static_pipeline(
         "sha1": hashlib.sha1(data).hexdigest(),
         "sha256": hashlib.sha256(data).hexdigest(),
         "hex_preview": hex_preview,
+        "yara": yara_result,
+        "yara_rules": yara_result.get("matched_rule_names", []),
         **assessment,
     }
