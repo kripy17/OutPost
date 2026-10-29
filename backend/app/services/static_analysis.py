@@ -364,8 +364,19 @@ def run_capa(data: bytes) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def analyze_sample(data: bytes) -> dict[str, Any]:
-    """Perform complete in-process static analysis over raw bytes."""
+def analyze_sample(
+    data: bytes,
+    isolate: bool = False,
+    timeout_sec: float = 10.0,
+) -> dict[str, Any]:
+    """Perform complete static analysis over raw bytes.
+
+    If isolate=True (or OUTPOST_FORCE_STATIC_WORKER=1) and OUTPOST_DISABLE_STATIC_WORKER!=1,
+    executes inside an isolated, resource-constrained worker subprocess.
+    """
+    if (isolate or os.environ.get("OUTPOST_FORCE_STATIC_WORKER") == "1") and os.environ.get("OUTPOST_DISABLE_STATIC_WORKER") != "1":
+        return execute_in_isolated_worker(data, timeout_sec=timeout_sec)
+
     res = run_complete_static_pipeline(data)
 
     # Merge CAPA if installed

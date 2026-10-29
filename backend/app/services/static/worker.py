@@ -81,10 +81,30 @@ def _set_worker_rlimits() -> None:
         raise OSError(f"Failed to enforce RLIMIT_AS (512MB): {exc}") from exc
 
     try:
-        # 5 CPU seconds
-        resource.setrlimit(resource.RLIMIT_CPU, (5, 5))
+        # Dynamic CPU time limit (default 5s, configurable via OUTPOST_WORKER_CPU_LIMIT)
+        cpu_sec = int(os.environ.get("OUTPOST_WORKER_CPU_LIMIT", "5"))
+        resource.setrlimit(resource.RLIMIT_CPU, (cpu_sec, cpu_sec))
     except (ValueError, OSError) as exc:
-        raise OSError(f"Failed to enforce RLIMIT_CPU (5s): {exc}") from exc
+        raise OSError(f"Failed to enforce RLIMIT_CPU ({cpu_sec}s): {exc}") from exc
+
+    try:
+        # 100 MB max file output size (prevents disk fill attacks)
+        fsize_limit = 100 * 1024 * 1024
+        resource.setrlimit(resource.RLIMIT_FSIZE, (fsize_limit, fsize_limit))
+    except (ValueError, OSError, AttributeError):
+        pass
+
+    try:
+        # 256 max open file descriptors (prevents FD exhaustion)
+        resource.setrlimit(resource.RLIMIT_NOFILE, (256, 256))
+    except (ValueError, OSError, AttributeError):
+        pass
+
+    try:
+        # Disable core dumps on crash/segfault
+        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+    except (ValueError, OSError, AttributeError):
+        pass
 
 
 def execute_in_isolated_worker(
@@ -117,6 +137,7 @@ def execute_in_isolated_worker(
 
         cmd = [sys.executable, "-m", "app.services.static.worker", input_file, output_file]
         worker_env = _build_minimal_worker_env()
+        worker_env["OUTPOST_WORKER_CPU_LIMIT"] = str(max(5, int(timeout_sec)))
 
         try:
             proc = subprocess.Popen(
@@ -180,7 +201,10 @@ def execute_in_isolated_worker(
             reason = f"Worker crashed or aborted (exit code {proc.returncode})"
             if proc.returncode in (-24, 152):  # SIGXCPU
                 status_code = "rlimit_cpu_exceeded"
-                reason = "Worker exceeded allocated CPU time budget (5.0s)"
+                reason = "Worker exceeded allocated CPU time budget"
+            elif proc.returncode in (-25, 153):  # SIGXFSZ
+                status_code = "rlimit_fsize_exceeded"
+                reason = "Worker exceeded allocated file output size budget (100MB)"
             elif proc.returncode in (-9, 137, -6, 134):  # SIGKILL / SIGABRT (OOM killer or rlimit)
                 status_code = "rlimit_memory_exceeded"
                 reason = "Worker exceeded allocated virtual memory budget (512MB)"
@@ -259,6 +283,16 @@ if __name__ == "__main__":
             from app.services.static.pipeline import run_complete_static_pipeline
 
         parsed_result = run_complete_static_pipeline(blob)
+
+        # Merge CAPA if installed
+        try:
+            from app.services.static_analysis import run_capa
+            capa_report = run_capa(blob)
+            parsed_result["capa"] = capa_report
+            if capa_report.get("capabilities"):
+                parsed_result["capabilities"] = parsed_result.get("capabilities", []) + capa_report["capabilities"]
+        except Exception:
+            parsed_result["capa"] = {"available": False, "capabilities": []}
 
         with open(out_path, "w", encoding="utf-8") as f_out:
             json.dump(parsed_result, f_out)

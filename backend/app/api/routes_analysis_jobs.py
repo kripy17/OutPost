@@ -336,7 +336,16 @@ async def create_analysis_job(body: AnalysisJobCreateIn, request: Request) -> An
         sample_bytes = _load_bytes(body.sample_id) if body.sample_id else None
         result = None
         if sample_bytes is not None:
-            result = static_analysis.analyze_sample(sample_bytes)
+            try:
+                result = static_analysis.analyze_sample(sample_bytes, isolate=True)
+            except Exception as exc:
+                result = {
+                    "status": "parser_failed",
+                    "error": f"Static analysis failed: {exc}",
+                    "verdict": "parser_failed",
+                    "static_risk_score": 0,
+                    "could_not_analyze": [f"Analysis aborted due to error: {exc}"],
+                }
         job = jobs_store.create_job(
             conn, run_id, "static",
             status=jobs_store.COMPLETED,
