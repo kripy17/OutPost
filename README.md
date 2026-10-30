@@ -1,13 +1,13 @@
 # OutPost — Malware Analysis Workbench & Behavioral Security Monitor
 
-[![Tests](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fkripy17%2FOutPost%2Fmain%2Fbadges%2Ftests.json&style=flat-square)](https://github.com/kripy17/OutPost/actions)
-[![Rules](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fkripy17%2FOutPost%2Fmain%2Fbadges%2Frules.json&style=flat-square)](docs/11-DETECTION-LOGIC.md)
-[![Tactics](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fkripy17%2FOutPost%2Fmain%2Fbadges%2Fcoverage.json&style=flat-square)](docs/11-DETECTION-LOGIC.md)
-[![Commands](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fkripy17%2FOutPost%2Fmain%2Fbadges%2Fcommands.json&style=flat-square)](docs/09-CLI-SPEC.md)
-[![Python](https://img.shields.io/badge/python-3.12%20%7C%203.14-blue.svg?style=flat-square)](backend/README.md)
-[![Frontend](https://img.shields.io/badge/frontend-React%2018%20%7C%20Vite%20%7C%20Tailwind-61dafb.svg?style=flat-square)](frontend/README.md)
-[![Air-Gap](https://img.shields.io/badge/air--gap-zero%20cloud%20egress-success.svg?style=flat-square)](docs/18-AIR-GAP.md)
-[![License](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square)](LICENSE)
+[![Tests](badges/tests.svg)](https://github.com/kripy17/OutPost/actions)
+[![Rules](badges/rules.svg)](docs/11-DETECTION-LOGIC.md)
+[![Tactics](badges/coverage.svg)](docs/11-DETECTION-LOGIC.md)
+[![Commands](badges/commands.svg)](docs/09-CLI-SPEC.md)
+[![Python](badges/python.svg)](backend/README.md)
+[![Frontend](badges/frontend.svg)](frontend/README.md)
+[![Air-Gap](badges/airgap.svg)](docs/18-AIR-GAP.md)
+[![License](badges/license.svg)](LICENSE)
 
 **OutPost** is an offline-first, dual-layer **Static and Dynamic Malware Analysis Workbench & Behavioral Threat Forecaster** engineered for malware analysts, reverse engineers, incident responders, and detection teams.
 
