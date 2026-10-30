@@ -22,6 +22,7 @@ backend/data/samples/
 .venv/
 .freebuff/
 *.log
+!tests/fixtures/*.log
 *.pid
 *.egg-info/
 /data/
